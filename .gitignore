@@ -49,3 +49,6 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# vendored binaries (download from upstream instead of committing)
+tools/cloudflared.exe
