@@ -1,0 +1,45 @@
+%% Ticket System v3 — main operational flow (Mermaid source)
+%% Regenerate SVG/PNG: npm run docs:flowchart
+
+flowchart TB
+  subgraph AUTH["1. Authentication"]
+    SI["/signin — Credentials / Google / OIDC SSO"]
+    SI --> SE["Session: role + email + authProvider"]
+  end
+
+  subgraph CUST["2. Customer journey"]
+    SE --> CH{Customer role?}
+    CH -->|Yes| DASH["Dashboard /my-tickets"]
+    DASH --> NEW{"Create ticket allowed?\n(no pending resolved confirmation)"}
+    NEW -->|No| VERP["Open verification\n/tickets/id/verification"]
+    NEW -->|Yes| NT["/tickets/new"]
+    NT --> POST["POST /api/tickets\ncontact + requestor email rules"]
+    POST --> TRACK["Track ticket /tickets/id"]
+    TRACK --> MSG["Messages & timeline"]
+    MSG --> RESNOTE["Staff marks RESOLVED"]
+    RESNOTE --> EMAIL["SMTP: resolution email\nto requestor inbox"]
+    EMAIL --> VERIFY["Verify resolution\n(email link or portal)"]
+    VERIFY --> RATE["Star rating / feedback"]
+    RATE --> CLOSED["CLOSED"]
+  end
+
+  subgraph STAFF["3. Personnel / Agent"]
+    SE --> AG{Staff role?}
+    AG -->|Yes| BOARD["/agent — Board & Kanban"]
+    BOARD --> PRI["Set priority\n(UNSET blocks → IN PROGRESS)"]
+    PRI --> WORK["Ticket workspace — status,\nescalate, resolve"]
+    WORK --> RESNOTE
+  end
+
+  subgraph SYS["4. System automation"]
+    SLA["SLA policies per priority"]
+    SWEEP["POST /api/sla/sweep\n(Admin) breach escalation"]
+    SLA -.-> TRACK
+    SWEEP -.-> TRACK
+  end
+
+  CH -->|No staff| AG
+
+  style NEW fill:#fef3c7
+  style PRI fill:#fef3c7
+  style VERIFY fill:#dbeafe

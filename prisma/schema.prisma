@@ -1,0 +1,298 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TicketCategory {
+  IT
+  HR
+  FINANCE
+  OPERATIONS
+  GENERAL
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  /// Default until staff sets a real priority; work cannot move to In progress until changed.
+  UNSET
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_INFO
+  ESCALATED
+  /// Awaiting customer confirmation / rating (was previously stored as RESOLVED in older data).
+  FOR_CONFIRMATION
+  RESOLVED
+  CLOSED
+}
+
+enum EscalationType {
+  FUNCTIONAL
+  HIERARCHICAL
+}
+
+enum ActivityActor {
+  SYSTEM
+  AGENT
+  USER
+}
+
+enum KpiFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum TaskStatus {
+  CURRENT
+  DONE
+  DELAYED
+}
+
+model PortalAccount {
+  id           String   @id @default(cuid())
+  username     String?  @unique
+  email        String   @unique
+  name         String
+  passwordHash String
+  /// Portal role: Head | Personnel | Customer (staff signup defaults to Personnel).
+  role         String   @default("Customer")
+  /// Deprecated: prefer role === "Head". Kept for migration; synced when role changes.
+  headPrivileges Boolean @default(false)
+  /// Customer signup: company (maps to Team / queue).
+  companyId    String?
+  company      Team?    @relation("PortalCustomerCompany", fields: [companyId], references: [id], onDelete: SetNull)
+  /// Staff (Head / Personnel): optional designated company queue from roster (AGC, ALI, …).
+  staffDesignatedCompanyId String?
+  staffDesignatedCompany   Team?    @relation("PortalStaffDesignatedCompany", fields: [staffDesignatedCompanyId], references: [id], onDelete: SetNull)
+  /// Customer org role at signup: Head | Personnel (distinct from staff Personnel).
+  customerOrgRole String?
+  accountStatus String  @default("ACTIVE")
+  profileImage String?
+  profileImageZoom Float @default(1)
+  profileImagePosX Int   @default(50)
+  profileImagePosY Int   @default(50)
+  createdAt    DateTime @default(now())
+  actionRequests AccountActionRequest[]
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  agents      Agent[]
+  tickets     Ticket[]
+  customerPortalAccounts      PortalAccount[] @relation("PortalCustomerCompany")
+  staffDesignatedPortalAccounts PortalAccount[] @relation("PortalStaffDesignatedCompany")
+}
+
+model Agent {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tickets   Ticket[] @relation("AssignedAgent")
+  kpis      KpiMaintenance[] @relation("AssignedKpi")
+  tasks     TaskItem[]       @relation("AssignedTask")
+  createdAt DateTime @default(now())
+
+  @@index([teamId, name])
+}
+
+model SlaPolicy {
+  id                 String         @id @default(cuid())
+  priority           TicketPriority @unique
+  firstResponseHours Float
+  resolutionHours    Float
+}
+
+model EscalationTrigger {
+  id          String         @id @default(cuid())
+  priority    TicketPriority @unique
+  enabled     Boolean        @default(false)
+  notifyAdmin Boolean        @default(false)
+  notifyTarget String        @default("NONE")
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model Ticket {
+  id                 String           @id @default(cuid())
+  ticketNumber       String           @unique
+  title              String
+  description        String
+  category           TicketCategory
+  priority           TicketPriority   @default(UNSET)
+  status             TicketStatus     @default(OPEN)
+  contactName        String
+  contactEmail       String
+  requestorEmail     String?
+  contactPhone       String?
+  teamId             String?
+  team               Team?            @relation(fields: [teamId], references: [id])
+  assignedAgentId    String?
+  assignedAgent      Agent?           @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
+  firstResponseDueAt DateTime
+  resolutionDueAt    DateTime
+  firstResponseAt    DateTime?
+  resolvedAt         DateTime?
+  closedAt           DateTime?
+  escalationType     EscalationType?
+  escalatedAt        DateTime?
+  reopenCount        Int              @default(0)
+  resolutionNotes    String?
+  /// Intake screenshots from the new-ticket form: stored filename on disk, original name, mime, size (JSON array).
+  intakeScreenshotMeta Json?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  activities         TicketActivity[]
+  messages           TicketMessage[]
+  feedback           TicketFeedback?
+
+  @@index([status, updatedAt])
+  @@index([status, createdAt])
+  @@index([contactEmail, updatedAt])
+  @@index([contactEmail, createdAt])
+  @@index([requestorEmail, updatedAt])
+  @@index([requestorEmail, createdAt])
+  @@index([assignedAgentId, status])
+  @@index([assignedAgentId, createdAt])
+  @@index([assignedAgentId, updatedAt])
+  @@index([teamId, status])
+  @@index([teamId, createdAt])
+  @@index([resolutionDueAt, status])
+  @@index([resolvedAt])
+  @@index([closedAt])
+  @@index([closedAt, assignedAgentId])
+  @@index([createdAt])
+  @@index([priority, status])
+  @@index([status, priority, updatedAt])
+}
+
+model TicketActivity {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor     ActivityActor
+  summary   String
+  detail    String?
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([summary, createdAt])
+  @@index([ticketId, summary, createdAt])
+}
+
+model TicketMessage {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor     ActivityActor
+  author    String
+  body      String
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model TicketFeedback {
+  id        String   @id @default(cuid())
+  ticketId  String   @unique
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  csat      Int
+  nps       Int?
+  ces       Int?
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+model KpiMaintenance {
+  id                  String       @id @default(cuid())
+  title               String
+  isRecurring         Boolean      @default(true)
+  nonRecurringStartAt DateTime?
+  nonRecurringEndAt   DateTime?
+  frequency           KpiFrequency
+  subKpis             Json
+  assignedAgentId     String?
+  assignedAgent       Agent?       @relation("AssignedKpi", fields: [assignedAgentId], references: [id])
+  assignedRole        String?
+  /// 0=Sunday … 6=Saturday (UTC). Required for WEEKLY; ignored otherwise.
+  recurrenceWeekday   Int?
+  /// 1–31 anchor day in month (UTC). Required for MONTHLY; ignored otherwise.
+  recurrenceMonthDay  Int?
+  /// Anchor start instant (UTC) of the active recurrence cycle — drives due date until rollover completes.
+  periodCycleStartAt  DateTime?
+  /// Last time checklist became fully complete; rollover resets one calendar day later (timezone from client fetch).
+  lastFullCompletionAt DateTime?
+  /// Last period identity used to reset sub-KPIs when the calendar period advances (see kpi-recurrence).
+  periodKey           String?
+  /// True when the previous period ended with incomplete checklist; cleared when the new period is fully completed.
+  rolledOverIncomplete Boolean @default(false)
+  createdBy           String
+  createdByRole       String
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([assignedAgentId, frequency])
+  @@index([createdAt])
+}
+
+model TaskItem {
+  id              String      @id @default(cuid())
+  title           String
+  description     String?
+  status          TaskStatus  @default(CURRENT)
+  assignedAgentId String?
+  assignedAgent   Agent?      @relation("AssignedTask", fields: [assignedAgentId], references: [id])
+  priority        String?
+  dueAt           DateTime?
+  createdBy       String
+  createdByRole   String
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  activities      TaskActivity[]
+
+  @@index([assignedAgentId, status])
+  @@index([status, dueAt])
+  @@index([createdAt])
+}
+
+model TaskActivity {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      TaskItem @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    String
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+}
+
+model AccountActionRequest {
+  id               String   @id @default(cuid())
+  portalAccountId  String
+  portalAccount    PortalAccount @relation(fields: [portalAccountId], references: [id], onDelete: Cascade)
+  requestType      String
+  reason           String?
+  status           String   @default("PENDING")
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([portalAccountId, createdAt])
+  @@index([status, createdAt])
+}

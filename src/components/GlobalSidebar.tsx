@@ -1,0 +1,218 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { useEffect, useState } from "react";
+import {
+  Activity,
+  BarChart3,
+  Gauge,
+  GitBranch,
+  Home,
+  LayoutDashboard,
+  LifeBuoy,
+  Menu,
+  PlusSquare,
+  Ticket,
+  UserCircle,
+  Users,
+  X,
+} from "lucide-react";
+import { navLinkActive } from "@/lib/nav-link-active";
+import { BrandLockup } from "@/components/BrandLockup";
+
+function linksForRole(role: string | undefined) {
+  if (role === "SuperAdmin") {
+    return [
+      { href: "/", label: "Ticket Dashboard" },
+      { href: "/admin/personnel", label: "Personnel" },
+      { href: "/agent", label: "Board" },
+      { href: "/insights", label: "Metrics & Reports" },
+      { href: "/admin/escalation-triggers", label: "Escalation triggers" },
+      { href: "/admin/account", label: "My Account" },
+    ];
+  }
+  if (role === "Admin") {
+    return [
+      { href: "/", label: "Ticket Dashboard" },
+      { href: "/admin/personnel", label: "Personnel" },
+      { href: "/agent", label: "Board" },
+      { href: "/insights", label: "Metrics & Reports" },
+      { href: "/admin/escalation-triggers", label: "Escalation triggers" },
+      { href: "/admin/account", label: "My Account" },
+    ];
+  }
+  if (role === "Personnel") {
+    return [
+      { href: "/tickets/new", label: "New Ticket" },
+      { href: "/agent", label: "Board" },
+      { href: "/insights", label: "Personal Metrics" },
+      { href: "/admin/account", label: "My Account" },
+    ];
+  }
+  return [
+    { href: "/", label: "Home" },
+    { href: "/admin/account", label: "My Account" },
+  ];
+}
+
+function iconForLink(label: string) {
+  const key = label.toLowerCase();
+  if (key.includes("ticket dashboard")) return LayoutDashboard;
+  if (key === "board") return Ticket;
+  if (key.includes("home") || key.includes("dashboard")) return Home;
+  if (key.includes("ticket")) return Ticket;
+  if (key.includes("metrics") || key.includes("reports")) return BarChart3;
+  if (key.includes("metric")) return Gauge;
+  if (key.includes("analytics")) return BarChart3;
+  if (key.includes("report")) return Activity;
+  if (key.includes("personnel")) return Users;
+  if (key.includes("my account")) return UserCircle;
+  if (key.includes("account")) return UserCircle;
+  if (key.includes("escalation")) return LifeBuoy;
+  if (key.includes("process")) return GitBranch;
+  if (key.includes("submit")) return PlusSquare;
+  if (key.includes("queue metrics")) return Gauge;
+  return Home;
+}
+
+export function GlobalSidebar() {
+  const pathname = usePathname();
+  const { data } = useSession();
+  const role = data?.user?.role;
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      const stored = window.localStorage.getItem("sidebar-collapsed");
+      setCollapsed(stored === "1");
+    });
+  }, []);
+
+  if (pathname === "/signin" || pathname === "/signup" || pathname === "/customer/signin" || pathname === "/customer/signup") return null;
+
+  const links = linksForRole(role);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem("sidebar-collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setMobileOpen(true)}
+        className="fixed bottom-4 left-4 z-40 inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 lg:hidden"
+        aria-label="Open navigation menu"
+      >
+        <Menu size={18} />
+      </button>
+      {mobileOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close navigation menu"
+          />
+          <aside className="absolute left-0 top-0 h-full w-[82vw] max-w-[320px] border-r border-zinc-200 bg-white px-4 py-5 shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220]">
+            <div className="mb-5 flex items-center justify-between">
+              <BrandLockup variant="staff-sidebar-expanded" />
+              <button
+                type="button"
+                onClick={() => setMobileOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                aria-label="Close navigation menu"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <nav className="space-y-2 text-sm">
+              {links.map((link) => {
+                const active = navLinkActive(pathname, link.href);
+                const Icon = iconForLink(link.label);
+                return (
+                  <Link
+                    key={`m-${link.href}-${link.label}`}
+                    href={link.href}
+                    onClick={() => setMobileOpen(false)}
+                    className={`block rounded-md px-3 py-2 ${
+                      active
+                        ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
+                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <Icon size={16} strokeWidth={2.1} />
+                      {link.label}
+                    </span>
+                  </Link>
+                );
+              })}
+            </nav>
+          </aside>
+        </div>
+      ) : null}
+      <aside
+        className={`hidden h-screen min-h-0 shrink-0 flex-col border-r border-zinc-200 bg-white px-4 py-5 transition-all duration-200 dark:border-zinc-800 dark:bg-[#0b1220] lg:flex lg:flex-col ${collapsed ? "w-20" : "w-72"}`}
+      >
+        <div className={`shrink-0 flex ${collapsed ? "flex-col items-center gap-3" : "items-start justify-between gap-3"}`}>
+          <div className={`min-w-0 flex-1 ${collapsed ? "text-center" : ""}`}>
+            {collapsed ? (
+              <BrandLockup variant="staff-sidebar-collapsed" />
+            ) : (
+              <BrandLockup variant="staff-sidebar-expanded" />
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className={`rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 ${collapsed ? "w-full" : ""}`}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? ">>" : "<<"}
+          </button>
+        </div>
+        <nav
+          className={`mt-6 min-h-0 flex-1 space-y-2 overflow-y-auto text-sm ${collapsed ? "flex flex-col items-center" : ""}`}
+        >
+          {links.map((link) => {
+            const active = navLinkActive(pathname, link.href);
+            const Icon = iconForLink(link.label);
+            return (
+              <Link
+                key={`${link.href}-${link.label}`}
+                href={link.href}
+                title={collapsed ? link.label : undefined}
+                className={`block rounded-md ${
+                  collapsed ? "w-10 px-0 py-2 text-center" : "px-3 py-2"
+                } ${
+                  active
+                    ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
+                    : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {collapsed ? (
+                  <span className="inline-flex w-full items-center justify-center">
+                    <Icon size={16} strokeWidth={2.2} />
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <Icon size={16} strokeWidth={2.1} />
+                    {link.label}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+      </aside>
+    </>
+  );
+}

@@ -1,0 +1,91 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+export function TicketRatingForm({
+  ticketId,
+  initialStars,
+}: {
+  ticketId: string;
+  initialStars: number;
+}) {
+  const router = useRouter();
+  const [stars, setStars] = useState(initialStars);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function submit() {
+    if (!Number.isFinite(stars) || stars < 1 || stars > 5) {
+      setError("Star rating is required.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/tickets/${ticketId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "feedback",
+        csat: stars,
+        comment: comment.trim() || null,
+      }),
+    });
+    setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Could not submit rating.");
+      return;
+    }
+    setDone(true);
+    router.refresh();
+  }
+
+  return (
+    <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm">
+      <h2 className="text-lg font-semibold text-zinc-100">Mandatory ticket rating</h2>
+      <p className="mt-1 text-sm text-zinc-400">
+        Please rate your resolved ticket. This is required to complete closure.
+      </p>
+
+      <div className="mt-4 flex gap-2">
+        {[1, 2, 3, 4, 5].map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setStars(value)}
+            className={`rounded-md px-3 py-2 text-lg ${
+              value <= stars ? "bg-amber-500/20 text-amber-200" : "bg-zinc-900 text-zinc-500"
+            }`}
+          >
+            ★
+          </button>
+        ))}
+      </div>
+
+      <label className="mt-4 block text-sm text-zinc-300">
+        Optional comment
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          rows={3}
+          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+        />
+      </label>
+
+      <button
+        type="button"
+        disabled={busy || done}
+        onClick={submit}
+        className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+      >
+        {done ? "Rating submitted" : "Submit rating"}
+      </button>
+
+      {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
+      {done ? <p className="mt-2 text-sm text-orange-300">Thanks. Your ticket has been closed.</p> : null}
+    </article>
+  );
+}

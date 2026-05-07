@@ -1,0 +1,774 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
+import { requireSession } from "@/lib/access";
+import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
+import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board";
+import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
+import { prisma } from "@/lib/prisma";
+import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
+import { findSessionAgentWithTeam } from "@/lib/session-agent";
+import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
+import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
+import { BRAND_TITLE } from "@/lib/brand";
+import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
+import { AgentKanban, type KanbanTicket } from "./agent-kanban";
+import { CompanyKanban } from "./company-kanban";
+import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
+import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
+
+export const dynamic = "force-dynamic";
+
+const STATUS_PIPELINE: TicketStatus[] = [
+  "OPEN",
+  "IN_PROGRESS",
+  "PENDING_INFO",
+  "ESCALATED",
+  "FOR_CONFIRMATION",
+  "RESOLVED",
+];
+
+const statusOptions: Array<{ label: string; value: TicketStatus | "ALL" }> = [
+  { label: "All", value: "ALL" },
+  { label: "Open", value: "OPEN" },
+  { label: "In Progress", value: "IN_PROGRESS" },
+  { label: "Pending Info", value: "PENDING_INFO" },
+  { label: "Escalated", value: "ESCALATED" },
+  { label: "For confirmation", value: "FOR_CONFIRMATION" },
+  { label: "Resolved (legacy)", value: "RESOLVED" },
+  { label: "Closed", value: "CLOSED" },
+];
+
+const priorityOptions: Array<{ label: string; value: TicketPriority | "ALL" }> = [
+  { label: "All", value: "ALL" },
+  { label: "Set Priority Level", value: "UNSET" },
+  { label: "Low", value: "LOW" },
+  { label: "Medium", value: "MEDIUM" },
+  { label: "High", value: "HIGH" },
+  { label: "Urgent", value: "URGENT" },
+];
+
+function firstQuery(v: string | string[] | undefined) {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function AgentHome({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    status?: string | string[];
+    priority?: string | string[];
+    q?: string | string[];
+    sort?: string | string[];
+    dir?: string | string[];
+    page?: string | string[];
+    notifications?: string | string[];
+    view?: string | string[];
+    assigned?: string | string[];
+      board?: string | string[];
+    company?: string | string[];
+  }>;
+}) {
+  const session = await requireSession();
+  if (!session?.user) redirect("/signin");
+  if (!["SuperAdmin", "Personnel", "Admin"].includes(session.user.role)) redirect("/");
+
+  const params = await searchParams;
+  const rawBoard = firstQuery(params.board);
+  if (rawBoard === "department") {
+    redirect("/agent?board=company");
+  }
+  const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
+  const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
+  // Personnel must use board view to be able to drag cards and change status inline.
+  const requestedViewMode = firstQuery(params.view) === "table" ? "table" : "board";
+  const boardTab = rawBoard === "kpi" ? "kpi" : rawBoard === "company" ? "company" : "ticket";
+  const isCompanyBoard = boardTab === "company";
+  const selectedCompany = firstQuery(params.company) ?? "ALL";
+  const viewMode = session.user.role === "Personnel" ? "board" : requestedViewMode;
+  const isBoard = viewMode === "board";
+  const selectedAssigned = firstQuery(params.assigned) ?? "ALL";
+  const selectedStatus = firstQuery(params.status) ?? "ALL";
+  const selectedPriority = firstQuery(params.priority) ?? "ALL";
+  const query = firstQuery(params.q)?.trim() ?? "";
+  const sort = firstQuery(params.sort) ?? "updatedAt";
+  const dir = firstQuery(params.dir) === "asc" ? "asc" : "desc";
+  const page = Math.max(1, Number.parseInt(firstQuery(params.page) ?? "1", 10) || 1);
+  const notificationsOpen = firstQuery(params.notifications) === "1";
+  const pageSize = 20;
+  const hideCompanyPriorityFilter =
+    !companyCoordinator && session.user.role === "Personnel";
+
+  let companyBoardPayload: Awaited<ReturnType<typeof loadCompanyBoard>> | null = null;
+  let companyAggregates: Awaited<ReturnType<typeof getCompanyBoardAggregates>> | null = null;
+  let companyActivityLogs: Awaited<ReturnType<typeof loadTicketActivityLogForSession>> = [];
+
+  const rosterTeamsForFilter = isCompanyBoard
+    ? sortByRosterOrder(
+        await prisma.team.findMany({
+          where: rosterTeamNameFilter(),
+          select: { id: true, name: true },
+        }),
+      )
+    : [];
+
+  if (isCompanyBoard) {
+    const priorityForCompany = (selectedPriority === "ALL" ? "ALL" : selectedPriority) as TicketPriority | "ALL";
+    const [dep, agg, logs] = await Promise.all([
+      loadCompanyBoard({
+        session,
+        searchQuery: query,
+        priorityFilter: priorityForCompany,
+        companyTeamIds: selectedCompany === "ALL" ? [] : [selectedCompany],
+      }),
+      getCompanyBoardAggregates({
+        session,
+        searchQuery: query,
+        priorityFilter: priorityForCompany,
+        companyTeamIds: selectedCompany === "ALL" ? [] : [selectedCompany],
+      }),
+      loadTicketActivityLogForSession({ session, limit: 120 }),
+    ]);
+    companyBoardPayload = dep;
+    companyAggregates = agg;
+    companyActivityLogs = logs;
+  }
+
+  const fetchTicketPipeline = !isCompanyBoard && boardTab !== "kpi";
+
+  const agents = await prisma.agent.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+
+  const whereBase: Prisma.TicketWhereInput = {};
+  if (session.user.role === "Personnel") {
+    whereBase.assignedAgentId = operator?.id ?? "__none__";
+  }
+  if (selectedAssigned === "UNASSIGNED") {
+    if (session.user.role !== "Personnel") {
+      whereBase.assignedAgentId = null;
+    }
+  } else if (selectedAssigned !== "ALL") {
+    if (session.user.role !== "Personnel") {
+      whereBase.assignedAgentId = selectedAssigned;
+    }
+  }
+  if (selectedPriority !== "ALL") {
+    whereBase.priority = selectedPriority as TicketPriority;
+  }
+  if (query) {
+    whereBase.OR = [
+      { ticketNumber: { contains: query, mode: "insensitive" } },
+      { title: { contains: query, mode: "insensitive" } },
+      { contactName: { contains: query, mode: "insensitive" } },
+      { contactEmail: { contains: query, mode: "insensitive" } },
+    ];
+  }
+
+  const tableWhere: Prisma.TicketWhereInput = { ...whereBase };
+  if (selectedStatus !== "ALL") {
+    tableWhere.status = selectedStatus as TicketStatus;
+  }
+
+  const boardWhere: Prisma.TicketWhereInput = {
+    ...whereBase,
+    status: { in: STATUS_PIPELINE },
+  };
+
+  const dataWhere = isBoard ? boardWhere : tableWhere;
+
+  const allowedSorts: Record<string, Prisma.TicketOrderByWithRelationInput> = {
+    updatedAt: { updatedAt: dir },
+    createdAt: { createdAt: dir },
+    priority: { priority: dir },
+    status: { status: dir },
+  };
+  const orderBy = allowedSorts[sort] ?? { updatedAt: "desc" };
+
+  const [
+    ticketsTable,
+    ticketsBoard,
+    totalCount,
+    critical,
+    open,
+    slaAtRisk,
+    recentUpdated,
+  ] = await Promise.all([
+    fetchTicketPipeline && !isBoard
+      ? prisma.ticket.findMany({
+          where: tableWhere,
+          orderBy,
+          include: { team: true, assignedAgent: true },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        })
+      : Promise.resolve([]),
+    fetchTicketPipeline && isBoard
+      ? prisma.ticket.findMany({
+          where: boardWhere,
+          orderBy: { updatedAt: "desc" },
+          take: 200,
+          include: { team: true, assignedAgent: true },
+        })
+      : Promise.resolve([]),
+    fetchTicketPipeline ? prisma.ticket.count({ where: dataWhere }) : Promise.resolve(0),
+    fetchTicketPipeline
+      ? prisma.ticket.count({
+          where: { ...dataWhere, priority: "URGENT" },
+        })
+      : Promise.resolve(0),
+    fetchTicketPipeline
+      ? prisma.ticket.count({
+          where: {
+            ...dataWhere,
+            status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO"] },
+          },
+        })
+      : Promise.resolve(0),
+    fetchTicketPipeline
+      ? prisma.ticket.count({
+          where: { ...dataWhere, status: "ESCALATED" },
+        })
+      : Promise.resolve(0),
+    fetchTicketPipeline
+      ? prisma.ticket.findMany({
+          where: dataWhere,
+          orderBy: { updatedAt: "desc" },
+          take: 4,
+          select: {
+            id: true,
+            ticketNumber: true,
+            title: true,
+            status: true,
+            updatedAt: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const tickets = isBoard ? ticketsBoard : ticketsTable;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const start = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalCount);
+
+  function buildHref(next: Record<string, string | null>) {
+    const qs = new URLSearchParams();
+    if (viewMode === "table") qs.set("view", "table");
+    if (selectedAssigned !== "ALL") qs.set("assigned", selectedAssigned);
+    if (!isBoard) {
+      if (selectedStatus !== "ALL") qs.set("status", selectedStatus);
+    }
+    if (selectedPriority !== "ALL") qs.set("priority", selectedPriority);
+    if (query) qs.set("q", query);
+    if (sort !== "updatedAt") qs.set("sort", sort);
+    if (dir !== "desc") qs.set("dir", dir);
+    if (page !== 1) qs.set("page", String(page));
+    if (notificationsOpen) qs.set("notifications", "1");
+    if (boardTab !== "ticket") qs.set("board", boardTab);
+    if (isCompanyBoard && selectedCompany !== "ALL") {
+      qs.set("company", selectedCompany);
+    }
+
+    for (const [key, value] of Object.entries(next)) {
+      if (value === null || value === "") qs.delete(key);
+      else qs.set(key, value);
+    }
+    const s = qs.toString();
+    return s ? `/agent?${s}` : "/agent";
+  }
+
+  function sortHref(column: string) {
+    const nextDir = sort === column && dir === "desc" ? "asc" : "desc";
+    return buildHref({ sort: column, dir: nextDir, page: "1" });
+  }
+
+  const ticketsResultLabel = totalCount === 0 ? "No results" : `Showing ${start}-${end} of ${totalCount} results`;
+
+  const ticketsEmpty = tickets.length === 0;
+  const isSorted = (column: string) => sort === column;
+  const sortMarker = (column: string) => {
+    if (!isSorted(column)) return "";
+    return dir === "asc" ? " ▲" : " ▼";
+  };
+  const searchFieldQuery = query;
+  const currentPage = page;
+  const canPrev = currentPage > 1;
+  const canNext = currentPage < totalPages;
+  const prevHref = buildHref({ page: String(currentPage - 1) });
+  const nextHref = buildHref({ page: String(currentPage + 1) });
+  const clearHref = isCompanyBoard
+    ? "/agent?board=company"
+    : "/agent";
+
+  const applySortClass = (column: string) =>
+    `px-4 py-3 ${isSorted(column) ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"} hover:text-zinc-950 dark:hover:text-zinc-200`;
+  const tableRows = tickets;
+  const showPageLinks = totalPages > 1 && !isBoard;
+  const pageLinks = Array.from(
+    { length: Math.min(totalPages, 5) },
+    (_, i) => Math.max(1, Math.min(totalPages - 4, currentPage - 2)) + i,
+  ).filter((n, i, arr) => n >= 1 && n <= totalPages && arr.indexOf(n) === i);
+
+  const boardCards: KanbanTicket[] = isBoard
+    ? ticketsBoard.map((t) => ({
+        id: t.id,
+        ticketNumber: t.ticketNumber,
+        title: t.title,
+        description: t.description,
+        priority: t.priority,
+        status: t.status,
+        updatedAt: t.updatedAt.toISOString(),
+        agentName: t.assignedAgent?.name ?? null,
+      }))
+    : [];
+
+  const activeEvents = isCompanyBoard ? (companyAggregates?.total ?? 0) : totalCount;
+  const statCritical = isCompanyBoard ? (companyAggregates?.critical ?? 0) : critical;
+  const statOpen = isCompanyBoard ? (companyAggregates?.openPipeline ?? 0) : open;
+  const statSla = isCompanyBoard ? (companyAggregates?.slaEscalated ?? 0) : slaAtRisk;
+
+  return (
+    <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100 sm:px-4">
+      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col space-y-4">
+        <section className="space-y-4">
+          {notificationsOpen ? (
+            <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
+                  Notifications
+                </h2>
+                <Link href={buildHref({ notifications: null })} className="text-xs text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200">
+                  Close
+                </Link>
+              </div>
+              <div className="mt-3 space-y-2">
+                {recentUpdated.length === 0 ? (
+                  <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                    No recent queue activity.
+                  </p>
+                ) : (
+                  recentUpdated.map((item) => (
+                    <AgentTicketDeepLink
+                      key={item.id}
+                      ticketId={item.id}
+                      className="block rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                    >
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{item.ticketNumber}</p>
+                      <p className="text-xs text-zinc-700 dark:text-zinc-300">{item.title}</p>
+                      <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                        {item.status.replaceAll("_", " ")} · {relativeTime(item.updatedAt)}
+                      </p>
+                    </AgentTicketDeepLink>
+                  ))
+                )}
+              </div>
+            </section>
+          ) : null}
+
+          <div className="flex flex-col gap-3">
+            <OrchestrationQueueNav />
+
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
+                  {BRAND_TITLE} · Orchestration
+                </p>
+                <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+                  {isCompanyBoard ? "Company overview" : "Orchestration Board"}
+                </h1>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  {isCompanyBoard
+                    ? "General view of customer tickets by company. Counts follow your role and filters below."
+                    : "Manage active systemic resolutions. Visualizing"}{" "}
+                  {!isCompanyBoard ? (
+                    <>
+                      <span className="font-semibold text-orange-700 dark:text-orange-400">
+                        {activeEvents.toLocaleString()}
+                      </span>{" "}
+                      active {boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event{activeEvents !== 1 ? "s" : ""}{" "}
+                      across the grid.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-semibold text-orange-700 dark:text-orange-400">
+                        {activeEvents.toLocaleString()}
+                      </span>{" "}
+                      ticket{activeEvents !== 1 ? "s" : ""} in this view.
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-3">
+                <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
+                <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
+                <StatCard label="SLA at Risk" value={statSla} valueClass="text-amber-400" />
+              </div>
+            </div>
+          </div>
+
+          <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+            <form className="mb-4 flex flex-col gap-3" method="get">
+              {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
+              {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="flex w-full flex-wrap gap-2 xl:w-auto">
+                  {isCompanyBoard ? (
+                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Company:</span>
+                      <select
+                        name="company"
+                        defaultValue={selectedCompany}
+                        className="max-w-[260px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                      >
+                        <option value="ALL">All companies</option>
+                        {rosterTeamsForFilter.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  {isCompanyBoard ? null : (
+                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Assigned:</span>
+                      <select
+                        name="assigned"
+                        defaultValue={selectedAssigned}
+                        className="max-w-[200px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                      >
+                        {session.user.role === "Personnel" ? (
+                          <option value="ALL">My assigned tickets</option>
+                        ) : (
+                          <>
+                            <option value="ALL">All</option>
+                            <option value="UNASSIGNED">Unassigned</option>
+                            {agents.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
+                    </label>
+                  )}
+                  {isBoard || isCompanyBoard ? null : (
+                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Status:</span>
+                      <select
+                        name="status"
+                        defaultValue={selectedStatus}
+                        className="bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                      >
+                        {statusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {!(isCompanyBoard && hideCompanyPriorityFilter) ? (
+                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Priority:</span>
+                      <select
+                        name="priority"
+                        defaultValue={selectedPriority}
+                        className="bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                      >
+                        {priorityOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <button
+                    type="submit"
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    Apply
+                  </button>
+                  <Link
+                    href={clearHref}
+                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    Clear
+                  </Link>
+                </div>
+                <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
+                  <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+                    {isCompanyBoard ? (
+                      <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
+                    ) : session.user.role === "Personnel" ? (
+                      <span className="rounded-md px-3 py-1.5 bg-orange-600 text-white">Board</span>
+                    ) : (
+                      <>
+                        <Link
+                          href={buildHref({ view: null, page: "1" })}
+                          className={`rounded-md px-3 py-1.5 ${
+                            isBoard
+                              ? "bg-orange-600 text-white"
+                              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                          }`}
+                        >
+                          Board
+                        </Link>
+                        <Link
+                          href={buildHref({ view: "table", page: "1" })}
+                          className={`rounded-md px-3 py-1.5 ${
+                            !isBoard
+                              ? "bg-orange-600 text-white"
+                              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
+                          }`}
+                        >
+                          Table
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                  <label className="flex min-w-[200px] flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                    <span className="mr-2">Q</span>
+                    <input
+                      name="q"
+                      defaultValue={searchFieldQuery}
+                      placeholder="Search events…"
+                      className="w-full bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+                    />
+                  </label>
+                </div>
+              </div>
+              {isBoard && !isCompanyBoard ? (
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                  Board view uses lanes (Open, In progress, Feedback) for active pipeline work. Use Table for resolved
+                  items and full filters.
+                </p>
+              ) : isCompanyBoard ? (
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                  All companies = grouped by company requested to. Selecting a company hides that lane and shows
+                  matching tickets under the requestor designated-company lanes.
+                </p>
+              ) : null}
+            </form>
+
+            {isCompanyBoard && companyBoardPayload ? (
+              <>
+                {companyBoardPayload.emptyHint ? (
+                  <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-900 dark:text-amber-100/90">
+                    {companyBoardPayload.emptyHint}
+                  </p>
+                ) : null}
+                <CompanyKanban columns={companyBoardPayload.columns} />
+                <TicketActivityLogPanel
+                  entries={companyActivityLogs}
+                  linkTickets
+                />
+              </>
+            ) : isBoard && boardTab === "ticket" ? (
+              <>
+                {ticketsEmpty ? (
+                  <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 py-20 text-center dark:border-zinc-800">
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">No tickets in the pipeline</p>
+                    <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-600">
+                      {query || selectedPriority !== "ALL" || selectedAssigned !== "ALL"
+                        ? "Adjust filters or switch to Table view for resolved tickets."
+                        : "The queue is clear — new tickets will land in Open."}
+                    </p>
+                  </div>
+                ) : (
+                  <AgentKanban tickets={boardCards} />
+                )}
+              </>
+            ) : isBoard && boardTab === "kpi" ? (
+              <AgentKpiKanbanFlow />
+            ) : (
+              <>
+                <div className="w-full overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+                  <table className="w-full min-w-[900px] table-fixed border-collapse divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+                    <colgroup>
+                      <col className="w-[9%]" />
+                      <col className="w-[32%]" />
+                      <col className="w-[19%]" />
+                      <col className="w-[10%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[18%]" />
+                    </colgroup>
+                    <thead className="bg-zinc-100 text-left text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                      <tr>
+                        <th className="px-4 py-3">ID</th>
+                        <th className="px-4 py-3 min-w-0">Subject</th>
+                        <th className="px-4 py-3">Customer</th>
+                        <th className={applySortClass("priority")}>
+                          <Link href={sortHref("priority")}>Priority{sortMarker("priority")}</Link>
+                        </th>
+                        <th className={applySortClass("status")}>
+                          <Link href={sortHref("status")}>Status{sortMarker("status")}</Link>
+                        </th>
+                        <th className={applySortClass("updatedAt")}>
+                          <Link href={sortHref("updatedAt")}>Updated{sortMarker("updatedAt")}</Link>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 bg-white dark:divide-zinc-800 dark:bg-[#0f172a]">
+                      {ticketsEmpty ? (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-14 text-center">
+                            <div className="flex flex-col items-center gap-2">
+                              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">
+                                No tickets match this view
+                              </p>
+                              <p className="text-xs text-zinc-600 dark:text-zinc-600">
+                                Try different filters or return to the board.
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        tableRows.map((t) => (
+                          <tr key={t.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80">
+                            <td className="px-4 py-3 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                              {t.ticketNumber}
+                            </td>
+                            <td className="min-w-0 px-4 py-3 break-words">
+                              <AgentTicketDeepLink
+                                ticketId={t.id}
+                                className="font-semibold text-zinc-900 hover:underline dark:text-zinc-100"
+                              >
+                                {t.title}
+                              </AgentTicketDeepLink>
+                              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                                Company: {t.team?.name ?? "Queue"}
+                              </p>
+                            </td>
+                            <td className="px-4 py-3 text-zinc-800 dark:text-zinc-300">
+                              {t.contactName || t.contactEmail || "Customer"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${t.priority === "UNSET" ? "normal-case" : "uppercase"} ${priorityPill(t.priority)}`}
+                              >
+                                {formatTicketPriorityLabel(t.priority)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${statusTone(t.status)}`}>
+                                <span className="inline-block size-1.5 rounded-full bg-current" />
+                                {t.status.replaceAll("_", " ")}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">{relativeTime(t.updatedAt)}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-800 dark:text-zinc-300">
+                  <p>{ticketsResultLabel}</p>
+                  {showPageLinks ? (
+                    <div className="flex items-center gap-1">
+                      <Link
+                        href={canPrev ? prevHref : "#"}
+                        className={`rounded-md px-2.5 py-1.5 ${
+                          canPrev
+                            ? "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                            : "cursor-not-allowed text-zinc-400 dark:text-zinc-500"
+                        }`}
+                        aria-disabled={!canPrev}
+                      >
+                        Prev
+                      </Link>
+                      {pageLinks.map((p) => (
+                        <Link
+                          key={p}
+                          href={buildHref({ page: String(p) })}
+                          className={`rounded-md px-2.5 py-1.5 ${
+                            p === currentPage
+                              ? "bg-orange-600 text-white"
+                              : "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                          }`}
+                        >
+                          {p}
+                        </Link>
+                      ))}
+                      <Link
+                        href={canNext ? nextHref : "#"}
+                        className={`rounded-md px-2.5 py-1.5 ${
+                          canNext
+                            ? "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                            : "cursor-not-allowed text-zinc-400 dark:text-zinc-500"
+                        }`}
+                        aria-disabled={!canNext}
+                      >
+                        Next
+                      </Link>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </section>
+        </section>
+
+        <footer className="mt-auto border-t border-zinc-200 pt-3 text-[11px] text-zinc-600 dark:border-zinc-800/80">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="inline-flex items-center gap-1.5 text-orange-500/90">
+                <span className="size-1.5 rounded-full bg-orange-500" />
+                Network operational
+              </span>
+              <span className="text-zinc-500">Queue sync active</span>
+            </div>
+            <span className="text-zinc-500">AGC command · v2</span>
+          </div>
+        </footer>
+      </div>
+    </main>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string;
+  value: number;
+  valueClass: string;
+}) {
+  return (
+    <article className="min-w-[96px] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-[0_6px_20px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-600 dark:text-zinc-500">{label}</p>
+      <p className={`mt-0.5 text-2xl font-bold ${valueClass}`}>{String(value).padStart(2, "0")}</p>
+    </article>
+  );
+}
+
+function relativeTime(date: Date) {
+  const diff = Date.now() - date.getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function priorityPill(priority: string) {
+  if (priority === "UNSET")
+    return "bg-amber-500/15 text-amber-950 dark:bg-amber-500/15 dark:text-amber-200";
+  if (priority === "URGENT" || priority === "HIGH")
+    return "bg-rose-500/15 text-rose-900 dark:bg-rose-500/20 dark:text-rose-200";
+  if (priority === "MEDIUM")
+    return "bg-orange-500/15 text-orange-900 dark:bg-orange-500/20 dark:text-orange-200";
+  return "bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-200";
+}
+
+function statusTone(status: string) {
+  if (status === "FOR_CONFIRMATION" || status === "RESOLVED" || status === "CLOSED")
+    return "text-orange-800 dark:text-orange-300";
+  if (status === "IN_PROGRESS") return "text-orange-800 dark:text-orange-300";
+  if (status === "ESCALATED") return "text-rose-800 dark:text-rose-300";
+  return "text-zinc-700 dark:text-zinc-300";
+}

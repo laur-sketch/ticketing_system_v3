@@ -1,0 +1,63 @@
+{
+  "name": "ticket_system_v3",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/prisma-generate-retry.cjs && next build",
+    "start": "next start",
+    "start:cpanel": "node server.js",
+    "deploy:build": "npm run build && npx prisma migrate deploy",
+    "deploy:pm2": "node scripts/deploy-pm2.cjs",
+    "lint": "eslint",
+    "db:generate": "node scripts/prisma-generate-retry.cjs",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:runcheck": "npx tsx scripts/db-runcheck.ts",
+    "db:seed": "prisma db seed",
+    "postinstall": "node scripts/prisma-generate-retry.cjs",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ticket_system_v3",
+    "pm2:restart": "pm2 restart ticket_system_v3",
+    "pm2:reload": "pm2 reload ticket_system_v3 --update-env",
+    "pm2:logs": "pm2 logs ticket_system_v3",
+    "pm2:status": "pm2 list",
+    "pm2:save": "pm2 save",
+    "start:pm2": "pm2 start ecosystem.config.cjs",
+    "docs:pdf": "node scripts/generate-docs-pdf.cjs",
+    "docs:flowchart": "npx mmdc -i docs/flowcharts/ticket-system-v3-main-flow.mmd -o docs/flowcharts/ticket-system-v3-main-flow.svg -b transparent && npx mmdc -i docs/flowcharts/ticket-system-v3-main-flow.mmd -o docs/flowcharts/ticket-system-v3-main-flow.png -w 2000 -b white"
+  },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^3.0.3",
+    "lucide-react": "^1.8.0",
+    "luxon": "^3.7.2",
+    "next": "16.2.4",
+    "next-auth": "^4.24.14",
+    "nodemailer": "^7.0.13",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^11.14.0",
+    "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^20",
+    "@types/nodemailer": "^8.0.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "md-to-pdf": "^5.2.5",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}
