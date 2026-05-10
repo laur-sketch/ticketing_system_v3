@@ -24,11 +24,16 @@ export default async function ManualAssignmentPage({
   const requestedCompanyFilter = (Array.isArray(params.company) ? params.company[0] : params.company)?.trim() ?? "";
 
   const meEmail = (session.user.email ?? "").trim().toLowerCase();
-  let personnelCompanyFilterTeamId: string | null = null;
-  let personnelCompanyFilterLabel: string | null = null;
+  /**
+   * Admins and Personnel are locked to their designated company's lanes;
+   * SuperAdmin can browse and filter freely.
+   */
+  const isCompanyScopedRole =
+    session.user.role === "Personnel" || session.user.role === "Admin";
+  let scopedCompanyFilterTeamId: string | null = null;
+  let scopedCompanyFilterLabel: string | null = null;
 
-  // Personnel should only see the assignment lanes / unassigned pool for their designated company.
-  if (session.user.role === "Personnel") {
+  if (isCompanyScopedRole) {
     const mePortal = await prisma.portalAccount.findFirst({
       where: { email: { equals: meEmail, mode: "insensitive" } },
       select: {
@@ -39,10 +44,15 @@ export default async function ManualAssignmentPage({
       },
     });
 
-    personnelCompanyFilterTeamId = mePortal?.staffDesignatedCompanyId ?? mePortal?.companyId ?? null;
-    personnelCompanyFilterLabel =
+    scopedCompanyFilterTeamId = mePortal?.staffDesignatedCompanyId ?? mePortal?.companyId ?? null;
+    scopedCompanyFilterLabel =
       mePortal?.staffDesignatedCompany?.name?.trim() ?? mePortal?.company?.name?.trim() ?? null;
   }
+  /**
+   * Company-scoped roles without a designated company should land on an empty
+   * board with a notice rather than seeing everyone.
+   */
+  const scopeUnavailable = isCompanyScopedRole && !scopedCompanyFilterTeamId;
 
   if (!["SuperAdmin", "Admin"].includes(session.user.role)) {
     const normalizedEmail = (session.user.email ?? "").trim().toLowerCase();
@@ -76,7 +86,7 @@ export default async function ManualAssignmentPage({
       where: {
         status: { in: ACTIVE_STATUSES },
         assignedAgentId: null,
-        ...(personnelCompanyFilterTeamId ? { teamId: personnelCompanyFilterTeamId } : {}),
+        ...(scopedCompanyFilterTeamId ? { teamId: scopedCompanyFilterTeamId } : {}),
       },
       orderBy: { updatedAt: "desc" },
       select: {
@@ -106,15 +116,17 @@ export default async function ManualAssignmentPage({
   const validRequestedFilterId = requestedCompanyFilter
     ? orderedCompanyTeams.find((t) => t.id === requestedCompanyFilter)?.id ?? null
     : null;
-  const effectiveCompanyFilterId =
-    session.user.role === "Personnel" ? personnelCompanyFilterTeamId : validRequestedFilterId;
-  const effectiveCompanyFilterLabel =
-    session.user.role === "Personnel"
-      ? personnelCompanyFilterLabel
-      : orderedCompanyTeams.find((t) => t.id === effectiveCompanyFilterId)?.name ?? null;
-  const scopedUnassigned = effectiveCompanyFilterId
-    ? unassigned.filter((t) => t.teamId === effectiveCompanyFilterId)
-    : unassigned;
+  const effectiveCompanyFilterId = isCompanyScopedRole
+    ? scopedCompanyFilterTeamId
+    : validRequestedFilterId;
+  const effectiveCompanyFilterLabel = isCompanyScopedRole
+    ? scopedCompanyFilterLabel
+    : orderedCompanyTeams.find((t) => t.id === effectiveCompanyFilterId)?.name ?? null;
+  const scopedUnassigned = scopeUnavailable
+    ? []
+    : effectiveCompanyFilterId
+      ? unassigned.filter((t) => t.teamId === effectiveCompanyFilterId)
+      : unassigned;
 
   const defaultTeamId =
     teams.find((t) => t.name.toLowerCase().includes("general"))?.id ??
@@ -122,6 +134,7 @@ export default async function ManualAssignmentPage({
     null;
   const staffPortal = portalStaff.filter((p) => {
     if (!isStaffPortalRole(p.role)) return false;
+    if (scopeUnavailable) return false;
     if (!effectiveCompanyFilterId) return true;
     const designated = p.staffDesignatedCompanyId ?? p.companyId ?? null;
     return designated === effectiveCompanyFilterId;
@@ -225,9 +238,14 @@ export default async function ManualAssignmentPage({
       companyFilterLabel={effectiveCompanyFilterLabel}
       companyFilterTeamId={effectiveCompanyFilterId}
       companyFilterOptions={
-        session.user.role === "Personnel"
+        isCompanyScopedRole
           ? []
           : orderedCompanyTeams.map((t) => ({ id: t.id, name: t.name }))
+      }
+      notice={
+        scopeUnavailable
+          ? "Your portal account doesn't have a designated company yet. A SuperAdmin can set one in Personnel → Portal Accounts so you can see your team's lanes."
+          : null
       }
       unassigned={scopedUnassigned.map((t) => ({
         id: t.id,

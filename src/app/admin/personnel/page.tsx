@@ -1,34 +1,27 @@
-import { portalStaffHasAgentRow } from "@/lib/admin-roster";
-import { prisma } from "@/lib/prisma";
-import { isStaffPortalRole } from "@/lib/staff-role";
+import { redirect } from "next/navigation";
+import { requireSession } from "@/lib/access";
+import { loadPersonnelAccountsPayload } from "@/lib/personnel-accounts-data";
 import { PersonnelClient } from "./ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function PersonnelPage() {
-  const [agents, teams, portalPersonnelRaw] = await Promise.all([
-    prisma.agent.findMany({
-      include: { team: true },
-      orderBy: { name: "asc" },
-    }),
-    prisma.team.findMany({ orderBy: { name: "asc" } }),
-    prisma.portalAccount.findMany({
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        username: true,
-        passwordHash: true,
-        accountStatus: true,
-        role: true,
-        staffDesignatedCompanyId: true,
-        staffDesignatedCompany: { select: { id: true, name: true } },
-      },
-    }),
-  ]);
-  const portalPersonnel = portalPersonnelRaw.filter((p) => isStaffPortalRole(p.role));
-  const pendingPersonnel = portalPersonnel.filter((p) => !portalStaffHasAgentRow(p, agents));
+  const session = await requireSession();
+  if (!session?.user) redirect("/signin");
+  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/");
 
-  return <PersonnelClient initialTeams={teams} initialPending={pendingPersonnel} />;
+  const payload = await loadPersonnelAccountsPayload({
+    role: session.user.role,
+    email: session.user.email,
+  });
+
+  return (
+    <PersonnelClient
+      initialTeams={payload.teams}
+      initialPersonnel={payload.personnel}
+      viewerMode={payload.viewerMode}
+      scopeUnavailable={payload.scopeUnavailable}
+      scopedCompanyName={payload.scopedCompanyName}
+    />
+  );
 }

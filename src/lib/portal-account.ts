@@ -151,8 +151,14 @@ export async function createPortalAccount(input: {
   const username = input.username.trim().toLowerCase();
   const email = input.email.trim().toLowerCase();
   const role = input.role;
-  const companyId = role === "Customer" ? (input.companyId ?? null) : null;
-  const customerOrgRole = role === "Customer" ? (input.customerOrgRole ?? null) : null;
+  let companyId: string | null = null;
+  let customerOrgRole: string | null = null;
+  if (role === "Customer") {
+    companyId = input.companyId?.trim() ? input.companyId!.trim() : null;
+    const org = (input.customerOrgRole ?? "").trim();
+    const normalized = org === "Head" ? "Admin" : org;
+    customerOrgRole = ["Admin", "Personnel"].includes(normalized) ? normalized : null;
+  }
   try {
     await prisma.portalAccount.create({
       data: {
@@ -162,7 +168,9 @@ export async function createPortalAccount(input: {
         name: input.name.trim(),
         passwordHash,
         role,
-        companyId,
+        ...(companyId
+          ? { company: { connect: { id: companyId } } }
+          : { companyId: null }),
         customerOrgRole,
       },
     });

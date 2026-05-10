@@ -161,19 +161,22 @@ export const authOptions: NextAuthOptions = {
           console.error("Portal lookup failed", e);
         }
 
-        const role =
-          roleFromEmail(loginId.includes("@") ? loginId : undefined) ?? "Customer";
-        const emailForSession = loginId.includes("@")
-          ? loginId.toLowerCase()
-          : `${loginId.toLowerCase()}@portal.stoicticket.local`;
-        const displayName =
-          loginId.includes("@") ? (loginId.split("@")[0] || "User") : loginId;
-        return {
-          id: loginId,
-          email: emailForSession,
-          name: displayName,
-          role,
-        };
+        /**
+         * Allow env-listed admin/agent emails to authenticate without a
+         * portal record (rescue path); everyone else must have a portal account.
+         */
+        if (loginId.includes("@")) {
+          const emailRole = roleFromEmail(loginId);
+          if (emailRole === "SuperAdmin" || emailRole === "Personnel") {
+            return {
+              id: loginId,
+              email: loginId.toLowerCase(),
+              name: loginId.split("@")[0] || "User",
+              role: emailRole,
+            };
+          }
+        }
+        return null;
       },
     }),
   ],
@@ -217,7 +220,11 @@ export const authOptions: NextAuthOptions = {
         token.role = elevateRoleByEmail(token.email, normalizeRole(token.role) ?? "Customer");
       }
       if (!token.role) token.role = roleFromEmail(token.email);
-      if (typeof token.email === "string" && (account?.provider || token.companyId === undefined)) {
+      /**
+       * Always reconcile the JWT with the portal record (when an email is known) so
+       * stale Customer roles or missing company metadata self-heal on the next refresh.
+       */
+      if (typeof token.email === "string" && token.email.length > 0) {
         const portal = await findPortalByEmailOnly(token.email);
         if (portal) {
           token.companyId = portal.companyId;

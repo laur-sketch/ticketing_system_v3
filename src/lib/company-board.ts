@@ -80,23 +80,35 @@ export async function loadCompanyBoard(opts: {
   const cardMode: CompanyBoardCardMode =
     role === "SuperAdmin" || role === "Admin" || companyAdminPrivileges ? "staff" : "personnel";
 
+  /** Admin scope: see other roster companies, hide own queue, group by requestor's company. */
+  const isAdminScope = role !== "SuperAdmin" && (role === "Admin" || companyAdminPrivileges);
+
   let teamWhere: Prisma.TeamWhereInput | undefined;
+  let excludedTeamIds: string[] = [];
+  /** Hard limit on which routed-to teams (ticket.teamId) the viewer is allowed to see. */
+  let restrictTicketTeamIds: string[] | null = null;
 
   if (role === "SuperAdmin") {
     teamWhere = undefined;
-  } else if (role === "Admin" || companyAdminPrivileges) {
+  } else if (isAdminScope) {
     if (!staffCompanyId) {
       return {
         columns: [],
         cardMode,
         emptyHint:
-          "Set a designated company for your account (Personnel → Portal Accounts) to view the assignment board.",
+          "Set a designated company for your account (Personnel) to view the company board.",
       };
     }
-    teamWhere =
-      staffCompanyId === outsideTeamRow.id
-        ? { id: staffCompanyId }
-        : { id: { in: [staffCompanyId, outsideTeamRow.id] } };
+    /**
+     * Admin scope:
+     *  - Visible tickets are limited to the admin's own queue (ticket.teamId == staffCompanyId).
+     *  - Columns represent the **requestor's** company (not where the ticket is routed).
+     *  - The admin's own SBU is hidden from the requestor columns; tickets whose requestor
+     *    belongs to the admin's own company are bucketed into OUTSIDE COMPANY instead.
+     */
+    teamWhere = undefined;
+    excludedTeamIds = [staffCompanyId];
+    restrictTicketTeamIds = [staffCompanyId];
   } else if (role === "Personnel") {
     if (!operator?.teamId) {
       return {
@@ -116,7 +128,7 @@ export async function loadCompanyBoard(opts: {
     return { columns: [], cardMode, emptyHint: null };
   }
 
-  let mergedTeamWhere = mergeTeamWhereWithRoster(teamWhere);
+  const mergedTeamWhere = mergeTeamWhereWithRoster(teamWhere);
   const selectedIds = (companyTeamIds ?? []).map((s) => s.trim()).filter(Boolean);
   const selectedNonAll = selectedIds.filter((s) => s !== "ALL");
   const filterBySpecificCompany = selectedNonAll.length > 0;
@@ -149,21 +161,42 @@ export async function loadCompanyBoard(opts: {
     ticketWhereBase.assignedAgentId = operator?.id ?? "__none__";
   }
 
+  /** Admin-only: never include tickets routed to teams outside the admin's queue. */
+  if (restrictTicketTeamIds && restrictTicketTeamIds.length > 0) {
+    ticketWhereBase.teamId = { in: restrictTicketTeamIds };
+  }
+
   const allowedTeamIds = teams.map((t) => t.id);
   const teamById = new Map(teams.map((t) => [t.id, t]));
   const selectedFilterTeamIds =
     selectedNonAll.length > 0
       ? selectedNonAll.filter((id) => allowedTeamIds.includes(id))
       : [];
-  const displayTeamIds = filterBySpecificCompany
-    ? allowedTeamIds.filter((id) => !selectedFilterTeamIds.includes(id))
-    : allowedTeamIds;
-  if (filterBySpecificCompany) {
+
+  let displayTeamIds: string[];
+  if (isAdminScope) {
+    /** Admin: every roster team minus own queue, optionally narrowed by company filter. */
+    const baseDisplay = allowedTeamIds.filter((id) => !excludedTeamIds.includes(id));
+    displayTeamIds = filterBySpecificCompany
+      ? baseDisplay.filter((id) => selectedFilterTeamIds.includes(id))
+      : baseDisplay;
+    if (filterBySpecificCompany && displayTeamIds.length === 0) {
+      return { columns: [], cardMode, emptyHint: "No matching company filter in your scope." };
+    }
+  } else if (filterBySpecificCompany) {
+    /** Existing semantics for SuperAdmin/Personnel: hide selected lanes, group by requestor. */
     if (selectedFilterTeamIds.length === 0) {
       return { columns: [], cardMode, emptyHint: "No matching company filter in your scope." };
     }
+    displayTeamIds = allowedTeamIds.filter((id) => !selectedFilterTeamIds.includes(id));
     ticketWhereBase.teamId = { in: selectedFilterTeamIds };
+  } else {
+    displayTeamIds = allowedTeamIds;
   }
+
+  /** Admin & filtered modes group cards by requestor company; default groups by routed-to team. */
+  const groupByRequestor = isAdminScope || filterBySpecificCompany;
+
   const rawTickets = await prisma.ticket.findMany({
     where: ticketWhereBase,
     orderBy: { updatedAt: "desc" },
@@ -219,62 +252,52 @@ export async function loadCompanyBoard(opts: {
     });
   }
 
+  const outsideId = outsideTeamRow.id;
   const seenTicketIds = new Set<string>();
-  if (!filterBySpecificCompany) {
-    // Strict ALL companies mode: group only by company requested to (ticket.teamId).
-    for (const x of rawTickets) {
-      if (seenTicketIds.has(x.id)) continue;
-      const teamIdForColumn = x.teamId;
-      if (!teamIdForColumn || !displayTeamIds.includes(teamIdForColumn)) continue;
-      const team = teamById.get(teamIdForColumn);
-      if (!team) continue;
-      const col = columnsByTeam.get(team.id);
-      if (!col) continue;
-      const card: CompanyTicketCard = {
-        id: x.id,
-        ticketNumber: x.ticketNumber,
-        title: x.title,
-        description: x.description,
-        status: x.status,
-        priority: x.priority,
-        updatedAt: x.updatedAt,
-        assignedAgentId: x.assignedAgentId,
-        assignedAgentName: x.assignedAgent?.name ?? null,
-      };
-      const b = bucketFor(card);
-      if (b === "closed" && col.buckets.closed.length >= CLOSED_CAP) continue;
-      col.buckets[b].push(card);
-      seenTicketIds.add(x.id);
-    }
-  } else {
-    // Filtered mode: selected company lane is hidden; cards are grouped by requestor designated company.
-    for (const x of rawTickets) {
-      if (seenTicketIds.has(x.id)) continue;
+
+  for (const x of rawTickets) {
+    if (seenTicketIds.has(x.id)) continue;
+
+    let teamIdForColumn: string | null;
+    if (groupByRequestor) {
       const email = (x.requestorEmail?.trim() || x.contactEmail?.trim() || "").toLowerCase();
       const requestorCompanyId = email ? requestorCompanyByEmail.get(email) : undefined;
-      if (!requestorCompanyId) continue;
-      const teamIdForColumn = requestorCompanyId;
-      if (!teamIdForColumn || !displayTeamIds.includes(teamIdForColumn)) continue;
-      const team = teamById.get(teamIdForColumn);
-      if (!team) continue;
-      const col = columnsByTeam.get(team.id);
-      if (!col) continue;
-      const card: CompanyTicketCard = {
-        id: x.id,
-        ticketNumber: x.ticketNumber,
-        title: x.title,
-        description: x.description,
-        status: x.status,
-        priority: x.priority,
-        updatedAt: x.updatedAt,
-        assignedAgentId: x.assignedAgentId,
-        assignedAgentName: x.assignedAgent?.name ?? null,
-      };
-      const b = bucketFor(card);
-      if (b === "closed" && col.buckets.closed.length >= CLOSED_CAP) continue;
-      col.buckets[b].push(card);
-      seenTicketIds.add(x.id);
+      if (requestorCompanyId && !excludedTeamIds.includes(requestorCompanyId)) {
+        teamIdForColumn = requestorCompanyId;
+      } else if (displayTeamIds.includes(outsideId)) {
+        /**
+         * No known requestor company (or requestor is from the admin's own queue) →
+         * bucket into OUTSIDE COMPANY so nothing routed to the admin gets lost.
+         */
+        teamIdForColumn = outsideId;
+      } else {
+        continue;
+      }
+    } else {
+      teamIdForColumn = x.teamId;
     }
+
+    if (!teamIdForColumn || !displayTeamIds.includes(teamIdForColumn)) continue;
+    const team = teamById.get(teamIdForColumn);
+    if (!team) continue;
+    const col = columnsByTeam.get(team.id);
+    if (!col) continue;
+
+    const card: CompanyTicketCard = {
+      id: x.id,
+      ticketNumber: x.ticketNumber,
+      title: x.title,
+      description: x.description,
+      status: x.status,
+      priority: x.priority,
+      updatedAt: x.updatedAt,
+      assignedAgentId: x.assignedAgentId,
+      assignedAgentName: x.assignedAgent?.name ?? null,
+    };
+    const b = bucketFor(card);
+    if (b === "closed" && col.buckets.closed.length >= CLOSED_CAP) continue;
+    col.buckets[b].push(card);
+    seenTicketIds.add(x.id);
   }
 
   const columns = teams
@@ -306,6 +329,9 @@ export async function getCompanyBoardAggregates(opts: {
   const cardMode: CompanyBoardCardMode =
     role === "SuperAdmin" || role === "Admin" || companyAdminPrivileges ? "staff" : "personnel";
 
+  /** Admin scope: see other roster companies, hide own queue, group by requestor's company. */
+  const isAdminScope = role !== "SuperAdmin" && (role === "Admin" || companyAdminPrivileges);
+
   const where: Prisma.TicketWhereInput = {};
 
   if (priorityFilter && priorityFilter !== "ALL" && cardMode === "staff") {
@@ -331,15 +357,17 @@ export async function getCompanyBoardAggregates(opts: {
   }
 
   let teamIds: string[] | null = null;
+  let excludedTeamIds: string[] = [];
+  let restrictTicketTeamIds: string[] | null = null;
 
   if (role === "SuperAdmin") {
     teamIds = null;
-  } else if (role === "Admin" || companyAdminPrivileges) {
+  } else if (isAdminScope) {
     if (!staffCompanyId) return empty;
-    teamIds =
-      staffCompanyId === outsideTeamRow.id
-        ? [staffCompanyId]
-        : [staffCompanyId, outsideTeamRow.id];
+    /** Admin: count only tickets routed to own queue, classified by requestor company. */
+    teamIds = null;
+    excludedTeamIds = [staffCompanyId];
+    restrictTicketTeamIds = [staffCompanyId];
   } else if (role === "Personnel") {
     if (!operator?.teamId) return empty;
     teamIds =
@@ -370,55 +398,82 @@ export async function getCompanyBoardAggregates(opts: {
     selectedNonAll.length > 0
       ? selectedNonAll.filter((id) => allowedTeamIds.includes(id))
       : [];
-  const requestedToTeamIds = filterBySpecificCompany
-    ? allowedTeamIds.filter((id) => !selectedFilterTeamIds.includes(id))
-    : allowedTeamIds;
-  if (requestedToTeamIds.length === 0) return empty;
-  if (filterBySpecificCompany) {
+
+  let displayTeamIds: string[];
+  if (isAdminScope) {
+    const baseDisplay = allowedTeamIds.filter((id) => !excludedTeamIds.includes(id));
+    displayTeamIds = filterBySpecificCompany
+      ? baseDisplay.filter((id) => selectedFilterTeamIds.includes(id))
+      : baseDisplay;
+    if (displayTeamIds.length === 0) return empty;
+  } else if (filterBySpecificCompany) {
     if (selectedFilterTeamIds.length === 0) return empty;
+    displayTeamIds = allowedTeamIds.filter((id) => !selectedFilterTeamIds.includes(id));
     where.teamId = { in: selectedFilterTeamIds };
+    if (displayTeamIds.length === 0) return empty;
+  } else {
+    displayTeamIds = allowedTeamIds;
   }
 
+  /** Admin & filter mode count by requestor company; default counts by routed-to team. */
+  const groupByRequestor = isAdminScope || filterBySpecificCompany;
+
+  const baseTicketWhere: Prisma.TicketWhereInput = groupByRequestor
+    ? {
+        ...where,
+        ...(restrictTicketTeamIds && restrictTicketTeamIds.length > 0
+          ? { teamId: { in: restrictTicketTeamIds } }
+          : {}),
+      }
+    : { ...where, teamId: { in: displayTeamIds } };
+
   const tickets = await prisma.ticket.findMany({
-    where: { ...where, teamId: { in: requestedToTeamIds } },
+    where: baseTicketWhere,
     select: {
       id: true,
       priority: true,
       status: true,
+      teamId: true,
       requestorEmail: true,
       contactEmail: true,
     },
     take: 1200,
   });
   if (tickets.length === 0) return empty;
-  const emails = Array.from(
-    new Set(
-      tickets
-        .map((t) => (t.requestorEmail?.trim() || t.contactEmail?.trim() || "").toLowerCase())
-        .filter(Boolean),
-    ),
-  );
-  const accounts =
-    emails.length > 0
-      ? await prisma.portalAccount.findMany({
-          where: { email: { in: emails } },
-          select: { email: true, companyId: true, staffDesignatedCompanyId: true },
-        })
-      : [];
-  const companyByEmail = new Map<string, string>();
-  for (const a of accounts) {
-    const e = a.email.trim().toLowerCase();
-    const cid = a.companyId ?? a.staffDesignatedCompanyId ?? null;
-    if (e && cid) companyByEmail.set(e, cid);
+
+  let scoped = tickets;
+  if (groupByRequestor) {
+    const emails = Array.from(
+      new Set(
+        tickets
+          .map((t) => (t.requestorEmail?.trim() || t.contactEmail?.trim() || "").toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+    const accounts =
+      emails.length > 0
+        ? await prisma.portalAccount.findMany({
+            where: { email: { in: emails } },
+            select: { email: true, companyId: true, staffDesignatedCompanyId: true },
+          })
+        : [];
+    const companyByEmail = new Map<string, string>();
+    for (const a of accounts) {
+      const e = a.email.trim().toLowerCase();
+      const cid = a.companyId ?? a.staffDesignatedCompanyId ?? null;
+      if (e && cid) companyByEmail.set(e, cid);
+    }
+    const outsideId = outsideTeamRow.id;
+    scoped = tickets.filter((t) => {
+      const email = (t.requestorEmail?.trim() || t.contactEmail?.trim() || "").toLowerCase();
+      const cid = email ? companyByEmail.get(email) : undefined;
+      if (cid && !excludedTeamIds.includes(cid)) {
+        return displayTeamIds.includes(cid);
+      }
+      /** Unknown / own-queue requestors: count under OUTSIDE if shown. */
+      return displayTeamIds.includes(outsideId);
+    });
   }
-  const scoped = filterBySpecificCompany
-    ? tickets.filter((t) => {
-    const email = (t.requestorEmail?.trim() || t.contactEmail?.trim() || "").toLowerCase();
-    if (!email) return false;
-    const cid = companyByEmail.get(email);
-    return Boolean(cid && requestedToTeamIds.includes(cid));
-      })
-    : tickets;
 
   const total = scoped.length;
   const critical = scoped.filter((t) => t.priority === "URGENT").length;

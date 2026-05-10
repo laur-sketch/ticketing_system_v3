@@ -7,6 +7,7 @@ import {
   isSignupRole,
 } from "@/lib/portal-account";
 import { prisma } from "@/lib/prisma";
+import { ensureRosterTeamsInDb } from "@/lib/roster-teams";
 
 function validEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -17,10 +18,8 @@ function validUsername(username: string) {
 }
 
 function passwordMeetsPolicy(password: string) {
-  if (password.length < 8) return false;
-  if (!/[A-Z]/.test(password)) return false;
-  if (!/[0-9]/.test(password)) return false;
-  return true;
+  /** Signup password complexity rules removed; only require a non-empty value. */
+  return password.length > 0;
 }
 
 export async function POST(req: Request) {
@@ -61,12 +60,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Enter a valid work email." }, { status: 400 });
     }
     if (!passwordMeetsPolicy(password)) {
-      return NextResponse.json(
-        {
-          error: "Password must be at least 8 characters with one uppercase letter and one number.",
-        },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Enter a password." }, { status: 400 });
     }
 
     const [byEmail, byUser] = await Promise.all([
@@ -83,20 +77,22 @@ export async function POST(req: Request) {
     let companyId: string | null = null;
     let customerOrgRole: string | null = null;
     if (role === "Customer") {
+      await ensureRosterTeamsInDb();
       const cid = body.companyId?.trim() ?? "";
-      const orgRole = body.customerOrgRole?.trim() ?? "";
-      if (!cid || !["Head", "Personnel"].includes(orgRole)) {
+      const orgRoleRaw = body.customerOrgRole?.trim() ?? "";
+      const normalizedOrgRole = orgRoleRaw === "Head" ? "Admin" : orgRoleRaw;
+      if (!cid || !["Admin", "Personnel"].includes(normalizedOrgRole)) {
         return NextResponse.json(
-          { error: "Choose your company and org role (Head or Personnel)." },
+          { error: "Choose your company and org role (Admin or Personnel)." },
           { status: 400 },
         );
       }
-      const team = await prisma.team.findUnique({ where: { id: cid }, select: { name: true } });
+      const team = await prisma.team.findUnique({ where: { id: cid }, select: { id: true, name: true } });
       if (!team || !(COMPANY_ROSTER as readonly string[]).includes(team.name)) {
         return NextResponse.json({ error: "Invalid company selection." }, { status: 400 });
       }
-      companyId = cid;
-      customerOrgRole = orgRole;
+      companyId = team.id;
+      customerOrgRole = normalizedOrgRole;
     }
 
     const result = await createPortalAccount({

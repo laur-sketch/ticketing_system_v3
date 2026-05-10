@@ -44,12 +44,45 @@ function rangeFilter(range: KpiRange) {
   return { gte: range.from, lte: range.to };
 }
 
-/** UTC calendar days inclusive between `from` and `to`. */
-function enumerateDaysUtc(from: Date, to: Date): string[] {
+/**
+ * Reporting timezone — defaults to Asia/Manila so volume trends line up with
+ * what operators see locally instead of UTC midnights. Can be overridden with
+ * the REPORT_TZ env var.
+ */
+const REPORT_TZ = process.env.REPORT_TZ || "Asia/Manila";
+const localDayFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: REPORT_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function localDayKey(d: Date): string {
+  /** en-CA returns YYYY-MM-DD which is also what we use as the bucket label. */
+  return localDayFmt.format(d);
+}
+
+/** Local-time calendar days inclusive between `from` and `to` (DST-safe). */
+function enumerateDaysLocal(from: Date, to: Date): string[] {
+  const startKey = localDayKey(from);
+  const endKey = localDayKey(to);
   const labels: string[] = [];
-  const start = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
-  const end = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
-  for (let t = start; t <= end; t += 86400000) {
+  /**
+   * Walk by parsing each YYYY-MM-DD as a UTC midnight and stepping 24h. This is
+   * deterministic and avoids DST ambiguity since we never re-cross timezone
+   * offsets while iterating.
+   */
+  const startMs = Date.UTC(
+    Number(startKey.slice(0, 4)),
+    Number(startKey.slice(5, 7)) - 1,
+    Number(startKey.slice(8, 10)),
+  );
+  const endMs = Date.UTC(
+    Number(endKey.slice(0, 4)),
+    Number(endKey.slice(5, 7)) - 1,
+    Number(endKey.slice(8, 10)),
+  );
+  for (let t = startMs; t <= endMs; t += 86400000) {
     labels.push(new Date(t).toISOString().slice(0, 10));
   }
   return labels;
@@ -62,10 +95,6 @@ function countPerDay(labels: string[], timestamps: Date[], dayOf: (d: Date) => s
     if (map.has(k)) map.set(k, (map.get(k) ?? 0) + 1);
   }
   return labels.map((l) => map.get(l) ?? 0);
-}
-
-function utcDayKey(d: Date) {
-  return d.toISOString().slice(0, 10);
 }
 
 export async function computeKpis(range: KpiRange, scope: KpiScope = {}) {
@@ -160,14 +189,14 @@ export async function computeKpis(range: KpiRange, scope: KpiScope = {}) {
     }),
   ]);
 
-  const dayLabels = enumerateDaysUtc(range.from, range.to);
+  const dayLabels = enumerateDaysLocal(range.from, range.to);
   const createdByDay = countPerDay(
     dayLabels,
     createdTimestamps.map((t) => t.createdAt),
-    utcDayKey,
+    localDayKey,
   );
   const closedDates = closedTimestamps.map((t) => t.closedAt).filter((d): d is Date => d != null);
-  const closedByDay = countPerDay(dayLabels, closedDates, utcDayKey);
+  const closedByDay = countPerDay(dayLabels, closedDates, localDayKey);
 
   const queueStatusMix = queueByStatus
     .map((row) => ({

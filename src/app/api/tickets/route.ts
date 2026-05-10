@@ -22,6 +22,7 @@ import {
 import { resolveCustomerRequestTeam } from "@/lib/ticket-intake-request-team";
 import type { IntakeScreenshotMetaItem } from "@/lib/ticket-intake-screenshots-meta";
 import { persistTicketScreenshots, validateScreenshotFiles } from "@/lib/ticket-intake-screenshots";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 const categories = new Set(Object.values(TicketCategory));
 const priorities = new Set(Object.values(TicketPriority));
@@ -322,20 +323,39 @@ export async function POST(req: Request) {
       customerSbuRoutingMatched = routed?.matched ?? false;
     } else {
       const rawCompanyTeamId = (companyTeamIdRaw || "").trim();
-      if (!rawCompanyTeamId) {
+      const requestToCompanySbu = (requestToCompanySbuRaw ?? "").trim();
+      if (requestToCompanySbu.length > 500) {
+        return NextResponse.json(
+          { error: "Request to Company/SBU must be at most 500 characters." },
+          { status: 400 },
+        );
+      }
+      if (rawCompanyTeamId) {
+        const selectedTeam = await prisma.team.findUnique({
+          where: { id: rawCompanyTeamId },
+          select: { id: true, name: true },
+        });
+        if (!selectedTeam || !(COMPANY_ROSTER as readonly string[]).includes(selectedTeam.name)) {
+          return NextResponse.json({ error: "Invalid company/SBU selection." }, { status: 400 });
+        }
+        team = selectedTeam;
+      } else if (session.user.role === "Personnel" && requestToCompanySbu) {
+        const fallbackTeamId = await resolveStaffCompanyTeamId(accountEmail);
+        const outsideTeam = await ensureOutsideCompanyTeam();
+        const routed = await resolveCustomerRequestTeam({
+          requestText: requestToCompanySbu,
+          fallbackTeamId,
+        });
+        team = routed?.team ?? outsideTeam;
+        customerRequestSbuText = requestToCompanySbu;
+        customerRequestOutsideQueue = !routed;
+        customerSbuRoutingMatched = routed?.matched ?? false;
+      } else {
         return NextResponse.json(
           { error: "Request to Company/SBU is required." },
           { status: 400 },
         );
       }
-      const selectedTeam = await prisma.team.findUnique({
-        where: { id: rawCompanyTeamId },
-        select: { id: true, name: true },
-      });
-      if (!selectedTeam || !(COMPANY_ROSTER as readonly string[]).includes(selectedTeam.name)) {
-        return NextResponse.json({ error: "Invalid company/SBU selection." }, { status: 400 });
-      }
-      team = selectedTeam;
     }
 
     const ticketNumber = await nextTicketNumber();
@@ -372,22 +392,28 @@ export async function POST(req: Request) {
       "Ticket logged",
       `Queued for ${team?.name ?? "triage"}. SLA: first response by ${firstResponseDueAt.toISOString()}, resolution by ${resolutionDueAt.toISOString()}.`,
     );
+    const requestSbuFreeText =
+      (session.user.role === "Customer" || session.user.role === "Personnel") && customerRequestSbuText
+        ? customerRequestSbuText
+        : null;
     if (team) {
-      if (session.user.role === "Customer" && customerRequestSbuText) {
-        await logActivity(ticket.id, "USER", "Request to Company/SBU", customerRequestSbuText);
+      if (requestSbuFreeText) {
+        await logActivity(ticket.id, "USER", "Request to Company/SBU", requestSbuFreeText);
         if (customerRequestOutsideQueue) {
           await logActivity(
             ticket.id,
             "SYSTEM",
             "Routing note",
-            `No roster SBU matched your request text; ticket queued under ${team.name}.`,
+            `No roster SBU matched the request text; ticket queued under ${team.name}.`,
           );
         } else if (customerSbuRoutingMatched === false) {
+          const fallbackLabel =
+            session.user.role === "Personnel" ? "designated company" : "assigned company";
           await logActivity(
             ticket.id,
             "SYSTEM",
             "Routing note",
-            `Ticket queued under ${team.name} (assigned company fallback); refine SBU keywords if needed.`,
+            `Ticket queued under ${team.name} (${fallbackLabel} fallback); refine SBU keywords if needed.`,
           );
         }
       } else {
@@ -414,9 +440,9 @@ export async function POST(req: Request) {
       if (orgRole) {
         await logActivity(ticket.id, "USER", "Customer org role", orgRole);
       }
-      if (branch) {
-        await logActivity(ticket.id, "USER", "Branch", branch);
-      }
+    }
+    if (branch) {
+      await logActivity(ticket.id, "USER", "Branch", branch);
     }
     if (uploadedMeta && uploadedMeta.length > 0) {
       const label = uploadedMeta.map((m) => m.originalName).join(", ");

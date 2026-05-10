@@ -43,25 +43,6 @@ export function AppChrome({ children }: Props) {
     return <CustomerPortalShell>{children}</CustomerPortalShell>;
   }
 
-  const isCustomerPortalLike = role === "Personnel";
-
-  // Personnel/Head want the *customer portal* look for ticket intake + tracking.
-  // Keep the staff layout elsewhere.
-  if (
-    isCustomerPortalLike &&
-    (pathname === "/my-tickets" ||
-      pathname.startsWith("/my-tickets/") ||
-      pathname === "/" ||
-      pathname === "/tickets/new" ||
-      pathname.startsWith("/tickets/new/") ||
-      pathname === "/tickets/knowledge" ||
-      pathname.startsWith("/tickets/") ||
-      pathname.startsWith("/tickets/")
-      )
-  ) {
-    return <CustomerPortalShell>{children}</CustomerPortalShell>;
-  }
-
   return (
     <div className="flex min-h-screen flex-1 bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <RealtimeRefreshBeacon />

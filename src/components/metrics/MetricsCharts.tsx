@@ -3,14 +3,37 @@
 import { cn } from "@/lib/cn";
 
 const ORANGE = "#f97316";
-const ZINC_AXIS = "#3f3f46";
 const ZINC_LINE = "#a1a1aa";
+const GRID_LIGHT = "#e4e4e7";
+const GRID_DARK = "#27272a";
 
 function formatStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
-/** Created vs closed tickets per day (UTC buckets). */
+/**
+ * Daily x-axis tick density — every day for short windows, then every 2/3/7
+ * days as the range grows so labels never overlap regardless of width.
+ */
+function pickDailyTickIndices(n: number): number[] {
+  if (n <= 1) return [0];
+  let step: number;
+  if (n <= 10) step = 1;
+  else if (n <= 21) step = 2;
+  else if (n <= 45) step = 3;
+  else step = 7;
+  const idx = new Set<number>();
+  for (let i = 0; i < n; i += step) idx.add(i);
+  idx.add(n - 1);
+  return [...idx].sort((a, b) => a - b);
+}
+
+/** Format a YYYY-MM-DD label as compact MM-DD for x-axis chips. */
+function shortDayLabel(label: string): string {
+  return label?.length >= 10 ? label.slice(5) : label ?? "—";
+}
+
+/** Created vs closed tickets per day (Asia/Manila buckets) — line chart. */
 export function MetricsTrendChart({
   labels,
   created,
@@ -28,67 +51,158 @@ export function MetricsTrendChart({
     );
   }
 
-  const padX = 2;
-  const padY = 4;
+  const padX = 4;
+  const padTop = 6;
+  const padBottom = 6;
   const w = 100;
-  const h = 42;
+  const h = 48;
+  const innerH = h - padTop - padBottom;
   const n = Math.max(labels.length, 1);
-  const max = Math.max(1, ...created, ...closed);
-  const xAt = (i: number) => (n <= 1 ? w / 2 : padX + ((w - 2 * padX) * i) / Math.max(n - 1, 1));
-  const yAt = (v: number) => h - padY - ((h - 2 * padY) * v) / max;
+  const peak = Math.max(1, ...created, ...closed);
+  const max = Math.max(1, peak);
+
+  const xAt = (i: number) =>
+    n <= 1 ? w / 2 : padX + ((w - 2 * padX) * i) / Math.max(n - 1, 1);
+  const yAt = (v: number) => padTop + innerH - (innerH * v) / max;
 
   const createdPts = created.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
   const closedPts = closed.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
 
-  const areaD =
-    n === 0
-      ? ""
-      : `M ${xAt(0)} ${h - padY} L ${created.map((v, i) => `${xAt(i)} ${yAt(v)}`).join(" L ")} L ${xAt(n - 1)} ${h - padY} Z`;
-
-  const tickIdx =
-    n <= 5
-      ? [...Array(n).keys()]
-      : [0, Math.floor(n / 2), n - 1].filter((i, idx, a) => a.indexOf(i) === idx);
+  const tickIdx = pickDailyTickIndices(n);
+  /** Y-axis reference ticks — divide vertical space into 4 bands with rounded values. */
+  const yTickValues = (() => {
+    const out: number[] = [];
+    for (let i = 0; i <= 4; i += 1) {
+      out.push((max * i) / 4);
+    }
+    return out;
+  })();
 
   return (
     <div className="w-full">
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="h-44 w-full overflow-visible sm:h-52"
-        preserveAspectRatio="none"
-        aria-hidden
-      >
-        <defs>
-          <linearGradient id="metricsTrendFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={ORANGE} stopOpacity="0.35" />
-            <stop offset="100%" stopColor={ORANGE} stopOpacity="0.02" />
-          </linearGradient>
-        </defs>
-        {[0, 0.25, 0.5, 0.75, 1].map((t) => (
-          <line
-            key={t}
-            x1={padX}
-            x2={w - padX}
-            y1={padY + (h - 2 * padY) * (1 - t)}
-            y2={padY + (h - 2 * padY) * (1 - t)}
-            stroke={ZINC_AXIS}
-            strokeWidth={0.15}
+      <div className="relative">
+        <svg
+          viewBox={`0 0 ${w} ${h}`}
+          className="h-52 w-full overflow-visible sm:h-60"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Daily volume trend"
+        >
+          {yTickValues.map((v, idx) => {
+            const y = yAt(v);
+            return (
+              <g key={`grid-${idx}`}>
+                <line
+                  x1={padX}
+                  x2={w - padX}
+                  y1={y}
+                  y2={y}
+                  className="stroke-zinc-200 dark:stroke-zinc-800"
+                  strokeWidth={0.18}
+                  vectorEffect="non-scaling-stroke"
+                  strokeDasharray={idx === 0 ? "0" : "0.6 0.6"}
+                  stroke={idx === 0 ? GRID_LIGHT : undefined}
+                  style={{ stroke: undefined }}
+                />
+              </g>
+            );
+          })}
+          {/** Vertical day grid (ticks only at label positions to keep things calm). */}
+          {tickIdx.map((i) => (
+            <line
+              key={`vgrid-${i}`}
+              x1={xAt(i)}
+              x2={xAt(i)}
+              y1={padTop}
+              y2={h - padBottom}
+              stroke={GRID_DARK}
+              strokeOpacity={0.18}
+              strokeWidth={0.12}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+
+          {/** Closed first so Created sits visually on top. */}
+          <polyline
+            fill="none"
+            stroke={ZINC_LINE}
+            strokeWidth={0.7}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={closedPts}
             vectorEffect="non-scaling-stroke"
           />
-        ))}
-        {n > 0 && areaD ? <path d={areaD} fill="url(#metricsTrendFill)" /> : null}
-        {n > 0 ? (
-          <polyline fill="none" stroke={ORANGE} strokeWidth={0.45} points={createdPts} vectorEffect="non-scaling-stroke" />
-        ) : null}
-        {n > 0 ? (
-          <polyline fill="none" stroke={ZINC_LINE} strokeWidth={0.4} points={closedPts} vectorEffect="non-scaling-stroke" />
-        ) : null}
-      </svg>
-      <div className="mt-2 flex flex-wrap justify-between gap-x-2 text-[10px] font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-500">
+          <polyline
+            fill="none"
+            stroke={ORANGE}
+            strokeWidth={0.85}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={createdPts}
+            vectorEffect="non-scaling-stroke"
+          />
+
+          {/** Per-day markers so each daily value is visible. */}
+          {created.map((v, i) => (
+            <circle
+              key={`c-${i}`}
+              cx={xAt(i)}
+              cy={yAt(v)}
+              r={0.55}
+              fill={ORANGE}
+              stroke="#ffffff"
+              strokeOpacity={0.6}
+              strokeWidth={0.18}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+          {closed.map((v, i) => (
+            <circle
+              key={`x-${i}`}
+              cx={xAt(i)}
+              cy={yAt(v)}
+              r={0.45}
+              fill={ZINC_LINE}
+              stroke="#ffffff"
+              strokeOpacity={0.55}
+              strokeWidth={0.16}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+
+        {/** Y-axis numeric labels overlay (HTML so they stay legible at any width). */}
+        <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-10 sm:block">
+          {yTickValues
+            .slice()
+            .reverse()
+            .map((v, idx) => (
+              <span
+                key={`ylabel-${idx}`}
+                className="absolute -translate-y-1/2 text-[10px] font-medium tabular-nums text-zinc-500 dark:text-zinc-500"
+                style={{ top: `${(idx / (yTickValues.length - 1)) * 100}%`, left: 0 }}
+              >
+                {Math.round(v)}
+              </span>
+            ))}
+        </div>
+      </div>
+
+      <div className="mt-3 grid w-full grid-flow-col auto-cols-fr text-[10px] font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-500">
         {tickIdx.map((i) => (
-          <span key={labels[i] ?? i}>{labels[i]?.slice(5) ?? "—"}</span>
+          <span
+            key={`xlabel-${labels[i] ?? i}`}
+            className={cn(
+              "text-center first:text-left last:text-right",
+              tickIdx.length === 1 ? "text-center" : null,
+            )}
+            title={labels[i] ?? ""}
+          >
+            {shortDayLabel(labels[i] ?? "")}
+          </span>
         ))}
       </div>
+
       <div className="mt-3 flex flex-wrap gap-4 text-xs text-zinc-600 dark:text-zinc-400">
         <span className="inline-flex items-center gap-2">
           <span className="size-2 rounded-sm bg-orange-500" /> Created

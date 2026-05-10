@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import {
   Activity,
   BarChart3,
+  CheckSquare,
   Gauge,
   GitBranch,
   Home,
@@ -22,38 +23,50 @@ import {
 import { navLinkActive } from "@/lib/nav-link-active";
 import { BrandLockup } from "@/components/BrandLockup";
 
-function linksForRole(role: string | undefined) {
+type NavChild = { href: string; label: string; matchBoard?: "ticket" | "kpi" };
+type NavItem =
+  | { kind: "link"; href: string; label: string }
+  | { kind: "group"; label: string; children: NavChild[] };
+
+function linksForRole(role: string | undefined): NavItem[] {
   if (role === "SuperAdmin") {
     return [
-      { href: "/", label: "Ticket Dashboard" },
-      { href: "/admin/personnel", label: "Personnel" },
-      { href: "/agent", label: "Board" },
-      { href: "/insights", label: "Metrics & Reports" },
-      { href: "/admin/escalation-triggers", label: "Escalation triggers" },
-      { href: "/admin/account", label: "My Account" },
+      { kind: "link", href: "/", label: "Ticket Dashboard" },
+      { kind: "link", href: "/admin/personnel", label: "Personnel" },
+      { kind: "link", href: "/agent", label: "Board" },
+      { kind: "link", href: "/insights", label: "Metrics & Reports" },
+      { kind: "link", href: "/admin/escalation-triggers", label: "Escalation triggers" },
+      { kind: "link", href: "/admin/account", label: "My Account" },
     ];
   }
   if (role === "Admin") {
     return [
-      { href: "/", label: "Ticket Dashboard" },
-      { href: "/admin/personnel", label: "Personnel" },
-      { href: "/agent", label: "Board" },
-      { href: "/insights", label: "Metrics & Reports" },
-      { href: "/admin/escalation-triggers", label: "Escalation triggers" },
-      { href: "/admin/account", label: "My Account" },
+      { kind: "link", href: "/", label: "Ticket Dashboard" },
+      { kind: "link", href: "/admin/personnel", label: "Personnel" },
+      { kind: "link", href: "/agent", label: "Board" },
+      { kind: "link", href: "/insights", label: "Metrics & Reports" },
+      { kind: "link", href: "/admin/escalation-triggers", label: "Escalation triggers" },
+      { kind: "link", href: "/admin/account", label: "My Account" },
     ];
   }
   if (role === "Personnel") {
     return [
-      { href: "/tickets/new", label: "New Ticket" },
-      { href: "/agent", label: "Board" },
-      { href: "/insights", label: "Personal Metrics" },
-      { href: "/admin/account", label: "My Account" },
+      { kind: "link", href: "/my-requests", label: "Ticket Dashboard" },
+      {
+        kind: "group",
+        label: "Board",
+        children: [
+          { href: "/agent", label: "Ticket Board", matchBoard: "ticket" },
+          { href: "/agent?board=kpi", label: "Task Board", matchBoard: "kpi" },
+        ],
+      },
+      { kind: "link", href: "/insights", label: "Personnel Metrics" },
+      { kind: "link", href: "/admin/account", label: "My Account" },
     ];
   }
   return [
-    { href: "/", label: "Home" },
-    { href: "/admin/account", label: "My Account" },
+    { kind: "link", href: "/", label: "Home" },
+    { kind: "link", href: "/admin/account", label: "My Account" },
   ];
 }
 
@@ -61,6 +74,8 @@ function iconForLink(label: string) {
   const key = label.toLowerCase();
   if (key.includes("ticket dashboard")) return LayoutDashboard;
   if (key === "board") return Ticket;
+  if (key.includes("ticket board")) return Ticket;
+  if (key.includes("task board")) return CheckSquare;
   if (key.includes("home") || key.includes("dashboard")) return Home;
   if (key.includes("ticket")) return Ticket;
   if (key.includes("metrics") || key.includes("reports")) return BarChart3;
@@ -77,8 +92,28 @@ function iconForLink(label: string) {
   return Home;
 }
 
+function agentBoardActive(
+  pathname: string,
+  searchParams: URLSearchParams | null,
+  match: "ticket" | "kpi",
+): boolean {
+  if (!(pathname === "/agent" || pathname.startsWith("/agent/"))) return false;
+  const board = searchParams?.get("board") ?? "";
+  if (match === "kpi") return board === "kpi";
+  return board === "" || board === "ticket" || board === "company";
+}
+
 export function GlobalSidebar() {
+  return (
+    <Suspense fallback={null}>
+      <GlobalSidebarInner />
+    </Suspense>
+  );
+}
+
+function GlobalSidebarInner() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { data } = useSession();
   const role = data?.user?.role;
   const [collapsed, setCollapsed] = useState(false);
@@ -134,13 +169,49 @@ export function GlobalSidebar() {
               </button>
             </div>
             <nav className="space-y-2 text-sm">
-              {links.map((link) => {
-                const active = navLinkActive(pathname, link.href);
-                const Icon = iconForLink(link.label);
+              {links.map((item) => {
+                if (item.kind === "group") {
+                  const GroupIcon = iconForLink(item.label);
+                  return (
+                    <div key={`m-group-${item.label}`} className="space-y-1">
+                      <div className="flex items-center gap-2 px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                        <GroupIcon size={14} strokeWidth={2.1} />
+                        {item.label}
+                      </div>
+                      <div className="space-y-1 pl-3">
+                        {item.children.map((child) => {
+                          const ChildIcon = iconForLink(child.label);
+                          const active = child.matchBoard
+                            ? agentBoardActive(pathname, searchParams, child.matchBoard)
+                            : navLinkActive(pathname, child.href);
+                          return (
+                            <Link
+                              key={`m-${child.href}-${child.label}`}
+                              href={child.href}
+                              onClick={() => setMobileOpen(false)}
+                              className={`block rounded-md px-3 py-2 ${
+                                active
+                                  ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
+                                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <ChildIcon size={16} strokeWidth={2.1} />
+                                {child.label}
+                              </span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+                const active = navLinkActive(pathname, item.href);
+                const Icon = iconForLink(item.label);
                 return (
                   <Link
-                    key={`m-${link.href}-${link.label}`}
-                    href={link.href}
+                    key={`m-${item.href}-${item.label}`}
+                    href={item.href}
                     onClick={() => setMobileOpen(false)}
                     className={`block rounded-md px-3 py-2 ${
                       active
@@ -150,7 +221,7 @@ export function GlobalSidebar() {
                   >
                     <span className="inline-flex items-center gap-2">
                       <Icon size={16} strokeWidth={2.1} />
-                      {link.label}
+                      {item.label}
                     </span>
                   </Link>
                 );
@@ -182,14 +253,63 @@ export function GlobalSidebar() {
         <nav
           className={`mt-6 min-h-0 flex-1 space-y-2 overflow-y-auto text-sm ${collapsed ? "flex flex-col items-center" : ""}`}
         >
-          {links.map((link) => {
-            const active = navLinkActive(pathname, link.href);
-            const Icon = iconForLink(link.label);
+          {links.map((item) => {
+            if (item.kind === "group") {
+              const GroupIcon = iconForLink(item.label);
+              return (
+                <div
+                  key={`group-${item.label}`}
+                  className={collapsed ? "flex w-full flex-col items-center gap-1" : "space-y-1"}
+                >
+                  {!collapsed ? (
+                    <div className="flex items-center gap-2 px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                      <GroupIcon size={14} strokeWidth={2.1} />
+                      {item.label}
+                    </div>
+                  ) : null}
+                  <div className={collapsed ? "flex flex-col items-center gap-1" : "space-y-1 pl-3"}>
+                    {item.children.map((child) => {
+                      const ChildIcon = iconForLink(child.label);
+                      const active = child.matchBoard
+                        ? agentBoardActive(pathname, searchParams, child.matchBoard)
+                        : navLinkActive(pathname, child.href);
+                      return (
+                        <Link
+                          key={`${child.href}-${child.label}`}
+                          href={child.href}
+                          title={collapsed ? child.label : undefined}
+                          className={`block rounded-md ${
+                            collapsed ? "w-10 px-0 py-2 text-center" : "px-3 py-2"
+                          } ${
+                            active
+                              ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
+                              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          }`}
+                        >
+                          {collapsed ? (
+                            <span className="inline-flex w-full items-center justify-center">
+                              <ChildIcon size={16} strokeWidth={2.2} />
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-2">
+                              <ChildIcon size={16} strokeWidth={2.1} />
+                              {child.label}
+                            </span>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+            const active = navLinkActive(pathname, item.href);
+            const Icon = iconForLink(item.label);
             return (
               <Link
-                key={`${link.href}-${link.label}`}
-                href={link.href}
-                title={collapsed ? link.label : undefined}
+                key={`${item.href}-${item.label}`}
+                href={item.href}
+                title={collapsed ? item.label : undefined}
                 className={`block rounded-md ${
                   collapsed ? "w-10 px-0 py-2 text-center" : "px-3 py-2"
                 } ${
@@ -205,7 +325,7 @@ export function GlobalSidebar() {
                 ) : (
                   <span className="inline-flex items-center gap-2">
                     <Icon size={16} strokeWidth={2.1} />
-                    {link.label}
+                    {item.label}
                   </span>
                 )}
               </Link>

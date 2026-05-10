@@ -1,10 +1,10 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowRight, Building2, LogIn, Shield, Sparkles, Users } from "lucide-react";
 import { getServerSession } from "next-auth";
 import type { TicketPriority, TicketStatus } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
-import { StaffHomeDashboard } from "@/components/portal/StaffHomeDashboard";
 import { OnDutyPanel } from "@/components/dashboard/OnDutyPanel";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import { BrandLockup } from "@/components/BrandLockup";
@@ -13,7 +13,6 @@ import { customerHasPendingResolvedTicket } from "@/lib/customer-pending-resolut
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
 import { onDutyCompanyLine, resolveStaffOnDutyAgentIds } from "@/lib/on-duty-company-line";
-import { findSessionAgentId } from "@/lib/session-agent";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 
 export const dynamic = "force-dynamic";
@@ -32,16 +31,7 @@ export default async function Home() {
   const session = await getServerSession(authOptions);
 
   if (session?.user?.role === "Personnel") {
-    const operator = await findSessionAgentId({ email: session.user.email, name: session.user.name });
-    const first = session.user.name?.split(" ")[0] ?? "there";
-    return (
-      <StaffHomeDashboard
-        operatorId={operator?.id ?? null}
-        firstName={first}
-        canCreateTickets
-        pendingVerificationHref={null}
-      />
-    );
+    redirect("/agent");
   }
 
   if (session?.user?.role === "Customer") {
@@ -452,7 +442,7 @@ export default async function Home() {
               </div>
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                  New here? One registration flow—pick staff or company inside
+                  New here? Create your company account in one step
                 </p>
                 <div className="mt-2.5 flex flex-wrap gap-2">
                   <Link
@@ -643,9 +633,9 @@ export default async function Home() {
               Ready when you are
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-300">
-              Use <span className="font-semibold text-zinc-900 dark:text-white">/signin</span> for every account. Need a new
-              profile? Use <span className="font-semibold text-zinc-900 dark:text-white">/signup</span> once, select staff or
-              company, then sign in here.
+              Use <span className="font-semibold text-zinc-900 dark:text-white">/signin</span> for every account. Company
+              users can register at <span className="font-semibold text-zinc-900 dark:text-white">/signup</span>. Staff
+              accounts are created by an administrator.
             </p>
           </div>
           <div className="mx-auto mt-8 flex max-w-md flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-center sm:gap-3">

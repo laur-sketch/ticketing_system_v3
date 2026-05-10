@@ -1960,7 +1960,7 @@ export default function InsightsPage() {
                   Volume trend
                 </h2>
                 <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  Created vs closed (UTC days)
+                  Created vs closed (daily, real-time)
                 </p>
               </div>
               <div className="flex flex-wrap gap-4 text-right text-xs text-zinc-600 dark:text-zinc-500">

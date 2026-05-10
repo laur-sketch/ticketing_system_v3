@@ -1,4 +1,5 @@
 import type { Agent, Team } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 
 /** Normalize display name for loose matching (same as personnel screens). */
 export function normalizePersonName(v: string) {
@@ -40,4 +41,29 @@ export function portalStaffHasAgentRow<
   T extends { id: string; email: string; name: string; createdAt: Date },
 >(portal: { email: string; name: string }, agents: T[]): boolean {
   return pickCanonicalAgentForPortal(portal, agents) !== null;
+}
+
+/**
+ * Ensure a staff portal account has a matching Agent row attached to the given team.
+ * Used after the SuperAdmin sets a designated company so that there is no separate
+ * "awaiting team assignment" step: the agent row is created (or re-pointed) inline.
+ */
+export async function ensureAgentRowForPortalStaff(
+  portal: { email: string; name: string },
+  teamId: string,
+): Promise<void> {
+  const agents = await prisma.agent.findMany({ orderBy: { createdAt: "asc" } });
+  const canonical = pickCanonicalAgentForPortal(portal, agents);
+  if (!canonical) {
+    await prisma.agent.create({
+      data: { name: portal.name, email: portal.email.trim().toLowerCase(), teamId },
+    });
+    return;
+  }
+  if (canonical.teamId !== teamId) {
+    await prisma.agent.update({
+      where: { id: canonical.id },
+      data: { teamId },
+    });
+  }
 }

@@ -138,10 +138,10 @@ export default function NewTicketPage() {
     typeof session?.user?.authProvider === "string" &&
     session.user.authProvider.trim().toLowerCase() === "google";
 
-  const isStaffIntake =
-    session?.user?.role === "SuperAdmin" ||
-    session?.user?.role === "Admin" ||
-    session?.user?.role === "Personnel";
+  const isPersonnelIntake = session?.user?.role === "Personnel";
+  const isAdminStaffIntake =
+    session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
+  const isStaffIntake = isAdminStaffIntake || isPersonnelIntake;
 
   const mergeScreenshotFiles = useCallback((picked: File[]) => {
     setScreenshots((prev) => {
@@ -210,6 +210,11 @@ export default function NewTicketPage() {
           if (googleOAuthCustomer) {
             fd.append("customerOrgRole", String(form.get("customerOrgRole") || "").trim() || "Personnel");
           }
+        } else if (isPersonnelIntake) {
+          fd.append("contactName", String(form.get("contactName") || "").trim());
+          fd.append("contactEmail", String(form.get("contactEmail") || "").trim());
+          fd.append("requestToCompanySbu", String(form.get("requestToCompanySbu") || "").trim());
+          fd.append("branch", String(form.get("branch") || "").trim());
         } else {
           fd.append("companyTeamId", String(form.get("companyTeamId") || ""));
           fd.append("contactName", String(form.get("contactName") || "").trim());
@@ -231,6 +236,11 @@ export default function NewTicketPage() {
           if (googleOAuthCustomer) {
             payload.customerOrgRole = String(form.get("customerOrgRole") || "").trim() || "Personnel";
           }
+        } else if (isPersonnelIntake) {
+          payload.contactName = String(form.get("contactName") || "").trim();
+          payload.contactEmail = String(form.get("contactEmail") || "").trim();
+          payload.requestToCompanySbu = String(form.get("requestToCompanySbu") || "").trim();
+          payload.branch = String(form.get("branch") || "").trim();
         } else {
           payload.companyTeamId = String(form.get("companyTeamId") || "");
           payload.contactName = String(form.get("contactName") || "").trim();
@@ -248,7 +258,7 @@ export default function NewTicketPage() {
         return;
       }
       await res.json();
-      router.push("/my-tickets?submitted=1");
+      router.push(isPersonnelIntake ? "/agent?submitted=1" : "/my-tickets?submitted=1");
     } catch {
       setError("Could not create ticket.");
     } finally {
@@ -283,7 +293,7 @@ export default function NewTicketPage() {
 
         <Card className="border-zinc-200 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_16px_45px_rgba(0,0,0,0.35)]">
           <form onSubmit={onSubmit} className="space-y-5">
-            {isStaffIntake ? (
+            {isAdminStaffIntake ? (
               <>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                   Name
@@ -342,6 +352,75 @@ export default function NewTicketPage() {
                   </Select>
                 </label>
               </>
+            ) : isPersonnelIntake ? (
+              <>
+                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Name
+                  <Input
+                    name="contactName"
+                    required
+                    maxLength={200}
+                    defaultValue={
+                      session?.user?.name?.trim() ||
+                      (session?.user?.email?.includes("@") ? session.user.email.split("@")[0] : "") ||
+                      ""
+                    }
+                    autoComplete="name"
+                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Email
+                  <Input
+                    type="email"
+                    name="contactEmail"
+                    required
+                    defaultValue={session?.user?.email?.trim() ?? ""}
+                    autoComplete="email"
+                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+
+                <div>
+                  <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Company</span>
+                  <div className="mt-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100">
+                    {staffDesignatedLoading
+                      ? "Loading…"
+                      : staffDesignatedCompany?.name?.trim() || "Not yet assigned"}
+                  </div>
+                  <p className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                    Your company is assigned at signup or by a SuperAdmin/Admin and cannot be changed here.
+                  </p>
+                </div>
+
+                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Branch{" "}
+                  <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
+                  <Input
+                    name="branch"
+                    maxLength={120}
+                    placeholder="e.g. Main Office, Cebu Branch"
+                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+
+                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Company Requested to
+                  <Textarea
+                    name="requestToCompanySbu"
+                    required
+                    rows={3}
+                    maxLength={500}
+                    placeholder="Type the company or SBU you are requesting (e.g. AGC, ALI, IT support)."
+                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+                <p className="-mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                  Use a roster SBU name when you can. If it does not match, your request still registers and is triaged
+                  under <strong className="font-medium text-zinc-600 dark:text-zinc-300">OUTSIDE COMPANY</strong> on the
+                  company board.
+                </p>
+              </>
             ) : (
               <>
                 <div>
@@ -367,7 +446,7 @@ export default function NewTicketPage() {
                     maxLength={500}
                     autoComplete="organization"
                     defaultValue={portalCustomer.companyName?.trim() ?? ""}
-                    placeholder="Type your company / SBU (e.g. AGC, ALI, M.CONPINCO)"
+                    placeholder="Type your company / SBU (e.g. AGC, ALI, MCONPINCO)"
                     className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
                 </label>

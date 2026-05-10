@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { Eye, EyeOff } from "lucide-react";
 import {
   AuthShell,
   authInputClass,
@@ -27,6 +28,17 @@ function SignInForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetIdentifier, setResetIdentifier] = useState("");
+  const [resetReason, setResetReason] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  const revealPassword = () => setShowPassword(true);
+  const hidePassword = () => setShowPassword(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,15 +70,55 @@ function SignInForm() {
     window.location.href = res?.url ?? callbackUrl;
   }
 
+  function openResetPanel() {
+    setResetOpen(true);
+    setResetMessage(null);
+    setResetError(null);
+    if (!resetIdentifier && username) setResetIdentifier(username);
+  }
+
+  function closeResetPanel() {
+    setResetOpen(false);
+  }
+
+  async function submitResetRequest(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setResetError(null);
+    setResetMessage(null);
+    const identifier = resetIdentifier.trim();
+    if (!identifier) {
+      setResetError("Enter your username or email.");
+      return;
+    }
+    setResetBusy(true);
+    try {
+      const res = await fetch("/api/auth/password-reset-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier, reason: resetReason.trim() || undefined }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) {
+        setResetError(data.error ?? "Could not submit request. Try again.");
+        return;
+      }
+      setResetMessage(
+        data.message ??
+          "Request sent. A SuperAdmin will review it and notify you when the password is reset.",
+      );
+      setResetReason("");
+    } catch {
+      setResetError("Network error. Try again.");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   return (
     <AuthShell mode="signin">
       <h1 className="text-[1.5rem] font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-[1.65rem]">
         Sign in
       </h1>
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
-        One sign-in for everyone. After you authenticate, you are taken to the workspace that matches your account—
-        operations console, admin tools, or your company portal.
-      </p>
 
       {banner ? (
         <p className="mt-4 rounded-lg border border-orange-500/25 bg-orange-500/[0.08] px-3 py-2 text-xs leading-snug text-orange-900 dark:text-orange-100/90 sm:text-[13px]">
@@ -89,25 +141,51 @@ function SignInForm() {
 
         <label className="flex flex-col gap-1.5">
           <span className={authLabelClass}>Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            autoComplete="current-password"
-            placeholder="••••••••"
-            className={authInputClass}
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+              placeholder="••••••••"
+              className={`${authInputClass} pr-11`}
+            />
+            <button
+              type="button"
+              aria-label={showPassword ? "Hide password" : "Press and hold to show password"}
+              title="Press and hold to reveal"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                revealPassword();
+              }}
+              onPointerUp={hidePassword}
+              onPointerLeave={hidePassword}
+              onPointerCancel={hidePassword}
+              onBlur={hidePassword}
+              onKeyDown={(e) => {
+                if (e.key === " " || e.key === "Enter") {
+                  e.preventDefault();
+                  revealPassword();
+                }
+              }}
+              onKeyUp={(e) => {
+                if (e.key === " " || e.key === "Enter") {
+                  e.preventDefault();
+                  hidePassword();
+                }
+              }}
+              tabIndex={-1}
+              className="absolute right-1.5 top-1/2 inline-flex size-8 -translate-y-1/2 select-none items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f97316]/40 active:scale-95 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
+            >
+              {showPassword ? (
+                <EyeOff className="size-4" aria-hidden />
+              ) : (
+                <Eye className="size-4" aria-hidden />
+              )}
+            </button>
+          </div>
         </label>
-
-        <p className="rounded-md bg-zinc-100 px-2.5 py-2 text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-500">
-          Use your <span className="text-zinc-700 dark:text-zinc-400">username</span> or{" "}
-          <span className="text-zinc-700 dark:text-zinc-400">email</span> and password. Need an account?{" "}
-          <Link href="/signup" className="font-medium text-[#f97316] hover:text-[#fb923c]">
-            Create account
-          </Link>{" "}
-          (choose staff or company on the next screen).
-        </p>
 
         {error ? (
           <p className="rounded-lg border border-red-500/30 bg-red-500/[0.07] px-2.5 py-2 text-xs text-red-700 dark:text-red-200/90 sm:text-[13px]">
@@ -118,46 +196,117 @@ function SignInForm() {
         <button type="submit" className={authPrimaryButtonClass}>
           Sign in
         </button>
+
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={openResetPanel}
+            className="text-[12px] font-medium text-[#f97316] transition hover:text-[#fb923c] sm:text-[13px]"
+          >
+            Forgot password? Request reset
+          </button>
+        </div>
       </form>
+
+      {resetOpen ? (
+        <section className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[12px] font-bold uppercase tracking-[0.18em] text-zinc-700 dark:text-zinc-300">
+                Request password reset
+              </h2>
+              <p className="mt-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
+                A SuperAdmin reviews each request. Once approved, your password is reset to the default value provided
+                by your administrator.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={closeResetPanel}
+              className="shrink-0 rounded-md border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800/70"
+            >
+              Close
+            </button>
+          </div>
+
+          {resetMessage ? (
+            <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-2 text-[12px] text-emerald-800 dark:text-emerald-100/90">
+              {resetMessage}
+            </p>
+          ) : null}
+          {resetError ? (
+            <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-2.5 py-2 text-[12px] text-red-700 dark:text-red-200/90">
+              {resetError}
+            </p>
+          ) : null}
+
+          <form onSubmit={submitResetRequest} className="mt-3 space-y-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-600 dark:text-zinc-500">
+                Username or email
+              </span>
+              <input
+                value={resetIdentifier}
+                onChange={(e) => setResetIdentifier(e.target.value)}
+                required
+                autoComplete="username"
+                placeholder="you or name@company.com"
+                className={authInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-600 dark:text-zinc-500">
+                Reason (optional)
+              </span>
+              <textarea
+                value={resetReason}
+                onChange={(e) => setResetReason(e.target.value)}
+                rows={2}
+                placeholder="Brief context to help the SuperAdmin verify the request."
+                className={`${authInputClass} resize-none`}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={resetBusy}
+              className={`${authPrimaryButtonClass} disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              {resetBusy ? "Sending request…" : "Send request to SuperAdmin"}
+            </button>
+          </form>
+        </section>
+      ) : null}
 
       <div className="my-6 flex items-center gap-3">
         <span className="h-px flex-1 bg-zinc-300 dark:bg-zinc-800/90" />
         <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-600">
-          External identity providers
+          or
         </span>
         <span className="h-px flex-1 bg-zinc-300 dark:bg-zinc-800/90" />
       </div>
 
-      <div className="grid grid-cols-1 gap-2.5">
-        <button
-          type="button"
-          className={authSecondaryButtonClass}
-          disabled={!googleEnabled}
-          onClick={() => void signIn("google", { callbackUrl })}
-        >
-          <span className="inline-flex items-center gap-2">
-            <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4">
-              <path
-                fill="#EA4335"
-                d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.8-5.5 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4A9.6 9.6 0 0 0 2.4 12 9.6 9.6 0 0 0 12 21.6c5.6 0 9.3-3.9 9.3-9.4 0-.6-.1-1.1-.2-2H12z"
-              />
-              <path fill="#34A853" d="M2.4 12c0 3.7 2.1 7 5.2 8.6l3-2.5c-.8-.2-1.5-.7-2.1-1.2C7.7 16 7.2 14.9 7 13.8l-3-.2V12z" />
-              <path fill="#4285F4" d="M12 21.6c2.7 0 4.9-.9 6.6-2.5l-3.2-2.6c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.2l-3 .2A9.6 9.6 0 0 0 12 21.6z" />
-              <path fill="#FBBC05" d="M7 13.8a5.8 5.8 0 0 1 0-3.6V7.9l-3-.2A9.6 9.6 0 0 0 2.4 12c0 1.5.3 2.9.9 4.2l3.7-2.4z" />
-            </svg>
-            {googleEnabled ? "Google" : "Google (not configured)"}
-          </span>
-        </button>
-        {googleEnabled ? (
-          <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-600">
-            Company portal users who rely on org-linked routing may prefer username and password if Google does not match
-            your provisioned profile.
-          </p>
-        ) : null}
-      </div>
+      <button
+        type="button"
+        className={authSecondaryButtonClass}
+        disabled={!googleEnabled}
+        onClick={() => void signIn("google", { callbackUrl })}
+      >
+        <span className="inline-flex items-center gap-2">
+          <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4">
+            <path
+              fill="#EA4335"
+              d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.8-5.5 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.3 14.7 2.4 12 2.4A9.6 9.6 0 0 0 2.4 12 9.6 9.6 0 0 0 12 21.6c5.6 0 9.3-3.9 9.3-9.4 0-.6-.1-1.1-.2-2H12z"
+            />
+            <path fill="#34A853" d="M2.4 12c0 3.7 2.1 7 5.2 8.6l3-2.5c-.8-.2-1.5-.7-2.1-1.2C7.7 16 7.2 14.9 7 13.8l-3-.2V12z" />
+            <path fill="#4285F4" d="M12 21.6c2.7 0 4.9-.9 6.6-2.5l-3.2-2.6c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.2l-3 .2A9.6 9.6 0 0 0 12 21.6z" />
+            <path fill="#FBBC05" d="M7 13.8a5.8 5.8 0 0 1 0-3.6V7.9l-3-.2A9.6 9.6 0 0 0 2.4 12c0 1.5.3 2.9.9 4.2l3.7-2.4z" />
+          </svg>
+          {googleEnabled ? "Continue with Google" : "Google (not configured)"}
+        </span>
+      </button>
 
       <p className="mt-6 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
-        First time here?{" "}
+        New here?{" "}
         <Link href="/signup" className="font-semibold text-[#f97316] hover:text-[#fb923c]">
           Create account
         </Link>

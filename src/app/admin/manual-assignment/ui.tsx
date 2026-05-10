@@ -36,12 +36,14 @@ export function ManualAssignmentBoard({
   companyFilterLabel,
   companyFilterTeamId,
   companyFilterOptions,
+  notice,
 }: {
   unassigned: TicketCard[];
   personnel: PersonnelColumn[];
   companyFilterLabel?: string | null;
   companyFilterTeamId?: string | null;
   companyFilterOptions?: Array<{ id: string; name: string }>;
+  notice?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -110,7 +112,14 @@ export function ManualAssignmentBoard({
           </p>
           {companyFilterLabel ? (
             <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-300">
-              Filtered company/SBU: {companyFilterLabel}
+              {canChooseCompanyFilter
+                ? `Filtered company/SBU: ${companyFilterLabel}`
+                : `Locked to your company/SBU: ${companyFilterLabel}`}
+            </p>
+          ) : null}
+          {notice ? (
+            <p className="mt-3 rounded-lg border border-amber-400/40 bg-amber-100/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">
+              {notice}
             </p>
           ) : null}
           {canChooseCompanyFilter ? (

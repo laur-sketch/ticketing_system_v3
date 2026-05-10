@@ -1,2 +1,2 @@
-/** Applied when an admin approves a password reset request. */
-export const DEFAULT_PASSWORD_RESET = "@ci_2024";
+/** Applied when a SuperAdmin approves a password reset request. */
+export const DEFAULT_PASSWORD_RESET = "aci_@dmin123";

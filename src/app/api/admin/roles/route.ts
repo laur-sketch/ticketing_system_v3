@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { pickCanonicalAgentForPortal } from "@/lib/admin-roster";
+import { ensureAgentRowForPortalStaff, pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import { rosterTeamNameFilter, sortByRosterOrder, COMPANY_ROSTER } from "@/lib/company-roster";
 import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
@@ -144,11 +144,12 @@ export async function PATCH(req: Request) {
           return NextResponse.json({ error: "Invalid company queue." }, { status: 400 });
         }
         data.company = { connect: { id: cid } };
-        const org =
+        const orgRaw =
           body.customerOrgRole !== undefined ? body.customerOrgRole : existing.customerOrgRole;
-        if (org !== "Head" && org !== "Personnel") {
+        const org = orgRaw === "Head" ? "Admin" : orgRaw;
+        if (org !== "Admin" && org !== "Personnel") {
           return NextResponse.json(
-            { error: "Customer org role must be Head or Personnel when a company is set." },
+            { error: "Customer org role must be Admin or Personnel when a company is set." },
             { status: 400 },
           );
         }
@@ -161,9 +162,10 @@ export async function PATCH(req: Request) {
           { status: 400 },
         );
       }
-      const org = body.customerOrgRole;
-      if (org !== null && org !== "Head" && org !== "Personnel") {
-        return NextResponse.json({ error: "Org role must be Head or Personnel." }, { status: 400 });
+      const orgRaw = body.customerOrgRole;
+      const org = orgRaw === "Head" ? "Admin" : orgRaw;
+      if (org !== null && org !== "Admin" && org !== "Personnel") {
+        return NextResponse.json({ error: "Org role must be Admin or Personnel." }, { status: 400 });
       }
       data.customerOrgRole = org;
     }
@@ -215,6 +217,26 @@ export async function PATCH(req: Request) {
       createdAt: true,
     },
   });
+
+  /**
+   * Once a SuperAdmin assigns a designated company to a staff portal account,
+   * make sure the matching Agent row exists on that team — no separate
+   * "awaiting team assignment" step is required.
+   */
+  if (
+    staffCompanyPatch &&
+    updated.staffDesignatedCompanyId &&
+    isStaffPortalRole(updated.role)
+  ) {
+    try {
+      await ensureAgentRowForPortalStaff(
+        { email: updated.email, name: updated.name },
+        updated.staffDesignatedCompanyId,
+      );
+    } catch (e) {
+      console.error("ensureAgentRowForPortalStaff failed", e);
+    }
+  }
 
   return NextResponse.json({ ok: true, account: updated });
 }

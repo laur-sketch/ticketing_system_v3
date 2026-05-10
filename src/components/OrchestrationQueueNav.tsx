@@ -86,15 +86,9 @@ export function OrchestrationQueueNav() {
 
   if (onAssignment) return null;
 
+  /** Personnel see only Ticket Board + Task Board; Company Board is admin-only. */
   return (
     <nav className="flex flex-wrap gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-500">
-      {onCompanyBoard ? (
-        <span className={pillActive}>Company Board</span>
-      ) : (
-        <Link href="/agent?board=company" className={pillInactive}>
-          Company Board
-        </Link>
-      )}
       {onTicketBoard ? (
         <span className={pillActive}>Ticket Board</span>
       ) : (

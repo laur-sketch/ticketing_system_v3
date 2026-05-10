@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Plus } from "lucide-react";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
@@ -7,6 +8,7 @@ import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board
 import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
 import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
@@ -78,6 +80,10 @@ export default async function AgentHome({
   if (rawBoard === "department") {
     redirect("/agent?board=company");
   }
+  /** Personnel cannot view the Company Board: force them back to the Ticket Board. */
+  if (rawBoard === "company" && session.user.role === "Personnel") {
+    redirect("/agent?board=ticket");
+  }
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
   // Personnel must use board view to be able to drag cards and change status inline.
@@ -103,13 +109,18 @@ export default async function AgentHome({
   let companyAggregates: Awaited<ReturnType<typeof getCompanyBoardAggregates>> | null = null;
   let companyActivityLogs: Awaited<ReturnType<typeof loadTicketActivityLogForSession>> = [];
 
+  const adminScopedCompanyId =
+    isCompanyBoard && session.user.role !== "SuperAdmin" && (session.user.role === "Admin" || companyCoordinator)
+      ? await resolveStaffCompanyTeamId(session.user.email)
+      : null;
+
   const rosterTeamsForFilter = isCompanyBoard
     ? sortByRosterOrder(
         await prisma.team.findMany({
           where: rosterTeamNameFilter(),
           select: { id: true, name: true },
         }),
-      )
+      ).filter((t) => (adminScopedCompanyId ? t.id !== adminScopedCompanyId : true))
     : [];
 
   if (isCompanyBoard) {
@@ -396,10 +407,21 @@ export default async function AgentHome({
                   )}
                 </p>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-3">
-                <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
-                <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
-                <StatCard label="SLA at Risk" value={statSla} valueClass="text-amber-400" />
+              <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
+                {session.user.role === "Personnel" && !isCompanyBoard && boardTab === "ticket" ? (
+                  <Link
+                    href="/tickets/new"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-[#070d19]"
+                  >
+                    <Plus className="size-4" aria-hidden />
+                    Create ticket
+                  </Link>
+                ) : null}
+                <div className="flex flex-wrap gap-3">
+                  <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
+                  <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
+                  <StatCard label="SLA at Risk" value={statSla} valueClass="text-amber-400" />
+                </div>
               </div>
             </div>
           </div>
