@@ -141,10 +141,11 @@ export const authOptions: NextAuthOptions = {
             const match = await bcrypt.compare(password, portal.passwordHash);
             if (!match) return null;
             const baseRole = normalizeRole(portal.role) ?? "Customer";
-            /** Block password login for customer portal accounts (Google OAuth only). */
-            if (baseRole === "Customer") {
-              return null;
-            }
+            /**
+             * Customer accounts created via self-signup are allowed to sign in
+             * with username/password. Google sign-in continues to work in
+             * parallel for the same account (email match).
+             */
             const role = elevateRoleByEmail(portal.email, baseRole);
             return {
               id: portal.id,
