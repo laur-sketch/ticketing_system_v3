@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -37,6 +37,7 @@ export function ManualAssignmentBoard({
   companyFilterTeamId,
   companyFilterOptions,
   notice,
+  showFullRosterFilter,
 }: {
   unassigned: TicketCard[];
   personnel: PersonnelColumn[];
@@ -44,10 +45,10 @@ export function ManualAssignmentBoard({
   companyFilterTeamId?: string | null;
   companyFilterOptions?: Array<{ id: string; name: string }>;
   notice?: string | null;
+  /** SuperAdmin / Admin: company dropdown narrows personnel lanes + queue */
+  showFullRosterFilter?: boolean;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [cards, setCards] = useState<TicketCard[]>(unassigned);
   const [columns, setColumns] = useState<PersonnelColumn[]>(personnel);
   const [dragTicketId, setDragTicketId] = useState<string | null>(null);
@@ -56,13 +57,12 @@ export function ManualAssignmentBoard({
   const allCount = useMemo(() => cards.length + columns.reduce((sum, c) => sum + c.cards.length, 0), [cards, columns]);
   const canChooseCompanyFilter = Array.isArray(companyFilterOptions) && companyFilterOptions.length > 0;
 
-  function onCompanyFilterChange(nextTeamId: string) {
-    const qs = new URLSearchParams(searchParams?.toString() ?? "");
-    if (nextTeamId) qs.set("company", nextTeamId);
-    else qs.delete("company");
-    const q = qs.toString();
-    router.push(q ? `${pathname}?${q}` : pathname);
-  }
+  useEffect(() => {
+    setCards(unassigned);
+    setColumns(personnel);
+  }, [unassigned, personnel]);
+
+  const clearHref = pathname || "/admin/manual-assignment";
 
   async function assign(ticket: TicketCard, agentId: string) {
     setBusyTicketId(ticket.id);
@@ -113,8 +113,12 @@ export function ManualAssignmentBoard({
           {companyFilterLabel ? (
             <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-300">
               {canChooseCompanyFilter
-                ? `Filtered company/SBU: ${companyFilterLabel}`
+                ? `Showing personnel & unassigned queue for: ${companyFilterLabel}`
                 : `Locked to your company/SBU: ${companyFilterLabel}`}
+            </p>
+          ) : showFullRosterFilter && canChooseCompanyFilter ? (
+            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+              All companies/SBUs — pick a company above to show only personnel assigned to that SBU and tickets queued to that SBU.
             </p>
           ) : null}
           {notice ? (
@@ -123,23 +127,43 @@ export function ManualAssignmentBoard({
             </p>
           ) : null}
           {canChooseCompanyFilter ? (
-            <div className="mt-3 flex max-w-xs flex-col gap-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-                Company filter
-              </label>
-              <select
-                value={companyFilterTeamId ?? ""}
-                onChange={(e) => onCompanyFilterChange(e.target.value)}
-                className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-              >
-                <option value="">All companies/SBUs</option>
-                {companyFilterOptions.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <form method="get" action={pathname} className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="flex min-w-[200px] max-w-xs flex-col gap-1.5">
+                <label className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                  Company / SBU (personnel lanes)
+                </label>
+                <select
+                  key={companyFilterTeamId ?? "all"}
+                  name="company"
+                  defaultValue={companyFilterTeamId ?? ""}
+                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                >
+                  <option value="">All companies / SBUs</option>
+                  {companyFilterOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="submit"
+                  className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Apply
+                </button>
+                <Link
+                  href={clearHref}
+                  className="inline-flex items-center justify-center rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  Clear
+                </Link>
+              </div>
+              <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500">
+                Choose an SBU and click Apply to show only personnel with that staff designation. Clear removes the filter.
+              </p>
+            </form>
           ) : null}
         </header>
 
@@ -191,7 +215,14 @@ export function ManualAssignmentBoard({
           </article>
 
           <div className="-mx-1 flex snap-x gap-4 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 sm:grid-cols-2">
-            {columns.map((col) => (
+            {columns.length === 0 ? (
+              <div className="w-full rounded-2xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                {companyFilterTeamId
+                  ? "No personnel on roster for this company/SBU. Designate staff to this SBU in Personnel (Portal Accounts), or pick another filter."
+                  : "No personnel lanes — add staff to the roster from Personnel."}
+              </div>
+            ) : (
+              columns.map((col) => (
               <article
                 key={col.agentId}
                 onDragOver={(e) => e.preventDefault()}
@@ -239,7 +270,8 @@ export function ManualAssignmentBoard({
                   )}
                 </div>
               </article>
-            ))}
+            ))
+            )}
           </div>
         </section>
       </div>

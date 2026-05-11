@@ -25,15 +25,14 @@ export default async function ManualAssignmentPage({
 
   const meEmail = (session.user.email ?? "").trim().toLowerCase();
   /**
-   * Admins and Personnel are locked to their designated company's lanes;
-   * SuperAdmin can browse and filter freely.
+   * Personnel (company coordinators) stay locked to their designated SBU — no roster filter.
+   * SuperAdmin and JWT Admin use the company dropdown to narrow unassigned tickets and personnel lanes.
    */
-  const isCompanyScopedRole =
-    session.user.role === "Personnel" || session.user.role === "Admin";
+  const isPersonnelCompanyLock = session.user.role === "Personnel";
   let scopedCompanyFilterTeamId: string | null = null;
   let scopedCompanyFilterLabel: string | null = null;
 
-  if (isCompanyScopedRole) {
+  if (isPersonnelCompanyLock) {
     const mePortal = await prisma.portalAccount.findFirst({
       where: { email: { equals: meEmail, mode: "insensitive" } },
       select: {
@@ -52,7 +51,7 @@ export default async function ManualAssignmentPage({
    * Company-scoped roles without a designated company should land on an empty
    * board with a notice rather than seeing everyone.
    */
-  const scopeUnavailable = isCompanyScopedRole && !scopedCompanyFilterTeamId;
+  const scopeUnavailable = isPersonnelCompanyLock && !scopedCompanyFilterTeamId;
 
   if (!["SuperAdmin", "Admin"].includes(session.user.role)) {
     const normalizedEmail = (session.user.email ?? "").trim().toLowerCase();
@@ -116,10 +115,10 @@ export default async function ManualAssignmentPage({
   const validRequestedFilterId = requestedCompanyFilter
     ? orderedCompanyTeams.find((t) => t.id === requestedCompanyFilter)?.id ?? null
     : null;
-  const effectiveCompanyFilterId = isCompanyScopedRole
+  const effectiveCompanyFilterId = isPersonnelCompanyLock
     ? scopedCompanyFilterTeamId
     : validRequestedFilterId;
-  const effectiveCompanyFilterLabel = isCompanyScopedRole
+  const effectiveCompanyFilterLabel = isPersonnelCompanyLock
     ? scopedCompanyFilterLabel
     : orderedCompanyTeams.find((t) => t.id === effectiveCompanyFilterId)?.name ?? null;
   const scopedUnassigned = scopeUnavailable
@@ -132,12 +131,16 @@ export default async function ManualAssignmentPage({
     teams.find((t) => t.name.toLowerCase().includes("general"))?.id ??
     teams[0]?.id ??
     null;
+  /**
+   * SBU filter uses **staff designation only** (`staffDesignatedCompanyId`).
+   * Do not fall back to `companyId` — that is the customer/signup company and stays out of sync,
+   * which caused personnel moved to ALI to still appear under AGC.
+   */
   const staffPortal = portalStaff.filter((p) => {
     if (!isStaffPortalRole(p.role)) return false;
     if (scopeUnavailable) return false;
     if (!effectiveCompanyFilterId) return true;
-    const designated = p.staffDesignatedCompanyId ?? p.companyId ?? null;
-    return designated === effectiveCompanyFilterId;
+    return p.staffDesignatedCompanyId === effectiveCompanyFilterId;
   });
   const staffEmails = Array.from(
     new Set(staffPortal.map((p) => p.email.trim().toLowerCase()).filter(Boolean)),
@@ -181,7 +184,13 @@ export default async function ManualAssignmentPage({
   const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
   const portalByEmail = new Map(portalStaff.map((p) => [p.email.trim().toLowerCase(), p]));
 
-  const agentsForBoard = personnelAgents;
+  let agentsForBoard = personnelAgents;
+  if (effectiveCompanyFilterId) {
+    agentsForBoard = personnelAgents.filter((a) => {
+      const row = portalByEmail.get(a.email.trim().toLowerCase());
+      return row?.staffDesignatedCompanyId === effectiveCompanyFilterId;
+    });
+  }
 
   const assignedByAgent = await prisma.ticket.findMany({
     where: {
@@ -237,10 +246,11 @@ export default async function ManualAssignmentPage({
     <ManualAssignmentBoard
       companyFilterLabel={effectiveCompanyFilterLabel}
       companyFilterTeamId={effectiveCompanyFilterId}
+      showFullRosterFilter={session.user.role === "SuperAdmin" || session.user.role === "Admin"}
       companyFilterOptions={
-        isCompanyScopedRole
-          ? []
-          : orderedCompanyTeams.map((t) => ({ id: t.id, name: t.name }))
+        session.user.role === "SuperAdmin" || session.user.role === "Admin"
+          ? orderedCompanyTeams.map((t) => ({ id: t.id, name: t.name }))
+          : []
       }
       notice={
         scopeUnavailable

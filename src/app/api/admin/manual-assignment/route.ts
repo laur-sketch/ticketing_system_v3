@@ -95,8 +95,11 @@ export async function POST(req: Request) {
       }
     }
 
-    /** Company-scoped admins assign only within their designated company queue. */
-    if (!isSuperAdmin) {
+    /**
+     * SuperAdmin and JWT Admin use the assignment board across SBUs.
+     * Others (company coordinators, etc.) assign only within their designated company queue.
+     */
+    if (!isSuperAdmin && !isJwtAdmin) {
       const scopeTeamId = await resolveStaffCompanyTeamId(session.user.email);
       if (!scopeTeamId) {
         return NextResponse.json(
