@@ -44,17 +44,18 @@ export async function loadPersonnelAccountsPayload(viewer: {
    */
   const staffWithCompany = await prisma.portalAccount.findMany({
     where: {
-      role: { in: ["Admin", "Personnel"] },
       staffDesignatedCompanyId: { not: null },
     },
     select: {
       email: true,
       name: true,
       staffDesignatedCompanyId: true,
+      role: true,
     },
   });
   for (const p of staffWithCompany) {
     if (!p.staffDesignatedCompanyId) continue;
+    if (!isStaffPortalRole(p.role)) continue;
     try {
       await ensureAgentRowForPortalStaff(
         { email: p.email, name: p.name },

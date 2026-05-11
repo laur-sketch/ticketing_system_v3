@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { ensureAgentRowForPortalStaff, pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import { rosterTeamNameFilter, sortByRosterOrder, COMPANY_ROSTER } from "@/lib/company-roster";
 import { requireRole } from "@/lib/access";
+import { createStaffPortalAccount } from "@/lib/portal-account";
 import { prisma } from "@/lib/prisma";
 import {
   isAdminEligibleStaffRole,
@@ -219,15 +220,13 @@ export async function PATCH(req: Request) {
   });
 
   /**
-   * Once a SuperAdmin assigns a designated company to a staff portal account,
-   * make sure the matching Agent row exists on that team — no separate
-   * "awaiting team assignment" step is required.
+   * Whenever the portal is staff and has a designated company, keep the Agent
+   * roster in sync. We must not only run this when `staffDesignatedCompanyId`
+   * is in the PATCH body — if the SuperAdmin sets the company first and later
+   * changes role from Customer to Personnel/Admin, the roster would otherwise
+   * never get the Agent row.
    */
-  if (
-    staffCompanyPatch &&
-    updated.staffDesignatedCompanyId &&
-    isStaffPortalRole(updated.role)
-  ) {
+  if (updated.staffDesignatedCompanyId && isStaffPortalRole(updated.role)) {
     try {
       await ensureAgentRowForPortalStaff(
         { email: updated.email, name: updated.name },
@@ -239,4 +238,111 @@ export async function PATCH(req: Request) {
   }
 
   return NextResponse.json({ ok: true, account: updated });
+}
+
+function validEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function validUsername(username: string) {
+  return /^[a-zA-Z0-9._-]{3,32}$/.test(username);
+}
+
+export async function POST(req: Request) {
+  const { unauthorized } = await requireRole(["SuperAdmin"]);
+  if (unauthorized) return unauthorized;
+
+  let body: {
+    username?: string;
+    email?: string;
+    name?: string;
+    password?: string;
+    role?: string;
+    staffDesignatedCompanyId?: string | null;
+  };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  const username = body.username?.trim().toLowerCase() ?? "";
+  const email = body.email?.trim().toLowerCase() ?? "";
+  const name = body.name?.trim() ?? "";
+  const password = body.password ?? "";
+  const roleRaw = body.role?.trim() ?? "";
+  const teamId = body.staffDesignatedCompanyId?.trim() ?? "";
+
+  if (name.length < 2) {
+    return NextResponse.json({ error: "Please enter a display name." }, { status: 400 });
+  }
+  if (!validUsername(username)) {
+    return NextResponse.json(
+      { error: "Username must be 3–32 characters (letters, numbers, . _ -)." },
+      { status: 400 },
+    );
+  }
+  if (!validEmail(email)) {
+    return NextResponse.json({ error: "Enter a valid email." }, { status: 400 });
+  }
+  if (password.length === 0) {
+    return NextResponse.json({ error: "Enter a password." }, { status: 400 });
+  }
+  if (roleRaw !== "Admin" && roleRaw !== "Personnel") {
+    return NextResponse.json({ error: "Role must be Admin or Personnel." }, { status: 400 });
+  }
+  if (!teamId) {
+    return NextResponse.json(
+      { error: "Choose a designated company queue so the user appears on the roster." },
+      { status: 400 },
+    );
+  }
+
+  const team = await prisma.team.findUnique({ where: { id: teamId }, select: { name: true } });
+  if (!team || !(COMPANY_ROSTER as readonly string[]).includes(team.name)) {
+    return NextResponse.json({ error: "Invalid designated company." }, { status: 400 });
+  }
+
+  const created = await createStaffPortalAccount({
+    username,
+    email,
+    name,
+    password,
+    role: roleRaw as "Admin" | "Personnel",
+    staffDesignatedCompanyId: teamId,
+  });
+  if (!created.ok) {
+    if (created.code === "DUPLICATE") {
+      return NextResponse.json({ error: "Username or email is already registered." }, { status: 409 });
+    }
+    return NextResponse.json({ error: "Could not create account." }, { status: 500 });
+  }
+
+  const account = await prisma.portalAccount.findFirst({
+    where: { email: { equals: email, mode: "insensitive" } },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      headPrivileges: true,
+      staffDesignatedCompanyId: true,
+      company: { select: { id: true, name: true } },
+      staffDesignatedCompany: { select: { id: true, name: true } },
+      createdAt: true,
+    },
+  });
+  if (!account?.staffDesignatedCompanyId) {
+    return NextResponse.json({ ok: true, account });
+  }
+  try {
+    await ensureAgentRowForPortalStaff(
+      { email: account.email, name: account.name },
+      account.staffDesignatedCompanyId,
+    );
+  } catch (e) {
+    console.error("ensureAgentRowForPortalStaff failed after staff create", e);
+  }
+
+  return NextResponse.json({ ok: true, account });
 }

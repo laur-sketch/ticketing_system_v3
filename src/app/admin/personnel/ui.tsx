@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
+import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
 import { passwordHashLabel } from "@/lib/password-hash-display";
@@ -61,6 +62,16 @@ export function PersonnelClient({
   const [reconcileBusy, setReconcileBusy] = useState(false);
   const [pendingAccountRequests, setPendingAccountRequests] = useState<PendingAccountRequestRow[]>([]);
   const [requestReviewBusyId, setRequestReviewBusyId] = useState<string | null>(null);
+
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createOk, setCreateOk] = useState<string | null>(null);
+  const [createUsername, setCreateUsername] = useState("");
+  const [createEmail, setCreateEmail] = useState("");
+  const [createName, setCreateName] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
+  const [createRole, setCreateRole] = useState<"Admin" | "Personnel">("Personnel");
+  const [createCompanyId, setCreateCompanyId] = useState("");
 
   const { data: session, status: sessionStatus } = useSession();
   const canManagePortalAccounts = session?.user?.role === "SuperAdmin";
@@ -123,6 +134,47 @@ export function PersonnelClient({
       await loadRoles();
     } finally {
       setRequestReviewBusyId(null);
+    }
+  }
+
+  async function createStaffAccount(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setCreateError(null);
+    setCreateOk(null);
+    if (!createCompanyId) {
+      setCreateError("Select a designated company queue.");
+      return;
+    }
+    setCreateBusy(true);
+    try {
+      const res = await fetch("/api/admin/roles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: createUsername.trim(),
+          email: createEmail.trim(),
+          name: createName.trim(),
+          password: createPassword,
+          role: createRole,
+          staffDesignatedCompanyId: createCompanyId,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setCreateError(data.error ?? "Could not create account.");
+        return;
+      }
+      setCreateOk("Account created. They can sign in with the username and password you set.");
+      setCreateUsername("");
+      setCreateEmail("");
+      setCreateName("");
+      setCreatePassword("");
+      setCreateRole("Personnel");
+      setCreateCompanyId("");
+      await loadRoles();
+      await load();
+    } finally {
+      setCreateBusy(false);
     }
   }
 
@@ -291,6 +343,115 @@ export function PersonnelClient({
             ) : null}
           </div>
         </header>
+
+        {canManagePortalAccounts && !isAdminCompanyView ? (
+          <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800/90 dark:bg-[#12161c] md:p-5">
+            <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-700 dark:text-zinc-400">
+              Add staff portal account
+            </h2>
+            <p className="mt-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
+              Creates an <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Admin</strong> or{" "}
+              <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Personnel</strong> login (not a
+              customer company signup). The user is placed on the agent roster for the queue you pick so they appear on
+              the assignment board immediately.
+            </p>
+            {createOk ? (
+              <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100/90">
+                {createOk}
+              </p>
+            ) : null}
+            {createError ? (
+              <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-xs text-red-800 dark:text-red-200/90">
+                {createError}
+              </p>
+            ) : null}
+            <form onSubmit={(e) => void createStaffAccount(e)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="flex flex-col gap-1 sm:col-span-1">
+                <span className={authLabelClass}>Username</span>
+                <input
+                  required
+                  value={createUsername}
+                  onChange={(e) => setCreateUsername(e.target.value)}
+                  autoComplete="off"
+                  placeholder="jdoe"
+                  className={authInputClass}
+                />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-1">
+                <span className={authLabelClass}>Work email</span>
+                <input
+                  type="email"
+                  required
+                  value={createEmail}
+                  onChange={(e) => setCreateEmail(e.target.value)}
+                  autoComplete="off"
+                  placeholder="jdoe@company.com"
+                  className={authInputClass}
+                />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-1">
+                <span className={authLabelClass}>Display name</span>
+                <input
+                  required
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  autoComplete="off"
+                  placeholder="Jane Doe"
+                  className={authInputClass}
+                />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-1">
+                <span className={authLabelClass}>Initial password</span>
+                <input
+                  type="password"
+                  required
+                  value={createPassword}
+                  onChange={(e) => setCreatePassword(e.target.value)}
+                  autoComplete="new-password"
+                  placeholder="••••••••"
+                  className={authInputClass}
+                />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-1">
+                <span className={authLabelClass}>Portal role</span>
+                <select
+                  value={createRole}
+                  onChange={(e) => setCreateRole(e.target.value as "Admin" | "Personnel")}
+                  className={authInputClass}
+                >
+                  <option value="Personnel">Personnel</option>
+                  <option value="Admin">Admin</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-1">
+                <span className={authLabelClass}>Designated company queue</span>
+                <select
+                  required
+                  value={createCompanyId}
+                  onChange={(e) => setCreateCompanyId(e.target.value)}
+                  disabled={rosterCompanies.length === 0}
+                  className={authInputClass}
+                >
+                  <option value="">Select company…</option>
+                  {rosterCompanies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-end sm:col-span-2 lg:col-span-3">
+                <button
+                  type="submit"
+                  disabled={createBusy || rosterCompanies.length === 0}
+                  className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {createBusy ? "Creating…" : "Create staff account"}
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : null}
 
         {error ? (
           <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>

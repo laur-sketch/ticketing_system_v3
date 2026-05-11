@@ -182,6 +182,49 @@ export async function createPortalAccount(input: {
   }
 }
 
+export type StaffPortalCreateRole = "Admin" | "Personnel";
+
+/**
+ * SuperAdmin-only: create a staff portal account (Admin or Personnel) with a
+ * password and designated company queue. Customer self-signup uses {@link createPortalAccount}.
+ */
+export async function createStaffPortalAccount(input: {
+  username: string;
+  email: string;
+  name: string;
+  password: string;
+  role: StaffPortalCreateRole;
+  staffDesignatedCompanyId: string;
+}): Promise<{ ok: true } | { ok: false; code: "DUPLICATE" | "ERROR" }> {
+  const id = randomUUID();
+  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+  const username = input.username.trim().toLowerCase();
+  const email = input.email.trim().toLowerCase();
+  const teamId = input.staffDesignatedCompanyId.trim();
+  if (!teamId) return { ok: false, code: "ERROR" };
+  try {
+    await prisma.portalAccount.create({
+      data: {
+        id,
+        username,
+        email,
+        name: input.name.trim(),
+        passwordHash,
+        role: input.role,
+        headPrivileges: input.role === "Admin",
+        companyId: null,
+        customerOrgRole: null,
+        staffDesignatedCompanyId: teamId,
+      },
+    });
+    return { ok: true };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const duplicate = msg.includes("Unique") || msg.includes("duplicate");
+    return { ok: false, code: duplicate ? "DUPLICATE" : "ERROR" };
+  }
+}
+
 /**
  * Ensure OAuth users are linked to a portal row by email.
  * Keeps existing company/org-role assignments intact.
