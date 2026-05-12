@@ -11,6 +11,7 @@ import {
 } from "@/lib/kpi-cycle-state";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { collectAllSubKpiItems, normalizeSubKpis } from "@/lib/kpi-subkpis";
+import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
 
@@ -37,7 +38,15 @@ type AssignableAgent = {
   team?: { name?: string | null } | null;
 };
 
-export function AgentKpiKanbanFlow() {
+export function AgentKpiKanbanFlow({
+  companyFilterTeamId = null,
+  showAdminTaskManagement = false,
+}: {
+  /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
+  companyFilterTeamId?: string | null;
+  /** SuperAdmin / Admin: KPI definition form (moved from Ticket Metrics and Reports). */
+  showAdminTaskManagement?: boolean;
+} = {}) {
   const [rows, setRows] = useState<KpiRecord[]>([]);
   const [agents, setAgents] = useState<AssignableAgent[]>([]);
   const [canAssignWork, setCanAssignWork] = useState(false);
@@ -58,8 +67,13 @@ export function AgentKpiKanbanFlow() {
     }
   }, []);
 
+  const companyQs =
+    companyFilterTeamId && companyFilterTeamId !== "ALL"
+      ? `&company=${encodeURIComponent(companyFilterTeamId)}`
+      : "";
+
   async function load() {
-    const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, { cache: "no-store" });
+    const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}${companyQs}`, { cache: "no-store" });
     if (!res.ok) return;
     const payload = (await res.json()) as { rows?: KpiRecord[]; canAssignWork?: boolean };
     if (Array.isArray(payload.rows)) setRows(payload.rows);
@@ -67,9 +81,13 @@ export function AgentKpiKanbanFlow() {
   }
 
   async function loadContext() {
+    const agentsUrl =
+      companyFilterTeamId && companyFilterTeamId !== "ALL"
+        ? `/api/agents?company=${encodeURIComponent(companyFilterTeamId)}`
+        : "/api/agents";
     const [permRes, agentsRes] = await Promise.all([
       fetch("/api/me/permissions", { cache: "no-store" }),
-      fetch("/api/agents", { cache: "no-store" }),
+      fetch(agentsUrl, { cache: "no-store" }),
     ]);
     if (permRes.ok) {
       const p = (await permRes.json()) as { operatorAgentId?: string | null };
@@ -85,7 +103,7 @@ export function AgentKpiKanbanFlow() {
     void load();
     void loadContext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tz]);
+  }, [tz, companyFilterTeamId]);
 
   function progress(r: KpiRecord) {
     const all = collectAllSubKpiItems(normalizeSubKpis(r.subKpis));
@@ -208,6 +226,9 @@ export function AgentKpiKanbanFlow() {
 
   return (
     <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+      {showAdminTaskManagement ? (
+        <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => void load()} />
+      ) : null}
       {canAssignWork ? (
         <div className="mb-5 rounded-2xl border border-zinc-300 bg-zinc-50/70 p-4 dark:border-zinc-700 dark:bg-zinc-950/30">
           <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">

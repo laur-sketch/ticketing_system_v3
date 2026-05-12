@@ -40,9 +40,33 @@ export async function GET(req: Request) {
   const timeZone = normalizeTimeZone(searchParams.get("tz"));
 
   const perms = await resolveOpsPermissions(session);
-  const where = perms.canAssignWork
+  let where: Prisma.KpiMaintenanceWhereInput = perms.canAssignWork
     ? {}
     : { assignedAgentId: perms.operator?.id ?? "__none__" };
+
+  const companyTeamId = searchParams.get("company")?.trim();
+  if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
+    const portals = await prisma.portalAccount.findMany({
+      where: { staffDesignatedCompanyId: companyTeamId },
+      select: { email: true },
+    });
+    const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
+    const agentsInSbu =
+      emails.length > 0
+        ? await prisma.agent.findMany({
+            where: { email: { in: emails } },
+            select: { id: true },
+          })
+        : [];
+    const agentIds = agentsInSbu.map((a) => a.id);
+    const scopedOr: Prisma.KpiMaintenanceWhereInput[] = [{ assignedAgentId: null }];
+    if (agentIds.length > 0) {
+      scopedOr.push({ assignedAgentId: { in: agentIds } });
+    }
+    where = {
+      AND: [where, { OR: scopedOr }],
+    };
+  }
 
   let rows = await prisma.kpiMaintenance.findMany({
     where,

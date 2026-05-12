@@ -5,9 +5,38 @@
  * Port: set PORT before start, or defaults to 3000 (Next also reads .env / .env.production).
  * Logs: ./logs/pm2-*.log
  */
+const fs = require("fs");
 const path = require("path");
 
 const cwd = __dirname;
+
+/** Load .env then .env.production into process.env (later file wins). Helps PM2 when the shell has no vars. */
+function loadEnvFiles(dir) {
+  const mergeLine = (line) => {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) return;
+    const eq = t.indexOf("=");
+    if (eq <= 0) return;
+    const key = t.slice(0, eq).trim();
+    let val = t.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+  };
+  for (const name of [".env", ".env.production"]) {
+    const p = path.join(dir, name);
+    if (!fs.existsSync(p)) continue;
+    for (const line of fs.readFileSync(p, "utf8").split(/\n")) {
+      mergeLine(line);
+    }
+  }
+}
+
+loadEnvFiles(cwd);
 
 module.exports = {
   apps: [

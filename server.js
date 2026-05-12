@@ -1,4 +1,39 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+const fs = require("fs");
+const path = require("path");
+
+/**
+ * Load `.env` then `.env.production` from this directory (later wins).
+ * Ensures values next to `server.js` apply on every start even when PM2 or the
+ * shell still carries an older `GOOGLE_CLIENT_*` / `NEXTAUTH_*` from a prior run.
+ */
+function applyProjectEnvFiles() {
+  const mergeLine = (line) => {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) return;
+    const eq = t.indexOf("=");
+    if (eq <= 0) return;
+    const key = t.slice(0, eq).trim();
+    let val = t.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+  };
+  for (const name of [".env", ".env.production"]) {
+    const p = path.join(__dirname, name);
+    if (!fs.existsSync(p)) continue;
+    for (const line of fs.readFileSync(p, "utf8").split("\n")) {
+      mergeLine(line);
+    }
+  }
+}
+
+applyProjectEnvFiles();
+
 const http = require("http");
 const next = require("next");
 const { Server } = require("socket.io");

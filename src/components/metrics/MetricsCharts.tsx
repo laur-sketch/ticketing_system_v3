@@ -43,13 +43,17 @@ export function MetricsTrendChart({
   created: number[];
   closed: number[];
 }) {
-  if (labels.length === 0) {
+  const n = Math.min(labels.length, created.length, closed.length);
+  if (n === 0) {
     return (
       <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-14 text-center text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-500">
         Expand the reporting window or add ticket activity to plot trends.
       </div>
     );
   }
+  const safeLabels = labels.slice(0, n);
+  const safeCreated = created.slice(0, n);
+  const safeClosed = closed.slice(0, n);
 
   const padX = 4;
   const padTop = 6;
@@ -57,16 +61,15 @@ export function MetricsTrendChart({
   const w = 100;
   const h = 48;
   const innerH = h - padTop - padBottom;
-  const n = Math.max(labels.length, 1);
-  const peak = Math.max(1, ...created, ...closed);
+  const peak = Math.max(1, ...safeCreated, ...safeClosed);
   const max = Math.max(1, peak);
 
   const xAt = (i: number) =>
     n <= 1 ? w / 2 : padX + ((w - 2 * padX) * i) / Math.max(n - 1, 1);
   const yAt = (v: number) => padTop + innerH - (innerH * v) / max;
 
-  const createdPts = created.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
-  const closedPts = closed.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+  const createdPts = safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+  const closedPts = safeClosed.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
 
   const tickIdx = pickDailyTickIndices(n);
   /** Y-axis reference ticks — divide vertical space into 4 bands with rounded values. */
@@ -143,7 +146,7 @@ export function MetricsTrendChart({
           />
 
           {/** Per-day markers so each daily value is visible. */}
-          {created.map((v, i) => (
+          {safeCreated.map((v, i) => (
             <circle
               key={`c-${i}`}
               cx={xAt(i)}
@@ -156,7 +159,7 @@ export function MetricsTrendChart({
               vectorEffect="non-scaling-stroke"
             />
           ))}
-          {closed.map((v, i) => (
+          {safeClosed.map((v, i) => (
             <circle
               key={`x-${i}`}
               cx={xAt(i)}
@@ -191,14 +194,14 @@ export function MetricsTrendChart({
       <div className="mt-3 grid w-full grid-flow-col auto-cols-fr text-[10px] font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-500">
         {tickIdx.map((i) => (
           <span
-            key={`xlabel-${labels[i] ?? i}`}
+            key={`xlabel-${safeLabels[i] ?? i}`}
             className={cn(
               "text-center first:text-left last:text-right",
               tickIdx.length === 1 ? "text-center" : null,
             )}
-            title={labels[i] ?? ""}
+            title={safeLabels[i] ?? ""}
           >
-            {shortDayLabel(labels[i] ?? "")}
+            {shortDayLabel(safeLabels[i] ?? "")}
           </span>
         ))}
       </div>
@@ -220,12 +223,15 @@ export function MetricsGauge({
   label,
   value,
   sub,
+  target,
 }: {
   label: string;
   value: number | null;
   sub?: string;
+  target?: number | null;
 }) {
   const pct = value == null ? null : Math.max(0, Math.min(1, value));
+  const targetPct = target == null ? null : Math.max(0, Math.min(1, target));
   const r = 36;
   const cx = 50;
   const cy = 52;
@@ -252,12 +258,26 @@ export function MetricsGauge({
           strokeDasharray={`${dash} ${arcLen}`}
           className={cn(pct == null && "opacity-25")}
         />
+        {targetPct != null ? (
+          <line
+            x1={cx + (r - 5) * Math.cos(Math.PI * (1 - targetPct))}
+            y1={cy - (r - 5) * Math.sin(Math.PI * (1 - targetPct))}
+            x2={cx + (r + 5) * Math.cos(Math.PI * (1 - targetPct))}
+            y2={cy - (r + 5) * Math.sin(Math.PI * (1 - targetPct))}
+            stroke="#facc15"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        ) : null}
         <text x={cx} y={cy - 4} textAnchor="middle" className="fill-zinc-100 text-[14px] font-bold">
           {pct == null ? "—" : `${Math.round(pct * 100)}%`}
         </text>
       </svg>
       <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{label}</p>
       {sub ? <p className="mt-0.5 text-[10px] text-zinc-600">{sub}</p> : null}
+      {targetPct != null ? (
+        <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">Target {Math.round(targetPct * 100)}%</p>
+      ) : null}
     </div>
   );
 }
@@ -270,6 +290,7 @@ export function MetricsPieChart({
   itemsLabel,
   emptyDescription,
   pieClassName,
+  showPercentages = false,
 }: {
   title: string;
   subtitle?: string;
@@ -278,6 +299,7 @@ export function MetricsPieChart({
   itemsLabel?: (total: number) => string;
   emptyDescription?: string;
   pieClassName?: string;
+  showPercentages?: boolean;
 }) {
   const total = segments.reduce((s, x) => s + x.value, 0);
   const cx = 50;
@@ -367,7 +389,12 @@ export function MetricsPieChart({
                   <span className="size-3 rounded-sm" style={{ backgroundColor: seg.color }} />
                   {seg.label}
                 </span>
-                <span className="tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{seg.value}</span>
+                <span className="tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">
+                  {seg.value}
+                  {showPercentages && total > 0
+                    ? ` (${Math.round((seg.value / total) * 1000) / 10}%)`
+                    : ""}
+                </span>
               </li>
             ))}
           </ul>
@@ -381,9 +408,11 @@ export function MetricsPieChart({
 export function MetricsBarChart({
   rows,
   title,
+  valueFormatter,
 }: {
   title: string;
   rows: { label: string; value: number }[];
+  valueFormatter?: (value: number, row: { label: string; value: number }) => string;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (
@@ -397,7 +426,9 @@ export function MetricsBarChart({
             <div key={row.label}>
               <div className="mb-1 flex justify-between text-xs">
                 <span className="truncate font-medium text-zinc-800 dark:text-zinc-300">{row.label}</span>
-                <span className="tabular-nums text-zinc-600 dark:text-zinc-400">{row.value}</span>
+                <span className="tabular-nums text-zinc-600 dark:text-zinc-400">
+                  {valueFormatter ? valueFormatter(row.value, row) : row.value}
+                </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                 <div

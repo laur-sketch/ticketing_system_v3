@@ -1,3 +1,4 @@
+import "@/lib/auth-env";
 import type { NextAuthOptions } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import bcrypt from "bcryptjs";

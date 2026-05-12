@@ -60,7 +60,7 @@ function linksForRole(role: string | undefined): NavItem[] {
           { href: "/agent?board=kpi", label: "Task Board", matchBoard: "kpi" },
         ],
       },
-      { kind: "link", href: "/insights", label: "Personnel Metrics" },
+      { kind: "link", href: "/insights", label: "Metrics & Reports" },
       { kind: "link", href: "/admin/account", label: "My Account" },
     ];
   }

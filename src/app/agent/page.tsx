@@ -109,12 +109,29 @@ export default async function AgentHome({
   let companyAggregates: Awaited<ReturnType<typeof getCompanyBoardAggregates>> | null = null;
   let companyActivityLogs: Awaited<ReturnType<typeof loadTicketActivityLogForSession>> = [];
 
+  const showKpiCompanyFilter =
+    boardTab === "kpi" &&
+    (session.user.role === "SuperAdmin" ||
+      session.user.role === "Admin" ||
+      companyCoordinator);
+
   const adminScopedCompanyId =
-    isCompanyBoard && session.user.role !== "SuperAdmin" && (session.user.role === "Admin" || companyCoordinator)
+    (isCompanyBoard || showKpiCompanyFilter) &&
+    session.user.role !== "SuperAdmin" &&
+    (session.user.role === "Admin" || companyCoordinator)
       ? await resolveStaffCompanyTeamId(session.user.email)
       : null;
 
   const rosterTeamsForFilter = isCompanyBoard
+    ? sortByRosterOrder(
+        await prisma.team.findMany({
+          where: rosterTeamNameFilter(),
+          select: { id: true, name: true },
+        }),
+      ).filter((t) => (adminScopedCompanyId ? t.id !== adminScopedCompanyId : true))
+    : [];
+
+  const rosterTeamsForKpiFilter = showKpiCompanyFilter
     ? sortByRosterOrder(
         await prisma.team.findMany({
           where: rosterTeamNameFilter(),
@@ -274,7 +291,7 @@ export default async function AgentHome({
     if (page !== 1) qs.set("page", String(page));
     if (notificationsOpen) qs.set("notifications", "1");
     if (boardTab !== "ticket") qs.set("board", boardTab);
-    if (isCompanyBoard && selectedCompany !== "ALL") {
+    if ((isCompanyBoard || boardTab === "kpi") && selectedCompany !== "ALL") {
       qs.set("company", selectedCompany);
     }
 
@@ -307,7 +324,9 @@ export default async function AgentHome({
   const nextHref = buildHref({ page: String(currentPage + 1) });
   const clearHref = isCompanyBoard
     ? "/agent?board=company"
-    : "/agent";
+    : boardTab === "kpi"
+      ? "/agent?board=kpi"
+      : "/agent";
 
   const applySortClass = (column: string) =>
     `px-4 py-3 ${isSorted(column) ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"} hover:text-zinc-950 dark:hover:text-zinc-200`;
@@ -437,11 +456,30 @@ export default async function AgentHome({
                       <span className="mr-2 text-zinc-600 dark:text-zinc-400">Company:</span>
                       <select
                         name="company"
+                        key={`cc-${selectedCompany}`}
                         defaultValue={selectedCompany}
                         className="max-w-[260px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
                       >
                         <option value="ALL">All companies</option>
                         {rosterTeamsForFilter.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  {showKpiCompanyFilter ? (
+                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Company:</span>
+                      <select
+                        name="company"
+                        key={`kpi-${selectedCompany}`}
+                        defaultValue={selectedCompany}
+                        className="max-w-[260px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                      >
+                        <option value="ALL">All companies</option>
+                        {rosterTeamsForKpiFilter.map((t) => (
                           <option key={t.id} value={t.id}>
                             {t.name}
                           </option>
@@ -570,6 +608,11 @@ export default async function AgentHome({
                   All companies = grouped by company requested to. Selecting a company hides that lane and shows
                   matching tickets under the requestor designated-company lanes.
                 </p>
+              ) : showKpiCompanyFilter ? (
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                  Filter by company (personnel assigned company in Personnel). Choosing one company narrows tasks and
+                  shows only personnel designated to that company.
+                </p>
               ) : null}
             </form>
 
@@ -602,7 +645,14 @@ export default async function AgentHome({
                 )}
               </>
             ) : isBoard && boardTab === "kpi" ? (
-              <AgentKpiKanbanFlow />
+              <AgentKpiKanbanFlow
+                companyFilterTeamId={
+                  showKpiCompanyFilter && selectedCompany !== "ALL" ? selectedCompany : null
+                }
+                showAdminTaskManagement={
+                  session.user.role === "SuperAdmin" || session.user.role === "Admin"
+                }
+              />
             ) : (
               <>
                 <div className="w-full overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
