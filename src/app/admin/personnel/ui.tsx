@@ -8,7 +8,8 @@ import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
 import { passwordHashLabel } from "@/lib/password-hash-display";
 import type { PersonnelRosterRow } from "@/lib/personnel-accounts-data";
-import { PORTAL_ROLES, normalizePortalRole } from "@/lib/staff-role";
+import { StaffAssignmentColorSelect } from "@/components/admin/StaffAssignmentColorSelect";
+import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
 
 type Team = { id: string; name: string };
 type PortalAccountRow = {
@@ -22,6 +23,7 @@ type PortalAccountRow = {
   accountStatus?: string;
   staffDesignatedCompanyId?: string | null;
   staffDesignatedCompany?: { id: string; name: string } | null;
+  staffAssignmentColor?: string | null;
   createdAt: string;
   agentId: string | null;
   onPersonnelRoster: boolean;
@@ -271,10 +273,41 @@ export function PersonnelClient({
     }
   }
 
+  async function updateStaffAssignmentColor(id: string, staffAssignmentColor: string) {
+    setError(null);
+    setRoleBusyId(id);
+    try {
+      const res = await fetch("/api/admin/roles", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          staffAssignmentColor: staffAssignmentColor.trim() || null,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not update assignment color.");
+        return;
+      }
+      await load();
+      if (session?.user?.role === "SuperAdmin") {
+        await loadRoles();
+      }
+    } finally {
+      setRoleBusyId(null);
+    }
+  }
+
   const teamSelectClass = `${cn(
     "w-full min-w-0 rounded-md border border-zinc-300 bg-zinc-50 px-1.5 py-1 text-[11px] text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
     "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
   )} max-w-full sm:max-w-[140px]`;
+
+  const assignmentSelectClass = `${cn(
+    "w-full min-w-0 rounded-md border border-zinc-300 bg-zinc-50 px-1.5 py-1 text-[11px] text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+    "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
+  )} max-w-full sm:max-w-[128px]`;
 
   function showStaffDesignatedCompany(role: string) {
     const n = normalizePortalRole(role) ?? role;
@@ -299,8 +332,9 @@ export function PersonnelClient({
           <p className="mt-2 max-w-3xl text-xs leading-snug text-zinc-600 dark:text-zinc-400">
             {isAdminCompanyView ? (
               <>
-                View staff on your company queue{scopedCompanyName ? ` (${scopedCompanyName})` : ""}. Portal roles and
-                roster edits are managed by a SuperAdmin. Your login:{" "}
+                View staff on your company queue{scopedCompanyName ? ` (${scopedCompanyName})` : ""}. You can set
+                assignment colors for Admin and Personnel here; other roster changes are done by a SuperAdmin. Your
+                login:{" "}
                 <Link href="/admin/account" className="text-orange-400 underline-offset-2 hover:underline">
                   My account
                 </Link>
@@ -321,8 +355,8 @@ export function PersonnelClient({
             <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
               {isAdminCompanyView ? (
                 <>
-                  One row per person on your company&apos;s ticket board queue. Contact a SuperAdmin to add staff or
-                  change roles.
+                  One row per Admin or Personnel on your company queue. Assignment colors are editable below; contact
+                  a SuperAdmin to add staff or change roles.
                 </>
               ) : (
                 <>
@@ -535,21 +569,22 @@ export function PersonnelClient({
                   </p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[520px] table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
+                  <table className="w-full min-w-[560px] table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
                     <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
                       <tr>
-                        <th className="w-[16%] px-3 py-2">Name</th>
-                        <th className="w-[10%] px-3 py-2">User</th>
-                        <th className="w-[26%] px-3 py-2">Email</th>
-                        <th className="w-[12%] px-3 py-2">Role</th>
-                        <th className="w-[12%] px-3 py-2">Status</th>
-                        <th className="w-[24%] px-3 py-2">Queue</th>
+                        <th className="w-[15%] px-3 py-2">Name</th>
+                        <th className="w-[9%] px-3 py-2">User</th>
+                        <th className="w-[24%] px-3 py-2">Email</th>
+                        <th className="w-[11%] px-3 py-2">Role</th>
+                        <th className="w-[11%] px-3 py-2">Status</th>
+                        <th className="w-[19%] px-3 py-2">Queue</th>
+                        <th className="w-[11%] px-3 py-2">Assign</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
                       {personnel.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
+                          <td colSpan={7} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
                             No personnel are on this company queue yet.
                           </td>
                         </tr>
@@ -580,6 +615,14 @@ export function PersonnelClient({
                             </td>
                             <td className="truncate px-3 py-2 text-zinc-600" title={row.teamName}>
                               {row.teamName}
+                            </td>
+                            <td className="px-2 py-2">
+                              <StaffAssignmentColorSelect
+                                disabled={roleBusyId === row.portalAccountId}
+                                value={row.staffAssignmentColor ?? ""}
+                                onChange={(next) => void updateStaffAssignmentColor(row.portalAccountId, next)}
+                                selectClassName={assignmentSelectClass}
+                              />
                             </td>
                           </tr>
                         ))
@@ -689,29 +732,81 @@ export function PersonnelClient({
                             </select>
                           </label>
                           {showStaffDesignatedCompany(a.role) ? (
+                            isStaffPortalRole(a.role) ? (
+                              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <label className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                                    Company
+                                  </span>
+                                  <select
+                                    value={a.staffDesignatedCompanyId ?? ""}
+                                    disabled={roleBusyId === a.id || rosterCompanies.length === 0}
+                                    onChange={(e) =>
+                                      void updateStaffDesignated(
+                                        a.id,
+                                        e.target.value === ALL_SBUS_VALUE ? "" : e.target.value,
+                                      )
+                                    }
+                                    className={teamSelectClass}
+                                  >
+                                    <option value="">-</option>
+                                    <option value={ALL_SBUS_VALUE}>ALL SBU's</option>
+                                    {rosterCompanies.map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="flex min-w-0 flex-col gap-0.5">
+                                  <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                                    Assignment color
+                                  </span>
+                                  <StaffAssignmentColorSelect
+                                    value={a.staffAssignmentColor ?? ""}
+                                    disabled={roleBusyId === a.id}
+                                    onChange={(next) => void updateStaffAssignmentColor(a.id, next)}
+                                    selectClassName={assignmentSelectClass}
+                                  />
+                                </label>
+                              </div>
+                            ) : (
+                              <label className="mt-2 flex flex-col gap-0.5">
+                                <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                                  Company
+                                </span>
+                                <select
+                                  value={a.staffDesignatedCompanyId ?? ""}
+                                  disabled={roleBusyId === a.id || rosterCompanies.length === 0}
+                                  onChange={(e) =>
+                                    void updateStaffDesignated(
+                                      a.id,
+                                      e.target.value === ALL_SBUS_VALUE ? "" : e.target.value,
+                                    )
+                                  }
+                                  className={teamSelectClass}
+                                >
+                                  <option value="">-</option>
+                                  <option value={ALL_SBUS_VALUE}>ALL SBU's</option>
+                                  {rosterCompanies.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            )
+                          ) : isStaffPortalRole(a.role) ? (
                             <label className="mt-2 flex flex-col gap-0.5">
                               <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                Company
+                                Assignment color
                               </span>
-                              <select
-                                value={a.staffDesignatedCompanyId ?? ""}
-                                disabled={roleBusyId === a.id || rosterCompanies.length === 0}
-                                onChange={(e) =>
-                                  void updateStaffDesignated(
-                                    a.id,
-                                    e.target.value === ALL_SBUS_VALUE ? "" : e.target.value,
-                                  )
-                                }
-                                className={teamSelectClass}
-                              >
-                                <option value="">-</option>
-                                <option value={ALL_SBUS_VALUE}>ALL SBU's</option>
-                                {rosterCompanies.map((c) => (
-                                  <option key={c.id} value={c.id}>
-                                    {c.name}
-                                  </option>
-                                ))}
-                              </select>
+                              <StaffAssignmentColorSelect
+                                value={a.staffAssignmentColor ?? ""}
+                                disabled={roleBusyId === a.id}
+                                onChange={(next) => void updateStaffAssignmentColor(a.id, next)}
+                                selectClassName={assignmentSelectClass}
+                              />
                             </label>
                           ) : null}
                           {a.agentId ? (
@@ -733,20 +828,21 @@ export function PersonnelClient({
                     <table className="w-full table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
                       <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
                         <tr>
-                          <th className="w-[12%] px-2 py-2">Name</th>
-                          <th className="w-[9%] px-2 py-2">User</th>
-                          <th className="w-[10%] px-2 py-2">Hash</th>
-                          <th className="w-[22%] px-2 py-2">Email</th>
-                          <th className="w-[9%] px-2 py-2">Status</th>
-                          <th className="w-[11%] px-2 py-2">Roles</th>
-                          <th className="w-[13%] px-2 py-2">Co.</th>
+                          <th className="w-[11%] px-2 py-2">Name</th>
+                          <th className="w-[8%] px-2 py-2">User</th>
+                          <th className="w-[9%] px-2 py-2">Hash</th>
+                          <th className="w-[18%] px-2 py-2">Email</th>
+                          <th className="w-[8%] px-2 py-2">Status</th>
+                          <th className="w-[10%] px-2 py-2">Roles</th>
+                          <th className="w-[12%] px-2 py-2">Co.</th>
+                          <th className="w-[10%] px-2 py-2">Color</th>
                           <th className="w-[14%] px-2 py-2 text-right">Act.</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
                         {portalAccounts.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
+                            <td colSpan={9} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
                               No portal accounts loaded.
                             </td>
                           </tr>
@@ -811,6 +907,18 @@ export function PersonnelClient({
                                       </option>
                                     ))}
                                   </select>
+                                ) : (
+                                  <span className="text-[10px] text-zinc-500">—</span>
+                                )}
+                              </td>
+                              <td className="px-1 py-1">
+                                {isStaffPortalRole(a.role) ? (
+                                  <StaffAssignmentColorSelect
+                                    disabled={roleBusyId === a.id}
+                                    value={a.staffAssignmentColor ?? ""}
+                                    onChange={(next) => void updateStaffAssignmentColor(a.id, next)}
+                                    selectClassName={assignmentSelectClass}
+                                  />
                                 ) : (
                                   <span className="text-[10px] text-zinc-500">—</span>
                                 )}

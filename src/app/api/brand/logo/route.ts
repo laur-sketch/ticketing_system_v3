@@ -1,12 +1,25 @@
 import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import { extname, join } from "node:path";
 import { NextResponse } from "next/server";
 import { BRAND_TITLE } from "@/lib/brand";
 
 export const runtime = "nodejs";
 
-const DEFAULT_LOCAL_BRAND_LOGO =
-  "C:\\Users\\Administrator\\.cursor\\projects\\c-xampp-htdocs-ticket-system-v3\\assets\\c__Users_Administrator_AppData_Roaming_Cursor_User_workspaceStorage_6b352eb58bd06ca356f95803f2d40c4f_images_450854211_2120321401684452_5423327526871394472_n-3c16fb39-2771-4be0-ad46-42e414319b36.png";
+/** Strip wrapping quotes/spaces so Windows paths like `"C:\logo.png"` work. */
+function normalizeLogoPath(raw: string | undefined): string {
+  let p = (raw ?? "").trim();
+  while (
+    p.length >= 2 &&
+    ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'")))
+  ) {
+    p = p.slice(1, -1).trim();
+  }
+  return p;
+}
+
+function bundledDefaultLogoPath() {
+  return join(process.cwd(), "public", "brand", "agc-logo.svg");
+}
 
 function escapeXml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -48,22 +61,28 @@ function mimeFor(filePath: string) {
 }
 
 export async function GET() {
-  const logoPath = process.env.BRAND_LOGO_PATH?.trim() || DEFAULT_LOCAL_BRAND_LOGO;
-  try {
-    const buf = await readFile(logoPath);
-    return new NextResponse(new Uint8Array(buf), {
-      headers: {
-        "content-type": mimeFor(logoPath),
-        "cache-control": "public, max-age=300",
-      },
-    });
-  } catch {
-    return new NextResponse(makeFallbackSvg(BRAND_TITLE), {
-      status: 200,
-      headers: {
-        "content-type": "image/svg+xml; charset=utf-8",
-        "cache-control": "public, max-age=60",
-      },
-    });
+  const fromEnv = normalizeLogoPath(process.env.BRAND_LOGO_PATH);
+  const candidates = fromEnv ? [fromEnv] : [bundledDefaultLogoPath()];
+
+  for (const logoPath of candidates) {
+    try {
+      const buf = await readFile(logoPath);
+      return new NextResponse(new Uint8Array(buf), {
+        headers: {
+          "content-type": mimeFor(logoPath),
+          "cache-control": "public, max-age=300",
+        },
+      });
+    } catch {
+      // try next candidate
+    }
   }
+
+  return new NextResponse(makeFallbackSvg(BRAND_TITLE), {
+    status: 200,
+    headers: {
+      "content-type": "image/svg+xml; charset=utf-8",
+      "cache-control": "public, max-age=60",
+    },
+  });
 }

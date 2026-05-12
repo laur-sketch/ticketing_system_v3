@@ -74,6 +74,8 @@ model PortalAccount {
   /// Staff (Head / Personnel): optional designated company queue from roster (AGC, ALI, …).
   staffDesignatedCompanyId String?
   staffDesignatedCompany   Team?    @relation("PortalStaffDesignatedCompany", fields: [staffDesignatedCompanyId], references: [id], onDelete: SetNull)
+  /// SuperAdmin-set rainbow tag for roster / assignment visibility (RED … VIOLET).
+  staffAssignmentColor     String?
   /// Customer org role at signup: Head | Personnel (distinct from staff Personnel).
   customerOrgRole String?
   accountStatus String  @default("ACTIVE")

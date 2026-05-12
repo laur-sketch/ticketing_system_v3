@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
 import {
@@ -27,6 +29,8 @@ type PersonnelColumn = {
   name: string;
   role: string;
   teamLabel: string;
+  /** Registry color for this lane's assignee (Admin/Personnel). */
+  assigneeColorKey?: string | null;
   cards: TicketCard[];
 };
 
@@ -113,7 +117,9 @@ export function ManualAssignmentBoard({
           {companyFilterLabel ? (
             <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-300">
               {canChooseCompanyFilter
-                ? `Showing personnel & unassigned queue for: ${companyFilterLabel}`
+                ? companyFilterTeamId
+                  ? `Personnel lanes: ${companyFilterLabel}. Unassigned pool lists every active unassigned ticket (all queues).`
+                  : `Showing personnel & unassigned queue for: ${companyFilterLabel}`
                 : `Locked to your company/SBU: ${companyFilterLabel}`}
             </p>
           ) : showFullRosterFilter && canChooseCompanyFilter ? (
@@ -234,13 +240,20 @@ export function ManualAssignmentBoard({
                 className="w-[88%] shrink-0 snap-start rounded-2xl border border-zinc-200 bg-white p-3 sm:w-auto dark:border-zinc-800 dark:bg-[#0b1220]"
               >
                 <div className="mb-2 flex items-start justify-between gap-2 px-1">
-                  <div>
-                    <p className="truncate text-lg font-bold text-zinc-900 dark:text-zinc-100">{col.name}</p>
-                    <p className="text-xs text-zinc-600 dark:text-zinc-500">
-                      {col.role} · {col.teamLabel}
-                    </p>
+                  <div className="flex min-w-0 items-start gap-2">
+                    <AssigneeInitialsBadge
+                      agentName={col.name}
+                      assigneeColorKey={col.assigneeColorKey}
+                      className="mt-0.5 size-8 text-xs"
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate text-lg font-bold text-zinc-900 dark:text-zinc-100">{col.name}</p>
+                      <p className="text-xs text-zinc-600 dark:text-zinc-500">
+                        {col.role} · {col.teamLabel}
+                      </p>
+                    </div>
                   </div>
-                  <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{col.cards.length}</span>
+                  <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{col.cards.length}</span>
                 </div>
                 <div className="max-h-[56vh] space-y-2 overflow-y-auto pr-1">
                   {col.cards.length === 0 ? (
@@ -249,7 +262,12 @@ export function ManualAssignmentBoard({
                     </div>
                   ) : (
                     col.cards.map((t) => (
-                      <div key={t.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-[#101a2f]">
+                      <AssigneeColorHighlight
+                        key={t.id}
+                        assigneeColorKey={col.assigneeColorKey}
+                        className="rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-[#101a2f]"
+                      >
+                      <div className="p-3">
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">{t.ticketNumber}</p>
                           <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", priorityPillClass(t.priority))}>
@@ -266,6 +284,7 @@ export function ManualAssignmentBoard({
                       ) : null}
                         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">{formatRelativeAgo(t.updatedAt)}</p>
                       </div>
+                      </AssigneeColorHighlight>
                     ))
                   )}
                 </div>

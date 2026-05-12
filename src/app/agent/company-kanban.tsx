@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import type { CompanyBoardColumn, CompanyBucketId } from "@/lib/company-board";
 import { cleanIssuePreview, formatRelativeAgo, priorityPillClass } from "@/lib/ticket-board-formatters";
 import { cn } from "@/lib/cn";
@@ -103,10 +105,14 @@ export function CompanyKanban({
                         list.map((t) => {
                           const preview = cleanIssuePreview(t.description || t.title);
                           return (
-                            <AgentTicketDeepLink
+                            <AssigneeColorHighlight
                               key={`${meta.id}-${t.id}`}
+                              assigneeColorKey={t.assigneeColorKey}
+                              className="block rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm transition hover:border-orange-400/60 dark:border-zinc-700 dark:bg-[#101a2f]"
+                            >
+                            <AgentTicketDeepLink
                               ticketId={t.id}
-                              className="block rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 shadow-sm transition hover:border-orange-400/60 dark:border-zinc-700 dark:bg-[#101a2f]"
+                              className="block px-3 py-2.5"
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">
@@ -135,23 +141,32 @@ export function CompanyKanban({
                                 {preview || t.title}
                               </p>
                               {t.assignedAgentName ? (
-                                <p className="mt-1 text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
-                                  Assigned: {t.assignedAgentName}
-                                </p>
+                                <div className="mt-1 flex items-center gap-1.5">
+                                  <AssigneeInitialsBadge
+                                    agentName={t.assignedAgentName}
+                                    assigneeColorKey={t.assigneeColorKey}
+                                    className="size-5 text-[9px]"
+                                  />
+                                  <p className="min-w-0 text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
+                                    Assigned: {t.assignedAgentName}
+                                  </p>
+                                </div>
                               ) : null}
                               <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
                                 {formatRelativeAgo(t.updatedAt)}
                               </p>
                             </AgentTicketDeepLink>
+                            </AssigneeColorHighlight>
                           );
                         })
                       ) : (
                         list.map((t) => (
-                          <AgentTicketDeepLink
+                          <AssigneeColorHighlight
                             key={`${meta.id}-${t.id}`}
-                            ticketId={t.id}
-                            className="block rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 shadow-sm transition hover:border-orange-400/60 dark:border-zinc-700 dark:bg-[#101a2f]"
+                            assigneeColorKey={t.assigneeColorKey}
+                            className="block rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm transition hover:border-orange-400/60 dark:border-zinc-700 dark:bg-[#101a2f]"
                           >
+                          <AgentTicketDeepLink ticketId={t.id} className="block px-3 py-2.5">
                             <div className="flex items-center justify-between gap-2">
                               <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">
                                 {t.ticketNumber}
@@ -182,6 +197,7 @@ export function CompanyKanban({
                               {formatRelativeAgo(t.updatedAt)}
                             </p>
                           </AgentTicketDeepLink>
+                          </AssigneeColorHighlight>
                         ))
                       )}
                     </div>

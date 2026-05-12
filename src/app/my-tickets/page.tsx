@@ -1,11 +1,15 @@
 import type { Prisma } from "@prisma/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { requireSession } from "@/lib/access";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { customerTicketWhereBySessionEmail } from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { BRAND_TITLE, BRAND_TAGLINE_CUSTOMER } from "@/lib/brand";
+import { personnelAssigneeHighlightStyle, personnelAssignmentHex } from "@/lib/personnel-assignment-colors";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +58,13 @@ export default async function MyTicketsPage({
     take: 100,
   });
 
+  const assigneeColorByEmail =
+    tickets.length > 0
+      ? await loadStaffAssignmentColorsForAgents(
+          tickets.map((t) => ({ email: t.assignedAgent?.email, name: t.assignedAgent?.name })),
+        )
+      : new Map<string, string | null>();
+
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100">
       <div className="mx-auto max-w-[1280px] space-y-5 px-4 py-6 sm:py-8 md:py-10">
@@ -87,11 +98,17 @@ export default async function MyTicketsPage({
               {role === "Customer" ? "No submitted tickets yet." : "No tickets assigned to you yet."}
             </article>
           ) : (
-            tickets.map((t) => (
-              <article
+            tickets.map((t) => {
+              const assigneeKey = t.assignedAgent?.email
+                ? (assigneeColorByEmail.get(t.assignedAgent.email.trim().toLowerCase()) ?? null)
+                : null;
+              return (
+              <AssigneeColorHighlight
                 key={t.id}
+                assigneeColorKey={assigneeKey}
                 className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_8px_24px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
               >
+                <div>
                 <div className="flex items-start justify-between gap-3">
                   <Link
                     href={`/tickets/${t.id}`}
@@ -104,12 +121,23 @@ export default async function MyTicketsPage({
                   </span>
                 </div>
                 <p className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">{t.title}</p>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-zinc-700 dark:text-zinc-300">
-                  <p>Priority: {t.priority}</p>
-                  <p>Assigned: {t.assignedAgent?.name ?? "Queue"}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+                  <span>Priority: {t.priority}</span>
+                  <span className="flex items-center gap-1.5">
+                    {t.assignedAgent?.name ? (
+                      <>
+                        <AssigneeInitialsBadge agentName={t.assignedAgent.name} assigneeColorKey={assigneeKey} />
+                        <span>Assigned: {t.assignedAgent.name}</span>
+                      </>
+                    ) : (
+                      <span>Assigned: Queue</span>
+                    )}
+                  </span>
                 </div>
-              </article>
-            ))
+                </div>
+              </AssigneeColorHighlight>
+              );
+            })
           )}
         </div>
 
@@ -132,8 +160,17 @@ export default async function MyTicketsPage({
                   </td>
                 </tr>
               ) : (
-                tickets.map((t) => (
-                  <tr key={t.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80">
+                tickets.map((t) => {
+                  const assigneeKey = t.assignedAgent?.email
+                    ? (assigneeColorByEmail.get(t.assignedAgent.email.trim().toLowerCase()) ?? null)
+                    : null;
+                  const accentHex = personnelAssignmentHex(assigneeKey);
+                  return (
+                  <tr
+                    key={t.id}
+                    className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80"
+                    style={personnelAssigneeHighlightStyle(accentHex)}
+                  >
                     <td className="px-4 py-3 font-mono text-xs text-orange-700 dark:text-orange-300">
                       <Link href={`/tickets/${t.id}`} className="hover:underline">
                         {t.ticketNumber}
@@ -145,10 +182,20 @@ export default async function MyTicketsPage({
                     </td>
                     <td className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">{t.priority}</td>
                     <td className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
-                      {t.assignedAgent?.name ?? "Queue"}
+                      <span className="flex items-center gap-2">
+                        {t.assignedAgent?.name ? (
+                          <>
+                            <AssigneeInitialsBadge agentName={t.assignedAgent.name} assigneeColorKey={assigneeKey} />
+                            <span>{t.assignedAgent.name}</span>
+                          </>
+                        ) : (
+                          "Queue"
+                        )}
+                      </span>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

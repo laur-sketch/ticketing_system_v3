@@ -1,11 +1,29 @@
 import type { Prisma, TicketStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { resolveTicketContactFields } from "@/lib/ticket-intake-contact";
 
-/** Customer intake lock: block new submissions while they already have active work in progress. */
-export const CUSTOMER_INTAKE_LOCK_STATUSES: TicketStatus[] = ["IN_PROGRESS"];
+/**
+ * Requestor cannot open another ticket while any ticket tied to them (contact or requestor email)
+ * is in one of these states. They may submit again once the ticket is **CLOSED** (or never opened
+ * a conflicting one). `OPEN` is intentionally allowed so a brand-new ticket does not block itself.
+ */
+export const CUSTOMER_INTAKE_LOCK_STATUSES: TicketStatus[] = [
+  "IN_PROGRESS",
+  "PENDING_INFO",
+  "ESCALATED",
+  "FOR_CONFIRMATION",
+  "RESOLVED",
+];
 
 export function isAwaitingCustomerConfirmation(status: TicketStatus) {
   return status === "FOR_CONFIRMATION" || status === "RESOLVED";
+}
+
+/** Deep link for a blocking ticket (verification flow vs. general ticket view). */
+export function customerPendingTicketHref(row: { id: string; status: TicketStatus }) {
+  return isAwaitingCustomerConfirmation(row.status)
+    ? `/tickets/${row.id}/verification`
+    : `/tickets/${row.id}`;
 }
 
 /** Tickets visible to a customer (portal contact or notification inbox). */
@@ -14,34 +32,112 @@ export function customerTicketWhereBySessionEmail(email: string): Prisma.TicketW
   if (!e) return { id: "__none__" };
   return {
     OR: [
-      { contactEmail: { equals: e, mode: "insensitive" } },
-      { requestorEmail: { equals: e, mode: "insensitive" } },
+      { contactEmail: { equals: e, mode: "insensitive" as const } },
+      { requestorEmail: { equals: e, mode: "insensitive" as const } },
     ],
   };
 }
 
-const pendingWhere = (email: string): Prisma.TicketWhereInput => ({
+/** OR-clause: ticket belongs to any of these emails as contact or requestor. */
+export function requestorIdentityWhereForEmails(emails: Iterable<string>): Prisma.TicketWhereInput {
+  const normalized = [
+    ...new Set(
+      [...emails]
+        .map((e) => (e ?? "").trim().toLowerCase())
+        .filter((e) => e.length > 0),
+    ),
+  ];
+  if (normalized.length === 0) return { id: "__none__" };
+  return {
+    OR: normalized.flatMap((e) => [
+      { contactEmail: { equals: e, mode: "insensitive" as const } },
+      { requestorEmail: { equals: e, mode: "insensitive" as const } },
+    ]),
+  };
+}
+
+const intakeBlockingWhere = (emails: Iterable<string>): Prisma.TicketWhereInput => ({
   status: { in: [...CUSTOMER_INTAKE_LOCK_STATUSES] },
-  ...customerTicketWhereBySessionEmail(email),
+  ...requestorIdentityWhereForEmails(emails),
 });
 
-/** Customer may open one request at a time: block while another ticket is already IN_PROGRESS. */
-export async function customerHasPendingResolvedTicket(accountEmail: string) {
-  const email = accountEmail.trim().toLowerCase();
-  if (!email) return null;
+/**
+ * Any ticket for this identity set that blocks a new submission (in progress or awaiting
+ * customer confirmation / closure).
+ */
+export async function requestorHasIntakeBlockingTicket(identityEmails: Iterable<string>) {
+  const normalized = [
+    ...new Set(
+      [...identityEmails]
+        .map((e) => (e ?? "").trim().toLowerCase())
+        .filter((e) => e.length > 0),
+    ),
+  ];
+  if (normalized.length === 0) return null;
   return prisma.ticket.findFirst({
-    where: pendingWhere(email),
+    where: intakeBlockingWhere(normalized),
     orderBy: { updatedAt: "desc" },
-    select: { id: true, ticketNumber: true, updatedAt: true },
+    select: { id: true, ticketNumber: true, updatedAt: true, status: true },
   });
 }
 
-export async function listCustomerPendingResolvedTickets(accountEmail: string) {
-  const email = accountEmail.trim().toLowerCase();
-  if (!email) return [];
+/**
+ * Same email set POST /api/tickets uses for intake lock (portal contact + notification inbox).
+ * Must stay in sync with {@link resolveTicketContactFields} for customers.
+ */
+export async function resolveCustomerIntakeIdentityEmails(
+  accountEmail: string,
+  authProvider: string | null | undefined,
+): Promise<string[]> {
+  const e = accountEmail.trim().toLowerCase();
+  if (!e) return [];
+  try {
+    const r = await resolveTicketContactFields({
+      sessionEmail: e,
+      authProvider,
+      bodyRequestorEmail: undefined,
+    });
+    return [
+      ...new Set(
+        [r.contactEmail, r.requestorEmail]
+          .map((x) => (x ?? "").trim().toLowerCase())
+          .filter((x) => x.length > 0),
+      ),
+    ];
+  } catch {
+    return [e];
+  }
+}
+
+export async function listIntakeBlockingTicketsForEmails(emails: Iterable<string>) {
+  const normalized = [
+    ...new Set(
+      [...emails]
+        .map((x) => (x ?? "").trim().toLowerCase())
+        .filter((x) => x.length > 0),
+    ),
+  ];
+  if (normalized.length === 0) return [];
   return prisma.ticket.findMany({
-    where: pendingWhere(email),
+    where: intakeBlockingWhere(normalized),
     orderBy: { updatedAt: "desc" },
-    select: { id: true, ticketNumber: true, updatedAt: true },
+    select: { id: true, ticketNumber: true, updatedAt: true, status: true },
   });
+}
+
+/** @see {@link requestorHasIntakeBlockingTicket} — portal session identity (Customer or Personnel as requestor). */
+export async function customerHasPendingResolvedTicket(
+  accountEmail: string,
+  authProvider?: string | null,
+) {
+  const emails = await resolveCustomerIntakeIdentityEmails(accountEmail, authProvider ?? null);
+  return requestorHasIntakeBlockingTicket(emails);
+}
+
+export async function listCustomerPendingResolvedTickets(
+  accountEmail: string,
+  authProvider?: string | null,
+) {
+  const emails = await resolveCustomerIntakeIdentityEmails(accountEmail, authProvider ?? null);
+  return listIntakeBlockingTicketsForEmails(emails);
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Code, CreditCard, Rocket, Shield } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { TicketsKanbanBoard, type KanbanTicket } from "./TicketsKanbanBoard";
 import { BRAND_TITLE } from "@/lib/brand";
 
@@ -47,7 +48,7 @@ export async function StaffHomeDashboard({
       where: ticketScope,
       orderBy: { updatedAt: "desc" },
       take: 50,
-      include: { assignedAgent: { select: { name: true } } },
+      include: { assignedAgent: { select: { name: true, email: true } } },
     }),
     prisma.ticketActivity.findMany({
       where: { ticket: ticketScope },
@@ -63,15 +64,28 @@ export async function StaffHomeDashboard({
     }),
   ]);
 
-  const kanbanData: KanbanTicket[] = tickets.map((t) => ({
-    id: t.id,
-    ticketNumber: t.ticketNumber,
-    title: t.title,
-    status: t.status,
-    priority: t.priority,
-    updatedAt: t.updatedAt.toISOString(),
-    authorLabel: t.assignedAgent?.name ? `by ${t.assignedAgent.name}` : "Support team",
-  }));
+  const assigneeColorByEmail =
+    tickets.length > 0
+      ? await loadStaffAssignmentColorsForAgents(
+          tickets.map((t) => ({ email: t.assignedAgent?.email, name: t.assignedAgent?.name })),
+        )
+      : new Map<string, string | null>();
+
+  const kanbanData: KanbanTicket[] = tickets.map((t) => {
+    const assigneeEmail = t.assignedAgent?.email?.trim().toLowerCase();
+    const assigneeColorKey = assigneeEmail ? (assigneeColorByEmail.get(assigneeEmail) ?? null) : null;
+    return {
+      id: t.id,
+      ticketNumber: t.ticketNumber,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      updatedAt: t.updatedAt.toISOString(),
+      authorLabel: t.assignedAgent?.name ? `by ${t.assignedAgent.name}` : "Support team",
+      assigneeName: t.assignedAgent?.name ?? null,
+      assigneeColorKey,
+    };
+  });
 
   return (
     <main className="px-3 py-5 text-zinc-900 sm:px-6 sm:py-6 md:py-8 dark:text-zinc-100">

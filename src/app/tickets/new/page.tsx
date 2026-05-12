@@ -32,6 +32,8 @@ export default function NewTicketPage() {
     authProvider: string | null;
     pendingConfirmation: { verificationHref: string; ticketNumber: string } | null;
   }>({ canCreateTickets: true, authProvider: null, pendingConfirmation: null });
+  /** False until `/api/me/intake-lock` returns (Customer + Personnel as requestor). */
+  const [intakeGateReady, setIntakeGateReady] = useState(true);
   const [companyTeams, setCompanyTeams] = useState<{ id: string; name: string }[]>([]);
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [staffDesignatedCompany, setStaffDesignatedCompany] = useState<{ id: string; name: string } | null>(null);
@@ -56,25 +58,33 @@ export default function NewTicketPage() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadIntake() {
-      if (sessionStatus !== "authenticated" || session?.user?.role !== "Customer") return;
-      const res = await fetch("/api/customer/notifications", { cache: "no-store" });
-      if (!res.ok || cancelled) return;
-      const j = (await res.json().catch(() => ({}))) as {
-        intake?: {
+    async function loadIntakeLock() {
+      if (sessionStatus !== "authenticated") return;
+      const role = session?.user?.role;
+      if (role !== "Customer" && role !== "Personnel") {
+        setIntakeGateReady(true);
+        return;
+      }
+      setIntakeGateReady(false);
+      try {
+        const res = await fetch("/api/me/intake-lock", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const j = (await res.json().catch(() => ({}))) as {
           canCreateTickets?: boolean;
           authProvider?: string | null;
           pendingConfirmation?: { verificationHref: string; ticketNumber: string } | null;
         };
-      };
-      if (!j.intake || cancelled) return;
-      setIntake({
-        canCreateTickets: Boolean(j.intake.canCreateTickets),
-        authProvider: typeof j.intake.authProvider === "string" ? j.intake.authProvider : null,
-        pendingConfirmation: j.intake.pendingConfirmation ?? null,
-      });
+        if (cancelled) return;
+        setIntake({
+          canCreateTickets: Boolean(j.canCreateTickets),
+          authProvider: typeof j.authProvider === "string" ? j.authProvider : null,
+          pendingConfirmation: j.pendingConfirmation ?? null,
+        });
+      } finally {
+        if (!cancelled) setIntakeGateReady(true);
+      }
     }
-    void loadIntake();
+    void loadIntakeLock();
     return () => {
       cancelled = true;
     };
@@ -126,19 +136,22 @@ export default function NewTicketPage() {
     };
   }, [sessionStatus, session?.user?.role, session?.user?.email]);
 
-  const customerBlocked = session?.user?.role === "Customer" && !intake.canCreateTickets;
+  const isCustomer = session?.user?.role === "Customer";
+  const isPersonnelIntake = session?.user?.role === "Personnel";
+  const isRequestorIntakeLockRole = isCustomer || isPersonnelIntake;
+  const intakeBlocked = isRequestorIntakeLockRole && !intake.canCreateTickets;
+  const intakeSubmitLocked = isRequestorIntakeLockRole && (!intakeGateReady || intakeBlocked);
+  const myTicketsHref = isPersonnelIntake ? "/my-requests" : "/my-tickets";
   const portalCustomer = session?.user as {
     companyName?: string | null;
     customerOrgRole?: string | null;
     companyId?: string | null;
   };
-  const isCustomer = session?.user?.role === "Customer";
   const googleOAuthCustomer =
     Boolean(isCustomer) &&
     typeof session?.user?.authProvider === "string" &&
     session.user.authProvider.trim().toLowerCase() === "google";
 
-  const isPersonnelIntake = session?.user?.role === "Personnel";
   const isAdminStaffIntake =
     session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
   const isStaffIntake = isAdminStaffIntake || isPersonnelIntake;
@@ -179,8 +192,14 @@ export default function NewTicketPage() {
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    if (customerBlocked) {
-      setError("You already have a ticket in progress. Please wait until it moves out of In Progress before creating a new request.");
+    if (intakeSubmitLocked) {
+      if (intakeBlocked) {
+        setError(
+          "You already have a ticket in progress or awaiting your confirmation. Confirm and close it before creating a new request.",
+        );
+      } else {
+        setError("Checking whether you can open a new request… try again in a moment.");
+      }
       return;
     }
     if (screenshots.length > MAX_SCREENSHOT_COUNT) {
@@ -253,12 +272,18 @@ export default function NewTicketPage() {
         });
       }
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Could not create ticket.");
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(
+          res.status === 409 && typeof data.error === "string"
+            ? data.error
+            : data.error ?? "Could not create ticket.",
+        );
         return;
       }
       await res.json();
-      router.push(isPersonnelIntake ? "/agent?submitted=1" : "/my-tickets?submitted=1");
+      router.push(
+        isPersonnelIntake ? "/my-requests?submitted=1" : "/my-tickets?submitted=1",
+      );
     } catch {
       setError("Could not create ticket.");
     } finally {
@@ -276,17 +301,39 @@ export default function NewTicketPage() {
           <h1 className="text-xl font-semibold text-zinc-900 sm:text-2xl dark:text-zinc-100">Submit a request</h1>
         </div>
 
-        {customerBlocked && intake.pendingConfirmation ? (
+        {isRequestorIntakeLockRole && !intakeGateReady ? (
+          <div className="mb-4 rounded-xl border border-zinc-300/80 bg-zinc-100/80 px-4 py-3 text-sm text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-200">
+            Checking whether you already have a ticket in progress…
+          </div>
+        ) : null}
+
+        {intakeBlocked && intake.pendingConfirmation ? (
           <div className="mb-4 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
             <p className="font-semibold">Action required: ticket {intake.pendingConfirmation.ticketNumber}</p>
             <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
-              A ticket is currently in progress. You can submit a new request once it moves out of In Progress.
+              You already have a ticket in progress or waiting on your confirmation. Confirm and close that ticket
+              before submitting a new request.
             </p>
             <Link
               href={intake.pendingConfirmation.verificationHref}
               className="mt-3 inline-flex text-sm font-semibold text-orange-700 underline-offset-4 hover:underline dark:text-orange-300"
             >
-              Go to verification
+              {intake.pendingConfirmation.verificationHref.includes("/verification")
+                ? "Go to confirmation"
+                : "Open ticket"}
+            </Link>
+          </div>
+        ) : intakeBlocked ? (
+          <div className="mb-4 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+            <p className="font-semibold">You already have a ticket in progress or awaiting confirmation</p>
+            <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
+              Confirm and close your existing ticket before submitting a new request.
+            </p>
+            <Link
+              href={myTicketsHref}
+              className="mt-3 inline-flex text-sm font-semibold text-orange-700 underline-offset-4 hover:underline dark:text-orange-300"
+            >
+              {isPersonnelIntake ? "Open my ticket dashboard" : "Open my tickets"}
             </Link>
           </div>
         ) : null}
@@ -627,15 +674,17 @@ export default function NewTicketPage() {
             <Button
               type="submit"
               variant="accent"
-              disabled={loading || customerBlocked}
+              disabled={loading || intakeSubmitLocked}
               className="w-full rounded-full sm:w-auto sm:px-8"
             >
               {loading
                 ? screenshots.length > 0
                   ? `Submitting… (uploading ${screenshots.length} image${screenshots.length === 1 ? "" : "s"})`
                   : "Submitting…"
-                : customerBlocked
-                  ? "Ticket in progress"
+                : intakeSubmitLocked
+                  ? !intakeGateReady
+                    ? "Checking open requests…"
+                    : "Finish existing ticket first"
                   : "Create ticket"}
             </Button>
           </form>

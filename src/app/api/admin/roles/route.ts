@@ -3,7 +3,13 @@ import { NextResponse } from "next/server";
 import { ensureAgentRowForPortalStaff, pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import { rosterTeamNameFilter, sortByRosterOrder, COMPANY_ROSTER } from "@/lib/company-roster";
 import { requireRole } from "@/lib/access";
-import { createStaffPortalAccount } from "@/lib/portal-account";
+import { createStaffPortalAccount, findPortalByEmailOnly } from "@/lib/portal-account";
+import { isPersonnelAssignmentColorKey } from "@/lib/personnel-assignment-colors";
+import {
+  getPortalStaffAssignmentColor,
+  loadPortalStaffAssignmentColorMap,
+  setPortalStaffAssignmentColor,
+} from "@/lib/portal-staff-assignment-color-sql";
 import { prisma } from "@/lib/prisma";
 import {
   isAdminEligibleStaffRole,
@@ -18,7 +24,7 @@ export async function GET() {
   const { unauthorized } = await requireRole(["SuperAdmin"]);
   if (unauthorized) return unauthorized;
 
-  const [portalRows, rosterTeams, agents] = await Promise.all([
+  const [portalRows, rosterTeams, agents, assignmentColorByPortalId] = await Promise.all([
     prisma.portalAccount.findMany({
       orderBy: { createdAt: "desc" },
       select: {
@@ -46,6 +52,7 @@ export async function GET() {
       include: { team: true },
       orderBy: { createdAt: "asc" },
     }),
+    loadPortalStaffAssignmentColorMap(),
   ]);
 
   const accounts = portalRows.map((row) => {
@@ -53,6 +60,9 @@ export async function GET() {
     const canonical = staff ? pickCanonicalAgentForPortal(row, agents) : null;
     return {
       ...row,
+      staffAssignmentColor: staff
+        ? (assignmentColorByPortalId.get(row.id) ?? null)
+        : null,
       agentId: canonical?.id ?? null,
       queueTeamId: canonical?.teamId ?? null,
       queueTeamName: canonical?.team?.name ?? null,
@@ -66,8 +76,22 @@ export async function GET() {
   });
 }
 
+const portalAccountPatchSelect = {
+  id: true,
+  email: true,
+  name: true,
+  role: true,
+  headPrivileges: true,
+  companyId: true,
+  customerOrgRole: true,
+  staffDesignatedCompanyId: true,
+  company: { select: { id: true, name: true } },
+  staffDesignatedCompany: { select: { id: true, name: true } },
+  createdAt: true,
+} satisfies Prisma.PortalAccountSelect;
+
 export async function PATCH(req: Request) {
-  const { unauthorized } = await requireRole(["SuperAdmin"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin"]);
   if (unauthorized) return unauthorized;
 
   const body = (await req.json()) as {
@@ -77,11 +101,14 @@ export async function PATCH(req: Request) {
     companyId?: string | null;
     customerOrgRole?: string | null;
     staffDesignatedCompanyId?: string | null;
+    staffAssignmentColor?: string | null;
   };
   const id = body.id?.trim() ?? "";
   if (!id) {
     return NextResponse.json({ error: "id is required." }, { status: 400 });
   }
+
+  const assignmentColorPatch = body.staffAssignmentColor !== undefined;
 
   const existing = await prisma.portalAccount.findUnique({
     where: { id },
@@ -95,6 +122,70 @@ export async function PATCH(req: Request) {
   });
   if (!existing) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
+  }
+
+  /** Company portal Admin: may only PATCH assignment color for own-SBU Admin/Personnel roster. */
+  if (session.user.role === "Admin") {
+    const otherField =
+      body.role !== undefined ||
+      body.headPrivileges !== undefined ||
+      body.companyId !== undefined ||
+      body.customerOrgRole !== undefined ||
+      body.staffDesignatedCompanyId !== undefined;
+    if (otherField || !assignmentColorPatch) {
+      return NextResponse.json(
+        { error: "You can only update assignment colors for staff on your company roster." },
+        { status: 403 },
+      );
+    }
+    if (!isStaffPortalRole(existing.role)) {
+      return NextResponse.json(
+        { error: "Assignment color applies only to Admin and Personnel portal accounts." },
+        { status: 403 },
+      );
+    }
+    const viewer = await findPortalByEmailOnly(session.user.email ?? "");
+    const scopeId = viewer?.staffDesignatedCompanyId ?? null;
+    if (!scopeId) {
+      return NextResponse.json(
+        { error: "Your account has no designated company queue." },
+        { status: 403 },
+      );
+    }
+    if (existing.staffDesignatedCompanyId !== scopeId) {
+      return NextResponse.json(
+        { error: "That account is not on your company roster." },
+        { status: 403 },
+      );
+    }
+    const raw = body.staffAssignmentColor;
+    let assignmentColorNext: string | null;
+    if (raw === null || raw === "") {
+      assignmentColorNext = null;
+    } else {
+      const key = String(raw).trim().toUpperCase();
+      if (!isPersonnelAssignmentColorKey(key)) {
+        return NextResponse.json({ error: "Invalid assignment color." }, { status: 400 });
+      }
+      assignmentColorNext = key;
+    }
+    try {
+      await setPortalStaffAssignmentColor(id, assignmentColorNext);
+    } catch (e) {
+      console.error("setPortalStaffAssignmentColor failed", e);
+      return NextResponse.json({ error: "Could not save assignment color." }, { status: 500 });
+    }
+    const updatedBase = await prisma.portalAccount.findUnique({
+      where: { id },
+      select: portalAccountPatchSelect,
+    });
+    if (!updatedBase) {
+      return NextResponse.json({ error: "Account not found." }, { status: 404 });
+    }
+    return NextResponse.json({
+      ok: true,
+      account: { ...updatedBase, staffAssignmentColor: assignmentColorNext },
+    });
   }
 
   const data: Prisma.PortalAccountUpdateInput = {};
@@ -194,30 +285,69 @@ export async function PATCH(req: Request) {
     }
   }
 
-  if (Object.keys(data).length === 0) {
+  let assignmentColorNext: string | null | undefined;
+  if (assignmentColorPatch) {
+    const effectiveRoleRaw = (typeof data.role === "string" ? data.role : existing.role) as string;
+    const raw = body.staffAssignmentColor;
+    if (raw === null || raw === "") {
+      assignmentColorNext = null;
+    } else {
+      if (!isStaffPortalRole(effectiveRoleRaw)) {
+        return NextResponse.json(
+          { error: "Assignment color applies only to Admin and Personnel portal accounts." },
+          { status: 400 },
+        );
+      }
+      const key = String(raw).trim().toUpperCase();
+      if (!isPersonnelAssignmentColorKey(key)) {
+        return NextResponse.json({ error: "Invalid assignment color." }, { status: 400 });
+      }
+      assignmentColorNext = key;
+    }
+  }
+
+  if (Object.keys(data).length === 0 && !assignmentColorPatch) {
     return NextResponse.json(
-      { error: "Provide role, headPrivileges, company, and/or staff designated company fields." },
+      {
+        error:
+          "Provide role, headPrivileges, company, staff designated company, and/or staff assignment color fields.",
+      },
       { status: 400 },
     );
   }
 
-  const updated = await prisma.portalAccount.update({
-    where: { id },
-    data,
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      headPrivileges: true,
-      companyId: true,
-      customerOrgRole: true,
-      staffDesignatedCompanyId: true,
-      company: { select: { id: true, name: true } },
-      staffDesignatedCompany: { select: { id: true, name: true } },
-      createdAt: true,
-    },
-  });
+  let updatedBase: Prisma.PortalAccountGetPayload<{ select: typeof portalAccountPatchSelect }> | null = null;
+  if (Object.keys(data).length > 0) {
+    updatedBase = await prisma.portalAccount.update({
+      where: { id },
+      data,
+      select: portalAccountPatchSelect,
+    });
+  } else {
+    updatedBase = await prisma.portalAccount.findUnique({
+      where: { id },
+      select: portalAccountPatchSelect,
+    });
+  }
+
+  if (!updatedBase) {
+    return NextResponse.json({ error: "Account not found." }, { status: 404 });
+  }
+
+  if (assignmentColorPatch) {
+    try {
+      await setPortalStaffAssignmentColor(id, assignmentColorNext!);
+    } catch (e) {
+      console.error("setPortalStaffAssignmentColor failed", e);
+      return NextResponse.json({ error: "Could not save assignment color." }, { status: 500 });
+    }
+  }
+
+  const staffAssignmentColor = assignmentColorPatch
+    ? assignmentColorNext!
+    : await getPortalStaffAssignmentColor(id);
+
+  const updated = { ...updatedBase, staffAssignmentColor };
 
   /**
    * Whenever the portal is staff and has a designated company, keep the Agent

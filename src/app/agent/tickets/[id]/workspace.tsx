@@ -1,14 +1,17 @@
 "use client";
 
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
 
+type AgentWithAssigneeColor = Agent & { staffAssignmentColor?: string | null };
+
 type TicketDetail = Ticket & {
   team: Team | null;
-  assignedAgent: Agent | null;
+  assignedAgent: AgentWithAssigneeColor | null;
   activities: TicketActivity[];
   messages: TicketMessage[];
   feedback?: {
@@ -106,7 +109,11 @@ export function AgentWorkspace({
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1.9fr_1fr] xl:items-start">
-      <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#0a101d] shadow-[0_14px_40px_rgba(0,0,0,0.3)]">
+      <AssigneeColorHighlight
+        assigneeColorKey={ticket.assignedAgent?.staffAssignmentColor}
+        className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#0a101d] shadow-[0_14px_40px_rgba(0,0,0,0.3)]"
+      >
+        <div className="flex flex-col">
         <div className="border-b border-zinc-800/90 px-5 py-4">
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500">
             <span>Incident</span>
@@ -213,7 +220,8 @@ export function AgentWorkspace({
             Use the right-side controls to continue escalation, reassignment, or resolution workflow.
           </div>
         </div>
-      </section>
+        </div>
+      </AssigneeColorHighlight>
 
       <aside className="space-y-4">
         <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">

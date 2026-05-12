@@ -3,8 +3,8 @@ import { TicketCategory, TicketPriority } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {
-  customerHasPendingResolvedTicket,
   customerTicketWhereBySessionEmail,
+  requestorHasIntakeBlockingTicket,
 } from "@/lib/customer-pending-resolution";
 import { COMPANY_ROSTER } from "@/lib/company-roster";
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
@@ -23,6 +23,7 @@ import { resolveCustomerRequestTeam } from "@/lib/ticket-intake-request-team";
 import type { IntakeScreenshotMetaItem } from "@/lib/ticket-intake-screenshots-meta";
 import { persistTicketScreenshots, validateScreenshotFiles } from "@/lib/ticket-intake-screenshots";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 
 const categories = new Set(Object.values(TicketCategory));
 const priorities = new Set(Object.values(TicketPriority));
@@ -74,12 +75,26 @@ export async function GET(req: Request) {
     take: limit,
   });
 
+  const colorMap = await loadStaffAssignmentColorsForAgents(
+    tickets.map((t) => ({ email: t.assignedAgent?.email, name: t.assignedAgent?.name })),
+  );
+  const enriched = tickets.map((t) => {
+    const email = t.assignedAgent?.email?.trim().toLowerCase();
+    const staffAssignmentColor = email ? (colorMap.get(email) ?? null) : null;
+    return {
+      ...t,
+      assignedAgent: t.assignedAgent
+        ? { ...t.assignedAgent, staffAssignmentColor }
+        : null,
+    };
+  });
+
   if (process.env.NODE_ENV === "development") {
     console.info(
-      `[perf] GET /api/tickets ${Date.now() - startedAt}ms role=${session.user.role} rows=${tickets.length}`,
+      `[perf] GET /api/tickets ${Date.now() - startedAt}ms role=${session.user.role} rows=${enriched.length}`,
     );
   }
-  return NextResponse.json(tickets);
+  return NextResponse.json(enriched);
 }
 
 export async function POST(req: Request) {
@@ -162,20 +177,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Signed-in account email is required." }, { status: 400 });
     }
 
-    if (session.user.role === "Customer") {
-      const pending = await customerHasPendingResolvedTicket(accountEmail);
-      if (pending) {
-        return NextResponse.json(
-          {
-            error:
-              "You already have a ticket currently in progress. Wait until it moves out of In Progress before submitting a new request.",
-            pendingTicketId: pending.id,
-          },
-          { status: 409 },
-        );
-      }
-    }
-
     let effectiveContactEmail: string;
     let effectiveRequestorEmail: string;
     try {
@@ -192,6 +193,7 @@ export async function POST(req: Request) {
       }
       throw e;
     }
+
     let effectiveName =
       (session.user.name || "").trim() ||
       (effectiveRequestorEmail.includes("@") ? effectiveRequestorEmail.split("@")[0] : "") ||
@@ -209,6 +211,27 @@ export async function POST(req: Request) {
         effectiveRequestorEmail = intakeEmailTrimmed;
       }
     }
+
+    const identityEmails = [
+      ...new Set(
+        [effectiveRequestorEmail, effectiveContactEmail]
+          .map((e) => e.trim().toLowerCase())
+          .filter((e) => e.length > 0),
+      ),
+    ];
+    const blocking = await requestorHasIntakeBlockingTicket(identityEmails);
+    if (blocking) {
+      return NextResponse.json(
+        {
+          error:
+            "This requestor already has a ticket that is in progress or awaiting confirmation. Confirm and close that ticket before submitting a new one.",
+          pendingTicketId: blocking.id,
+          pendingTicketNumber: blocking.ticketNumber,
+        },
+        { status: 409 },
+      );
+    }
+
     const effectiveCategory = (category || "GENERAL").trim();
     const effectivePriority = (priority && String(priority).trim() ? String(priority).trim() : "LOW");
     const issueText = (issue || description || "").trim();

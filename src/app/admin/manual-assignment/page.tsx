@@ -5,6 +5,7 @@ import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { ManualAssignmentBoard } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -121,11 +122,12 @@ export default async function ManualAssignmentPage({
   const effectiveCompanyFilterLabel = isPersonnelCompanyLock
     ? scopedCompanyFilterLabel
     : orderedCompanyTeams.find((t) => t.id === effectiveCompanyFilterId)?.name ?? null;
-  const scopedUnassigned = scopeUnavailable
-    ? []
-    : effectiveCompanyFilterId
-      ? unassigned.filter((t) => t.teamId === effectiveCompanyFilterId)
-      : unassigned;
+  /**
+   * Company/SBU filter narrows **personnel lanes** only. The unassigned pool stays
+   * all active unassigned tickets (for SuperAdmin/Admin) so coordinators still see
+   * every queue; Personnel already receive a company-scoped `unassigned` query above.
+   */
+  const scopedUnassigned = scopeUnavailable ? [] : unassigned;
 
   const defaultTeamId =
     teams.find((t) => t.name.toLowerCase().includes("general"))?.id ??
@@ -184,6 +186,10 @@ export default async function ManualAssignmentPage({
   const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
   const portalByEmail = new Map(portalStaff.map((p) => [p.email.trim().toLowerCase(), p]));
 
+  const assigneeColorByEmail = await loadStaffAssignmentColorsForAgents(
+    personnelAgents.map((a) => ({ email: a.email, name: a.name })),
+  );
+
   let agentsForBoard = personnelAgents;
   if (effectiveCompanyFilterId) {
     agentsForBoard = personnelAgents.filter((a) => {
@@ -231,6 +237,7 @@ export default async function ManualAssignmentPage({
       name: a.name,
       role: roleLabel,
       teamLabel,
+      assigneeColorKey: assigneeColorByEmail.get(a.email.trim().toLowerCase()) ?? null,
       cards: tickets.map((t) => ({
         id: t.id,
         ticketNumber: t.ticketNumber,

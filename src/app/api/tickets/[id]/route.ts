@@ -9,6 +9,35 @@ import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { parseTransferRequestDetail, serializeTransferRequest } from "@/lib/ticket-transfer-request";
 import { getTicketSlaState } from "@/lib/sla";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+
+async function ticketJsonWithAssigneeColor<T extends { assignedAgent: { email: string; name?: string } | null }>(
+  ticket: T,
+): Promise<
+  Omit<T, "assignedAgent"> & {
+    assignedAgent: (NonNullable<T["assignedAgent"]> & { staffAssignmentColor: string | null }) | null;
+  }
+> {
+  const email = ticket.assignedAgent?.email;
+  if (!email) {
+    return {
+      ...ticket,
+      assignedAgent: ticket.assignedAgent
+        ? { ...ticket.assignedAgent, staffAssignmentColor: null }
+        : null,
+    };
+  }
+  const map = await loadStaffAssignmentColorsForAgents([
+    { email, name: ticket.assignedAgent?.name ?? null },
+  ]);
+  const staffAssignmentColor = map.get(email.trim().toLowerCase()) ?? null;
+  return {
+    ...ticket,
+    assignedAgent: ticket.assignedAgent
+      ? { ...ticket.assignedAgent, staffAssignmentColor }
+      : null,
+  };
+}
 
 function canTransition(from: TicketStatus, to: TicketStatus) {
   const allowed: [TicketStatus, TicketStatus][] = [
@@ -93,7 +122,8 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
-  return NextResponse.json({ ...ticket, slaState: getTicketSlaState(ticket) });
+  const payload = await ticketJsonWithAssigneeColor(ticket);
+  return NextResponse.json({ ...payload, slaState: getTicketSlaState(ticket) });
 }
 
 export async function PATCH(
@@ -288,7 +318,7 @@ export async function PATCH(
         );
       }
 
-      return NextResponse.json(updated);
+      return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
     }
 
     if (action === "request_more_info") {
@@ -310,7 +340,10 @@ export async function PATCH(
         where: { id },
         include: { team: true, assignedAgent: true },
       });
-      return NextResponse.json(unchanged);
+      if (!unchanged) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      return NextResponse.json(await ticketJsonWithAssigneeColor(unchanged));
     }
 
     if (action === "priority") {
@@ -336,7 +369,7 @@ export async function PATCH(
         `Priority → ${nextPriority}`,
         typeof body.note === "string" ? body.note : undefined,
       );
-      return NextResponse.json(updated);
+      return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
     }
 
     if (action === "request_transfer") {
@@ -383,7 +416,7 @@ export async function PATCH(
         },
         include: { team: true, assignedAgent: true },
       });
-      return NextResponse.json(updated);
+      return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
     }
 
     if (action === "approve_transfer") {
@@ -441,7 +474,7 @@ export async function PATCH(
         "Transfer approved",
         typeof body.note === "string" ? body.note : "Admin approved reassignment request.",
       );
-      return NextResponse.json(updated);
+      return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
     }
 
     if (action === "feedback") {
@@ -550,7 +583,7 @@ export async function PATCH(
           "Resolution verification rejected",
           reason,
         );
-        return NextResponse.json(updated);
+        return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
       }
       await logActivity(
         id,

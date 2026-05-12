@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import type { TicketStatus } from "@prisma/client";
 import { cn } from "@/lib/cn";
@@ -17,6 +19,7 @@ export type KanbanTicket = {
   status: TicketStatus;
   updatedAt: string;
   agentName: string | null;
+  assigneeColorKey?: string | null;
 };
 
 type ColumnId = "open" | "progress" | "feedback";
@@ -80,14 +83,6 @@ function statusBadgeLabel(status: TicketStatus) {
   return status.replaceAll("_", " ");
 }
 
-function initials(name: string | null) {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/);
-  const a = parts[0]?.[0] ?? "";
-  const b = parts[1]?.[0] ?? "";
-  return (a + b).toUpperCase() || "?";
-}
-
 export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket[] }) {
   const router = useRouter();
   const [tickets, setTickets] = useState(initialTickets);
@@ -131,7 +126,7 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
       setTickets((prev) =>
         prev.map((t) =>
           t.id === ticket.id
-            ? { ...t, status: (data.status ?? nextStatus) as TicketStatus, updatedAt: new Date().toISOString() }
+            ? { ...t, status: (data.status ?? nextStatus) as TicketStatus, updatedAt: new Date().toISOString(), assigneeColorKey: t.assigneeColorKey }
             : t,
         ),
       );
@@ -202,18 +197,22 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
 
               <div className="flex flex-1 flex-col gap-2 p-2">
                 {colTickets.map((t) => (
-                  <div
+                  <AssigneeColorHighlight
                     key={t.id}
-                    draggable
-                    title="Drag to move ticket status"
-                    onDragStart={(e) => onDragStart(e, t.id)}
-                    onDragEnd={onDragEnd}
+                    assigneeColorKey={t.assigneeColorKey}
                     className={cn(
-                      "cursor-grab rounded-lg border border-zinc-200 bg-white p-3 shadow-sm transition active:cursor-grabbing dark:border-zinc-800 dark:bg-[#0f172a]",
+                      "cursor-grab rounded-lg border border-zinc-200 bg-white shadow-sm transition active:cursor-grabbing dark:border-zinc-800 dark:bg-[#0f172a]",
                       draggingId === t.id && "opacity-60",
                       busyId === t.id && "pointer-events-none opacity-50",
                       t.status === "ESCALATED" && "ring-1 ring-rose-500/40",
                     )}
+                  >
+                  <div
+                    draggable
+                    title="Drag to move ticket status"
+                    onDragStart={(e) => onDragStart(e, t.id)}
+                    onDragEnd={onDragEnd}
+                    className="p-3"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <AgentTicketDeepLink
@@ -238,11 +237,13 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
                     </AgentTicketDeepLink>
                     <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
                       <ElapsedFromIso iso={t.updatedAt} className="inline" />
-                      <div className="flex size-6 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-bold text-zinc-300" title={t.agentName ?? "Unassigned"}>
-                        {initials(t.agentName)}
-                      </div>
+                      <AssigneeInitialsBadge
+                        agentName={t.agentName}
+                        assigneeColorKey={t.assigneeColorKey}
+                      />
                     </div>
                   </div>
+                  </AssigneeColorHighlight>
                 ))}
 
                 {colTickets.length === 0 && (

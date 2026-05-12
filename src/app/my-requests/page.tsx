@@ -2,7 +2,14 @@ import type { TicketPriority, TicketStatus } from "@prisma/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Plus, Search } from "lucide-react";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { requireSession } from "@/lib/access";
+import {
+  customerHasPendingResolvedTicket,
+  customerPendingTicketHref,
+} from "@/lib/customer-pending-resolution";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { BRAND_TITLE } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/prisma";
@@ -125,7 +132,7 @@ function relativeTime(d: Date) {
 export default async function MyRequestsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string | string[] }>;
+  searchParams: Promise<{ q?: string | string[]; submitted?: string | string[] }>;
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
@@ -136,6 +143,7 @@ export default async function MyRequestsPage({
 
   const params = await searchParams;
   const query = firstQuery(params.q)?.trim() ?? "";
+  const submitted = firstQuery(params.submitted) === "1";
 
   const baseFilter = {
     OR: [
@@ -165,6 +173,13 @@ export default async function MyRequestsPage({
     take: 200,
   });
 
+  const assigneeColorByEmail =
+    tickets.length > 0
+      ? await loadStaffAssignmentColorsForAgents(
+          tickets.map((t) => ({ email: t.assignedAgent?.email, name: t.assignedAgent?.name })),
+        )
+      : new Map<string, string | null>();
+
   const counts = {
     total: tickets.length,
     open: tickets.filter((t) => t.status === "OPEN").length,
@@ -177,9 +192,16 @@ export default async function MyRequestsPage({
     closed: tickets.filter((t) => t.status === "CLOSED").length,
   };
 
+  const intakeBlock = await customerHasPendingResolvedTicket(me, session.user.authProvider);
+
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-5 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100 sm:px-5 md:py-8">
       <div className="mx-auto flex max-w-[min(100%,1480px)] flex-col gap-5">
+        {submitted ? (
+          <div className="rounded-xl border border-orange-400/50 bg-orange-500/15 px-4 py-3 text-sm text-orange-950 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200">
+            Ticket submitted successfully. It appears below in your dashboard.
+          </div>
+        ) : null}
         {/* Hero */}
         <header className="rounded-2xl border border-zinc-200 bg-gradient-to-br from-white via-white to-orange-50/40 p-5 shadow-[0_12px_36px_rgba(0,0,0,0.05)] dark:border-zinc-800/90 dark:from-[#0d1629] dark:via-[#0b1322] dark:to-[#0b1322] dark:shadow-[0_18px_48px_rgba(0,0,0,0.35)] md:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -210,13 +232,24 @@ export default async function MyRequestsPage({
                   className="h-10 w-full rounded-lg border border-zinc-300 bg-white pl-9 pr-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-500 focus:border-orange-500/60 focus:ring-2 focus:ring-orange-500/25 dark:border-zinc-700/70 dark:bg-zinc-900/55 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                 />
               </form>
-              <Link
-                href="/tickets/new"
-                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#f97316] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(249,115,22,0.32)] transition hover:bg-[#fb923c] active:translate-y-px"
-              >
-                <Plus className="size-4" />
-                Create ticket
-              </Link>
+              {intakeBlock != null ? (
+                <Link
+                  href={customerPendingTicketHref(intakeBlock)}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-500/25 dark:text-amber-100"
+                  title="Finish this request before opening another."
+                >
+                  <Plus className="size-4" aria-hidden />
+                  Resume {intakeBlock.ticketNumber}
+                </Link>
+              ) : (
+                <Link
+                  href="/tickets/new"
+                  className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#f97316] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(249,115,22,0.32)] transition hover:bg-[#fb923c] active:translate-y-px"
+                >
+                  <Plus className="size-4" />
+                  Create ticket
+                </Link>
+              )}
             </div>
           </div>
 
@@ -294,11 +327,19 @@ export default async function MyRequestsPage({
                           : "Nothing waiting on your confirmation."}
                     </div>
                   ) : (
-                    list.map((t) => (
-                      <Link
+                    list.map((t) => {
+                      const assigneeKey = t.assignedAgent?.email
+                        ? (assigneeColorByEmail.get(t.assignedAgent.email.trim().toLowerCase()) ?? null)
+                        : null;
+                      return (
+                      <AssigneeColorHighlight
                         key={t.id}
+                        assigneeColorKey={assigneeKey}
+                        className="group block rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#0f172a] dark:hover:border-orange-500/40 dark:hover:bg-[#111c33]"
+                      >
+                      <Link
                         href={`/tickets/${t.id}`}
-                        className="group block rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#0f172a] dark:hover:border-orange-500/40 dark:hover:bg-[#111c33]"
+                        className="block p-3.5"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <span className="font-mono text-[11px] font-bold text-orange-700 dark:text-orange-300">
@@ -331,10 +372,20 @@ export default async function MyRequestsPage({
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400">
-                          <span className="truncate">
+                        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                          <span className="flex min-w-0 items-center gap-1.5 truncate">
                             {t.assignedAgent?.name ? (
-                              <>Assigned: <span className="font-medium text-zinc-800 dark:text-zinc-200">{t.assignedAgent.name}</span></>
+                              <>
+                                <AssigneeInitialsBadge
+                                  agentName={t.assignedAgent.name}
+                                  assigneeColorKey={assigneeKey}
+                                  className="shrink-0"
+                                />
+                                <span className="truncate">
+                                  Assigned:{" "}
+                                  <span className="font-medium text-zinc-800 dark:text-zinc-200">{t.assignedAgent.name}</span>
+                                </span>
+                              </>
                             ) : (
                               <span className="text-zinc-500">No assignee yet</span>
                             )}
@@ -344,7 +395,9 @@ export default async function MyRequestsPage({
                           </span>
                         </div>
                       </Link>
-                    ))
+                      </AssigneeColorHighlight>
+                      );
+                    })
                   )}
                 </div>
               </div>

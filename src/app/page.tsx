@@ -9,7 +9,10 @@ import { OnDutyPanel } from "@/components/dashboard/OnDutyPanel";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { customerHasPendingResolvedTicket } from "@/lib/customer-pending-resolution";
+import {
+  customerHasPendingResolvedTicket,
+  customerPendingTicketHref,
+} from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
 import { onDutyCompanyLine, resolveStaffOnDutyAgentIds } from "@/lib/on-duty-company-line";
@@ -37,13 +40,15 @@ export default async function Home() {
   if (session?.user?.role === "Customer") {
     const email = session.user.email ?? "";
     const first = session.user.name?.split(" ")[0] ?? "there";
-    const pending = email ? await customerHasPendingResolvedTicket(email) : null;
+    const pending = email
+      ? await customerHasPendingResolvedTicket(email, session.user.authProvider)
+      : null;
     return (
       <CustomerHomeDashboard
         email={email}
         firstName={first}
         canCreateTickets={!pending}
-        pendingVerificationHref={pending ? `/tickets/${pending.id}/verification` : null}
+        pendingVerificationHref={pending ? customerPendingTicketHref(pending) : null}
       />
     );
   }

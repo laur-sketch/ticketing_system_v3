@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { canViewerApproveTransfer, parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
 import { safeReturnToParam } from "@/lib/safe-return-to";
 import { AgentWorkspace } from "./workspace";
@@ -34,7 +35,18 @@ export default async function AgentTicketPage({
     },
   });
   if (!ticket) notFound();
-  const requestorEmail = (ticket.requestorEmail ?? ticket.contactEmail ?? "").trim();
+  const assigneeColorMap = await loadStaffAssignmentColorsForAgents([
+    { email: ticket.assignedAgent?.email, name: ticket.assignedAgent?.name },
+  ]);
+  const assigneeEmail = ticket.assignedAgent?.email?.trim().toLowerCase();
+  const staffAssignmentColor = assigneeEmail ? (assigneeColorMap.get(assigneeEmail) ?? null) : null;
+  const ticketForWorkspace = {
+    ...ticket,
+    assignedAgent: ticket.assignedAgent
+      ? { ...ticket.assignedAgent, staffAssignmentColor }
+      : null,
+  };
+  const requestorEmail = (ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail ?? "").trim();
   const requestorAccount = requestorEmail
     ? await prisma.portalAccount.findFirst({
         where: { email: { equals: requestorEmail, mode: "insensitive" } },
@@ -50,7 +62,7 @@ export default async function AgentTicketPage({
     null;
   let transferPending = false;
   let lastTransferDetail: string | null = null;
-  for (const a of ticket.activities) {
+  for (const a of ticketForWorkspace.activities) {
     if (a.summary === "Transfer requested") {
       transferPending = true;
       lastTransferDetail = a.detail ?? null;
@@ -78,7 +90,7 @@ export default async function AgentTicketPage({
       : null;
   const operator = operatorByEmail ?? operatorByName;
   const isAdmin = session.user.role === "SuperAdmin" || session.user.role === "Admin";
-  const isAssignedOperator = !!operator && operator.id === ticket.assignedAgentId;
+  const isAssignedOperator = !!operator && operator.id === ticketForWorkspace.assignedAgentId;
   if (session.user.role === "Personnel" && !isAssignedOperator) {
     redirect("/agent");
   }
@@ -111,16 +123,16 @@ export default async function AgentTicketPage({
                   {backHref === "/agent" ? "← Back to queue" : "← Back"}
                 </Link>
                 <h1 className="mt-2 text-xl font-semibold text-zinc-100 sm:text-2xl">
-                  {ticket.ticketNumber}{" "}
-                  <span className="text-sm font-normal text-zinc-400 sm:text-base">· {ticket.title}</span>
+                  {ticketForWorkspace.ticketNumber}{" "}
+                  <span className="text-sm font-normal text-zinc-400 sm:text-base">· {ticketForWorkspace.title}</span>
                 </h1>
                 <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                  Customer: <span className="text-zinc-300 normal-case tracking-normal">{ticket.contactName}</span>
+                  Customer: <span className="text-zinc-300 normal-case tracking-normal">{ticketForWorkspace.contactName}</span>
                 </p>
                 <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
                   Requestor Email:{" "}
                   <span className="text-zinc-300 normal-case tracking-normal">
-                    {ticket.requestorEmail ?? ticket.contactEmail}
+                    {ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail}
                   </span>
                 </p>
                 <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
@@ -129,16 +141,16 @@ export default async function AgentTicketPage({
                     {requestorCompanyName ?? "Not assigned"}
                   </span>
                 </p>
-                {ticket.team?.name ? (
+                {ticketForWorkspace.team?.name ? (
                   <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
                     Company Requested to:{" "}
-                    <span className="text-zinc-300 normal-case tracking-normal">{ticket.team.name}</span>
+                    <span className="text-zinc-300 normal-case tracking-normal">{ticketForWorkspace.team.name}</span>
                   </p>
                 ) : null}
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-fit rounded-full bg-zinc-700 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                  {ticket.status.replaceAll("_", " ")}
+                  {ticketForWorkspace.status.replaceAll("_", " ")}
                 </span>
                 <Link
                   href={backHref}
@@ -151,7 +163,7 @@ export default async function AgentTicketPage({
 
             <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <AgentWorkspace
-                ticket={ticket}
+                ticket={ticketForWorkspace}
                 canEscalate={canEscalate}
                 canUpdatePriority={canUpdatePriority}
                 canRequestTransfer={canRequestTransfer}

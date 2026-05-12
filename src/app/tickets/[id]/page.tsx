@@ -2,6 +2,11 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { customerCanAccessTicket, requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+import {
+  personnelAssigneeHighlightStyle,
+  personnelAssignmentHex,
+} from "@/lib/personnel-assignment-colors";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { TicketIntakeScreenshotsBlock } from "@/components/ticket-intake-screenshots-block";
 import { CustomerTicketPanel } from "./ui";
@@ -30,6 +35,13 @@ export default async function TicketPage({
     },
   });
   if (!ticket) notFound();
+  const assigneeColorMap = await loadStaffAssignmentColorsForAgents([
+    { email: ticket.assignedAgent?.email, name: ticket.assignedAgent?.name },
+  ]);
+  const assigneeEmail = ticket.assignedAgent?.email?.trim().toLowerCase();
+  const assigneeAccentHex = assigneeEmail
+    ? personnelAssignmentHex(assigneeColorMap.get(assigneeEmail) ?? null)
+    : null;
   if (
     session.user.role === "Customer" &&
     !customerCanAccessTicket(
@@ -97,7 +109,10 @@ export default async function TicketPage({
         </div>
 
         <aside className="space-y-4">
-          <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm">
+          <article
+            className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm"
+            style={personnelAssigneeHighlightStyle(assigneeAccentHex)}
+          >
             <h2 className="text-sm font-semibold text-white">Acknowledgment</h2>
             <p className="mt-2 text-sm text-zinc-300">
               Your ticket is logged with SLA targets for first response and resolution. Share this link with your team

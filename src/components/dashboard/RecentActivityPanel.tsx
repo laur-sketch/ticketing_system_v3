@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ActivityActor, TicketPriority, TicketStatus } from "@prisma/client";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { cn } from "@/lib/cn";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 
@@ -52,7 +53,7 @@ type TicketDetailJson = {
   category: string;
   contactName: string;
   contactEmail: string;
-  assignedAgent: { id: string; name: string; email: string } | null;
+  assignedAgent: { id: string; name: string; email: string; staffAssignmentColor?: string | null } | null;
   firstResponseDueAt: string;
   resolutionDueAt: string;
   createdAt: string;
@@ -247,8 +248,13 @@ function TicketDetailFloat({
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-zinc-500">Assignee</dt>
-                  <dd className="text-right font-medium text-zinc-900 dark:text-zinc-100">
-                    {data.assignedAgent?.name ?? "Unassigned"}
+                  <dd className="flex items-center justify-end gap-2 text-right font-medium text-zinc-900 dark:text-zinc-100">
+                    <AssigneeInitialsBadge
+                      agentName={data.assignedAgent?.name ?? null}
+                      assigneeColorKey={data.assignedAgent?.staffAssignmentColor ?? null}
+                      className="shrink-0"
+                    />
+                    <span className="min-w-0">{data.assignedAgent?.name ?? "Unassigned"}</span>
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">

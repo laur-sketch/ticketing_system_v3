@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 
 function mergeTeamWhereWithRoster(base?: Prisma.TeamWhereInput): Prisma.TeamWhereInput {
   const roster = rosterTeamNameFilter();
@@ -27,6 +28,8 @@ export type CompanyTicketCard = {
   updatedAt: Date;
   assignedAgentId: string | null;
   assignedAgentName: string | null;
+  /** Portal registry rainbow tag for assigned staff (Admin/Personnel). */
+  assigneeColorKey: string | null;
 };
 
 export type CompanyBoardColumn = {
@@ -211,11 +214,14 @@ export async function loadCompanyBoard(opts: {
       priority: true,
       updatedAt: true,
       assignedAgentId: true,
-      assignedAgent: { select: { name: true } },
+      assignedAgent: { select: { name: true, email: true } },
       requestorEmail: true,
       contactEmail: true,
     },
   });
+  const assigneeColorByEmail = await loadStaffAssignmentColorsForAgents(
+    rawTickets.map((x) => ({ email: x.assignedAgent?.email, name: x.assignedAgent?.name })),
+  );
   const requestorEmails = Array.from(
     new Set(
       rawTickets
@@ -264,6 +270,16 @@ export async function loadCompanyBoard(opts: {
       const requestorCompanyId = email ? requestorCompanyByEmail.get(email) : undefined;
       if (requestorCompanyId && !excludedTeamIds.includes(requestorCompanyId)) {
         teamIdForColumn = requestorCompanyId;
+        /**
+         * Company filter hides the selected SBU as a column; tickets whose requestor
+         * maps to that SBU would otherwise be dropped (including unassigned work).
+         * Fall back to OUTSIDE COMPANY when that lane is not in view.
+         */
+        if (!displayTeamIds.includes(teamIdForColumn) && displayTeamIds.includes(outsideId)) {
+          teamIdForColumn = outsideId;
+        } else if (!displayTeamIds.includes(teamIdForColumn)) {
+          continue;
+        }
       } else if (displayTeamIds.includes(outsideId)) {
         /**
          * No known requestor company (or requestor is from the admin's own queue) →
@@ -283,6 +299,8 @@ export async function loadCompanyBoard(opts: {
     const col = columnsByTeam.get(team.id);
     if (!col) continue;
 
+    const assigneeEmail = x.assignedAgent?.email?.trim().toLowerCase();
+    const assigneeColorKey = assigneeEmail ? (assigneeColorByEmail.get(assigneeEmail) ?? null) : null;
     const card: CompanyTicketCard = {
       id: x.id,
       ticketNumber: x.ticketNumber,
@@ -293,6 +311,7 @@ export async function loadCompanyBoard(opts: {
       updatedAt: x.updatedAt,
       assignedAgentId: x.assignedAgentId,
       assignedAgentName: x.assignedAgent?.name ?? null,
+      assigneeColorKey,
     };
     const b = bucketFor(card);
     if (b === "closed" && col.buckets.closed.length >= CLOSED_CAP) continue;
@@ -468,7 +487,9 @@ export async function getCompanyBoardAggregates(opts: {
       const email = (t.requestorEmail?.trim() || t.contactEmail?.trim() || "").toLowerCase();
       const cid = email ? companyByEmail.get(email) : undefined;
       if (cid && !excludedTeamIds.includes(cid)) {
-        return displayTeamIds.includes(cid);
+        if (displayTeamIds.includes(cid)) return true;
+        /** Match board logic: hidden requestor SBU (filter) still counts if OUTSIDE is visible. */
+        return displayTeamIds.includes(outsideId);
       }
       /** Unknown / own-queue requestors: count under OUTSIDE if shown. */
       return displayTeamIds.includes(outsideId);

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import type { TicketPriority, TicketStatus } from "@prisma/client";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
+import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { cn } from "@/lib/cn";
 
 export type KanbanTicket = {
@@ -12,6 +14,9 @@ export type KanbanTicket = {
   priority: TicketPriority;
   updatedAt: string;
   authorLabel: string;
+  /** Assignee display name for initials chip */
+  assigneeName?: string | null;
+  assigneeColorKey?: string | null;
 };
 
 const columns: {
@@ -101,10 +106,11 @@ function TicketCard({ t }: { t: KanbanTicket }) {
       ? "bg-rose-500/15 text-rose-900 dark:bg-rose-500/20 dark:text-rose-200"
       : pill.className;
   return (
-    <Link
-      href={`/tickets/${t.id}`}
-      className="block rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm transition hover:border-orange-400/60 hover:bg-orange-50/50 dark:border-zinc-700 dark:bg-[#0f172a] dark:hover:bg-[#111c33]"
+    <AssigneeColorHighlight
+      assigneeColorKey={t.assigneeColorKey}
+      className="block rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:border-orange-400/60 hover:bg-orange-50/50 dark:border-zinc-700 dark:bg-[#0f172a] dark:hover:bg-[#111c33]"
     >
+      <Link href={`/tickets/${t.id}`} className="block p-3.5">
       <div className="flex items-start justify-between gap-2">
         <span
           className={cn(
@@ -119,11 +125,17 @@ function TicketCard({ t }: { t: KanbanTicket }) {
         </span>
       </div>
       <p className="mt-2.5 line-clamp-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{t.title}</p>
-      <p className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-        Updated {formatUpdated(t.updatedAt)}
-        {t.authorLabel ? ` · ${t.authorLabel}` : ""}
-      </p>
-    </Link>
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+        <p className="min-w-0 truncate">
+          Updated {formatUpdated(t.updatedAt)}
+          {t.authorLabel ? ` · ${t.authorLabel}` : ""}
+        </p>
+        {t.assigneeName ? (
+          <AssigneeInitialsBadge agentName={t.assigneeName} assigneeColorKey={t.assigneeColorKey} className="shrink-0" />
+        ) : null}
+      </div>
+      </Link>
+    </AssigneeColorHighlight>
   );
 }
 

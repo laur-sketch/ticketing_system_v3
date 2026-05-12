@@ -1,6 +1,7 @@
 import { ensureAgentRowForPortalStaff, pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import type { UserRole } from "@/lib/auth";
 import { findPortalByEmailOnly } from "@/lib/portal-account";
+import { loadPortalStaffAssignmentColorMap } from "@/lib/portal-staff-assignment-color-sql";
 import { prisma } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";
 
@@ -14,6 +15,7 @@ export type PersonnelRosterRow = {
   portalAccountId: string;
   staffRole: string;
   accountStatus: string;
+  staffAssignmentColor: string | null;
 };
 
 export type PersonnelAccountsPayload = {
@@ -66,7 +68,7 @@ export async function loadPersonnelAccountsPayload(viewer: {
     }
   }
 
-  const [agents, teams, portalPersonnelRaw] = await Promise.all([
+  const [agents, teams, portalPersonnelRaw, assignmentColorByPortalId] = await Promise.all([
     prisma.agent.findMany({
       include: { team: true },
       orderBy: { name: "asc" },
@@ -86,6 +88,7 @@ export async function loadPersonnelAccountsPayload(viewer: {
         staffDesignatedCompany: { select: { id: true, name: true } },
       },
     }),
+    loadPortalStaffAssignmentColorMap(),
   ]);
 
   const portalPersonnel = portalPersonnelRaw.filter((p) => isStaffPortalRole(p.role));
@@ -104,6 +107,7 @@ export async function loadPersonnelAccountsPayload(viewer: {
         portalAccountId: p.id,
         staffRole: p.role,
         accountStatus: p.accountStatus ?? "ACTIVE",
+        staffAssignmentColor: assignmentColorByPortalId.get(p.id) ?? null,
       };
     })
     .filter((row): row is PersonnelRosterRow => row !== null);

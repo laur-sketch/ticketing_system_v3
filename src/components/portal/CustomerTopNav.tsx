@@ -149,7 +149,7 @@ export function CustomerTopNav() {
             title={
               intake.canCreateTickets
                 ? "Submit a new request"
-                : "A ticket is currently in progress. You can submit a new request once it moves out of In Progress."
+                : "You have a ticket in progress or awaiting confirmation. Finish it before submitting a new request."
             }
           >
             <Plus className="size-4" />
@@ -213,7 +213,7 @@ export function CustomerTopNav() {
                         {n.ticketNumber} ·{" "}
                         {n.summary === "PENDING_RESOLUTION_CONFIRM"
                           ? "Confirmation required — verify your resolved ticket"
-                          : n.summary === "PENDING_IN_PROGRESS_LOCK"
+                          : n.summary === "PENDING_INTAKE_LOCK"
                             ? "Ticket is now in progress"
                             : n.summary === "Status → IN_PROGRESS"
                               ? "Ticket is now in progress"

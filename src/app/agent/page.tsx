@@ -4,13 +4,23 @@ import { Plus } from "lucide-react";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
+import {
+  customerHasPendingResolvedTicket,
+  customerPendingTicketHref,
+} from "@/lib/customer-pending-resolution";
 import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board";
 import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
 import { prisma } from "@/lib/prisma";
+import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+import {
+  personnelAssigneeHighlightStyle,
+  personnelAssignmentHex,
+} from "@/lib/personnel-assignment-colors";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
+import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { BRAND_TITLE } from "@/lib/brand";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
@@ -20,6 +30,10 @@ import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
 
 export const dynamic = "force-dynamic";
+
+type AgentTicketWithTeam = Prisma.TicketGetPayload<{
+  include: { team: true; assignedAgent: true };
+}>;
 
 const STATUS_PIPELINE: TicketStatus[] = [
   "OPEN",
@@ -86,6 +100,13 @@ export default async function AgentHome({
   }
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
+  let personnelRequestorIntakeBlock: Awaited<ReturnType<typeof customerHasPendingResolvedTicket>> = null;
+  if (session.user.role === "Personnel") {
+    const em = (session.user.email ?? "").trim().toLowerCase();
+    personnelRequestorIntakeBlock = em
+      ? await customerHasPendingResolvedTicket(em, session.user.authProvider)
+      : null;
+  }
   // Personnel must use board view to be able to drag cards and change status inline.
   const requestedViewMode = firstQuery(params.view) === "table" ? "table" : "board";
   const boardTab = rawBoard === "kpi" ? "kpi" : rawBoard === "company" ? "company" : "ticket";
@@ -228,7 +249,7 @@ export default async function AgentHome({
           skip: (page - 1) * pageSize,
           take: pageSize,
         })
-      : Promise.resolve([]),
+      : Promise.resolve([] as AgentTicketWithTeam[]),
     fetchTicketPipeline && isBoard
       ? prisma.ticket.findMany({
           where: boardWhere,
@@ -236,7 +257,7 @@ export default async function AgentHome({
           take: 200,
           include: { team: true, assignedAgent: true },
         })
-      : Promise.resolve([]),
+      : Promise.resolve([] as AgentTicketWithTeam[]),
     fetchTicketPipeline ? prisma.ticket.count({ where: dataWhere }) : Promise.resolve(0),
     fetchTicketPipeline
       ? prisma.ticket.count({
@@ -267,12 +288,34 @@ export default async function AgentHome({
             title: true,
             status: true,
             updatedAt: true,
+            assignedAgent: { select: { email: true, name: true } },
           },
         })
       : Promise.resolve([]),
   ]);
 
-  const tickets = isBoard ? ticketsBoard : ticketsTable;
+  const pipelineRows = [...ticketsTable, ...ticketsBoard];
+  const assigneeColorIdentities = [
+    ...pipelineRows.map((t) => ({ email: t.assignedAgent?.email, name: t.assignedAgent?.name })),
+    ...recentUpdated.map((r) => ({ email: r.assignedAgent?.email, name: r.assignedAgent?.name })),
+  ];
+  const assigneeColorByEmail = assigneeColorIdentities.some((x) => (x.email ?? "").trim())
+    ? await loadStaffAssignmentColorsForAgents(assigneeColorIdentities)
+    : new Map<string, string | null>();
+  const withAssigneeColor = (t: AgentTicketWithTeam): AgentTicketWithTeam => {
+    const email = t.assignedAgent?.email?.trim().toLowerCase();
+    const staffAssignmentColor = email ? (assigneeColorByEmail.get(email) ?? null) : null;
+    return {
+      ...t,
+      assignedAgent: t.assignedAgent
+        ? { ...t.assignedAgent, staffAssignmentColor }
+        : null,
+    } as AgentTicketWithTeam;
+  };
+  const ticketsTableEnriched = ticketsTable.map(withAssigneeColor);
+  const ticketsBoardEnriched = ticketsBoard.map(withAssigneeColor);
+
+  const tickets = isBoard ? ticketsBoardEnriched : ticketsTableEnriched;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const start = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);
@@ -338,7 +381,7 @@ export default async function AgentHome({
   ).filter((n, i, arr) => n >= 1 && n <= totalPages && arr.indexOf(n) === i);
 
   const boardCards: KanbanTicket[] = isBoard
-    ? ticketsBoard.map((t) => ({
+    ? ticketsBoardEnriched.map((t) => ({
         id: t.id,
         ticketNumber: t.ticketNumber,
         title: t.title,
@@ -347,6 +390,8 @@ export default async function AgentHome({
         status: t.status,
         updatedAt: t.updatedAt.toISOString(),
         agentName: t.assignedAgent?.name ?? null,
+        assigneeColorKey:
+          (t.assignedAgent as { staffAssignmentColor?: string | null } | null)?.staffAssignmentColor ?? null,
       }))
     : [];
 
@@ -375,19 +420,29 @@ export default async function AgentHome({
                     No recent queue activity.
                   </p>
                 ) : (
-                  recentUpdated.map((item) => (
-                    <AgentTicketDeepLink
-                      key={item.id}
-                      ticketId={item.id}
-                      className="block rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                    >
-                      <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{item.ticketNumber}</p>
-                      <p className="text-xs text-zinc-700 dark:text-zinc-300">{item.title}</p>
-                      <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                        {item.status.replaceAll("_", " ")} · {relativeTime(item.updatedAt)}
-                      </p>
-                    </AgentTicketDeepLink>
-                  ))
+                  recentUpdated.map((item) => {
+                    const notifyAssigneeKey = item.assignedAgent?.email
+                      ? (assigneeColorByEmail.get(item.assignedAgent.email.trim().toLowerCase()) ?? null)
+                      : null;
+                    return (
+                      <AssigneeColorHighlight
+                        key={item.id}
+                        assigneeColorKey={notifyAssigneeKey}
+                        className="block rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900"
+                      >
+                        <AgentTicketDeepLink
+                          ticketId={item.id}
+                          className="block px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        >
+                          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{item.ticketNumber}</p>
+                          <p className="text-xs text-zinc-700 dark:text-zinc-300">{item.title}</p>
+                          <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                            {item.status.replaceAll("_", " ")} · {relativeTime(item.updatedAt)}
+                          </p>
+                        </AgentTicketDeepLink>
+                      </AssigneeColorHighlight>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -428,13 +483,24 @@ export default async function AgentHome({
               </div>
               <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
                 {session.user.role === "Personnel" && !isCompanyBoard && boardTab === "ticket" ? (
-                  <Link
-                    href="/tickets/new"
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-[#070d19]"
-                  >
-                    <Plus className="size-4" aria-hidden />
-                    Create ticket
-                  </Link>
+                  personnelRequestorIntakeBlock != null ? (
+                    <Link
+                      href={customerPendingTicketHref(personnelRequestorIntakeBlock)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-500/25 dark:text-amber-100"
+                      title="Finish your own request before opening another."
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      Resume {personnelRequestorIntakeBlock.ticketNumber}
+                    </Link>
+                  ) : (
+                    <Link
+                      href="/tickets/new"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-[#070d19]"
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      Create ticket
+                    </Link>
+                  )
                 ) : null}
                 <div className="flex flex-wrap gap-3">
                   <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
@@ -696,8 +762,17 @@ export default async function AgentHome({
                           </td>
                         </tr>
                       ) : (
-                        tableRows.map((t) => (
-                          <tr key={t.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80">
+                        tableRows.map((t) => {
+                          const accentHex = personnelAssignmentHex(
+                            (t.assignedAgent as { staffAssignmentColor?: string | null } | null)
+                              ?.staffAssignmentColor,
+                          );
+                          return (
+                          <tr
+                            key={t.id}
+                            className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80"
+                            style={personnelAssigneeHighlightStyle(accentHex)}
+                          >
                             <td className="px-4 py-3 font-mono text-xs text-zinc-600 dark:text-zinc-400">
                               {t.ticketNumber}
                             </td>
@@ -730,7 +805,8 @@ export default async function AgentHome({
                             </td>
                             <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">{relativeTime(t.updatedAt)}</td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>

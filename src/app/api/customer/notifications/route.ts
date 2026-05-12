@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {
-  customerHasPendingResolvedTicket,
-  listCustomerPendingResolvedTickets,
+  customerPendingTicketHref,
+  isAwaitingCustomerConfirmation,
+  listIntakeBlockingTicketsForEmails,
+  requestorHasIntakeBlockingTicket,
+  requestorIdentityWhereForEmails,
+  resolveCustomerIntakeIdentityEmails,
 } from "@/lib/customer-pending-resolution";
 import { createEmailVerificationToken } from "@/lib/email-verification-token";
 import { prisma } from "@/lib/prisma";
@@ -38,18 +42,17 @@ export async function GET() {
   }
 
   const email = (session.user.email ?? "").trim().toLowerCase();
+  const identityEmails = await resolveCustomerIntakeIdentityEmails(email, session.user.authProvider);
   const [pendingPrimary, pendingList, activities] = await Promise.all([
-    customerHasPendingResolvedTicket(email),
-    listCustomerPendingResolvedTickets(email),
+    requestorHasIntakeBlockingTicket(identityEmails),
+    listIntakeBlockingTicketsForEmails(identityEmails),
     prisma.ticketActivity.findMany({
       where: {
         OR: [
           { summary: { in: ["Status → IN_PROGRESS", "Resolution email sent"] } },
           { summary: { startsWith: "Priority →" } },
         ],
-        ticket: {
-          OR: [{ contactEmail: email }, { requestorEmail: email }],
-        },
+        ticket: requestorIdentityWhereForEmails(identityEmails),
       },
       orderBy: { createdAt: "desc" },
       take: 20,
@@ -67,14 +70,16 @@ export async function GET() {
   ]);
 
   const pendingNotifications: CustomerNotification[] = pendingList.map((t) => ({
-      id: `pending-in-progress-${t.id}`,
-      ticketId: t.id,
-      ticketNumber: t.ticketNumber,
-      summary: "PENDING_IN_PROGRESS_LOCK",
-      detail: "You already have a ticket in progress. You can open a new one after it moves out of In Progress.",
-      createdAt: t.updatedAt.toISOString(),
-      href: `/tickets/${t.id}`,
-    }));
+    id: `pending-intake-lock-${t.id}`,
+    ticketId: t.id,
+    ticketNumber: t.ticketNumber,
+    summary: "PENDING_INTAKE_LOCK",
+    detail: isAwaitingCustomerConfirmation(t.status)
+      ? "You have a ticket awaiting your confirmation. Confirm and close it before opening a new request."
+      : "You have a ticket in progress. Close it or wait until it is awaiting confirmation or closed before opening a new request.",
+    createdAt: t.updatedAt.toISOString(),
+    href: customerPendingTicketHref(t),
+  }));
 
   const activityRows: CustomerNotification[] = activities.map((a) => {
     const isVerify = a.summary === "Resolution email sent";
@@ -103,7 +108,7 @@ export async function GET() {
       continue;
     }
     const pri = (s: string) =>
-      s === "PENDING_IN_PROGRESS_LOCK" ? 3 : s === "Resolution email sent" ? 2 : 1;
+      s === "PENDING_INTAKE_LOCK" ? 3 : s === "Resolution email sent" ? 2 : 1;
     if (pri(n.summary) > pri(existing.summary)) byTicket.set(n.ticketId, n);
     else if (pri(n.summary) === pri(existing.summary)) {
       const a = new Date(existing.createdAt).getTime();
@@ -123,7 +128,7 @@ export async function GET() {
       ? {
           ticketId: pendingPrimary.id,
           ticketNumber: pendingPrimary.ticketNumber,
-          verificationHref: `/tickets/${pendingPrimary.id}`,
+          verificationHref: customerPendingTicketHref(pendingPrimary),
         }
       : null,
   };
