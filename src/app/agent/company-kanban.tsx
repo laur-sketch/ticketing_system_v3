@@ -1,13 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import type { CompanyBoardColumn, CompanyBucketId } from "@/lib/company-board";
 import { cleanIssuePreview, formatRelativeAgo, priorityPillClass } from "@/lib/ticket-board-formatters";
 import { cn } from "@/lib/cn";
+import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
+
+const COMPANY_BOARD_PAGE_SIZE = 5;
 
 const BUCKET_META: { id: CompanyBucketId; label: string; sub: string }[] = [
   { id: "unassigned", label: "Unassigned", sub: "Not yet assigned to personnel" },
@@ -44,6 +47,8 @@ export function CompanyKanban({
   refreshSeconds?: number;
 }) {
   const router = useRouter();
+  const [companyPage, setCompanyPage] = useState(1);
+
   useEffect(() => {
     if (refreshSeconds <= 0) return;
     const id = window.setInterval(() => {
@@ -51,6 +56,18 @@ export function CompanyKanban({
     }, refreshSeconds * 1000);
     return () => window.clearInterval(id);
   }, [router, refreshSeconds]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(columns.length / COMPANY_BOARD_PAGE_SIZE));
+    setCompanyPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [columns.length]);
+
+  const companyPageCount = Math.max(1, Math.ceil(columns.length / COMPANY_BOARD_PAGE_SIZE));
+  const companyPageClamped = Math.min(Math.max(1, companyPage), companyPageCount);
+  const visibleColumns = useMemo(() => {
+    const start = (companyPageClamped - 1) * COMPANY_BOARD_PAGE_SIZE;
+    return columns.slice(start, start + COMPANY_BOARD_PAGE_SIZE);
+  }, [columns, companyPageClamped]);
 
   if (columns.length === 0) {
     return (
@@ -63,14 +80,15 @@ export function CompanyKanban({
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-        Company lanes with status buckets. Refreshes about every {refreshSeconds}s.
+        Company lanes with status buckets (up to {COMPANY_BOARD_PAGE_SIZE} companies per page when there are more).
+        Refreshes about every {refreshSeconds}s.
       </p>
 
-      <div className="-mx-1 flex snap-x snap-mandatory gap-4 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-3">
-        {columns.map((col) => (
+      <div className="-mx-1 flex snap-x snap-mandatory gap-4 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 md:grid-cols-3 lg:grid-cols-5">
+        {visibleColumns.map((col) => (
           <article
             key={col.teamId}
-            className="w-[min(94vw,380px)] shrink-0 snap-start sm:w-auto rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+            className="min-w-0 w-[min(94vw,380px)] shrink-0 snap-start sm:w-auto rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
           >
             <div className="mb-3 flex items-start justify-between gap-2 border-b border-zinc-200 px-1 pb-2 dark:border-zinc-800">
               <div className="min-w-0">
@@ -208,6 +226,14 @@ export function CompanyKanban({
           </article>
         ))}
       </div>
+      <SimplePaginationBar
+        page={companyPage}
+        pageSize={COMPANY_BOARD_PAGE_SIZE}
+        total={columns.length}
+        onPageChange={setCompanyPage}
+        itemLabel="companies"
+        className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#0b1220]"
+      />
     </div>
   );
 }
