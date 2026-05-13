@@ -2,30 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSyncExternalStore } from "react";
-import { BookOpen, Home, LifeBuoy, Settings, Ticket } from "lucide-react";
+import { LifeBuoy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { BrandLockup } from "@/components/BrandLockup";
-
-const items: { href: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { href: "/", label: "Dashboard", icon: Home },
-  { href: "/my-tickets", label: "Active Tickets", icon: Ticket },
-  { href: "/tickets/knowledge", label: "Knowledge Base", icon: BookOpen },
-  { href: "/tickets/knowledge#settings", label: "Settings", icon: Settings },
-];
-
-function subscribeHash(onChange: () => void) {
-  window.addEventListener("hashchange", onChange);
-  return () => window.removeEventListener("hashchange", onChange);
-}
-
-function useHash() {
-  return useSyncExternalStore(
-    subscribeHash,
-    () => window.location.hash,
-    () => "",
-  );
-}
+import { CUSTOMER_PORTAL_NAV_ITEMS, customerPortalNavItemActive } from "@/components/portal/customer-portal-nav";
+import { useHash } from "@/components/portal/useHash";
 
 export function CustomerSidebar() {
   const pathname = usePathname();
@@ -38,15 +19,8 @@ export function CustomerSidebar() {
       </div>
 
       <nav className="flex flex-1 flex-col gap-0.5 text-sm" aria-label="Sidebar">
-        {items.map(({ href, label, icon: Icon }) => {
-          let active = false;
-          if (label === "Dashboard") active = pathname === "/";
-          else if (label === "Active Tickets")
-            active = pathname === "/my-tickets" || pathname.startsWith("/my-tickets/");
-          else if (label === "Knowledge Base")
-            active = pathname === "/tickets/knowledge" && hash !== "#settings";
-          else if (label === "Settings")
-            active = pathname === "/tickets/knowledge" && hash === "#settings";
+        {CUSTOMER_PORTAL_NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+          const active = customerPortalNavItemActive(label, pathname, hash);
           return (
             <Link
               key={label + href}

@@ -169,14 +169,14 @@ export default async function Home() {
       .slice(0, 3);
 
     return (
-      <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-4 py-8 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100">
+      <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-6 text-zinc-900 sm:px-4 sm:py-8 dark:bg-[#070d19] dark:text-zinc-100">
         <div className="mx-auto max-w-6xl space-y-6">
-          <header className="flex flex-wrap items-start justify-between gap-4">
-            <div>
+          <header className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+            <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
                 {BRAND_TITLE} · Ticket dashboard
               </p>
-              <h1 className="mt-1.5 text-4xl font-bold tracking-tight text-zinc-900 dark:text-white">
+              <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
                 Operational Oversight
               </h1>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
@@ -184,16 +184,16 @@ export default async function Home() {
                 {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               <Link
                 href="/agent"
-                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 Ticket Queue
               </Link>
               <Link
                 href="/tickets/new"
-                className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-500"
+                className="inline-flex justify-center rounded-lg bg-orange-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-orange-500"
               >
                 New Ticket
               </Link>
@@ -203,19 +203,19 @@ export default async function Home() {
           <section className="grid gap-4 md:grid-cols-3">
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Open Tickets</p>
-              <p className="mt-3 text-5xl font-bold leading-none text-zinc-900 dark:text-zinc-100">{openTickets}</p>
+              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{openTickets}</p>
               <p className="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-600">Active queue requiring action</p>
             </article>
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Avg. Response</p>
-              <p className="mt-3 text-5xl font-bold leading-none text-zinc-900 dark:text-zinc-100">{avgMins}m</p>
+              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{avgMins}m</p>
               <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-600">
                 Based on latest first responses
               </p>
             </article>
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Resolution Rate</p>
-              <p className="mt-3 text-5xl font-bold leading-none text-zinc-900 dark:text-zinc-100">
+              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {resolutionRate.toFixed(1)}%
               </p>
               <p className="mt-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Target: 92.0%</p>

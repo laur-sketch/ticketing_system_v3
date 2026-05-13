@@ -166,10 +166,10 @@ export function Nav() {
 
   return (
     <header className="shrink-0 border-b border-zinc-200 bg-white backdrop-blur dark:border-zinc-800 dark:bg-[#0b1220]">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:gap-x-4">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2.5 sm:gap-x-4 sm:px-4">
         {showUtilities ? (
           <>
-            <BrandLockup variant="staff-header-compact" href="/" className="hidden shrink-0 md:inline-flex" />
+            <BrandLockup variant="staff-header-compact" href="/" className="inline-flex shrink-0" />
             <form
               action="/agent"
               method="get"
@@ -218,7 +218,7 @@ export function Nav() {
                 ) : null}
               </button>
               {notifOpen ? (
-                <div className="absolute right-0 z-40 mt-2 w-[360px] max-w-[86vw] rounded-xl border border-zinc-200 bg-white p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="absolute right-0 z-40 mt-2 w-[min(360px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-200 bg-white p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
                   <div className="flex items-center justify-between px-2 py-1.5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                       Notifications

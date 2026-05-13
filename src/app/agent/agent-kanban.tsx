@@ -1,14 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import { GripVertical } from "lucide-react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import type { TicketStatus } from "@prisma/client";
 import { cn } from "@/lib/cn";
+import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 
 export type KanbanTicket = {
   id: string;
@@ -39,8 +40,6 @@ function statusToColumn(status: TicketStatus): ColumnId {
 function targetStatusForColumn(ticket: KanbanTicket, column: ColumnId): TicketStatus {
   if (column === "open") return "OPEN";
   if (column === "feedback") return "FOR_CONFIRMATION";
-  // Progress lane represents IN_PROGRESS, but also currently visually groups ESCALATED.
-  // Keep ESCALATED stable when dropped back into the Progress lane.
   return ticket.status === "ESCALATED" ? "ESCALATED" : "IN_PROGRESS";
 }
 
@@ -86,7 +85,6 @@ function statusBadgeLabel(status: TicketStatus) {
 export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket[] }) {
   const router = useRouter();
   const [tickets, setTickets] = useState(initialTickets);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,49 +137,44 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
     }
   }
 
-  function onDragStart(e: React.DragEvent, id: string) {
-    e.dataTransfer.setData("text/plain", id);
-    e.dataTransfer.effectAllowed = "move";
-    setDraggingId(id);
-  }
-
-  function onDragEnd() {
-    setDraggingId(null);
-  }
-
-  function onDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  }
+  const { registerColumn, getCardPointerProps, ghost, hoverColumn, draggingItemId } = usePointerColumnDrag<ColumnId>({
+    onDrop: (itemId, column) => {
+      const t = tickets.find((x) => x.id === itemId);
+      if (t) void moveTicket(t, column);
+    },
+    isColumnDropDisabled: (c) => c === "open",
+    activationDistance: 12,
+    disabled: busyId != null,
+  });
 
   return (
     <div className="space-y-3">
-        {error ? (
+      <PointerDragGhostLayer ghost={ghost} />
+      {error ? (
         <p className="rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-sm text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
           {error}
         </p>
       ) : null}
 
-      <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 md:mx-0 md:grid md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:snap-none md:grid-cols-3">
+      <p className="text-[11px] text-zinc-600 md:hidden dark:text-zinc-400">
+        Drag cards between lanes: hold and slide (~½ inch) to pick up, then release over a column. Links still open
+        with a normal tap.
+      </p>
+
+      <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 [touch-action:pan-x] md:mx-0 md:grid md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:snap-none md:grid-cols-3 md:[touch-action:auto]">
         {columns.map((col) => {
           const colTickets = tickets.filter((t) => statusToColumn(t.status) === col.id);
           const dropEnabled = col.id !== "open";
+          const highlightDrop = dropEnabled && hoverColumn === col.id;
 
           return (
             <div
               key={col.id}
-              className="flex min-h-[280px] w-[86vw] min-w-[260px] snap-start flex-col rounded-xl border border-zinc-200 bg-zinc-50 sm:w-[360px] md:w-auto md:min-w-0 dark:border-zinc-800 dark:bg-zinc-950/40"
-              onDragOver={dropEnabled ? onDragOver : undefined}
-              onDrop={
-                dropEnabled
-                  ? (e) => {
-                      e.preventDefault();
-                      const id = e.dataTransfer.getData("text/plain");
-                      const t = tickets.find((x) => x.id === id);
-                      if (t) void moveTicket(t, col.id);
-                    }
-                  : undefined
-              }
+              ref={registerColumn(col.id)}
+              className={cn(
+                "flex min-h-[280px] w-[86vw] min-w-[260px] snap-start flex-col rounded-xl border border-zinc-200 bg-zinc-50 sm:w-[360px] md:w-auto md:min-w-0 dark:border-zinc-800 dark:bg-zinc-950/40",
+                highlightDrop && "ring-2 ring-orange-500/70 ring-offset-2 ring-offset-zinc-50 dark:ring-offset-zinc-950",
+              )}
             >
               <div className="border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
                 <div className="flex items-baseline justify-between gap-2">
@@ -201,48 +194,55 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
                     key={t.id}
                     assigneeColorKey={t.assigneeColorKey}
                     className={cn(
-                      "cursor-grab rounded-lg border border-zinc-200 bg-white shadow-sm transition active:cursor-grabbing dark:border-zinc-800 dark:bg-[#0f172a]",
-                      draggingId === t.id && "opacity-60",
+                      "rounded-lg border border-zinc-200 bg-white shadow-sm transition dark:border-zinc-800 dark:bg-[#0f172a]",
+                      draggingItemId === t.id && "opacity-55",
                       busyId === t.id && "pointer-events-none opacity-50",
                       t.status === "ESCALATED" && "ring-1 ring-rose-500/40",
                     )}
                   >
-                  <div
-                    draggable
-                    title="Drag to move ticket status"
-                    onDragStart={(e) => onDragStart(e, t.id)}
-                    onDragEnd={onDragEnd}
-                    className="p-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <AgentTicketDeepLink
-                        ticketId={t.id}
-                        className="font-mono text-[11px] text-zinc-600 hover:text-orange-700 dark:text-zinc-500 dark:hover:text-zinc-300"
-                      >
-                        #{t.ticketNumber}
-                      </AgentTicketDeepLink>
-                      <div className="flex items-center gap-1">
-                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", priorityClass(t.priority))}>
-                          {priorityBadgeLabel(t.priority)}
+                    <div
+                      {...getCardPointerProps(t.id, {
+                        getLabel: () => `#${t.ticketNumber} · ${(t.description || t.title).slice(0, 80)}`,
+                      })}
+                      className={cn(
+                        "touch-pan-y select-none md:cursor-grab md:active:cursor-grabbing",
+                        busyId === t.id && "pointer-events-none",
+                      )}
+                      title="Hold and drag to another lane (touch or mouse)"
+                    >
+                      <div className="flex gap-1.5 p-3 pt-2">
+                        <span className="mt-0.5 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden>
+                          <GripVertical className="size-4" />
                         </span>
-                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", statusBadgeClass(t.status))}>
-                          {statusBadgeLabel(t.status)}
-                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <AgentTicketDeepLink
+                              ticketId={t.id}
+                              className="font-mono text-[11px] text-zinc-600 hover:text-orange-700 dark:text-zinc-500 dark:hover:text-zinc-300"
+                            >
+                              #{t.ticketNumber}
+                            </AgentTicketDeepLink>
+                            <div className="flex items-center gap-1">
+                              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", priorityClass(t.priority))}>
+                                {priorityBadgeLabel(t.priority)}
+                              </span>
+                              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", statusBadgeClass(t.status))}>
+                                {statusBadgeLabel(t.status)}
+                              </span>
+                            </div>
+                          </div>
+                          <AgentTicketDeepLink ticketId={t.id} className="mt-1 block text-left">
+                            <p className="line-clamp-2 text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-100">
+                              {t.description || t.title}
+                            </p>
+                          </AgentTicketDeepLink>
+                          <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
+                            <ElapsedFromIso iso={t.updatedAt} className="inline" />
+                            <AssigneeInitialsBadge agentName={t.agentName} assigneeColorKey={t.assigneeColorKey} />
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <AgentTicketDeepLink ticketId={t.id} className="mt-1 block text-left">
-                      <p className="line-clamp-2 text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-100">
-                        {t.description || t.title}
-                      </p>
-                    </AgentTicketDeepLink>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
-                      <ElapsedFromIso iso={t.updatedAt} className="inline" />
-                      <AssigneeInitialsBadge
-                        agentName={t.agentName}
-                        assigneeColorKey={t.assigneeColorKey}
-                      />
-                    </div>
-                  </div>
                   </AssigneeColorHighlight>
                 ))}
 

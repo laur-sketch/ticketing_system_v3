@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { GripVertical } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import {
   incompletePastDeadlineDelayMs,
   nonRecurringDeadline,
@@ -52,9 +54,6 @@ export function AgentKpiKanbanFlow({
   const [canAssignWork, setCanAssignWork] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<KpiBoardStatus | null>(null);
-  const [assignDragId, setAssignDragId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState("UTC");
 
@@ -224,8 +223,22 @@ export function AgentKpiKanbanFlow({
     [agents, rows],
   );
 
+  const assignLaneDrag = usePointerColumnDrag<string>({
+    onDrop: (id, agentId) => void assignKpi(id, agentId),
+    disabled: busyId != null || !canAssignWork,
+    activationDistance: 12,
+  });
+
+  const kpiStatusDrag = usePointerColumnDrag<KpiBoardStatus>({
+    onDrop: (id, col) => void move(id, col),
+    disabled: busyId != null,
+    activationDistance: 12,
+  });
+
   return (
     <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+      <PointerDragGhostLayer ghost={assignLaneDrag.ghost} />
+      <PointerDragGhostLayer ghost={kpiStatusDrag.ghost} />
       {showAdminTaskManagement ? (
         <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => void load()} />
       ) : null}
@@ -235,7 +248,7 @@ export function AgentKpiKanbanFlow({
             Task Assignment Board
           </h4>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            Drag from Unassigned tasks into a personnel/head-role lane. Lanes are touch-friendly on mobile.
+            Hold and slide a task, then release over a lane (works on touch and desktop).
           </p>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
             <div className="rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
@@ -254,39 +267,30 @@ export function AgentKpiKanbanFlow({
                 {unassignedRows.map((r) => (
                   <div
                     key={`unassigned-${r.id}`}
-                    draggable={busyId !== r.id}
-                    onDragStart={(e) => {
-                      setAssignDragId(r.id);
-                      e.dataTransfer.setData("text/kpi-assign-id", r.id);
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragEnd={() => setAssignDragId(null)}
+                    {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => r.title })}
                     className={cn(
-                      "rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950/40",
-                      assignDragId === r.id && "ring-1 ring-orange-400/40",
+                      "touch-pan-y select-none rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950/40",
+                      assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
+                      busyId === r.id && "pointer-events-none opacity-50",
                     )}
                   >
-                    <p className="line-clamp-2 leading-snug">{r.title}</p>
+                    <div className="flex items-start gap-1.5">
+                      <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
+                      <p className="line-clamp-2 min-w-0 leading-snug">{r.title}</p>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:gap-3 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-2">
+            <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 [touch-action:pan-x] sm:mx-0 sm:grid sm:gap-3 sm:overflow-visible sm:px-0 sm:pb-0 sm:[touch-action:auto] lg:grid-cols-2">
               {agents.map((a) => (
                 <div
                   key={`lane-${a.id}`}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const id = e.dataTransfer.getData("text/kpi-assign-id");
-                    if (!id) return;
-                    void assignKpi(id, a.id);
-                    setAssignDragId(null);
-                  }}
-                  className="w-[88%] shrink-0 snap-start rounded-xl border border-zinc-300 bg-white p-3 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900/40"
+                  ref={assignLaneDrag.registerColumn(a.id)}
+                  className={cn(
+                    "w-[88%] shrink-0 snap-start rounded-xl border border-zinc-300 bg-white p-3 transition sm:w-auto dark:border-zinc-700 dark:bg-zinc-900/40",
+                    assignLaneDrag.hoverColumn === a.id && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
+                  )}
                 >
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{a.name}</p>
@@ -316,7 +320,7 @@ export function AgentKpiKanbanFlow({
             Task Kanban (drag to update)
           </h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Drag a task to <strong>Done</strong> to mark all sub-tasks done, or to <strong>Current</strong> to reset.
+            Hold and slide a task to <strong>Done</strong> or <strong>Current</strong> (touch or mouse).
           </p>
         </div>
       </div>
@@ -349,22 +353,11 @@ export function AgentKpiKanbanFlow({
             return (
               <article
                 key={col}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOver(col);
-                }}
-                onDragLeave={() => setDragOver(null)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOver(null);
-                  const id = e.dataTransfer.getData("text/kpi-id");
-                  if (!id) return;
-                  void move(id, col);
-                }}
+                ref={kpiStatusDrag.registerColumn(col)}
                 className={cn(
                   "min-h-[320px] rounded-2xl border p-3 transition",
                   colClass,
-                  dragOver === col && "ring-2 ring-orange-500/60",
+                  kpiStatusDrag.hoverColumn === col && "ring-2 ring-orange-500/60",
                 )}
               >
                 <div className="flex items-center justify-between gap-3 px-1">
@@ -387,20 +380,20 @@ export function AgentKpiKanbanFlow({
                       return (
                         <div
                           key={r.id}
-                          draggable={editable && busyId !== r.id}
-                          onDragStart={(e) => {
-                            if (!editable) return;
-                            setDragId(r.id);
-                            e.dataTransfer.setData("text/kpi-id", r.id);
-                            e.dataTransfer.effectAllowed = "move";
-                          }}
-                          onDragEnd={() => setDragId(null)}
+                          {...(editable
+                            ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => r.title })
+                            : {})}
                           className={cn(
                             "rounded-xl border bg-white/60 p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-950/30",
                             busyId === r.id && "opacity-50",
-                            dragId === r.id && "ring-1 ring-orange-400/40",
+                            editable && kpiStatusDrag.draggingItemId === r.id && "ring-1 ring-orange-400/40",
                           )}
                         >
+                          <div className="flex items-start gap-2">
+                            {editable ? (
+                              <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
+                            ) : null}
+                            <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{r.title}</p>
@@ -495,6 +488,8 @@ export function AgentKpiKanbanFlow({
                                     <span className={cn(Boolean(s.done) && "line-through opacity-70")}>{s.title}</span>
                                   </label>
                                 ))}
+                          </div>
+                            </div>
                           </div>
                         </div>
                       );

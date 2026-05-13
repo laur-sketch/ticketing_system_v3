@@ -75,9 +75,11 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "customer-topnav":
       return (
-        <div className="flex items-center gap-3">
-          <BrandLogo className="h-[4rem] w-auto max-w-[260px] shrink-0 object-contain object-left" />
-          <span className="text-sm font-bold tracking-[0.04em] text-zinc-900 dark:text-zinc-100">{BRAND_TITLE}</span>
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <BrandLogo className="h-10 w-auto max-w-[min(200px,55vw)] shrink-0 object-contain object-left sm:h-12 md:h-14 lg:h-16" />
+          <span className="min-w-0 truncate text-xs font-bold tracking-[0.04em] text-zinc-900 sm:text-sm dark:text-zinc-100">
+            {BRAND_TITLE}
+          </span>
         </div>
       );
     case "landing-header":

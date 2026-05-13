@@ -2,6 +2,13 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Prevent horizontal scroll from wide tables / grids; respect mobile text scaling. */
+html {
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 /* Light theme (default). Apply dark tokens when `html` has `.dark`. */
 :root {
   --background: #fafafa;

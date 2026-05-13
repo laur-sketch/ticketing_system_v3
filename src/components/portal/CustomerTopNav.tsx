@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Bell, CircleHelp, Plus, Search } from "lucide-react";
+import { Bell, CircleHelp, LifeBuoy, Menu, Plus, Search, X } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/cn";
 import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { CUSTOMER_PORTAL_NAV_ITEMS, customerPortalNavItemActive } from "@/components/portal/customer-portal-nav";
+import { useHash } from "@/components/portal/useHash";
 
 const tabs: { href: string; label: string }[] = [
   { href: "/", label: "Dashboard" },
@@ -17,7 +19,9 @@ const tabs: { href: string; label: string }[] = [
 
 export function CustomerTopNav() {
   const pathname = usePathname();
+  const hash = useHash();
   const { data } = useSession();
+  const [navOpen, setNavOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifBusy, setNotifBusy] = useState(false);
   type NotifRow = {
@@ -103,9 +107,72 @@ export function CustomerTopNav() {
 
   return (
     <header className="shrink-0 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#0b1220]">
+      {navOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setNavOpen(false)}
+            aria-label="Close menu"
+          />
+          <aside className="absolute left-0 top-0 flex h-full w-[min(88vw,320px)] max-w-[320px] flex-col border-r border-zinc-200 bg-white px-4 py-5 shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220]">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">Menu</p>
+              <button
+                type="button"
+                onClick={() => setNavOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                aria-label="Close menu"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <nav className="flex flex-1 flex-col gap-0.5 text-sm" aria-label="Mobile">
+              {CUSTOMER_PORTAL_NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+                const active = customerPortalNavItemActive(label, pathname, hash);
+                return (
+                  <Link
+                    key={`drawer-${label}`}
+                    href={href}
+                    onClick={() => setNavOpen(false)}
+                    className={cn(
+                      "flex items-center gap-2.5 rounded-lg px-3 py-2.5 font-medium transition",
+                      active
+                        ? "bg-orange-500/15 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
+                        : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+                    )}
+                  >
+                    <Icon className="size-4 shrink-0 opacity-80" />
+                    {label}
+                  </Link>
+                );
+              })}
+            </nav>
+            <a
+              href="mailto:support@example.com"
+              className="mt-4 flex items-center justify-center gap-1.5 rounded-lg border border-zinc-200 py-2.5 text-xs text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800/80"
+            >
+              <LifeBuoy className="size-3.5 shrink-0" />
+              Need help?
+            </a>
+          </aside>
+        </div>
+      ) : null}
       <div className="mx-auto flex max-w-7xl flex-col gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <BrandLockup variant="customer-topnav" href="/" />
+          <div className="flex items-start gap-2">
+            <button
+              type="button"
+              onClick={() => setNavOpen(true)}
+              className="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-zinc-50 text-zinc-800 lg:hidden dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+              aria-label="Open menu"
+            >
+              <Menu className="size-5" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <BrandLockup variant="customer-topnav" href="/" />
+            </div>
+          </div>
           <nav
             className="-mx-1 mt-2 flex items-center gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
             aria-label="Primary"
@@ -183,7 +250,7 @@ export function CustomerTopNav() {
               ) : null}
             </button>
             {notifOpen ? (
-              <div className="absolute right-0 z-20 mt-2 w-[320px] rounded-xl border border-zinc-200 bg-white p-2 shadow-xl dark:border-zinc-700 dark:bg-[#0b1220]">
+              <div className="fixed inset-x-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-20 mt-0 w-auto rounded-xl border border-zinc-200 bg-white p-2 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(320px,calc(100vw-2rem))] dark:border-zinc-700 dark:bg-[#0b1220]">
                 <div className="flex items-center justify-between gap-2 px-2 py-1">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
                     Notifications

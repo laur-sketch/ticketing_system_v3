@@ -47,9 +47,11 @@ export function AppChrome({ children }: Props) {
     <div className="flex min-h-screen flex-1 bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
       <RealtimeRefreshBeacon />
       <GlobalSidebar />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <Nav />
-        <div className="min-h-0 flex-1 overflow-auto">{children}</div>
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+          {children}
+        </div>
       </div>
     </div>
   );

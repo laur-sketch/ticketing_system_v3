@@ -143,7 +143,11 @@ function GlobalSidebarInner() {
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
-        className="fixed bottom-4 left-4 z-40 inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 lg:hidden"
+        className="fixed z-40 inline-flex h-11 w-11 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 lg:hidden"
+        style={{
+          bottom: "max(1rem, env(safe-area-inset-bottom, 0px))",
+          left: "max(1rem, env(safe-area-inset-left, 0px))",
+        }}
         aria-label="Open navigation menu"
       >
         <Menu size={18} />
