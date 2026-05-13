@@ -4,8 +4,7 @@ import { customerCanAccessTicket, requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import {
-  personnelAssigneeHighlightStyle,
-  personnelAssignmentHex,
+  personnelAssigneeHighlightStyleFromKey,
 } from "@/lib/personnel-assignment-colors";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { TicketIntakeScreenshotsBlock } from "@/components/ticket-intake-screenshots-block";
@@ -39,9 +38,7 @@ export default async function TicketPage({
     { email: ticket.assignedAgent?.email, name: ticket.assignedAgent?.name },
   ]);
   const assigneeEmail = ticket.assignedAgent?.email?.trim().toLowerCase();
-  const assigneeAccentHex = assigneeEmail
-    ? personnelAssignmentHex(assigneeColorMap.get(assigneeEmail) ?? null)
-    : null;
+  const assigneeColorKey = assigneeEmail ? (assigneeColorMap.get(assigneeEmail) ?? null) : null;
   if (
     session.user.role === "Customer" &&
     !customerCanAccessTicket(
@@ -111,7 +108,7 @@ export default async function TicketPage({
         <aside className="space-y-4">
           <article
             className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm"
-            style={personnelAssigneeHighlightStyle(assigneeAccentHex)}
+            style={personnelAssigneeHighlightStyleFromKey(assigneeColorKey)}
           >
             <h2 className="text-sm font-semibold text-white">Acknowledgment</h2>
             <p className="mt-2 text-sm text-zinc-300">

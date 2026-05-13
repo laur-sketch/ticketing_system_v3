@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
@@ -9,6 +9,7 @@ import { BRAND_TITLE } from "@/lib/brand";
 import { passwordHashLabel } from "@/lib/password-hash-display";
 import type { PersonnelRosterRow } from "@/lib/personnel-accounts-data";
 import { StaffAssignmentColorSelect } from "@/components/admin/StaffAssignmentColorSelect";
+import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
 import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
 
 type Team = { id: string; name: string };
@@ -30,6 +31,7 @@ type PortalAccountRow = {
 };
 type RosterCompany = { id: string; name: string };
 const ALL_SBUS_VALUE = "__ALL_SBUS__";
+const PERSONNEL_REGISTRY_PAGE_SIZE = 10;
 
 type PendingAccountRequestRow = {
   id: string;
@@ -74,6 +76,8 @@ export function PersonnelClient({
   const [createPassword, setCreatePassword] = useState("");
   const [createRole, setCreateRole] = useState<"Admin" | "Personnel">("Personnel");
   const [createCompanyId, setCreateCompanyId] = useState("");
+  const [personnelRegistryPage, setPersonnelRegistryPage] = useState(1);
+  const [portalRegistryPage, setPortalRegistryPage] = useState(1);
 
   const { data: session, status: sessionStatus } = useSession();
   const canManagePortalAccounts = session?.user?.role === "SuperAdmin";
@@ -82,6 +86,20 @@ export function PersonnelClient({
     void loadPendingAccountRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(personnel.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+    setPersonnelRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [personnel.length]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(portalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+    setPortalRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [portalAccounts.length]);
+
+  useEffect(() => {
+    setPortalRegistryPage(1);
+  }, [view]);
 
   useEffect(() => {
     if (sessionStatus === "loading") return;
@@ -320,6 +338,26 @@ export function PersonnelClient({
     if (status === "DELETED") return "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300";
     return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   };
+
+  const personnelRegistryPageCount = Math.max(1, Math.ceil(personnel.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+  const personnelRegistryPageClamped = Math.min(
+    Math.max(1, personnelRegistryPage),
+    personnelRegistryPageCount,
+  );
+  const paginatedPersonnel = useMemo(() => {
+    const start = (personnelRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
+    return personnel.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
+  }, [personnel, personnelRegistryPageClamped]);
+
+  const portalRegistryPageCount = Math.max(1, Math.ceil(portalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+  const portalRegistryPageClamped = Math.min(
+    Math.max(1, portalRegistryPage),
+    portalRegistryPageCount,
+  );
+  const paginatedPortalAccounts = useMemo(() => {
+    const start = (portalRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
+    return portalAccounts.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
+  }, [portalAccounts, portalRegistryPageClamped]);
 
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0a0b12] dark:text-zinc-100 sm:px-4 md:py-5">
@@ -589,7 +627,7 @@ export function PersonnelClient({
                           </td>
                         </tr>
                       ) : (
-                        personnel.map((row) => (
+                        paginatedPersonnel.map((row) => (
                           <tr key={row.portalAccountId} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
                             <td className="truncate px-3 py-2 font-medium text-zinc-900 dark:text-white" title={row.name}>
                               {row.name}
@@ -630,6 +668,13 @@ export function PersonnelClient({
                     </tbody>
                   </table>
                 </div>
+                <SimplePaginationBar
+                  page={personnelRegistryPage}
+                  pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
+                  total={personnel.length}
+                  onPageChange={setPersonnelRegistryPage}
+                  itemLabel="users"
+                />
               </section>
             )}
           </>
@@ -670,13 +715,14 @@ export function PersonnelClient({
                 </div>
 
                 {view === "cards" ? (
-                  <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <>
+                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {portalAccounts.length === 0 ? (
                       <article className="col-span-full rounded-xl border border-dashed border-zinc-300 bg-zinc-100 px-4 py-6 text-center text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/20 dark:text-zinc-500">
                         No portal accounts loaded.
                       </article>
                     ) : (
-                      portalAccounts.map((a) => (
+                      paginatedPortalAccounts.map((a) => (
                         <article
                           key={a.id}
                           className="flex flex-col rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#12161c]"
@@ -823,6 +869,15 @@ export function PersonnelClient({
                       ))
                     )}
                   </section>
+                  <SimplePaginationBar
+                    page={portalRegistryPage}
+                    pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
+                    total={portalAccounts.length}
+                    onPageChange={setPortalRegistryPage}
+                    itemLabel="users"
+                    className="mt-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]"
+                  />
+                </>
                 ) : (
                   <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
                     <table className="w-full table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
@@ -847,7 +902,7 @@ export function PersonnelClient({
                             </td>
                           </tr>
                         ) : (
-                          portalAccounts.map((a) => (
+                          paginatedPortalAccounts.map((a) => (
                             <tr key={a.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
                               <td className="truncate px-2 py-1.5 font-medium text-zinc-900 dark:text-white" title={a.name}>
                                 {a.name}
@@ -942,6 +997,13 @@ export function PersonnelClient({
                         )}
                       </tbody>
                     </table>
+                    <SimplePaginationBar
+                      page={portalRegistryPage}
+                      pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
+                      total={portalAccounts.length}
+                      onPageChange={setPortalRegistryPage}
+                      itemLabel="users"
+                    />
                   </section>
                 )}
               </>

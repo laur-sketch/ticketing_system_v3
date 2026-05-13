@@ -12,10 +12,7 @@ import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board
 import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
 import { prisma } from "@/lib/prisma";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
-import {
-  personnelAssigneeHighlightStyle,
-  personnelAssignmentHex,
-} from "@/lib/personnel-assignment-colors";
+import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignment-colors";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
@@ -763,15 +760,14 @@ export default async function AgentHome({
                         </tr>
                       ) : (
                         tableRows.map((t) => {
-                          const accentHex = personnelAssignmentHex(
+                          const assigneeColorKey =
                             (t.assignedAgent as { staffAssignmentColor?: string | null } | null)
-                              ?.staffAssignmentColor,
-                          );
+                              ?.staffAssignmentColor ?? null;
                           return (
                           <tr
                             key={t.id}
                             className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80"
-                            style={personnelAssigneeHighlightStyle(accentHex)}
+                            style={personnelAssigneeHighlightStyleFromKey(assigneeColorKey)}
                           >
                             <td className="px-4 py-3 font-mono text-xs text-zinc-600 dark:text-zinc-400">
                               {t.ticketNumber}

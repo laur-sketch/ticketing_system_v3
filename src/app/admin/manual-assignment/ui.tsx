@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
+import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { cn } from "@/lib/cn";
@@ -34,6 +35,8 @@ type PersonnelColumn = {
   cards: TicketCard[];
 };
 
+const ASSIGNMENT_LANES_PAGE_SIZE = 6;
+
 export function ManualAssignmentBoard({
   unassigned,
   personnel,
@@ -58,6 +61,7 @@ export function ManualAssignmentBoard({
   const [dragTicketId, setDragTicketId] = useState<string | null>(null);
   const [busyTicketId, setBusyTicketId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lanePage, setLanePage] = useState(1);
   const allCount = useMemo(() => cards.length + columns.reduce((sum, c) => sum + c.cards.length, 0), [cards, columns]);
   const canChooseCompanyFilter = Array.isArray(companyFilterOptions) && companyFilterOptions.length > 0;
 
@@ -65,6 +69,18 @@ export function ManualAssignmentBoard({
     setCards(unassigned);
     setColumns(personnel);
   }, [unassigned, personnel]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(columns.length / ASSIGNMENT_LANES_PAGE_SIZE));
+    setLanePage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [columns.length]);
+
+  const lanePageCount = Math.max(1, Math.ceil(columns.length / ASSIGNMENT_LANES_PAGE_SIZE));
+  const lanePageClamped = Math.min(Math.max(1, lanePage), lanePageCount);
+  const visibleColumns = useMemo(() => {
+    const start = (lanePageClamped - 1) * ASSIGNMENT_LANES_PAGE_SIZE;
+    return columns.slice(start, start + ASSIGNMENT_LANES_PAGE_SIZE);
+  }, [columns, lanePageClamped]);
 
   const clearHref = pathname || "/admin/manual-assignment";
 
@@ -112,7 +128,8 @@ export function ManualAssignmentBoard({
             <span className="font-semibold text-orange-700 dark:text-orange-300">{allCount}</span>.
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            On mobile, swipe the personnel lanes horizontally.
+            Up to six personnel lanes per page; use pagination below the lanes when there are more. On mobile, swipe
+            within the lane row.
           </p>
           {companyFilterLabel ? (
             <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-300">
@@ -220,6 +237,7 @@ export function ManualAssignmentBoard({
             </div>
           </article>
 
+          <div className="space-y-3 xl:min-w-0">
           <div className="-mx-1 flex snap-x gap-4 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 sm:grid-cols-2">
             {columns.length === 0 ? (
               <div className="w-full rounded-2xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
@@ -228,7 +246,7 @@ export function ManualAssignmentBoard({
                   : "No personnel lanes — add staff to the roster from Personnel."}
               </div>
             ) : (
-              columns.map((col) => (
+              visibleColumns.map((col) => (
               <article
                 key={col.agentId}
                 onDragOver={(e) => e.preventDefault()}
@@ -291,6 +309,15 @@ export function ManualAssignmentBoard({
               </article>
             ))
             )}
+          </div>
+            <SimplePaginationBar
+              page={lanePage}
+              pageSize={ASSIGNMENT_LANES_PAGE_SIZE}
+              total={columns.length}
+              onPageChange={setLanePage}
+              itemLabel="personnel"
+              className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#0b1220]"
+            />
           </div>
         </section>
       </div>

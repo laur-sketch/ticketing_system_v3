@@ -9,7 +9,7 @@ import { customerTicketWhereBySessionEmail } from "@/lib/customer-pending-resolu
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { BRAND_TITLE, BRAND_TAGLINE_CUSTOMER } from "@/lib/brand";
-import { personnelAssigneeHighlightStyle, personnelAssignmentHex } from "@/lib/personnel-assignment-colors";
+import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignment-colors";
 
 export const dynamic = "force-dynamic";
 
@@ -164,12 +164,11 @@ export default async function MyTicketsPage({
                   const assigneeKey = t.assignedAgent?.email
                     ? (assigneeColorByEmail.get(t.assignedAgent.email.trim().toLowerCase()) ?? null)
                     : null;
-                  const accentHex = personnelAssignmentHex(assigneeKey);
                   return (
                   <tr
                     key={t.id}
                     className="hover:bg-zinc-50 dark:hover:bg-zinc-900/80"
-                    style={personnelAssigneeHighlightStyle(accentHex)}
+                    style={personnelAssigneeHighlightStyleFromKey(assigneeKey)}
                   >
                     <td className="px-4 py-3 font-mono text-xs text-orange-700 dark:text-orange-300">
                       <Link href={`/tickets/${t.id}`} className="hover:underline">

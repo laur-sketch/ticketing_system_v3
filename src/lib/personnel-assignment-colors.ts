@@ -1,15 +1,17 @@
 import type { CSSProperties } from "react";
 
-/** Rainbow assignment tags for personnel (admin-set in Personnel registry). */
-
+/**
+ * Registry keys for `PortalAccount.staffAssignmentColor`.
+ * Actual fill colors come from CSS variables in `globals.css` (saturated in light and dark).
+ */
 export const PERSONNEL_ASSIGNMENT_COLORS = [
-  { key: "RED", label: "Red", hex: "#e53935" },
-  { key: "ORANGE", label: "Orange", hex: "#fb8c00" },
-  { key: "YELLOW", label: "Yellow", hex: "#fdd835" },
-  { key: "GREEN", label: "Green", hex: "#43a047" },
-  { key: "BLUE", label: "Blue", hex: "#1e88e5" },
-  { key: "INDIGO", label: "Indigo", hex: "#3949ab" },
-  { key: "VIOLET", label: "Violet", hex: "#8e24aa" },
+  { key: "RED", label: "Red" },
+  { key: "ORANGE", label: "Orange" },
+  { key: "YELLOW", label: "Yellow" },
+  { key: "GREEN", label: "Green" },
+  { key: "BLUE", label: "Blue" },
+  { key: "INDIGO", label: "Indigo" },
+  { key: "VIOLET", label: "Violet" },
 ] as const;
 
 export type PersonnelAssignmentColorKey = (typeof PERSONNEL_ASSIGNMENT_COLORS)[number]["key"];
@@ -22,13 +24,43 @@ export function isPersonnelAssignmentColorKey(
   return s != null && s !== "" && KEY_SET.has(s);
 }
 
-export function personnelAssignmentHex(key: string | null | undefined): string | null {
+/** CSS custom properties from `globals.css`. */
+export function personnelAssignmentCssVars(key: string | null | undefined): {
+  bg: string;
+  fg: string;
+} | null {
   if (!isPersonnelAssignmentColorKey(key)) return null;
-  const row = PERSONNEL_ASSIGNMENT_COLORS.find((c) => c.key === key);
-  return row?.hex ?? null;
+  const k = key.toLowerCase();
+  return {
+    bg: `var(--personnel-assign-${k})`,
+    fg: `var(--personnel-assign-${k}-fg)`,
+  };
 }
 
-/** Readable text (dark or light) on top of a solid `hex` chip background. */
+/**
+ * Resolved hex for native `<option>` / select chrome where CSS variables are unreliable.
+ * Same saturated palette as `globals.css`. The `theme` parameter is ignored (kept for call sites).
+ * Prefer {@link personnelAssignmentCssVars} for chips and highlights.
+ */
+const HEX_SATURATED: Record<PersonnelAssignmentColorKey, string> = {
+  RED: "#e53935",
+  ORANGE: "#fb8c00",
+  YELLOW: "#fdd835",
+  GREEN: "#43a047",
+  BLUE: "#1e88e5",
+  INDIGO: "#3949ab",
+  VIOLET: "#8e24aa",
+};
+
+export function personnelAssignmentHex(
+  key: string | null | undefined,
+  _theme: "light" | "dark",
+): string | null {
+  if (!isPersonnelAssignmentColorKey(key)) return null;
+  return HEX_SATURATED[key];
+}
+
+/** Readable text on top of a solid `hex` chip (used with {@link personnelAssignmentHex}). */
 export function personnelAssignmentContrastText(hex: string): string {
   const raw = hex.trim();
   const normalized = raw.startsWith("#") ? raw : `#${raw}`;
@@ -43,14 +75,26 @@ export function personnelAssignmentContrastText(hex: string): string {
   return L > 0.42 ? "#0f172a" : "#fafafa";
 }
 
-/**
- * Full-surface highlight for ticket surfaces (uses `backgroundImage` + `outline` so
- * Tailwind `ring-*` on the same node still works — avoids fighting `box-shadow`).
- */
+/** Full-surface highlight for ticket rows/cards (tint from assignment CSS variables). */
+export function personnelAssigneeHighlightStyleFromKey(
+  key: string | null | undefined,
+): CSSProperties | undefined {
+  if (!isPersonnelAssignmentColorKey(key)) return undefined;
+  const v = `var(--personnel-assign-${key.toLowerCase()})`;
+  const wash = `color-mix(in srgb, ${v} 28%, transparent)`;
+  const frame = `color-mix(in srgb, ${v} 52%, transparent)`;
+  return {
+    backgroundImage: `linear-gradient(${wash}, ${wash})`,
+    outline: `1px solid ${frame}`,
+    outlineOffset: -1,
+  };
+}
+
+/** @deprecated Use {@link personnelAssigneeHighlightStyleFromKey} with a registry key. */
 export function personnelAssigneeHighlightStyle(hex: string | null): CSSProperties | undefined {
   if (!hex) return undefined;
-  const wash = `color-mix(in srgb, ${hex} 18%, transparent)`;
-  const frame = `color-mix(in srgb, ${hex} 42%, transparent)`;
+  const wash = `color-mix(in srgb, ${hex} 28%, transparent)`;
+  const frame = `color-mix(in srgb, ${hex} 52%, transparent)`;
   return {
     backgroundImage: `linear-gradient(${wash}, ${wash})`,
     outline: `1px solid ${frame}`,
