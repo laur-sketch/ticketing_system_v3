@@ -12,6 +12,11 @@ import { StaffAssignmentColorSelect } from "@/components/admin/StaffAssignmentCo
 import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
 import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
 
+function portalRegistryRoleLabel(role: (typeof PORTAL_ROLES)[number]) {
+  if (role === "SuperAdmin") return "Super Admin (platform)";
+  return role;
+}
+
 type Team = { id: string; name: string };
 type PortalAccountRow = {
   id: string;
@@ -772,7 +777,7 @@ export function PersonnelClient({
                             >
                               {PORTAL_ROLES.map((r) => (
                                 <option key={r} value={r}>
-                                  {r}
+                                  {portalRegistryRoleLabel(r)}
                                 </option>
                               ))}
                             </select>
@@ -936,7 +941,7 @@ export function PersonnelClient({
                                 >
                                   {PORTAL_ROLES.map((r) => (
                                     <option key={r} value={r}>
-                                      {r}
+                                      {portalRegistryRoleLabel(r)}
                                     </option>
                                   ))}
                                 </select>

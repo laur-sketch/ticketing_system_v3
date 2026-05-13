@@ -1,10 +1,11 @@
 /**
  * Portal account roles stored on PortalAccount.role:
+ * SuperAdmin (full platform access; assignable only by a signed-in SuperAdmin in Personnel registry),
  * Admin (company-scoped coordinator), Personnel, Customer.
  * Legacy "Head" strings in the DB are normalized to Admin on read.
  */
 
-export const PORTAL_ROLES = ["Admin", "Personnel", "Customer"] as const;
+export const PORTAL_ROLES = ["SuperAdmin", "Admin", "Personnel", "Customer"] as const;
 export type PortalRole = (typeof PORTAL_ROLES)[number];
 
 const LEGACY_PERSONNEL = new Set(
@@ -38,11 +39,12 @@ export const STAFF_PORTAL_ROLES = ["Admin", "Personnel"] as const;
 export const STAFF_ROLE_OPTIONS = STAFF_PORTAL_ROLES;
 
 /**
- * Maps stored portal role to Admin | Personnel | Customer. Returns null if unknown.
+ * Maps stored portal role to SuperAdmin | Admin | Personnel | Customer. Returns null if unknown.
  */
 export function normalizePortalRole(role: string | null | undefined): PortalRole | null {
   const raw = (role ?? "").trim().toLowerCase();
   if (!raw) return null;
+  if (raw === "superadmin" || raw === "super_admin" || raw === "super-admin") return "SuperAdmin";
   if (raw === "admin") return "Admin";
   if (raw === "personnel") return "Personnel";
   if (raw === "customer") return "Customer";
@@ -59,6 +61,11 @@ export function normalizeStaffRoleLabel(role: string | null | undefined): string
 export function isStaffPortalRole(role: string | null | undefined): boolean {
   const n = normalizePortalRole(role);
   return n === "Admin" || n === "Personnel";
+}
+
+/** Stored portal role grants JWT SuperAdmin; not a company-queue staff tier. */
+export function isPlatformSuperAdminPortalRole(role: string | null | undefined): boolean {
+  return normalizePortalRole(role) === "SuperAdmin";
 }
 
 /** Company coordinator tier (assignment board, KPI assignment within company scope). */

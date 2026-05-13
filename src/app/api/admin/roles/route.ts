@@ -13,6 +13,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import {
   isAdminEligibleStaffRole,
+  isPlatformSuperAdminPortalRole,
   isStaffPortalRole,
   normalizePortalRole,
   PORTAL_ROLES,
@@ -195,11 +196,20 @@ export async function PATCH(req: Request) {
     if (!MANAGEABLE_ROLES.has(role)) {
       return NextResponse.json({ error: "Invalid role." }, { status: 400 });
     }
+    if (role === "SuperAdmin" && session.user.role !== "SuperAdmin") {
+      return NextResponse.json(
+        { error: "Only a SuperAdmin may assign the platform SuperAdmin portal role." },
+        { status: 403 },
+      );
+    }
     data.role = role;
     data.headPrivileges = role === "Admin";
     if (role !== "Customer") {
       data.company = { disconnect: true };
       data.customerOrgRole = null;
+    }
+    if (role === "SuperAdmin") {
+      data.staffDesignatedCompany = { disconnect: true };
     }
   }
 
@@ -267,9 +277,20 @@ export async function PATCH(req: Request) {
   if (staffCompanyPatch) {
     const effectiveRoleRaw = (typeof data.role === "string" ? data.role : existing.role) as string;
     const effective = normalizePortalRole(effectiveRoleRaw);
-    if (effective !== "Admin" && effective !== "Personnel" && effective !== "Customer") {
+    if (
+      effective !== "Admin" &&
+      effective !== "Personnel" &&
+      effective !== "Customer" &&
+      effective !== "SuperAdmin"
+    ) {
       return NextResponse.json(
         { error: "Designated company applies only to Admin, Personnel, or Customer portal accounts." },
+        { status: 400 },
+      );
+    }
+    if (effective === "SuperAdmin") {
+      return NextResponse.json(
+        { error: "Platform SuperAdmin accounts do not use a designated company queue." },
         { status: 400 },
       );
     }
@@ -334,6 +355,17 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Account not found." }, { status: 404 });
   }
 
+  if (
+    isPlatformSuperAdminPortalRole(existing.role) &&
+    !isPlatformSuperAdminPortalRole(updatedBase.role)
+  ) {
+    try {
+      await setPortalStaffAssignmentColor(id, null);
+    } catch (e) {
+      console.error("setPortalStaffAssignmentColor (demoted platform SuperAdmin) failed", e);
+    }
+  }
+
   if (assignmentColorPatch) {
     try {
       await setPortalStaffAssignmentColor(id, assignmentColorNext!);
@@ -343,9 +375,18 @@ export async function PATCH(req: Request) {
     }
   }
 
-  const staffAssignmentColor = assignmentColorPatch
+  let staffAssignmentColor = assignmentColorPatch
     ? assignmentColorNext!
     : await getPortalStaffAssignmentColor(id);
+
+  if (isPlatformSuperAdminPortalRole(updatedBase.role)) {
+    try {
+      await setPortalStaffAssignmentColor(id, null);
+    } catch (e) {
+      console.error("setPortalStaffAssignmentColor (platform SuperAdmin) failed", e);
+    }
+    staffAssignmentColor = null;
+  }
 
   const updated = { ...updatedBase, staffAssignmentColor };
 

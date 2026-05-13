@@ -14,8 +14,11 @@ import {
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { collectAllSubKpiItems, normalizeSubKpis } from "@/lib/kpi-subkpis";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
+import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
+
+const TASK_ASSIGNMENT_LANES_PAGE_SIZE = 6;
 
 type KpiRecord = {
   id: string;
@@ -56,6 +59,7 @@ export function AgentKpiKanbanFlow({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState("UTC");
+  const [assignmentLanePage, setAssignmentLanePage] = useState(1);
 
   useEffect(() => {
     try {
@@ -223,6 +227,18 @@ export function AgentKpiKanbanFlow({
     [agents, rows],
   );
 
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
+    setAssignmentLanePage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [agents.length]);
+
+  const assignmentLanePageCount = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
+  const assignmentLanePageClamped = Math.min(Math.max(1, assignmentLanePage), assignmentLanePageCount);
+  const visibleAssignmentAgents = useMemo(() => {
+    const start = (assignmentLanePageClamped - 1) * TASK_ASSIGNMENT_LANES_PAGE_SIZE;
+    return agents.slice(start, start + TASK_ASSIGNMENT_LANES_PAGE_SIZE);
+  }, [agents, assignmentLanePageClamped]);
+
   const assignLaneDrag = usePointerColumnDrag<string>({
     onDrop: (id, agentId) => void assignKpi(id, agentId),
     disabled: busyId != null || !canAssignWork,
@@ -249,6 +265,10 @@ export function AgentKpiKanbanFlow({
           </h4>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
             Hold and slide a task, then release over a lane (works on touch and desktop).
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Up to six personnel lanes per page; use pagination below the lanes when there are more. On mobile, swipe
+            within the lane row.
           </p>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
             <div className="rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
@@ -282,34 +302,44 @@ export function AgentKpiKanbanFlow({
                 ))}
               </div>
             </div>
-            <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 [touch-action:pan-x] sm:mx-0 sm:grid sm:gap-3 sm:overflow-visible sm:px-0 sm:pb-0 sm:[touch-action:auto] lg:grid-cols-2">
-              {agents.map((a) => (
-                <div
-                  key={`lane-${a.id}`}
-                  ref={assignLaneDrag.registerColumn(a.id)}
-                  className={cn(
-                    "w-[88%] shrink-0 snap-start rounded-xl border border-zinc-300 bg-white p-3 transition sm:w-auto dark:border-zinc-700 dark:bg-zinc-900/40",
-                    assignLaneDrag.hoverColumn === a.id && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
-                  )}
-                >
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{a.name}</p>
-                    <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                      {assignedCountByAgent.get(a.id) ?? 0}
-                    </span>
+            <div className="min-w-0 space-y-3">
+              <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 [touch-action:pan-x] sm:mx-0 sm:grid sm:gap-3 sm:overflow-visible sm:px-0 sm:pb-0 sm:[touch-action:auto] lg:grid-cols-2">
+                {visibleAssignmentAgents.map((a) => (
+                  <div
+                    key={`lane-${a.id}`}
+                    ref={assignLaneDrag.registerColumn(a.id)}
+                    className={cn(
+                      "w-[88%] shrink-0 snap-start rounded-xl border border-zinc-300 bg-white p-3 transition sm:w-auto dark:border-zinc-700 dark:bg-zinc-900/40",
+                      assignLaneDrag.hoverColumn === a.id && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
+                    )}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{a.name}</p>
+                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                        {assignedCountByAgent.get(a.id) ?? 0}
+                      </span>
+                    </div>
+                    <div className="max-h-[140px] space-y-1.5 overflow-y-auto pr-1">
+                      {rows
+                        .filter((r) => r.assignedAgent?.id === a.id)
+                        .slice(0, 5)
+                        .map((r) => (
+                          <p key={`lane-item-${r.id}`} className="truncate rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700">
+                            {r.title}
+                          </p>
+                        ))}
+                    </div>
                   </div>
-                  <div className="max-h-[140px] space-y-1.5 overflow-y-auto pr-1">
-                    {rows
-                      .filter((r) => r.assignedAgent?.id === a.id)
-                      .slice(0, 5)
-                      .map((r) => (
-                        <p key={`lane-item-${r.id}`} className="truncate rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700">
-                          {r.title}
-                        </p>
-                      ))}
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
+              <SimplePaginationBar
+                page={assignmentLanePage}
+                pageSize={TASK_ASSIGNMENT_LANES_PAGE_SIZE}
+                total={agents.length}
+                onPageChange={setAssignmentLanePage}
+                itemLabel="personnel"
+                className="rounded-lg border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900/40"
+              />
             </div>
           </div>
         </div>

@@ -399,7 +399,9 @@ export default async function AgentHome({
 
   return (
     <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100 sm:px-4">
-      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col space-y-4">
+      <div
+        className={`mx-auto flex w-full flex-1 flex-col space-y-4 ${isCompanyBoard ? "max-w-none" : "max-w-7xl"}`}
+      >
         <section className="space-y-4">
           {notificationsOpen ? (
             <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
