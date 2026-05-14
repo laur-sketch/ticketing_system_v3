@@ -30,7 +30,7 @@ function loadEnvFiles(dir) {
   for (const name of [".env", ".env.production"]) {
     const p = path.join(dir, name);
     if (!fs.existsSync(p)) continue;
-    for (const line of fs.readFileSync(p, "utf8").split(/\n")) {
+    for (const line of fs.readFileSync(p, "utf8").split("\n")) {
       mergeLine(line);
     }
   }
