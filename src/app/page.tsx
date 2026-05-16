@@ -1,6 +1,10 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowRight, Building2, LogIn, Shield, Sparkles, Users } from "lucide-react";
+import { ArrowRight, LogIn, Shield, Users } from "lucide-react";
+import { LandingAccessVisual } from "@/components/landing/LandingAccessVisual";
+import { LandingHeroVisual } from "@/components/landing/LandingHeroVisual";
+import { LandingWorkflowVisual } from "@/components/landing/LandingWorkflowVisual";
+import { LandingGallery } from "@/components/landing/LandingGallery";
 import { getServerSession } from "next-auth";
 import type { TicketPriority, TicketStatus } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
@@ -174,13 +178,13 @@ export default async function Home() {
           <header className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
             <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-                {BRAND_TITLE} · Ticket dashboard
+                {BRAND_TITLE} Â· Ticket dashboard
               </p>
               <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
                 Operational Oversight
               </h1>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
+                {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} Â·{" "}
                 {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
@@ -190,6 +194,12 @@ export default async function Home() {
                 className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 Ticket Queue
+              </Link>
+              <Link
+                href="/admin/ticket-requests"
+                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Create requests
               </Link>
               <Link
                 href="/tickets/new"
@@ -364,44 +374,44 @@ export default async function Home() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-clip bg-zinc-50 text-zinc-900 dark:bg-[#050913] dark:text-zinc-100">
+    <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(92%_72%_at_8%_12%,rgba(249,115,22,0.18),transparent_58%),radial-gradient(78%_68%_at_92%_88%,rgba(14,165,233,0.16),transparent_66%),linear-gradient(90deg,#f8fafc_0%,#edf2ff_48%,#eaf6ff_100%)] dark:bg-[radial-gradient(92%_72%_at_8%_12%,rgba(249,115,22,0.22),transparent_58%),radial-gradient(78%_68%_at_92%_88%,rgba(14,165,233,0.18),transparent_66%),linear-gradient(90deg,#020408_0%,#050b16_48%,#07152b_100%)]"
+        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(70%_50%_at_15%_0%,color-mix(in_srgb,var(--brand)_12%,transparent),transparent_55%)] dark:bg-[radial-gradient(70%_50%_at_15%_0%,color-mix(in_srgb,var(--brand)_18%,transparent),transparent_55%)]"
       />
-      <header className="sticky top-0 z-20 border-b border-zinc-200/90 bg-[linear-gradient(90deg,rgba(255,255,255,0.92),rgba(248,250,252,0.85))] backdrop-blur-md dark:border-zinc-800/80 dark:bg-[linear-gradient(90deg,rgba(2,4,8,0.92),rgba(7,21,43,0.85))]">
+      <header className="sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:py-3.5">
           <BrandLockup variant="landing-header" href="/" />
-          <nav className="hidden items-center gap-5 text-xs font-medium text-zinc-600 dark:text-zinc-400 md:flex">
-            <a href="#platform" className="transition hover:text-zinc-900 dark:hover:text-zinc-200">
+          <nav className="hidden items-center gap-5 text-xs font-medium text-muted md:flex">
+            <a href="#platform" className="transition hover:text-foreground">
               Platform
             </a>
-            <a href="#access" className="transition hover:text-zinc-900 dark:hover:text-zinc-200">
+            <a href="#access" className="transition hover:text-foreground">
               Access
             </a>
-            <a href="#principles" className="transition hover:text-zinc-900 dark:hover:text-zinc-200">
+            <a href="#principles" className="transition hover:text-foreground">
               Principles
             </a>
-            <a href="#workflow" className="transition hover:text-zinc-900 dark:hover:text-zinc-200">
+            <a href="#workflow" className="transition hover:text-foreground">
               Workflow
             </a>
-            <a href="#pricing" className="transition hover:text-zinc-900 dark:hover:text-zinc-200">
+            <a href="#pricing" className="transition hover:text-foreground">
               Get started
             </a>
           </nav>
           <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
             <ThemeToggle />
-            <div className="flex items-center rounded-full border border-zinc-200 bg-white/95 p-0.5 shadow-sm ring-1 ring-zinc-900/[0.04] dark:border-zinc-700 dark:bg-zinc-900/95 dark:ring-white/[0.06]">
+            <div className="flex items-center gap-2 rounded-[var(--radius-stoic)] border border-border bg-surface p-0.5 shadow-sm">
               <Link
                 href="/signin"
-                className="inline-flex items-center gap-1.5 rounded-full bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-500 sm:px-3.5"
+                className="stoic-btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs sm:px-3.5"
               >
                 <LogIn className="size-3.5 shrink-0 opacity-95" aria-hidden />
                 Sign in
               </Link>
               <Link
                 href="/signup"
-                className="rounded-full px-2.5 py-1.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 sm:px-3"
+                className="rounded-[var(--radius-stoic)] px-2.5 py-1.5 text-xs font-semibold text-muted transition hover:bg-surface-muted hover:text-foreground sm:px-3"
                 title="Create a staff or company account"
               >
                 Register
@@ -414,18 +424,15 @@ export default async function Home() {
       <main className="mx-auto max-w-6xl space-y-20 px-4 py-12 sm:py-16">
         <section id="platform" className="grid gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/[0.12] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-orange-900 shadow-sm dark:border-orange-400/25 dark:bg-orange-500/[0.14] dark:text-orange-100">
-              <Sparkles className="size-3.5 shrink-0 text-orange-600 dark:text-orange-300" aria-hidden />
-              Unified sign-in
-            </div>
-            <h1 className="mt-5 text-4xl font-extrabold leading-[1.08] tracking-tight text-zinc-900 sm:text-5xl dark:text-white">
-              One login.
+            <p className="stoic-label">
+              Access model
+            </p>
+            <h1 className="mt-4 text-4xl font-extrabold leading-[1.08] tracking-tight text-foreground sm:text-5xl">
+              Sign in once.
               <br />
-              <span className="bg-gradient-to-r from-orange-600 to-amber-500 bg-clip-text text-transparent dark:from-orange-400 dark:to-amber-300">
-                The right desk for you.
-              </span>
+              We place you in the correct experience.
             </h1>
-            <p className="mt-4 max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
+            <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted">
               Staff, admins, and company users all authenticate at the same place. After you sign in, AGCTek routes you to
               the workspace that matches your account, with company-based routing and confirmation-driven closure.
             </p>
@@ -433,14 +440,14 @@ export default async function Home() {
               <div className="flex flex-wrap items-center gap-3">
                 <Link
                   href="/signin"
-                  className="group inline-flex items-center gap-2 rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(234,88,12,0.35)] transition hover:bg-orange-500 hover:shadow-[0_10px_32px_rgba(234,88,12,0.42)] dark:shadow-[0_8px_28px_rgba(234,88,12,0.25)]"
+                  className="stoic-btn-primary group inline-flex items-center gap-2 px-5 py-2.5 text-sm shadow-[0_8px_28px_color-mix(in_srgb,var(--brand)_35%,transparent)]"
                 >
                   Sign in
                   <ArrowRight className="size-4 transition group-hover:translate-x-0.5" aria-hidden />
                 </Link>
                 <a
                   href="#access"
-                  className="text-sm font-semibold text-zinc-600 underline-offset-4 transition hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-200"
+                  className="text-sm font-semibold text-muted underline-offset-4 transition hover:text-foreground hover:underline"
                 >
                   How routing works
                 </a>
@@ -466,47 +473,10 @@ export default async function Home() {
               </div>
             </div>
           </div>
-          <div className="relative rounded-3xl border border-zinc-200 bg-[radial-gradient(130%_92%_at_10%_8%,rgba(249,115,22,0.22),transparent_52%),radial-gradient(100%_90%_at_95%_92%,rgba(14,165,233,0.14),transparent_58%),linear-gradient(180deg,#eef2ff_0%,#ffffff_100%)] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.08)] dark:border-zinc-800 dark:bg-[radial-gradient(130%_92%_at_10%_8%,rgba(249,115,22,0.24),transparent_52%),radial-gradient(100%_90%_at_95%_92%,rgba(14,165,233,0.16),transparent_58%),linear-gradient(180deg,#0b1428_0%,#0a1326_100%)] dark:shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
-            <p className="text-center text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-500">
-              Same entry for everyone
-            </p>
-            <div className="mt-5 rounded-2xl border border-zinc-200/90 bg-white/90 p-5 backdrop-blur-sm dark:border-zinc-700/90 dark:bg-zinc-950/60">
-              <div className="flex flex-col items-center">
-                <div className="flex w-full max-w-[220px] items-center justify-center gap-2 rounded-xl border-2 border-orange-500/45 bg-gradient-to-b from-orange-500/15 to-orange-500/[0.06] px-4 py-3 dark:from-orange-500/20 dark:to-orange-500/[0.08]">
-                  <LogIn className="size-5 shrink-0 text-orange-600 dark:text-orange-400" aria-hidden />
-                  <div className="text-left">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">One URL</p>
-                    <p className="text-sm font-bold text-zinc-900 dark:text-white">/signin</p>
-                  </div>
-                </div>
-                <div className="my-2 h-8 w-px bg-gradient-to-b from-orange-400/70 via-zinc-300 to-zinc-200 dark:via-zinc-600 dark:to-zinc-800" aria-hidden />
-                <div className="grid w-full grid-cols-3 gap-2 sm:gap-3">
-                  {[
-                    { label: "Queue", sub: "Agents", Icon: Users },
-                    { label: "Console", sub: "Admins", Icon: Shield },
-                    { label: "Portal", sub: "Customers", Icon: Building2 },
-                  ].map(({ label, sub, Icon }) => (
-                    <div
-                      key={label}
-                      className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-2 py-3 text-center dark:border-zinc-700/80 dark:bg-zinc-900/50"
-                    >
-                      <Icon className="mx-auto size-4 text-orange-600 dark:text-orange-400" aria-hidden />
-                      <p className="mt-2 text-[11px] font-bold text-zinc-900 dark:text-zinc-100">{label}</p>
-                      <p className="mt-0.5 text-[9px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                        {sub}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <p className="mt-4 text-center text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
-                Your role decides the dashboard. Same sign-in and same registration screen for everyone.
-              </p>
-            </div>
-          </div>
+          <LandingHeroVisual />
         </section>
 
-        <section id="access" className="scroll-mt-24 rounded-3xl border border-zinc-200 bg-white/80 px-5 py-8 shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/40 sm:px-8 sm:py-10">
+        <section id="access" className="stoic-card scroll-mt-24 px-5 py-8 sm:px-8 sm:py-10">
           <div className="mx-auto max-w-3xl text-center">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-orange-700 dark:text-orange-400">Access model</p>
             <h2 className="mt-2 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
@@ -517,6 +487,7 @@ export default async function Home() {
               stays unified—everyone uses <span className="font-semibold text-zinc-800 dark:text-zinc-200">/signin</span>.
             </p>
           </div>
+          <LandingAccessVisual />
           <div className="mx-auto mt-8 grid max-w-4xl gap-4 sm:grid-cols-3">
             {[
               {
@@ -540,7 +511,7 @@ export default async function Home() {
             ].map(({ step, title, body, Icon }) => (
               <article
                 key={step}
-                className="relative rounded-2xl border border-zinc-200 bg-[linear-gradient(165deg,rgba(255,255,255,0.95),rgba(248,250,252,0.88))] p-5 dark:border-zinc-700/80 dark:bg-[linear-gradient(165deg,rgba(15,23,42,0.5),rgba(9,12,24,0.65))]"
+                className="stoic-card relative bg-surface-elevated p-5"
               >
                 <span className="text-[10px] font-bold tabular-nums text-orange-600 dark:text-orange-400">{step}</span>
                 <div className="mt-3 flex size-10 items-center justify-center rounded-xl bg-orange-500/15 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300">
@@ -554,8 +525,8 @@ export default async function Home() {
         </section>
 
         <section id="principles">
-          <p className="text-center text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-500">Core principles</p>
-          <h2 className="mt-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+          <p className="stoic-label text-center">| Core principles</p>
+          <h2 className="mt-2 text-center text-2xl font-bold text-foreground">
             The Three Pillars of AGC Operations
           </h2>
           <div className="mt-6 grid gap-4 md:grid-cols-3">
@@ -566,19 +537,19 @@ export default async function Home() {
             ].map(([title, body]) => (
               <article
                 key={title}
-                className="rounded-2xl border border-zinc-200 bg-[radial-gradient(120%_90%_at_12%_0%,rgba(249,115,22,0.10),transparent_56%),radial-gradient(110%_90%_at_100%_100%,rgba(14,165,233,0.06),transparent_64%),linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.90))] p-5 dark:border-zinc-800 dark:bg-[radial-gradient(120%_90%_at_12%_0%,rgba(249,115,22,0.12),transparent_56%),radial-gradient(110%_90%_at_100%_100%,rgba(14,165,233,0.10),transparent_64%),linear-gradient(180deg,rgba(11,18,32,0.95),rgba(8,14,26,0.90))]"
+                className="stoic-card p-5"
               >
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
-                <p className="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">{body}</p>
+                <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+                <p className="mt-2 text-xs leading-relaxed text-muted">{body}</p>
               </article>
             ))}
           </div>
         </section>
 
         <section id="workflow" className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <article className="rounded-2xl border border-zinc-200 bg-[radial-gradient(126%_92%_at_10%_0%,rgba(249,115,22,0.12),transparent_55%),radial-gradient(110%_90%_at_100%_100%,rgba(14,165,233,0.08),transparent_64%),linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.90))] p-6 dark:border-zinc-800 dark:bg-[radial-gradient(126%_92%_at_10%_0%,rgba(249,115,22,0.14),transparent_55%),radial-gradient(110%_90%_at_100%_100%,rgba(14,165,233,0.12),transparent_64%),linear-gradient(180deg,rgba(11,18,32,0.95),rgba(8,14,26,0.90))]">
-            <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">
-              The Workflow of the <span className="text-orange-600 dark:text-orange-400">Disciplined</span>
+          <article className="stoic-card p-6">
+            <h2 className="text-2xl font-bold text-foreground">
+              The Workflow of the <span className="text-brand underline decoration-brand decoration-2 underline-offset-4">Disciplined</span>
             </h2>
             <ol className="mt-5 space-y-3 text-sm">
               <li className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -601,59 +572,39 @@ export default async function Home() {
               </li>
             </ol>
           </article>
-          <article className="space-y-3 rounded-2xl border border-zinc-200 bg-[radial-gradient(126%_92%_at_12%_0%,rgba(14,165,233,0.10),transparent_58%),radial-gradient(110%_90%_at_100%_100%,rgba(249,115,22,0.07),transparent_64%),linear-gradient(180deg,rgba(255,255,255,0.95),rgba(248,250,252,0.90))] p-6 dark:border-zinc-800 dark:bg-[radial-gradient(126%_92%_at_12%_0%,rgba(14,165,233,0.14),transparent_58%),radial-gradient(110%_90%_at_100%_100%,rgba(249,115,22,0.10),transparent_64%),linear-gradient(180deg,rgba(11,18,32,0.95),rgba(8,14,26,0.90))]">
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/70">
-              <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200">Database latency in cluster Alpha-7</p>
-              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">Ticket #INC-204</p>
-            </div>
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900/70">
-              <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200">API tier limit refinement</p>
-              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">Ticket #OPS-318</p>
-            </div>
-          </article>
+          <LandingWorkflowVisual />
         </section>
 
-        <section className="rounded-3xl border border-zinc-200 bg-[radial-gradient(130%_92%_at_50%_0%,rgba(249,115,22,0.14),transparent_58%),radial-gradient(100%_90%_at_50%_100%,rgba(14,165,233,0.10),transparent_64%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.90))] p-8 text-center dark:border-zinc-800 dark:bg-[radial-gradient(130%_92%_at_50%_0%,rgba(249,115,22,0.16),transparent_58%),radial-gradient(100%_90%_at_50%_100%,rgba(14,165,233,0.13),transparent_64%),linear-gradient(180deg,rgba(11,18,32,0.96),rgba(8,14,26,0.90))]">
-          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-500">
-            Trusted by teams practicing deep work
-          </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-6 text-xs font-semibold tracking-wide text-zinc-600 dark:text-zinc-400">
-            <span>AETHELFLAED</span>
-            <span>HYPERION</span>
-            <span>VIRTUE.CO</span>
-            <span>ZENITH</span>
-            <span>LOGOS</span>
-          </div>
-        </section>
+        <LandingGallery />
 
         <section
           id="pricing"
-          className="scroll-mt-24 overflow-hidden rounded-3xl border border-orange-400/45 bg-gradient-to-b from-orange-500/20 via-orange-500/12 to-transparent p-8 text-center dark:border-orange-500/35 dark:from-orange-500/15 dark:via-orange-500/10 dark:to-transparent sm:p-10"
+          className="stoic-card-elevated scroll-mt-24 p-8 text-center sm:p-10"
         >
           <div className="mx-auto max-w-2xl">
-            <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-white/90 shadow-sm dark:bg-zinc-900/80">
-              <LogIn className="size-6 text-orange-600 dark:text-orange-400" aria-hidden />
+            <div className="mx-auto flex size-12 items-center justify-center rounded-[var(--radius-stoic-lg)] border border-border bg-surface shadow-sm">
+              <LogIn className="size-6 text-brand" aria-hidden />
             </div>
-            <h2 className="mt-4 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-white">
-              Ready when you are
+            <h2 className="mt-4 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              Ready when you are.
             </h2>
-            <p className="mt-3 text-sm leading-relaxed text-zinc-800 dark:text-zinc-300">
-              Use <span className="font-semibold text-zinc-900 dark:text-white">/signin</span> for every account. Company
-              users can register at <span className="font-semibold text-zinc-900 dark:text-white">/signup</span>. Staff
+            <p className="mt-3 text-sm leading-relaxed text-muted">
+              Use <span className="font-semibold text-foreground">/signin</span> for every account. Company users can
+              register at <span className="font-semibold text-foreground">/signup</span>. Staff
               accounts are created by an administrator.
             </p>
           </div>
           <div className="mx-auto mt-8 flex max-w-md flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-center sm:gap-3">
             <Link
               href="/signin"
-              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-orange-500 sm:flex-initial sm:min-w-[140px]"
+              className="stoic-btn-primary inline-flex flex-1 items-center justify-center gap-2 px-5 py-3 text-sm sm:flex-initial sm:min-w-[140px]"
             >
-              Sign in
+              Sign in now
               <ArrowRight className="size-4" aria-hidden />
             </Link>
             <Link
               href="/signup"
-              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 shadow-sm transition hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:flex-initial sm:min-w-[160px]"
+              className="stoic-btn-outline inline-flex flex-1 items-center justify-center gap-2 px-5 py-3 text-sm sm:flex-initial sm:min-w-[160px]"
             >
               Create account
             </Link>
@@ -661,17 +612,17 @@ export default async function Home() {
         </section>
       </main>
 
-      <footer className="border-t border-zinc-200 bg-[radial-gradient(90%_120%_at_0%_0%,rgba(249,115,22,0.08),transparent_62%),radial-gradient(90%_120%_at_100%_100%,rgba(14,165,233,0.08),transparent_64%),linear-gradient(90deg,rgba(255,255,255,0.90),rgba(248,250,252,0.76))] dark:border-zinc-800 dark:bg-[radial-gradient(90%_120%_at_0%_0%,rgba(249,115,22,0.12),transparent_62%),radial-gradient(90%_120%_at_100%_100%,rgba(14,165,233,0.12),transparent_64%),linear-gradient(90deg,rgba(7,13,25,0.90),rgba(11,18,32,0.76))]">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 text-[11px] text-zinc-600 dark:text-zinc-500">
-          <p>AGCTek Help Desk · 2026</p>
+      <footer className="border-t border-border bg-surface">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 text-[11px] text-muted">
+          <p>AGCTek Help Desk Â· 2026</p>
           <div className="flex gap-4">
-            <a href="#" className="hover:text-zinc-900 dark:hover:text-zinc-300">
+            <a href="#" className="hover:text-foreground">
               Privacy Policy
             </a>
-            <a href="#" className="hover:text-zinc-900 dark:hover:text-zinc-300">
+            <a href="#" className="hover:text-foreground">
               Terms of Service
             </a>
-            <a href="#" className="hover:text-zinc-900 dark:hover:text-zinc-300">
+            <a href="#" className="hover:text-foreground">
               Contact
             </a>
           </div>

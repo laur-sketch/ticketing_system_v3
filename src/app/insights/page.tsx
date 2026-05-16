@@ -3,6 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
 import {
@@ -11,14 +12,22 @@ import {
   MetricsPieChart,
   MetricsQueueStrip,
   MetricsTrendChart,
+  colorForTicketStatus,
+  queueSegmentsForCharts,
 } from "@/components/metrics/MetricsCharts";
+import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
-import { taskKanbanDerivedStatus } from "@/lib/kpi-cycle-state";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import type {
+  CsatStarDistributionRow,
+  TaskChecklistPillarMetrics,
+  TaskMetricsHelpdeskTickets,
+  TaskMetricsUserSupportTickets,
+} from "@/lib/kpis";
 import {
-  collectAllSubKpiItems,
-  normalizeSubKpis,
-} from "@/lib/kpi-subkpis";
+  defaultTaskMetricsRangeForCadence,
+  resolveTaskMetricsQueryRange,
+} from "@/lib/task-metrics-range";
 
 type KpiPayload = {
   range: { from: string; to: string };
@@ -41,6 +50,7 @@ type KpiPayload = {
     npsAvg: number | null;
     cesAvg: number | null;
     feedbackCount: number;
+    csatByStar: CsatStarDistributionRow[];
   };
   agents: {
     ticketsClosedByAgent: { agentId: string; name: string; ticketsClosed: number }[];
@@ -97,8 +107,6 @@ export default function InsightsPage() {
   );
   const [data, setData] = useState<KpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sweepInfo, setSweepInfo] = useState<string | null>(null);
-  const [sweepBusy, setSweepBusy] = useState(false);
   const [throughputView, setThroughputView] = useState<"cards" | "table">("table");
   const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
   const [canAssignKpi, setCanAssignKpi] = useState(false);
@@ -130,6 +138,19 @@ export default function InsightsPage() {
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
 
+  const taskMetricsDefaults = useMemo(() => defaultTaskMetricsRangeForCadence("DAILY"), []);
+  const [taskMetricsCadence, setTaskMetricsCadence] = useState<KpiFrequencyCode>("DAILY");
+  const [taskMetricsDailyDate, setTaskMetricsDailyDate] = useState(taskMetricsDefaults.dailyDate);
+  const [taskMetricsFrom, setTaskMetricsFrom] = useState(taskMetricsDefaults.from);
+  const [taskMetricsTo, setTaskMetricsTo] = useState(taskMetricsDefaults.to);
+  const [taskMetricsHelpdesk, setTaskMetricsHelpdesk] = useState<TaskMetricsHelpdeskTickets | null>(null);
+  const [taskMetricsUserSupport, setTaskMetricsUserSupport] = useState<TaskMetricsUserSupportTickets | null>(
+    null,
+  );
+  const [taskChecklistPillars, setTaskChecklistPillars] = useState<TaskChecklistPillarMetrics | null>(null);
+  const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
+  const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
+
   const loadKpis = useCallback(async () => {
     setError(null);
     const qs = new URLSearchParams({ from, to });
@@ -143,21 +164,49 @@ export default function InsightsPage() {
     setData(json);
   }, [from, to]);
 
-  async function runSlaSweep() {
-    setSweepBusy(true);
-    setSweepInfo(null);
-    const res = await fetch("/api/sla/sweep", { method: "POST" });
-    setSweepBusy(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      setSweepInfo(body.error ?? "Could not run SLA sweep.");
-      return;
-    }
-    const body = (await res.json()) as { scanned: number; escalated: number };
-    setSweepInfo(
-      `SLA sweep complete: scanned ${body.scanned}, escalated ${body.escalated}.`,
+  const loadTaskMetrics = useCallback(async () => {
+    setTaskMetricsError(null);
+    setTaskMetricsLoading(true);
+    const { from: tf, to: tt } = resolveTaskMetricsQueryRange(
+      taskMetricsCadence,
+      taskMetricsDailyDate,
+      taskMetricsFrom,
+      taskMetricsTo,
     );
-    await loadKpis();
+    const qs = new URLSearchParams({
+      from: tf,
+      to: tt,
+      helpdeskCadence: taskMetricsCadence,
+      tz: recurrenceTz,
+    });
+    try {
+      const res = await fetch(`/api/kpis/task-metrics?${qs.toString()}`, { cache: "no-store" });
+      if (!res.ok) {
+        setTaskMetricsError("Could not load task metrics for the selected dates.");
+        setTaskMetricsHelpdesk(null);
+        setTaskMetricsUserSupport(null);
+        setTaskChecklistPillars(null);
+        return;
+      }
+      const json = (await res.json()) as {
+        taskMetricsHelpdesk: TaskMetricsHelpdeskTickets;
+        taskMetricsUserSupport: TaskMetricsUserSupportTickets;
+        taskChecklistPillars: TaskChecklistPillarMetrics;
+      };
+      setTaskMetricsHelpdesk(json.taskMetricsHelpdesk);
+      setTaskMetricsUserSupport(json.taskMetricsUserSupport);
+      setTaskChecklistPillars(json.taskChecklistPillars);
+    } finally {
+      setTaskMetricsLoading(false);
+    }
+  }, [taskMetricsCadence, taskMetricsDailyDate, taskMetricsFrom, taskMetricsTo, recurrenceTz]);
+
+  function handleTaskMetricsCadenceChange(next: KpiFrequencyCode) {
+    setTaskMetricsCadence(next);
+    const defaults = defaultTaskMetricsRangeForCadence(next);
+    setTaskMetricsDailyDate(defaults.dailyDate);
+    setTaskMetricsFrom(defaults.from);
+    setTaskMetricsTo(defaults.to);
   }
 
   useEffect(() => {
@@ -177,6 +226,17 @@ export default function InsightsPage() {
     const id = setInterval(() => void loadKpis(), 45_000);
     return () => clearInterval(id);
   }, [activeTab, loadKpis]);
+
+  useEffect(() => {
+    if (activeTab !== "task-metrics") return;
+    void loadTaskMetrics();
+  }, [activeTab, loadTaskMetrics]);
+
+  useEffect(() => {
+    if (activeTab !== "task-metrics") return;
+    const id = setInterval(() => void loadTaskMetrics(), 45_000);
+    return () => clearInterval(id);
+  }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
     let cancelled = false;
@@ -225,6 +285,7 @@ export default function InsightsPage() {
   const agentBars = useMemo(() => {
     if (!data) return [];
     return data.agents.ticketsClosedByAgent.slice(0, 10).map((r) => ({
+      id: r.agentId,
       label: r.name,
       value: r.ticketsClosed,
     }));
@@ -238,27 +299,40 @@ export default function InsightsPage() {
   );
   const queuePieSegments = useMemo(
     () =>
-      charts.queueStatusMix.map((seg, i) => ({
+      queueSegmentsForCharts(charts.queueStatusMix).map((seg) => ({
         label: seg.status.replaceAll("_", " "),
         value: seg.count,
-        color: ["#f97316", "#a1a1aa", "#3b82f6", "#eab308", "#f43f5e", "#10b981"][i % 6],
+        color: colorForTicketStatus(seg.status),
       })),
     [charts.queueStatusMix],
   );
-  const qualityRows = useMemo(
-    () => [
-      { label: "CSAT", value: data?.quality.csatAvg ?? 0, raw: data?.quality.csatAvg },
-      { label: "NPS", value: data?.quality.npsAvg ?? 0, raw: data?.quality.npsAvg },
-      { label: "CES", value: data?.quality.cesAvg ?? 0, raw: data?.quality.cesAvg },
-    ],
-    [data],
-  );
+  const satisfactionRows = useMemo(() => {
+    const dist = data?.quality?.csatByStar;
+    if (!dist?.length) {
+      return ([1, 2, 3, 4, 5] as const).map((star) => ({
+        label:
+          star === 1
+            ? "1★ — Very Poor"
+            : star === 2
+              ? "2★ — Poor"
+              : star === 3
+                ? "3★ — Neutral"
+                : star === 4
+                  ? "4★ — Good"
+                  : "5★ — Very Good",
+        value: 0,
+      }));
+    }
+    return dist.map((r) => ({
+      label: `${r.star}★ — ${r.label}`,
+      value: r.count,
+    }));
+  }, [data]);
 
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-4 py-6 text-zinc-900 sm:space-y-10 sm:py-8 md:py-10 dark:text-zinc-100">
       <header className="rounded-2xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-6 shadow-[0_12px_40px_rgba(0,0,0,0.06)] md:p-8 dark:border-zinc-800/90 dark:from-[#101010] dark:to-[#080808] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
+        <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
               {BRAND_TITLE} · {isPersonnel ? "Personal metrics" : "Ticket metrics & reports"}
             </p>
@@ -267,42 +341,9 @@ export default function InsightsPage() {
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
               {isPersonnel
-                ? "Live charts for your assigned queue, your SLA compliance, and your own throughput in the selected window."
-                : "Live charts for intake vs closure, queue composition, SLA compliance, and throughput. Adjust the reporting window to align with your review cycle."}
+                ? "Live charts for your assigned queue, SLA compliance, and throughput."
+                : "Live charts for intake vs closure, queue composition, SLA compliance, and throughput."}
             </p>
-          </div>
-          <div className="flex w-full flex-wrap gap-3 text-sm lg:w-auto lg:justify-end">
-            <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              From
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                className="mt-1.5 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-              />
-            </label>
-            <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              To
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                className="mt-1.5 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-              />
-            </label>
-            {session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin" ? (
-              <div className="flex flex-col justify-end">
-                <Button
-                  type="button"
-                  disabled={sweepBusy}
-                  onClick={() => void runSlaSweep()}
-                  className="h-[42px] rounded-xl px-5"
-                >
-                  {sweepBusy ? "Running SLA sweep..." : "Run SLA sweep"}
-                </Button>
-              </div>
-            ) : null}
-          </div>
         </div>
         <div className="mt-6 flex flex-wrap gap-1 rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
           <button
@@ -346,12 +387,6 @@ export default function InsightsPage() {
         </div>
       </header>
 
-      {sweepInfo ? (
-        <p className="rounded-xl border border-orange-400/40 bg-orange-500/15 px-4 py-3 text-sm text-orange-950 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-100">
-          {sweepInfo}
-        </p>
-      ) : null}
-
       {error ? (
         <p className="rounded-xl border border-red-500/35 bg-red-50 px-4 py-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200">
           {error}
@@ -368,12 +403,93 @@ export default function InsightsPage() {
         </div>
       ) : activeTab === "task-metrics" ? (
         <div className="space-y-6">
-          <TaskMetricsPanel maintenanceRecords={maintenanceRecords} recurrenceTz={recurrenceTz} />
+          <TaskMetricsPanel
+            checklistPillars={taskChecklistPillars}
+            helpdeskTickets={taskMetricsHelpdesk}
+            userSupportTickets={taskMetricsUserSupport}
+            loading={taskMetricsLoading}
+            error={taskMetricsError}
+            taskMetricsCadence={taskMetricsCadence}
+            onTaskMetricsCadenceChange={handleTaskMetricsCadenceChange}
+            dailyDate={taskMetricsDailyDate}
+            onDailyDateChange={setTaskMetricsDailyDate}
+            rangeFrom={taskMetricsFrom}
+            rangeTo={taskMetricsTo}
+            onRangeFromChange={setTaskMetricsFrom}
+            onRangeToChange={setTaskMetricsTo}
+            onApplyDates={() => void loadTaskMetrics()}
+          />
         </div>
-      ) : !data ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-500">Loading metrics…</p>
       ) : (
         <div className="space-y-8">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
+                  Reporting window
+                </h2>
+                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                  Ticket metrics and charts below use this date range.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3 text-sm">
+                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                  From
+                  <DatePickerField
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
+                  />
+                </label>
+                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                  To
+                  <DatePickerField
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
+                  />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          {!data ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-500">Loading metrics…</p>
+          ) : (
+            <>
+          {/* Operational load */}
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+            <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+              Operational load
+            </h2>
+            <div className="mt-4 space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <MetricTile
+                  label="Ticket volume"
+                  value={String(data.operational.ticketVolume)}
+                  hint="Total number of tickets"
+                  accent
+                />
+                <MetricTile label="Backlog (open)" value={String(data.operational.backlogSize)} />
+                <MetricTile
+                  label="Closed"
+                  value={String(data.sla.ticketsClosedInRange)}
+                  hint="Closed in selected period"
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <MetricTile
+                  label="Avg first response"
+                  value={formatDuration(data.operational.firstResponseTimeMsAvg)}
+                />
+                <MetricTile
+                  label="Avg resolution time"
+                  value={formatDuration(data.operational.resolutionTimeMsAvg)}
+                />
+              </div>
+            </div>
+          </section>
+
           {/* Volume and throughput */}
           <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
             <div className="flex flex-wrap items-end justify-between gap-3">
@@ -420,11 +536,9 @@ export default function InsightsPage() {
 
           {/* Queue composition + SLA performance */}
           <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a]">
-              <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-                Queue composition
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <div className="stoic-card p-5 sm:p-7">
+              <h2 className="stoic-label">Queue composition</h2>
+              <p className="mt-1 text-sm text-muted">
                 Non-closed tickets by status ({data.operational.backlogSize} total open)
               </p>
               <div className="mt-6">
@@ -438,19 +552,17 @@ export default function InsightsPage() {
                   segments={queuePieSegments}
                 />
               </div>
-              <div className="mt-5 border-t border-zinc-200 pt-5 dark:border-zinc-800/80">
+              <div className="mt-5 border-t border-border pt-5">
                 <MetricsQueueStrip segments={charts.queueStatusMix} />
               </div>
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a]">
-              <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-                SLA performance
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <div className="stoic-card p-5 sm:p-7">
+              <h2 className="stoic-label">SLA performance</h2>
+              <p className="mt-1 text-sm text-muted">
                 Sample-based in the selected window with 95% target markers.
               </p>
-              <div className="mt-4 grid grid-cols-2 gap-4 border-t border-zinc-200 pt-6 dark:border-zinc-800/80">
+              <div className="mt-6 grid grid-cols-2 gap-6 sm:gap-8">
                 <MetricsGauge
                   label="First response"
                   value={data.sla.firstResponseComplianceRate}
@@ -464,41 +576,22 @@ export default function InsightsPage() {
                   target={0.95}
                 />
               </div>
-              <div className="mt-6 grid grid-cols-2 gap-3 border-t border-zinc-200 pt-6 text-center dark:border-zinc-800/80">
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950/60">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              <div className="mt-6 grid grid-cols-2 gap-3 border-t border-border pt-6">
+                <div className="rounded-xl border border-border bg-surface-muted px-3 py-4 text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
                     Escalation rate
                   </p>
-                  <p className="mt-1 text-xl font-bold text-orange-700 dark:text-orange-300">
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-brand">
                     {pct(data.sla.escalationRate)}
                   </p>
                 </div>
-                <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950/60">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                    Reopen rate
+                <div className="rounded-xl border border-border bg-surface-muted px-3 py-4 text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Reopen rate</p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">
+                    {pct(data.sla.reopenRate)}
                   </p>
-                  <p className="mt-1 text-xl font-bold text-zinc-900 dark:text-zinc-200">{pct(data.sla.reopenRate)}</p>
                 </div>
               </div>
-            </div>
-          </section>
-
-          {/* Operational load */}
-          <section>
-            <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
-              Operational load
-            </h2>
-            <div className="mt-4 grid gap-4 md:grid-cols-3 lg:grid-cols-5">
-              <MetricTile label="Ticket volume" value={String(data.operational.ticketVolume)} accent />
-              <MetricTile label="Backlog (open)" value={String(data.operational.backlogSize)} />
-              <MetricTile label="Avg first response" value={formatDuration(data.operational.firstResponseTimeMsAvg)} />
-              <MetricTile label="Avg resolution time" value={formatDuration(data.operational.resolutionTimeMsAvg)} />
-              <MetricTile
-                label="First-contact resolution"
-                value={pct(data.operational.firstContactResolutionApprox)}
-                hint="Approximation"
-              />
-              <MetricTile label="KPIs added" value={String(data.kpiManagement?.kpisAdded ?? 0)} accent />
             </div>
           </section>
 
@@ -510,12 +603,11 @@ export default function InsightsPage() {
             <div className="mt-4 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
               <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800/90 dark:bg-[#0a0a0a]">
                 <MetricsBarChart
-                  title="Customer signal index (normalized to 5.0)"
-                  rows={qualityRows}
-                  valueFormatter={(_, row) => {
-                    const q = qualityRows.find((r) => r.label === row.label);
-                    return q?.raw == null ? "—" : q.raw.toFixed(2);
-                  }}
+                  title="User satisfaction (CSAT star ratings)"
+                  rows={satisfactionRows}
+                  valueFormatter={(v) =>
+                    v === 0 ? "0" : `${v} response${v === 1 ? "" : "s"}`
+                  }
                 />
               </section>
               <div className="grid gap-4">
@@ -526,8 +618,8 @@ export default function InsightsPage() {
                 />
                 <MetricTile
                   label="Quality note"
-                  value="Signals are directional"
-                  hint="Track trends over time more than one-off values."
+                  value="CSAT = 1–5 stars"
+                  hint="Counts are ratings submitted in the selected window."
                 />
               </div>
             </div>
@@ -638,115 +730,65 @@ export default function InsightsPage() {
               Utilization and audit-quality scores require scheduling integrations beyond this schema.
             </p>
           </section>
+            </>
+          )}
         </div>
       )}
     </main>
   );
 }
 
-function kpiPanelProgress(record: MaintenanceRecord) {
-  const all = collectAllSubKpiItems(normalizeSubKpis(record.subKpis));
-  return { total: all.length, done: all.filter((s) => s.done).length };
-}
-
-type TaskMetricsStatusView = "general" | "current" | "done" | "delayed";
-
-const TASK_PIE_OTHER = "#a1a1aa";
-
 function TaskMetricsPanel({
-  maintenanceRecords,
-  recurrenceTz,
+  checklistPillars,
+  helpdeskTickets,
+  userSupportTickets,
+  loading,
+  error,
+  taskMetricsCadence,
+  onTaskMetricsCadenceChange,
+  dailyDate,
+  onDailyDateChange,
+  rangeFrom,
+  rangeTo,
+  onRangeFromChange,
+  onRangeToChange,
+  onApplyDates,
 }: {
-  maintenanceRecords: MaintenanceRecord[];
-  recurrenceTz: string;
+  checklistPillars: TaskChecklistPillarMetrics | null;
+  helpdeskTickets: TaskMetricsHelpdeskTickets | null;
+  userSupportTickets: TaskMetricsUserSupportTickets | null;
+  loading: boolean;
+  error: string | null;
+  taskMetricsCadence: KpiFrequencyCode;
+  onTaskMetricsCadenceChange: (v: KpiFrequencyCode) => void;
+  dailyDate: string;
+  onDailyDateChange: (v: string) => void;
+  rangeFrom: string;
+  rangeTo: string;
+  onRangeFromChange: (v: string) => void;
+  onRangeToChange: (v: string) => void;
+  onApplyDates: () => void;
 }) {
-  const [freq, setFreq] = useState<KpiFrequencyCode>("DAILY");
-  const [statusView, setStatusView] = useState<TaskMetricsStatusView>("general");
-  const scoped = useMemo(
-    () => maintenanceRecords.filter((r) => r.isRecurring !== false && r.frequency === freq),
-    [maintenanceRecords, freq],
-  );
-  const nowMs = Date.now();
-  let doneN = 0;
-  let delayedN = 0;
-  let currentN = 0;
-  for (const r of scoped) {
-    const p = kpiPanelProgress(r);
-    const st = taskKanbanDerivedStatus(r, {
-      total: p.total,
-      done: p.done,
-      nowMs,
-      timeZone: recurrenceTz,
-    });
-    if (st === "DONE") doneN += 1;
-    else if (st === "DELAYED") delayedN += 1;
-    else currentN += 1;
-  }
-
-  const { pieSegments, pieSubtitle } = useMemo(() => {
-    switch (statusView) {
-      case "general":
-        return {
-          pieSegments: [
-            { label: "Current", value: currentN, color: "#3b82f6" },
-            { label: "Done", value: doneN, color: "#10b981" },
-            { label: "Delayed", value: delayedN, color: "#f43f5e" },
-          ],
-          pieSubtitle: "All statuses for the selected cadence (current · done · delayed).",
-        };
-      case "current": {
-        const other = doneN + delayedN;
-        return {
-          pieSegments: [
-            { label: "Current", value: currentN, color: "#3b82f6" },
-            { label: "Other", value: other, color: TASK_PIE_OTHER },
-          ],
-          pieSubtitle: "Current tasks vs all other statuses in this cadence.",
-        };
-      }
-      case "done": {
-        const other = currentN + delayedN;
-        return {
-          pieSegments: [
-            { label: "Done", value: doneN, color: "#10b981" },
-            { label: "Other", value: other, color: TASK_PIE_OTHER },
-          ],
-          pieSubtitle: "Done tasks vs all other statuses in this cadence.",
-        };
-      }
-      case "delayed": {
-        const other = currentN + doneN;
-        return {
-          pieSegments: [
-            { label: "Delayed", value: delayedN, color: "#f43f5e" },
-            { label: "Other", value: other, color: TASK_PIE_OTHER },
-          ],
-          pieSubtitle: "Delayed tasks vs all other statuses in this cadence.",
-        };
-      }
-    }
-  }, [statusView, currentN, doneN, delayedN]);
-
-  const statusToggleDefs: Array<{ id: TaskMetricsStatusView; label: string }> = [
-    { id: "general", label: "General" },
-    { id: "current", label: "Current" },
-    { id: "done", label: "Done" },
-    { id: "delayed", label: "Delayed" },
-  ];
+  const freq = taskMetricsCadence;
+  const isDaily = freq === "DAILY";
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
           <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
             Task metrics
           </h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Recurring maintenance tasks by kanban status. One-off tasks are excluded from the pie.
+            Daily checklist pillars are recorded when completed (before the next recurrence). Weekly and monthly views
+            average those daily scores across the range; weekly/monthly KPIs use their own period snapshots.{" "}
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">Helpdesk</span> and{" "}
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">User support</span> use ticket counts in the
+            reporting window below.
           </p>
         </div>
-        <div className="flex flex-col items-stretch gap-3 sm:items-end">
-          <div className="flex flex-col gap-1.5 sm:items-end">
+        <div className="flex w-full shrink-0 flex-col gap-4 sm:min-w-[17rem] lg:w-auto lg:items-end">
+          <div className="flex flex-col gap-1.5">
             <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
               Cadence
             </span>
@@ -755,7 +797,7 @@ function TaskMetricsPanel({
                 <button
                   key={f}
                   type="button"
-                  onClick={() => setFreq(f)}
+                  onClick={() => onTaskMetricsCadenceChange(f)}
                   className={cn(
                     "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
                     freq === f
@@ -768,38 +810,71 @@ function TaskMetricsPanel({
               ))}
             </div>
           </div>
-          <div className="flex flex-col gap-1.5 sm:items-end">
+          <div
+            className={cn(
+              "w-full rounded-xl border border-zinc-200 bg-zinc-50/90 p-3 dark:border-zinc-700/80 dark:bg-zinc-900/50",
+              isDaily ? "sm:max-w-[14rem]" : "sm:max-w-[22rem]",
+            )}
+          >
             <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-              View
+              {isDaily ? "Reporting day" : "Reporting range"}
             </span>
-            <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
-              {statusToggleDefs.map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setStatusView(id)}
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                    statusView === id
-                      ? "bg-orange-600 text-white shadow-sm"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {isDaily ? (
+              <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                Date
+                <DatePickerField
+                  value={dailyDate}
+                  onChange={(e) => onDailyDateChange(e.target.value)}
+                  wrapperClassName="mt-1.5"
+                  inputClassName="min-w-[10.5rem]"
+                />
+              </label>
+            ) : (
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                  Start
+                  <DatePickerField
+                    value={rangeFrom}
+                    max={rangeTo || undefined}
+                    onChange={(e) => onRangeFromChange(e.target.value)}
+                    wrapperClassName="mt-1.5"
+                    inputClassName="min-w-0"
+                  />
+                </label>
+                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                  End
+                  <DatePickerField
+                    value={rangeTo}
+                    min={rangeFrom || undefined}
+                    onChange={(e) => onRangeToChange(e.target.value)}
+                    wrapperClassName="mt-1.5"
+                    inputClassName="min-w-0"
+                  />
+                </label>
+              </div>
+            )}
+            <Button
+              type="button"
+              onClick={onApplyDates}
+              disabled={loading}
+              className="mt-3 h-9 w-full rounded-lg text-xs font-semibold"
+            >
+              {loading ? "Updating…" : "Apply dates"}
+            </Button>
           </div>
         </div>
       </div>
-      <div className="mt-6">
-        <MetricsPieChart
-          title="Task status distribution"
-          subtitle={pieSubtitle}
-          itemsLabel={(n) => `${n} task${n === 1 ? "" : "s"}`}
-          emptyDescription="No recurring tasks for this frequency in scope."
-          pieClassName="h-52 w-52 sm:h-60 sm:w-60"
-          segments={pieSegments}
+      {error ? (
+        <p className="mt-4 rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/30 dark:text-rose-100">
+          {error}
+        </p>
+      ) : null}
+      <div className={cn("mt-6", loading && "pointer-events-none opacity-60")}>
+        <TaskPillarMetricsGrid
+          checklistPillars={checklistPillars}
+          frequency={freq}
+          helpdeskTickets={helpdeskTickets}
+          userSupportTickets={userSupportTickets}
         />
       </div>
     </section>

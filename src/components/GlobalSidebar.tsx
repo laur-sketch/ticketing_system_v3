@@ -32,6 +32,7 @@ function linksForRole(role: string | undefined): NavItem[] {
   if (role === "SuperAdmin") {
     return [
       { kind: "link", href: "/", label: "Ticket Dashboard" },
+      { kind: "link", href: "/admin/ticket-requests", label: "Create requests" },
       { kind: "link", href: "/admin/personnel", label: "Personnel" },
       { kind: "link", href: "/agent", label: "Board" },
       { kind: "link", href: "/insights", label: "Metrics & Reports" },
@@ -42,6 +43,7 @@ function linksForRole(role: string | undefined): NavItem[] {
   if (role === "Admin") {
     return [
       { kind: "link", href: "/", label: "Ticket Dashboard" },
+      { kind: "link", href: "/admin/ticket-requests", label: "Create requests" },
       { kind: "link", href: "/admin/personnel", label: "Personnel" },
       { kind: "link", href: "/agent", label: "Board" },
       { kind: "link", href: "/insights", label: "Metrics & Reports" },
@@ -89,6 +91,7 @@ function iconForLink(label: string) {
   if (key.includes("process")) return GitBranch;
   if (key.includes("submit")) return PlusSquare;
   if (key.includes("queue metrics")) return Gauge;
+  if (key.includes("create request")) return PlusSquare;
   return Home;
 }
 
@@ -160,7 +163,7 @@ function GlobalSidebarInner() {
             onClick={() => setMobileOpen(false)}
             aria-label="Close navigation menu"
           />
-          <aside className="absolute left-0 top-0 h-full w-[82vw] max-w-[320px] border-r border-zinc-200 bg-white px-4 py-5 shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220]">
+          <aside className="absolute left-0 top-0 h-full w-[82vw] max-w-[320px] border-r border-border bg-surface px-4 py-5 shadow-2xl dark:border-zinc-800 bg-surface">
             <div className="mb-5 flex items-center justify-between">
               <BrandLockup variant="staff-sidebar-expanded" />
               <button
@@ -195,8 +198,8 @@ function GlobalSidebarInner() {
                               onClick={() => setMobileOpen(false)}
                               className={`block rounded-md px-3 py-2 ${
                                 active
-                                  ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
-                                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                  ? "stoic-nav-active"
+                                  : "text-muted hover:bg-surface-muted hover:text-foreground"
                               }`}
                             >
                               <span className="inline-flex items-center gap-2">
@@ -219,8 +222,8 @@ function GlobalSidebarInner() {
                     onClick={() => setMobileOpen(false)}
                     className={`block rounded-md px-3 py-2 ${
                       active
-                        ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
-                        : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        ? "stoic-nav-active"
+                        : "text-muted hover:bg-surface-muted hover:text-foreground"
                     }`}
                   >
                     <span className="inline-flex items-center gap-2">
@@ -235,7 +238,7 @@ function GlobalSidebarInner() {
         </div>
       ) : null}
       <aside
-        className={`hidden h-screen min-h-0 shrink-0 flex-col border-r border-zinc-200 bg-white px-4 py-5 transition-all duration-200 dark:border-zinc-800 dark:bg-[#0b1220] lg:flex lg:flex-col ${collapsed ? "w-20" : "w-72"}`}
+        className={`hidden h-screen min-h-0 shrink-0 flex-col border-r border-border bg-surface px-4 py-5 transition-all duration-200 dark:border-zinc-800 bg-surface lg:flex lg:flex-col ${collapsed ? "w-20" : "w-72"}`}
       >
         <div className={`shrink-0 flex ${collapsed ? "flex-col items-center gap-3" : "items-start justify-between gap-3"}`}>
           <div className={`min-w-0 flex-1 ${collapsed ? "text-center" : ""}`}>
@@ -286,8 +289,8 @@ function GlobalSidebarInner() {
                             collapsed ? "w-10 px-0 py-2 text-center" : "px-3 py-2"
                           } ${
                             active
-                              ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
-                              : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                              ? "stoic-nav-active"
+                              : "text-muted hover:bg-surface-muted hover:text-foreground"
                           }`}
                         >
                           {collapsed ? (
@@ -318,8 +321,8 @@ function GlobalSidebarInner() {
                   collapsed ? "w-10 px-0 py-2 text-center" : "px-3 py-2"
                 } ${
                   active
-                    ? "bg-orange-500/15 font-semibold text-orange-800 dark:bg-orange-500/20 dark:text-orange-200"
-                    : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    ? "stoic-nav-active"
+                    : "text-muted hover:bg-surface-muted hover:text-foreground"
                 }`}
               >
                 {collapsed ? (

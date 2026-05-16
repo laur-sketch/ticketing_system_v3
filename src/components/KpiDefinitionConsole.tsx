@@ -2,8 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DatePickerField } from "@/components/ui/DatePickerField";
+import {
+  IT_TASK_PILLAR_SELECT_OPTIONS,
+  isItProjectImplementationPillar,
+  isSelectableItTaskPillarTitle,
+} from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
-import { type SubKpiItem as SubKpi } from "@/lib/kpi-subkpis";
+import {
+  MIN_SEGMENTED_SUBKPIS_FOR_CREATE,
+  type SubKpiItem as SubKpi,
+} from "@/lib/kpi-subkpis";
 
 const MIN_SUB_FOR_SEGMENT_OPTION = 3;
 const INSIGHTS_VIEW_ONLY = false;
@@ -25,6 +34,8 @@ export type KpiDefinitionMaintenanceRecord = {
   recurrenceMonthDay?: number | null;
   periodCycleStartAt?: string | null;
   periodKey?: string | null;
+  itProjectName?: string | null;
+  itProjectPhase?: string | null;
   assignedAgent?: {
     id: string;
     name: string;
@@ -53,6 +64,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const [segItemDraft, setSegItemDraft] = useState<Record<string, string>>({});
   const [kpiMaintenanceAssignWork, setKpiMaintenanceAssignWork] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [itProjectNameDraft, setItProjectNameDraft] = useState("");
+  const [itProjectPhaseDraft, setItProjectPhaseDraft] = useState("");
 
   useEffect(() => {
     try {
@@ -108,12 +121,15 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     }
     setDraftUseSegments(true);
     if (subKpisDraft.length > 0) {
-      setDraftSegments([{ id: crypto.randomUUID(), label: "", items: [...subKpisDraft] }]);
+      const defaultLabel = maintenanceTitle.trim() || "Checklist";
+      setDraftSegments([{ id: crypto.randomUUID(), label: defaultLabel, items: [...subKpisDraft] }]);
       setSubKpisDraft([]);
       return;
     }
     if (draftSegments.length === 0) {
-      setDraftSegments([{ id: crypto.randomUUID(), label: "", items: [] }]);
+      setDraftSegments([
+        { id: crypto.randomUUID(), label: maintenanceTitle.trim() || "Segment 1", items: [] },
+      ]);
     }
   }
 
@@ -158,12 +174,38 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   async function createMaintenanceRecord() {
     if (INSIGHTS_VIEW_ONLY) return;
     const title = maintenanceTitle.trim();
-    if (!title) return;
+    if (!title || !isSelectableItTaskPillarTitle(title)) {
+      setLocalError("Choose a task title from the IT pillar list.");
+      return;
+    }
     const freqUpper = maintenanceFrequency.toUpperCase() as KpiFrequencyCode;
+
+    if (draftUseSegments) {
+      for (const seg of draftSegments) {
+        if (!seg.label.trim()) {
+          setLocalError('Each checklist segment needs a label (or turn off "Segment this checklist").');
+          return;
+        }
+        if (seg.items.length === 0) {
+          setLocalError(`Add at least one sub-task under "${seg.label.trim()}" or remove that segment.`);
+          return;
+        }
+      }
+      const segmentedTotal = draftSegments.reduce((a, s) => a + s.items.length, 0);
+      if (segmentedTotal < MIN_SEGMENTED_SUBKPIS_FOR_CREATE) {
+        setLocalError(
+          `Segmented checklists need at least ${MIN_SEGMENTED_SUBKPIS_FOR_CREATE} sub-tasks in total, or turn off "Segment this checklist".`,
+        );
+        return;
+      }
+    } else if (subKpisDraft.length === 0) {
+      setLocalError("Add at least one sub-task (checklist item) before saving.");
+      return;
+    }
 
     const body: Record<string, unknown> = {
       title,
-      frequency: maintenanceFrequency,
+      frequency: freqUpper,
       isRecurring: maintenanceIsRecurring,
     };
     if (draftUseSegments) {
@@ -179,15 +221,31 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     if (maintenanceIsRecurring && freqUpper === "WEEKLY") body.recurrenceWeekday = recurrenceWeekday;
     if (maintenanceIsRecurring && freqUpper === "MONTHLY") body.recurrenceMonthDay = recurrenceMonthDay;
     if (!maintenanceIsRecurring) {
-      if (!nonRecurringStartDate || !nonRecurringEndDate) return;
+      if (!nonRecurringStartDate || !nonRecurringEndDate) {
+        setLocalError("Choose start and end dates for this one-off task.");
+        return;
+      }
       const startAt = new Date(`${nonRecurringStartDate}T00:00:00`);
       const endAt = new Date(`${nonRecurringEndDate}T23:59:59`);
-      if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) return;
-      if (endAt.getTime() <= startAt.getTime()) return;
+      if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) {
+        setLocalError("Invalid start or end date.");
+        return;
+      }
+      if (endAt.getTime() <= startAt.getTime()) {
+        setLocalError("End date must be after start date.");
+        return;
+      }
       body.nonRecurringStartAt = startAt.toISOString();
       body.nonRecurringEndAt = endAt.toISOString();
     }
     body.timeZone = recurrenceTz;
+
+    if (isItProjectImplementationPillar(title)) {
+      const pn = itProjectNameDraft.trim();
+      const ph = itProjectPhaseDraft.trim();
+      if (pn) body.itProjectName = pn;
+      if (ph) body.itProjectPhase = ph;
+    }
 
     const res = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, {
       method: "POST",
@@ -201,8 +259,17 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         onMaintenanceRecordsUpdated?.(payload.rows);
       }
     } else {
-      const errBody = await res.json().catch(() => ({}));
-      setLocalError(typeof errBody.error === "string" ? errBody.error : "Could not save KPI.");
+      const raw = await res.text();
+      let message = "Could not save KPI.";
+      try {
+        const parsed = JSON.parse(raw) as { error?: unknown };
+        if (typeof parsed.error === "string" && parsed.error.trim()) {
+          message = parsed.error.trim();
+        }
+      } catch {
+        if (raw.trim()) message = raw.trim().slice(0, 400);
+      }
+      setLocalError(message);
       return;
     }
     setLocalError(null);
@@ -218,6 +285,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     setDraftUseSegments(false);
     setDraftSegments([]);
     setSegItemDraft({});
+    setItProjectNameDraft("");
+    setItProjectPhaseDraft("");
     void loadAssignFlag();
   }
 
@@ -227,7 +296,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         Task management
       </h2>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        Configure KPI checklist definitions here. Use the Task Assignment Board below to assign personnel to KPI cards.
+        Choose an IT pillar as the task title, add checklist items, then save. Use the Task Assignment Board below to
+        assign personnel to KPI cards.
       </p>
       {localError ? (
         <p className="mt-2 rounded-lg border border-red-500/35 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-200">
@@ -236,12 +306,54 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       ) : null}
 
       <div className="mt-5 grid gap-3 md:grid-cols-2">
-        <input
-          value={maintenanceTitle}
-          onChange={(e) => setMaintenanceTitle(e.target.value)}
-          placeholder="Task title (e.g., First-response SLA)"
-          className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-        />
+        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
+          Task title
+          <select
+            value={maintenanceTitle}
+            onChange={(e) => {
+              const v = e.target.value;
+              setMaintenanceTitle(v);
+              setLocalError(null);
+              if (!isItProjectImplementationPillar(v)) {
+                setItProjectNameDraft("");
+                setItProjectPhaseDraft("");
+              }
+            }}
+            required
+            className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-semibold tracking-tight text-zinc-900 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          >
+            <option value="">Select pillar…</option>
+            {IT_TASK_PILLAR_SELECT_OPTIONS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+        {isItProjectImplementationPillar(maintenanceTitle) ? (
+          <>
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
+              Project name
+              <input
+                type="text"
+                value={itProjectNameDraft}
+                onChange={(e) => setItProjectNameDraft(e.target.value)}
+                placeholder="Name of the project"
+                className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
+              Phase
+              <input
+                type="text"
+                value={itProjectPhaseDraft}
+                onChange={(e) => setItProjectPhaseDraft(e.target.value)}
+                placeholder="e.g. Discovery, Build, UAT"
+                className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+            </label>
+          </>
+        ) : null}
         <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
           <input
             type="checkbox"
@@ -254,20 +366,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
           <>
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
               Start date
-              <input
-                type="date"
+              <DatePickerField
                 value={nonRecurringStartDate}
                 onChange={(e) => setNonRecurringStartDate(e.target.value)}
-                className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                inputClassName="font-normal normal-case tracking-normal"
               />
             </label>
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
               End date
-              <input
-                type="date"
+              <DatePickerField
                 value={nonRecurringEndDate}
                 onChange={(e) => setNonRecurringEndDate(e.target.value)}
-                className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                inputClassName="font-normal normal-case tracking-normal"
               />
             </label>
           </>

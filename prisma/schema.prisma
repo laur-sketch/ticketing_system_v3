@@ -242,13 +242,38 @@ model KpiMaintenance {
   periodKey           String?
   /// True when the previous period ended with incomplete checklist; cleared when the new period is fully completed.
   rolledOverIncomplete Boolean @default(false)
+  /// IT Project Implementation only: display name for the project (not the pillar title).
+  itProjectName       String?
+  /// IT Project Implementation only: current phase label.
+  itProjectPhase      String?
   createdBy           String
   createdByRole       String
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
+  periodSnapshots     KpiMaintenancePeriodSnapshot[]
 
   @@index([assignedAgentId, frequency])
   @@index([createdAt])
+}
+
+/// Immutable checklist score for a KPI recurrence period (captured before rollover).
+model KpiMaintenancePeriodSnapshot {
+  id               String         @id @default(cuid())
+  kpiMaintenanceId String
+  kpiMaintenance   KpiMaintenance @relation(fields: [kpiMaintenanceId], references: [id], onDelete: Cascade)
+  periodKey        String
+  frequency        KpiFrequency
+  timeZone         String
+  total            Int
+  done             Int
+  missing          Int
+  percent          Int
+  fullyComplete    Boolean        @default(false)
+  capturedAt       DateTime       @default(now())
+
+  @@unique([kpiMaintenanceId, periodKey])
+  @@index([periodKey])
+  @@index([kpiMaintenanceId, capturedAt])
 }
 
 model TaskItem {

@@ -20,20 +20,20 @@ export function AppChrome({ children }: Props) {
 
   if (status === "unauthenticated" && pathname === "/") {
     return (
-      <div className="min-h-screen flex-1 bg-zinc-50 dark:bg-[#070d19]">{children}</div>
+      <div className="min-h-screen flex-1 bg-background text-foreground">{children}</div>
     );
   }
 
   if (status === "loading") {
     return (
-      <div className="flex min-h-dvh flex-1 flex-col items-center justify-center gap-4 bg-zinc-950 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
+      <div className="flex min-h-dvh flex-1 flex-col items-center justify-center gap-4 bg-background px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
         <div
-          className="h-11 w-11 animate-spin rounded-full border-2 border-orange-500/30 border-t-orange-500"
+          className="h-11 w-11 animate-spin rounded-full border-2 border-brand/30 border-t-brand"
           aria-hidden
         />
         <div className="max-w-sm text-center">
-          <p className="text-sm font-medium text-zinc-200">Loading workspace</p>
-          <p className="mt-1 text-xs text-zinc-500">Preparing navigation and your session…</p>
+          <p className="text-sm font-medium text-foreground">Loading workspace</p>
+          <p className="mt-1 text-xs text-muted">Preparing navigation and your session…</p>
         </div>
       </div>
     );
@@ -44,7 +44,7 @@ export function AppChrome({ children }: Props) {
   }
 
   return (
-    <div className="flex min-h-screen flex-1 bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+    <div className="flex min-h-screen flex-1 bg-background text-foreground">
       <RealtimeRefreshBeacon />
       <GlobalSidebar />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">

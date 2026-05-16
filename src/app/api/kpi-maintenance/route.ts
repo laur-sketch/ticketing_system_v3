@@ -11,17 +11,21 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import {
+  applyItProjectSubTaskDoneMeta,
   collectAllSubKpiItems,
   markEverySubKpiDone,
   normalizeSubKpis,
   resetAllSubKpiDone,
   setSubKpiItemDone,
+  setSubKpiItemScheduleMeta,
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
   wrapForPersist,
 } from "@/lib/kpi-subkpis";
+import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
+import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 
 const allowedFrequencies = new Set(Object.values(KpiFrequency));
@@ -111,6 +115,21 @@ export async function GET(req: Request) {
     if (complete && lastFull) {
       const eligible = nextRolloverEligibleAtUtc(lastFull, timeZone);
       if (eligible && now.getTime() >= eligible.getTime()) {
+        await upsertKpiPeriodSnapshot(
+          {
+            id: row.id,
+            title: row.title,
+            frequency: row.frequency,
+            subKpis: row.subKpis,
+            periodKey: row.periodKey,
+            recurrenceWeekday: row.recurrenceWeekday,
+            recurrenceMonthDay: row.recurrenceMonthDay,
+            periodCycleStartAt: row.periodCycleStartAt,
+            isRecurring: row.isRecurring,
+          },
+          timeZone,
+          now,
+        );
         const nextCycleStart = getPeriodEndExclusiveFromCycleStart(
           anchor,
           freq,
@@ -171,6 +190,8 @@ export async function POST(req: Request) {
     isRecurring?: boolean;
     nonRecurringStartAt?: string;
     nonRecurringEndAt?: string;
+    itProjectName?: string;
+    itProjectPhase?: string;
   };
   const title = body.title?.trim() ?? "";
   const frequency = body.frequency?.toUpperCase() as KpiFrequency;
@@ -281,28 +302,57 @@ export async function POST(req: Request) {
     ? getPeriodStartInclusive(frequency as KpiFrequencyCode, recurrenceWeekday, recurrenceMonthDay, new Date(), timeZone)
     : null;
 
-  const created = await prisma.kpiMaintenance.create({
-    data: {
-      title,
-      isRecurring,
-      frequency,
-      subKpis: subKpisPersist,
-      assignedAgentId: assignee?.id ?? null,
-      recurrenceWeekday,
-      recurrenceMonthDay,
-      nonRecurringStartAt,
-      nonRecurringEndAt,
-      periodCycleStartAt,
-      periodKey,
-      assignedRole: assignee
-        ? (await portalCompanyAdminPrivilegesForEmail(assignee.email))
-          ? "Admin Role"
-          : "Personnel"
-        : null,
-      createdBy: session.user.email ?? session.user.name ?? "unknown",
-      createdByRole: session.user.role,
-    },
-  });
+  const itProjectName =
+    isItProjectImplementationPillar(title) && typeof body.itProjectName === "string"
+      ? body.itProjectName.trim() || null
+      : null;
+  const itProjectPhase =
+    isItProjectImplementationPillar(title) && typeof body.itProjectPhase === "string"
+      ? body.itProjectPhase.trim() || null
+      : null;
+
+  let created;
+  try {
+    created = await prisma.kpiMaintenance.create({
+      data: {
+        title,
+        isRecurring,
+        frequency,
+        subKpis: subKpisPersist,
+        assignedAgentId: assignee?.id ?? null,
+        recurrenceWeekday,
+        recurrenceMonthDay,
+        nonRecurringStartAt,
+        nonRecurringEndAt,
+        periodCycleStartAt,
+        periodKey,
+        assignedRole: assignee
+          ? (await portalCompanyAdminPrivilegesForEmail(assignee.email))
+            ? "Admin Role"
+            : "Personnel"
+          : null,
+        createdBy: session.user.email ?? session.user.name ?? "unknown",
+        createdByRole: session.user.role,
+        itProjectName,
+        itProjectPhase,
+      },
+    });
+  } catch (e) {
+    console.error("[kpi-maintenance POST]", e);
+    if (e instanceof Prisma.PrismaClientKnownRequestError) {
+      if (e.code === "P2002") {
+        return NextResponse.json(
+          {
+            error:
+              "A task with this title already exists. Remove the duplicate KPI or choose a different pillar title.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+    const msg = e instanceof Error ? e.message : "Could not create KPI.";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
   return NextResponse.json(created, { status: 201 });
 }
 
@@ -310,6 +360,7 @@ export async function PATCH(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
   if (unauthorized || !session) return unauthorized;
   const perms = await resolveOpsPermissions(session);
+  const patchTz = normalizeTimeZone(new URL(req.url).searchParams.get("tz"));
   const body = (await req.json()) as {
     id?: string;
     subKpiId?: string;
@@ -317,6 +368,9 @@ export async function PATCH(req: Request) {
     markAllDone?: boolean;
     structuredSubKpis?: unknown;
     assignedAgentId?: string;
+    itProjectName?: string | null;
+    itProjectPhase?: string | null;
+    subKpiSchedule?: { subKpiId?: string; dueDate?: string | null; actualDate?: string | null };
   };
   const id = body.id?.trim() ?? "";
 
@@ -328,6 +382,7 @@ export async function PATCH(req: Request) {
     where: { id },
     select: {
       id: true,
+      title: true,
       assignedAgentId: true,
       subKpis: true,
       isRecurring: true,
@@ -335,11 +390,73 @@ export async function PATCH(req: Request) {
       recurrenceWeekday: true,
       recurrenceMonthDay: true,
       periodCycleStartAt: true,
+      periodKey: true,
       lastFullCompletionAt: true,
+      itProjectName: true,
+      itProjectPhase: true,
     },
   });
   if (!row) return NextResponse.json({ error: "KPI not found." }, { status: 404 });
-  const isAssignee = !!perms.operator && perms.operator.id === row.assignedAgentId;
+  const kpiRow = row;
+
+  async function captureCompletedPeriod(subKpis: unknown) {
+    if (!kpiRow.isRecurring || !checklistFullyComplete(subKpis)) return;
+    await upsertKpiPeriodSnapshot(
+      {
+        id: kpiRow.id,
+        title: kpiRow.title,
+        frequency: kpiRow.frequency,
+        subKpis,
+        periodKey: kpiRow.periodKey,
+        recurrenceWeekday: kpiRow.recurrenceWeekday,
+        recurrenceMonthDay: kpiRow.recurrenceMonthDay,
+        periodCycleStartAt: kpiRow.periodCycleStartAt,
+        isRecurring: kpiRow.isRecurring,
+      },
+      timeZoneFromPeriodKey(kpiRow.periodKey),
+    );
+  }
+  const isAssignee = !!perms.operator && perms.operator.id === kpiRow.assignedAgentId;
+
+  if (body.itProjectName !== undefined || body.itProjectPhase !== undefined) {
+    if (!isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json({ error: "Project fields apply only to IT Project Implementation tasks." }, { status: 400 });
+    }
+    const data: { itProjectName?: string | null; itProjectPhase?: string | null } = {};
+    if (body.itProjectName !== undefined) {
+      data.itProjectName =
+        typeof body.itProjectName === "string" ? body.itProjectName.trim() || null : null;
+    }
+    if (body.itProjectPhase !== undefined) {
+      data.itProjectPhase =
+        typeof body.itProjectPhase === "string" ? body.itProjectPhase.trim() || null : null;
+    }
+    const updated = await prisma.kpiMaintenance.update({ where: { id }, data });
+    return NextResponse.json(updated);
+  }
+
+  if (body.subKpiSchedule != null && typeof body.subKpiSchedule === "object") {
+    if (!isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json({ error: "Per sub-task scheduling applies only to IT Project Implementation." }, { status: 400 });
+    }
+    const subKpiIdSched = String(body.subKpiSchedule.subKpiId ?? "").trim();
+    if (!subKpiIdSched) {
+      return NextResponse.json({ error: "subKpiSchedule.subKpiId is required." }, { status: 400 });
+    }
+    const sched = body.subKpiSchedule;
+    const updatedJson = setSubKpiItemScheduleMeta(kpiRow.subKpis, subKpiIdSched, {
+      dueDate: sched.dueDate,
+      actualDate: sched.actualDate,
+    });
+    const updated = await prisma.kpiMaintenance.update({ where: { id }, data: { subKpis: updatedJson } });
+    return NextResponse.json(updated);
+  }
 
   const reassignedAgentId = body.assignedAgentId?.trim() ?? "";
   if (reassignedAgentId) {
@@ -375,7 +492,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: validated.error }, { status: 400 });
     }
     const wrapped = wrapForPersist(validated.norm);
-    const prevComplete = checklistFullyComplete(row.subKpis);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
     const nextComplete = checklistFullyComplete(wrapped);
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
@@ -389,6 +506,7 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
+    if (nextComplete) await captureCompletedPeriod(wrapped);
     return NextResponse.json(updated);
   }
 
@@ -405,12 +523,20 @@ export async function PATCH(req: Request) {
     );
   }
 
-  const updatedJson =
+  const updatedJsonRaw =
     typeof markAllDone === "boolean"
-      ? markEverySubKpiDone(row.subKpis, markAllDone)
-      : setSubKpiItemDone(row.subKpis, subKpiId, body.done!);
+      ? markEverySubKpiDone(kpiRow.subKpis, markAllDone)
+      : setSubKpiItemDone(kpiRow.subKpis, subKpiId, body.done!);
+  let updatedJson: Prisma.InputJsonValue = updatedJsonRaw;
+  if (
+    isItProjectImplementationPillar(kpiRow.title) &&
+    typeof body.done === "boolean" &&
+    subKpiId
+  ) {
+    updatedJson = applyItProjectSubTaskDoneMeta(updatedJsonRaw, subKpiId, body.done, patchTz);
+  }
 
-  const prevComplete = checklistFullyComplete(row.subKpis);
+  const prevComplete = checklistFullyComplete(kpiRow.subKpis);
   const nextComplete = checklistFullyComplete(updatedJson);
   let lastFullCompletionAt: Date | null | undefined;
   if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
@@ -426,5 +552,6 @@ export async function PATCH(req: Request) {
       ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
     },
   });
+  if (nextComplete) await captureCompletedPeriod(updatedJson);
   return NextResponse.json(updated);
 }

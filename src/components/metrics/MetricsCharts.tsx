@@ -11,6 +11,46 @@ function formatStatus(status: string) {
   return status.replaceAll("_", " ");
 }
 
+/** Stable colors per ticket status — shared by pie, strip, and legends. */
+export const TICKET_STATUS_CHART_COLORS: Record<string, string> = {
+  IN_PROGRESS: "#f97316",
+  OPEN: "#f43f5e",
+  PENDING_INFO: "#10b981",
+  ESCALATED: "#eab308",
+  FOR_CONFIRMATION: "#a1a1aa",
+  RESOLVED: "#3b82f6",
+  CLOSED: "#71717a",
+};
+
+const TICKET_STATUS_SORT_ORDER = [
+  "IN_PROGRESS",
+  "OPEN",
+  "PENDING_INFO",
+  "ESCALATED",
+  "FOR_CONFIRMATION",
+  "RESOLVED",
+  "CLOSED",
+] as const;
+
+export function colorForTicketStatus(status: string) {
+  return TICKET_STATUS_CHART_COLORS[status] ?? "#71717a";
+}
+
+export function queueSegmentsForCharts(raw: { status: string; count: number }[]) {
+  const byStatus = new Map(raw.map((r) => [r.status, r.count]));
+  const ordered: { status: string; count: number }[] = TICKET_STATUS_SORT_ORDER.map((status) => ({
+    status,
+    count: byStatus.get(status) ?? 0,
+  })).filter((s) => s.count > 0);
+  const known = new Set<string>(TICKET_STATUS_SORT_ORDER);
+  for (const row of raw) {
+    if (!known.has(row.status) && row.count > 0) {
+      ordered.push({ status: row.status, count: row.count });
+    }
+  }
+  return ordered.sort((a, b) => b.count - a.count);
+}
+
 /**
  * Daily x-axis tick density — every day for short windows, then every 2/3/7
  * days as the range grows so labels never overlap regardless of width.
@@ -245,7 +285,7 @@ export function MetricsGauge({
         <path
           d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`}
           fill="none"
-          stroke="#27272a"
+          className="stroke-zinc-200 dark:stroke-zinc-800"
           strokeWidth="8"
           strokeLinecap="round"
         />
@@ -269,14 +309,19 @@ export function MetricsGauge({
             strokeLinecap="round"
           />
         ) : null}
-        <text x={cx} y={cy - 4} textAnchor="middle" className="fill-zinc-100 text-[14px] font-bold">
+        <text
+          x={cx}
+          y={cy - 4}
+          textAnchor="middle"
+          className="fill-zinc-900 text-[14px] font-bold dark:fill-zinc-100"
+        >
           {pct == null ? "—" : `${Math.round(pct * 100)}%`}
         </text>
       </svg>
-      <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{label}</p>
-      {sub ? <p className="mt-0.5 text-[10px] text-zinc-600">{sub}</p> : null}
+      <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
+      {sub ? <p className="mt-0.5 text-[10px] text-muted">{sub}</p> : null}
       {targetPct != null ? (
-        <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">Target {Math.round(targetPct * 100)}%</p>
+        <p className="mt-0.5 text-[10px] text-muted">Target {Math.round(targetPct * 100)}%</p>
       ) : null}
     </div>
   );
@@ -372,24 +417,24 @@ export function MetricsPieChart({
                 <path key={`${s.label}-${i}`} d={s.d} fill={s.color} stroke="#18181b" strokeWidth="0.35" />
               ),
             )}
-            <circle cx={cx} cy={cy} r={10} className="fill-white dark:fill-zinc-950" />
+            <circle cx={cx} cy={cy} r={10} className="fill-surface" />
             <text
               x={cx}
               y={cy + 2}
               textAnchor="middle"
-              className="fill-zinc-900 text-[7px] font-bold dark:fill-zinc-100"
+              className="fill-foreground text-[7px] font-bold"
             >
               {total}
             </text>
           </svg>
           <ul className="grid w-full gap-2 text-sm sm:max-w-xs">
-            {segments.map((seg) => (
-              <li key={seg.label} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
+            {segments.map((seg, index) => (
+              <li key={`${seg.label}-${index}`} className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 text-muted">
                   <span className="size-3 rounded-sm" style={{ backgroundColor: seg.color }} />
                   {seg.label}
                 </span>
-                <span className="tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">
+                <span className="tabular-nums font-semibold text-foreground">
                   {seg.value}
                   {showPercentages && total > 0
                     ? ` (${Math.round((seg.value / total) * 1000) / 10}%)`
@@ -411,8 +456,8 @@ export function MetricsBarChart({
   valueFormatter,
 }: {
   title: string;
-  rows: { label: string; value: number }[];
-  valueFormatter?: (value: number, row: { label: string; value: number }) => string;
+  rows: { id?: string; label: string; value: number }[];
+  valueFormatter?: (value: number, row: { id?: string; label: string; value: number }) => string;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (
@@ -422,8 +467,8 @@ export function MetricsBarChart({
         {rows.length === 0 ? (
           <p className="text-sm text-zinc-600 dark:text-zinc-500">No data in this range.</p>
         ) : (
-          rows.map((row) => (
-            <div key={row.label}>
+          rows.map((row, index) => (
+            <div key={row.id ?? `${row.label}-${index}`}>
               <div className="mb-1 flex justify-between text-xs">
                 <span className="truncate font-medium text-zinc-800 dark:text-zinc-300">{row.label}</span>
                 <span className="tabular-nums text-zinc-600 dark:text-zinc-400">
@@ -444,48 +489,52 @@ export function MetricsBarChart({
   );
 }
 
-/** Stacked segments for open-queue status mix. */
+/** Stacked bar for open-queue status mix (colors match pie chart by status). */
 export function MetricsQueueStrip({
   segments,
+  showLegend = false,
 }: {
   segments: { status: string; count: number }[];
+  showLegend?: boolean;
 }) {
-  const total = segments.reduce((s, x) => s + x.count, 0);
+  const ordered = queueSegmentsForCharts(segments);
+  const total = ordered.reduce((s, x) => s + x.count, 0);
   if (total === 0) {
-    return <p className="text-sm text-zinc-600 dark:text-zinc-500">No active queue items.</p>;
+    return <p className="text-sm text-muted">No active queue items.</p>;
   }
-
-  const tones = [
-    "bg-orange-600",
-    "bg-orange-500/80",
-    "bg-zinc-600",
-    "bg-amber-600/90",
-    "bg-rose-600/90",
-  ];
 
   return (
     <div>
-      <div className="flex h-4 overflow-hidden rounded-full ring-1 ring-zinc-300 dark:ring-zinc-700/80">
-        {segments.map((seg, i) => (
+      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Status mix bar</p>
+      <div className="mt-2 flex h-3 overflow-hidden rounded-full border border-border bg-surface-muted">
+        {ordered.map((seg) => (
           <div
             key={seg.status}
-            className={cn(tones[i % tones.length], "min-w-[4px] transition-[width]")}
-            style={{ width: `${(seg.count / total) * 100}%` }}
+            className="min-w-[3px] transition-[width]"
+            style={{
+              width: `${(seg.count / total) * 100}%`,
+              backgroundColor: colorForTicketStatus(seg.status),
+            }}
             title={`${formatStatus(seg.status)}: ${seg.count}`}
           />
         ))}
       </div>
-      <ul className="mt-4 grid gap-2 sm:grid-cols-2">
-        {segments.map((seg, i) => (
-          <li key={seg.status} className="flex items-center justify-between gap-2 text-xs">
-            <span className="flex items-center gap-2 text-zinc-700 dark:text-zinc-400">
-              <span className={cn("size-2 rounded-full", tones[i % tones.length])} />
-              {formatStatus(seg.status)}
-            </span>
-            <span className="tabular-nums font-semibold text-zinc-900 dark:text-zinc-200">{seg.count}</span>
-          </li>
-        ))}
-      </ul>
+      {showLegend ? (
+        <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+          {ordered.map((seg) => (
+            <li key={seg.status} className="flex items-center justify-between gap-2 text-xs">
+              <span className="flex items-center gap-2 text-muted">
+                <span
+                  className="size-2.5 shrink-0 rounded-sm"
+                  style={{ backgroundColor: colorForTicketStatus(seg.status) }}
+                />
+                {formatStatus(seg.status)}
+              </span>
+              <span className="tabular-nums font-semibold text-foreground">{seg.count}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

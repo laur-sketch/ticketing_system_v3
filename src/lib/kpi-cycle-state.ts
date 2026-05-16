@@ -1,4 +1,5 @@
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   getPeriodEndExclusiveFromCycleStart,
   getRolloverEligibleAfterCompletion,
@@ -13,6 +14,8 @@ export type KpiMaintenanceLike = {
   nonRecurringStartAt?: unknown;
   nonRecurringEndAt?: unknown;
   periodCycleStartAt?: unknown;
+  /** Pillar title — overdue → Delayed applies only to IT Project Implementation. */
+  title?: string | null;
 };
 
 export function toJsDateMaybe(v: unknown): Date | null {
@@ -61,7 +64,7 @@ export function recurringDoneDelayedMs(record: KpiMaintenanceLike, timeZone: str
   return Math.max(0, doneAtMs - end);
 }
 
-/** Board column for task kanban: Done when checklist complete; Delayed only when overdue and incomplete. */
+/** Board column for task kanban: Done when checklist complete; Delayed only when overdue and incomplete (IT Project Implementation only). */
 export function taskKanbanDerivedStatus(
   record: KpiMaintenanceLike,
   args: { total: number; done: number; nowMs: number; timeZone: string },
@@ -69,6 +72,7 @@ export function taskKanbanDerivedStatus(
   const { total, done, nowMs, timeZone } = args;
   if (total > 0 && done === total) return "DONE";
   if (total === 0) return "CURRENT";
+  if (!isItProjectImplementationPillar(String(record.title ?? ""))) return "CURRENT";
   return incompletePastDeadlineDelayMs(record, nowMs, timeZone) > 0 ? "DELAYED" : "CURRENT";
 }
 

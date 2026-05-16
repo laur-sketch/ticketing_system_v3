@@ -165,7 +165,7 @@ export function Nav() {
   }
 
   return (
-    <header className="shrink-0 border-b border-zinc-200 bg-white backdrop-blur dark:border-zinc-800 dark:bg-[#0b1220]">
+    <header className="shrink-0 border-b border-border bg-surface/95 backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2.5 sm:gap-x-4 sm:px-4">
         {showUtilities ? (
           <>
@@ -173,7 +173,7 @@ export function Nav() {
             <form
               action="/agent"
               method="get"
-              className="flex min-w-0 flex-1 basis-[min(100%,18rem)] items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 sm:max-w-xl sm:basis-0"
+              className="flex min-w-0 flex-1 basis-[min(100%,18rem)] items-center rounded-[var(--radius-stoic)] border border-border bg-surface-muted px-3 py-2 text-sm text-muted shadow-sm sm:max-w-xl sm:basis-0"
             >
               {inQueueContext && status ? <input type="hidden" name="status" value={status} /> : null}
               {inQueueContext && priority ? <input type="hidden" name="priority" value={priority} /> : null}
@@ -187,7 +187,7 @@ export function Nav() {
                 name="q"
                 defaultValue={inQueueContext ? q : ""}
                 placeholder="Find ticket..."
-                className="min-w-0 flex-1 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+                className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted"
                 aria-label="Find ticket"
               />
             </form>
@@ -206,7 +206,7 @@ export function Nav() {
                     return next;
                   });
                 }}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted"
                 aria-label="Open notifications panel"
                 title="Open notifications panel"
               >
@@ -218,7 +218,7 @@ export function Nav() {
                 ) : null}
               </button>
               {notifOpen ? (
-                <div className="absolute right-0 z-40 mt-2 w-[min(360px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-200 bg-white p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="absolute right-0 z-40 mt-2 w-[min(360px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] stoic-card-elevated p-2">
                   <div className="flex items-center justify-between px-2 py-1.5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                       Notifications

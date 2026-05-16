@@ -2,6 +2,7 @@ import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
 import type { Session } from "next-auth";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
+import { ensureRosterTeamsInDb } from "@/lib/roster-teams";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
@@ -72,6 +73,7 @@ export async function loadCompanyBoard(opts: {
   /** Company ids to filter by (requestor-assigned company scope). Empty/undefined = all in allowed scope. */
   companyTeamIds?: string[];
 }): Promise<{ columns: CompanyBoardColumn[]; cardMode: CompanyBoardCardMode; emptyHint: string | null }> {
+  await ensureRosterTeamsInDb();
   const { session, searchQuery, priorityFilter, companyTeamIds } = opts;
   const q = (searchQuery ?? "").trim();
   const role = session.user.role;
@@ -336,6 +338,7 @@ export async function getCompanyBoardAggregates(opts: {
   priorityFilter?: TicketPriority | "ALL";
   companyTeamIds?: string[];
 }): Promise<{ total: number; critical: number; openPipeline: number; slaEscalated: number }> {
+  await ensureRosterTeamsInDb();
   const empty = { total: 0, critical: 0, openPipeline: 0, slaEscalated: 0 };
   const { session, searchQuery, priorityFilter, companyTeamIds } = opts;
   const q = (searchQuery ?? "").trim();

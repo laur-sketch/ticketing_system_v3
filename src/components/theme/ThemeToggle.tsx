@@ -15,9 +15,7 @@ export function ThemeToggle({ className }: Props) {
       type="button"
       onClick={toggleTheme}
       className={cn(
-        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition",
-        "border-zinc-300 bg-white text-zinc-700 shadow-sm hover:bg-zinc-100",
-        "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800",
+        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted",
         className,
       )}
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}

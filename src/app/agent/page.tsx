@@ -91,6 +91,9 @@ export default async function AgentHome({
   if (rawBoard === "department") {
     redirect("/agent?board=company");
   }
+  if (rawBoard === "it-tasks") {
+    redirect("/agent?board=kpi");
+  }
   /** Personnel cannot view the Company Board: force them back to the Ticket Board. */
   if (rawBoard === "company" && session.user.role === "Personnel") {
     redirect("/agent?board=ticket");

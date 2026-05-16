@@ -11,10 +11,25 @@ const root = path.join(__dirname, "..");
 const clientDir = path.join(root, "node_modules", ".prisma", "client");
 
 function sleepMs(ms) {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  if (process.platform === "win32") {
+    try {
+      execSync(`cmd /c timeout /t ${seconds} /nobreak`, { stdio: "ignore" });
+      return;
+    } catch {
+      /* continue to fallbacks */
+    }
+    try {
+      execSync(`powershell -NoProfile -Command "Start-Sleep -Seconds ${seconds}"`, { stdio: "ignore" });
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   try {
-    execSync(`powershell -NoProfile -Command "Start-Sleep -Milliseconds ${ms}"`, { stdio: "ignore" });
+    execSync(`sleep ${seconds}`, { stdio: "ignore" });
   } catch {
-    execSync(`ping 127.0.0.1 -n ${Math.max(2, Math.ceil(ms / 1000) + 1)} > nul`, { stdio: "ignore", shell: true });
+    /* ignore */
   }
 }
 

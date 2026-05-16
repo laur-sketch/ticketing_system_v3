@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
-import { computeKpis, parseHelpdeskCadence, parseKpiRangeFromQuery } from "@/lib/kpis";
+import {
+  computeTaskMetrics,
+  parseHelpdeskCadence,
+  parseKpiRangeFromQuery,
+} from "@/lib/kpis";
+import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { findSessionAgentId } from "@/lib/session-agent";
 
 export async function GET(req: Request) {
@@ -10,6 +15,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const { from, to } = parseKpiRangeFromQuery(searchParams.get("from"), searchParams.get("to"));
+  const helpdeskCadence = parseHelpdeskCadence(searchParams.get("helpdeskCadence"));
 
   const operator =
     session?.user?.role === "Personnel"
@@ -17,14 +23,19 @@ export async function GET(req: Request) {
       : null;
   const assignedAgentId = session?.user?.role === "Personnel" ? operator?.id ?? "__none__" : undefined;
 
-  const helpdeskCadence = parseHelpdeskCadence(searchParams.get("helpdeskCadence"));
-  const kpis = await computeKpis({ from, to }, { assignedAgentId }, { helpdeskCadence });
+  const timeZone = normalizeTimeZone(searchParams.get("tz"));
+  const payload = await computeTaskMetrics(
+    { from, to },
+    { assignedAgentId },
+    helpdeskCadence,
+    { timeZone },
+  );
   if (process.env.NODE_ENV === "development") {
     console.info(
-      `[perf] GET /api/kpis ${Date.now() - startedAt}ms from=${from.toISOString()} to=${to.toISOString()}`,
+      `[perf] GET /api/kpis/task-metrics ${Date.now() - startedAt}ms cadence=${helpdeskCadence} from=${from.toISOString()} to=${to.toISOString()}`,
     );
   }
-  return NextResponse.json(kpis, {
+  return NextResponse.json(payload, {
     headers: {
       "cache-control": "private, no-store, max-age=0",
     },

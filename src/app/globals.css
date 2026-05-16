@@ -9,15 +9,25 @@ html {
   text-size-adjust: 100%;
 }
 
-/* Light theme (default). Apply dark tokens when `html` has `.dark`. */
+/* StoicOps — light (default). Dark tokens when `html` has `.dark`. */
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
-  --brand: #ea580c;
-  --brand-ink: #9a3412;
+  --background: #f8f8f8;
+  --foreground: #111827;
+  --muted: #4b5563;
+  --muted-subtle: #6b7280;
+  --brand: #ff8300;
+  --brand-hover: #e67500;
+  --brand-ink: #111827;
+  --brand-muted: rgb(255 131 0 / 0.12);
   --surface: #ffffff;
-  --surface-muted: #f4f4f5;
-  --border: #e4e4e7;
+  --surface-elevated: #ffffff;
+  --surface-muted: #f3f4f6;
+  --border: #e5e7eb;
+  --border-subtle: #f3f4f6;
+  --shadow-card: 0 1px 3px rgb(17 24 39 / 0.06), 0 8px 24px rgb(17 24 39 / 0.04);
+  --shadow-elevated: 0 12px 40px rgb(17 24 39 / 0.08);
+  --radius-stoic: 0.625rem;
+  --radius-stoic-lg: 0.75rem;
 
   /* Staff assignment tags: saturated in light and dark */
   --personnel-assign-red: #e53935;
@@ -37,13 +47,21 @@ html {
 }
 
 html.dark {
-  --background: #050505;
-  --foreground: #f5f5f5;
-  --brand: #f97316;
-  --brand-ink: #fff7ed;
-  --surface: #0b0b0b;
-  --surface-muted: #111111;
-  --border: #2a2a2a;
+  --background: #000000;
+  --foreground: #ffffff;
+  --muted: #a1a1aa;
+  --muted-subtle: #71717a;
+  --brand: #ff8300;
+  --brand-hover: #ff9a33;
+  --brand-ink: #000000;
+  --brand-muted: rgb(255 131 0 / 0.14);
+  --surface: #121212;
+  --surface-elevated: #1a1a1a;
+  --surface-muted: #0a0a0a;
+  --border: #27272a;
+  --border-subtle: #1a1a1a;
+  --shadow-card: 0 10px 30px rgb(0 0 0 / 0.45);
+  --shadow-elevated: 0 20px 50px rgb(0 0 0 / 0.55);
 
   /* Staff assignment tags (same palette as :root) */
   --personnel-assign-red: #e53935;
@@ -65,20 +83,26 @@ html.dark {
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-subtle: var(--muted-subtle);
   --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
   --color-brand-ink: var(--brand-ink);
   --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
   --color-surface-muted: var(--surface-muted);
   --color-border: var(--border);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --radius-card: 1rem;
+  --radius-card: var(--radius-stoic-lg);
+  --radius-stoic: var(--radius-stoic);
+  --radius-stoic-lg: var(--radius-stoic-lg);
 }
 
 body {
-  background: linear-gradient(180deg, var(--surface-muted) 0%, var(--background) 100%);
+  background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 /* Keep native dropdown text readable in both themes. */
@@ -103,43 +127,223 @@ select optgroup {
 }
 
 .dark body {
-  background: linear-gradient(180deg, #050505 0%, #090909 100%);
+  background: var(--background);
+}
+
+/* Native date input + popup: contrast on light and dark surfaces. */
+input[type="date"].date-input {
+  color-scheme: light;
+}
+
+input[type="date"].date-input:not(.date-input-with-icon)::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.dark input[type="date"].date-input {
+  color-scheme: dark;
+}
+
+.dark input[type="date"].date-input::-webkit-datetime-edit,
+.dark input[type="date"].date-input::-webkit-datetime-edit-fields-wrapper,
+.dark input[type="date"].date-input::-webkit-datetime-edit-text,
+.dark input[type="date"].date-input::-webkit-datetime-edit-month-field,
+.dark input[type="date"].date-input::-webkit-datetime-edit-day-field,
+.dark input[type="date"].date-input::-webkit-datetime-edit-year-field {
+  color: #f4f4f5;
+}
+
+.dark input[type="date"].date-input:not(.date-input-with-icon)::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.25);
+  opacity: 0.92;
+}
+
+.dark input[type="date"].date-input:not(.date-input-with-icon):hover::-webkit-calendar-picker-indicator,
+.dark input[type="date"].date-input:not(.date-input-with-icon):focus::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+
+/* DatePickerField: strip native chrome — only the Lucide button opens the picker. */
+input[type="date"].date-input-with-icon {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: none;
+}
+
+.dark input[type="date"].date-input-with-icon {
+  color-scheme: dark;
+}
+
+input[type="date"].date-input-with-icon::-webkit-calendar-picker-indicator,
+input[type="date"].date-input-with-icon::-webkit-inner-spin-button,
+input[type="date"].date-input-with-icon::-webkit-clear-button {
+  display: none !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  left: -9999px !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+}
+
+input[type="date"].date-input-with-icon::-moz-calendar-picker-indicator {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  opacity: 0 !important;
+}
+
+input[type="date"].date-input-with-icon::-ms-clear,
+input[type="date"].date-input-with-icon::-ms-reveal {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* StoicOps component primitives */
+.stoic-label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brand);
+}
+
+.stoic-card {
+  border-radius: var(--radius-stoic-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.stoic-card-elevated {
+  border-radius: var(--radius-stoic-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-elevated);
+}
+
+.stoic-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-stoic);
+  background: var(--brand);
+  color: var(--brand-ink);
+  font-weight: 600;
+  transition: background-color 0.15s ease;
+}
+
+.stoic-btn-primary:hover {
+  background: var(--brand-hover);
+}
+
+.stoic-btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-stoic);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  font-weight: 600;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.stoic-btn-outline:hover {
+  background: var(--surface-muted);
+  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground) 30%);
+}
+
+.stoic-nav-active {
+  background: var(--brand-muted);
+  color: var(--brand);
+  font-weight: 600;
 }
 
 .panel {
-  @apply rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-[#101010] dark:shadow-[0_10px_30px_rgba(0,0,0,0.35)];
+  border-radius: var(--radius-stoic-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
 @layer utilities {
-  /* Legacy accent classes → brand orange */
+  /* Page shells — map legacy zinc / navy hex to StoicOps tokens */
+  html:not(.dark) .bg-zinc-50,
+  html:not(.dark) .min-h-\[calc\(100vh-56px\)\].bg-zinc-50 {
+    background-color: var(--background) !important;
+  }
+
+  .dark .bg-zinc-950,
+  .dark .bg-zinc-900 {
+    background-color: var(--background) !important;
+  }
+
+  html:not(.dark) .bg-white {
+    background-color: var(--surface) !important;
+  }
+
+  .dark .dark\:bg-\[\#0b1220\],
+  .dark .dark\:bg-\[\#070d19\],
+  .dark .dark\:bg-\[\#050913\],
+  .dark .dark\:bg-\[\#0a0b12\],
+  .dark .dark\:bg-\[\#12161c\],
+  .dark .dark\:bg-\[\#030304\] {
+    background-color: var(--surface) !important;
+  }
+
+  html:not(.dark) .border-zinc-200 {
+    border-color: var(--border) !important;
+  }
+
+  .dark .dark\:border-zinc-800,
+  .dark .dark\:border-zinc-800\/90,
+  .dark .dark\:border-zinc-700 {
+    border-color: var(--border) !important;
+  }
+
+  /* Legacy accent classes → StoicOps orange */
   .bg-blue-600,
-  .bg-blue-700 {
-    background-color: #ea580c !important;
+  .bg-blue-700,
+  .bg-orange-600 {
+    background-color: var(--brand) !important;
+    color: var(--brand-ink) !important;
   }
 
   .dark .bg-blue-600,
-  .dark .bg-blue-700 {
-    background-color: #f97316 !important;
+  .dark .bg-blue-700,
+  .dark .bg-orange-600 {
+    background-color: var(--brand) !important;
+    color: var(--brand-ink) !important;
   }
 
   .hover\:bg-blue-500:hover,
-  .hover\:bg-blue-800:hover {
-    background-color: #f97316 !important;
+  .hover\:bg-blue-800:hover,
+  .hover\:bg-orange-500:hover {
+    background-color: var(--brand-hover) !important;
   }
 
   .dark .hover\:bg-blue-500:hover,
-  .dark .hover\:bg-blue-800:hover {
-    background-color: #fb923c !important;
+  .dark .hover\:bg-blue-800:hover,
+  .dark .hover\:bg-orange-500:hover {
+    background-color: var(--brand-hover) !important;
   }
 
   .bg-blue-500\/10,
-  .bg-blue-500\/20 {
-    background-color: rgb(234 88 12 / 0.14) !important;
-  }
-
-  .dark .bg-blue-500\/10,
-  .dark .bg-blue-500\/20 {
-    background-color: rgb(249 115 22 / 0.18) !important;
+  .bg-blue-500\/20,
+  .bg-orange-500\/15,
+  .bg-orange-500\/20 {
+    background-color: var(--brand-muted) !important;
   }
 
   .text-blue-300,
@@ -149,63 +353,34 @@ select optgroup {
   .text-sky-300,
   .text-sky-400,
   .text-sky-500,
-  .text-cyan-400 {
-    color: #c2410c !important;
-  }
-
-  .dark .text-blue-300,
-  .dark .text-blue-200,
-  .dark .text-blue-400,
-  .dark .text-blue-500,
-  .dark .text-sky-300,
-  .dark .text-sky-400,
-  .dark .text-sky-500,
-  .dark .text-cyan-400 {
-    color: #fdba74 !important;
+  .text-cyan-400,
+  .text-orange-700,
+  .text-orange-800,
+  .dark .text-orange-300,
+  .dark .text-orange-400 {
+    color: var(--brand) !important;
   }
 
   .border-blue-500,
   .border-blue-400,
   .border-blue-300,
   .border-sky-400,
-  .border-cyan-400 {
-    border-color: #ea580c !important;
+  .border-cyan-400,
+  .border-orange-400\/50,
+  .border-orange-500\/30,
+  .border-orange-500\/45 {
+    border-color: color-mix(in srgb, var(--brand) 55%, var(--border)) !important;
   }
 
-  .dark .border-blue-500,
-  .dark .border-blue-400,
-  .dark .border-blue-300,
-  .dark .border-sky-400,
-  .dark .border-cyan-400 {
-    border-color: #f97316 !important;
-  }
-
-  .bg-orange-600 {
-    background-color: #ea580c !important;
-  }
-
-  .dark .bg-orange-600 {
-    background-color: #f97316 !important;
-  }
-
-  .hover\:bg-orange-500:hover {
-    background-color: #f97316 !important;
-  }
-
-  .dark .hover\:bg-orange-500:hover {
-    background-color: #fb923c !important;
-  }
-
-  .from-orange-600 {
-    --tw-gradient-from: #ea580c var(--tw-gradient-from-position) !important;
-  }
-
-  .dark .from-orange-600 {
-    --tw-gradient-from: #f97316 var(--tw-gradient-from-position) !important;
-  }
-
+  .from-orange-600,
+  .from-blue-600,
+  .to-blue-800,
+  .from-blue-700,
+  .to-blue-900,
   .to-orange-800 {
-    --tw-gradient-to: #9a3412 var(--tw-gradient-to-position) !important;
+    --tw-gradient-from: var(--brand) var(--tw-gradient-from-position) !important;
+    --tw-gradient-to: color-mix(in srgb, var(--brand) 65%, #000) var(--tw-gradient-to-position) !important;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
   }
 
   .dark .bg-\[\#070d19\],
@@ -214,8 +389,14 @@ select optgroup {
   .dark .bg-\[\#0e1629\],
   .dark .bg-\[\#0f172a\],
   .dark .bg-\[\#111214\],
-  .dark .bg-\[\#12161c\] {
-    background-color: #101010 !important;
+  .dark .bg-\[\#12161c\],
+  .dark .bg-\[\#050913\],
+  .dark .bg-\[\#0a0b12\],
+  .dark .bg-\[\#0a0a0a\],
+  .dark .bg-\[\#080808\],
+  .dark .bg-\[\#101010\],
+  .dark .bg-\[\#030304\] {
+    background-color: var(--surface) !important;
   }
 
   html:not(.dark) .bg-\[\#070d19\],
@@ -224,56 +405,22 @@ select optgroup {
   html:not(.dark) .bg-\[\#0e1629\],
   html:not(.dark) .bg-\[\#0f172a\],
   html:not(.dark) .bg-\[\#111214\],
-  html:not(.dark) .bg-\[\#12161c\] {
-    background-color: #fafafa !important;
-  }
-
-  /* Extra dark surfaces used on dashboard, insights, landing */
-  .dark .bg-\[\#050913\],
-  .dark .bg-\[\#0a0b12\],
-  .dark .bg-\[\#0a0a0a\],
-  .dark .bg-\[\#080808\],
-  .dark .bg-\[\#101010\] {
-    background-color: #101010 !important;
-  }
-
+  html:not(.dark) .bg-\[\#12161c\],
   html:not(.dark) .bg-\[\#050913\],
   html:not(.dark) .bg-\[\#0a0b12\],
   html:not(.dark) .bg-\[\#0a0a0a\],
   html:not(.dark) .bg-\[\#080808\],
-  html:not(.dark) .bg-\[\#101010\] {
-    background-color: #fafafa !important;
+  html:not(.dark) .bg-\[\#101010\],
+  html:not(.dark) .bg-\[\#030304\] {
+    background-color: var(--background) !important;
   }
 
   .dark .from-\[\#0d1629\],
-  .dark .to-\[\#0b1220\] {
-    --tw-gradient-from: #101010 var(--tw-gradient-from-position) !important;
-    --tw-gradient-to: rgb(16 16 16 / 0) var(--tw-gradient-to-position) !important;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
-  }
-
+  .dark .to-\[\#0b1220\],
   html:not(.dark) .from-\[\#0d1629\],
   html:not(.dark) .to-\[\#0b1220\] {
-    --tw-gradient-from: #fafafa var(--tw-gradient-from-position) !important;
-    --tw-gradient-to: rgb(250 250 250 / 0) var(--tw-gradient-to-position) !important;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
-  }
-
-  .from-blue-600,
-  .to-blue-800,
-  .from-blue-700,
-  .to-blue-900 {
-    --tw-gradient-from: #ea580c var(--tw-gradient-from-position) !important;
-    --tw-gradient-to: #c2410c var(--tw-gradient-to-position) !important;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
-  }
-
-  .dark .from-blue-600,
-  .dark .to-blue-800,
-  .dark .from-blue-700,
-  .dark .to-blue-900 {
-    --tw-gradient-from: #f97316 var(--tw-gradient-from-position) !important;
-    --tw-gradient-to: #c2410c var(--tw-gradient-to-position) !important;
+    --tw-gradient-from: var(--surface) var(--tw-gradient-from-position) !important;
+    --tw-gradient-to: rgb(0 0 0 / 0) var(--tw-gradient-to-position) !important;
     --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
   }
 
@@ -281,24 +428,12 @@ select optgroup {
   .bg-sky-700,
   .bg-cyan-600,
   .bg-cyan-700 {
-    background-color: #ea580c !important;
-  }
-
-  .dark .bg-sky-600,
-  .dark .bg-sky-700,
-  .dark .bg-cyan-600,
-  .dark .bg-cyan-700 {
-    background-color: #f97316 !important;
+    background-color: var(--brand) !important;
   }
 
   .hover\:bg-sky-500:hover,
   .hover\:bg-cyan-500:hover {
-    background-color: #f97316 !important;
-  }
-
-  .dark .hover\:bg-sky-500:hover,
-  .dark .hover\:bg-cyan-500:hover {
-    background-color: #fb923c !important;
+    background-color: var(--brand-hover) !important;
   }
 
   .ring-blue-500\/40,
@@ -306,16 +441,9 @@ select optgroup {
   .focus\:ring-blue-500:focus,
   .ring-orange-500\/40,
   .ring-orange-400\/40,
-  .focus\:ring-orange-500:focus {
-    --tw-ring-color: rgb(234 88 12 / 0.45) !important;
+  .focus\:ring-orange-500:focus,
+  .focus\:ring-\[\#f97316\]\/25:focus {
+    --tw-ring-color: color-mix(in srgb, var(--brand) 40%, transparent) !important;
   }
 
-  .dark .ring-blue-500\/40,
-  .dark .ring-blue-500\/30,
-  .dark .focus\:ring-blue-500:focus,
-  .dark .ring-orange-500\/40,
-  .dark .ring-orange-400\/40,
-  .dark .focus\:ring-orange-500:focus {
-    --tw-ring-color: rgb(249 115 22 / 0.45) !important;
-  }
 }

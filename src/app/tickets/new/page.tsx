@@ -156,6 +156,19 @@ export default function NewTicketPage() {
     session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
   const isStaffIntake = isAdminStaffIntake || isPersonnelIntake;
 
+  /** Full roster for Admin/SuperAdmin intake; designated company merged in if missing from public list. */
+  const adminCompanySelectOptions = useMemo(() => {
+    if (!isAdminStaffIntake) return [];
+    const teams = [...companyTeams];
+    if (
+      staffDesignatedCompany &&
+      !teams.some((t) => t.id === staffDesignatedCompany.id)
+    ) {
+      return [{ id: staffDesignatedCompany.id, name: staffDesignatedCompany.name }, ...teams];
+    }
+    return teams;
+  }, [isAdminStaffIntake, companyTeams, staffDesignatedCompany]);
+
   const mergeScreenshotFiles = useCallback((picked: File[]) => {
     setScreenshots((prev) => {
       const next = [...prev];
@@ -281,9 +294,14 @@ export default function NewTicketPage() {
         return;
       }
       await res.json();
-      router.push(
-        isPersonnelIntake ? "/my-requests?submitted=1" : "/my-tickets?submitted=1",
-      );
+      const role = session?.user?.role;
+      if (isPersonnelIntake) {
+        router.push("/my-requests?submitted=1");
+      } else if (role === "SuperAdmin" || role === "Admin") {
+        router.push("/admin/ticket-requests?submitted=1");
+      } else {
+        router.push("/my-tickets?submitted=1");
+      }
     } catch {
       setError("Could not create ticket.");
     } finally {
@@ -371,33 +389,28 @@ export default function NewTicketPage() {
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                   Request to Company/SBU
                   <Select
-                    key={`staff-company-${staffDesignatedCompany?.id ?? "all"}`}
+                    key={`admin-company-${String(companiesLoading)}-${String(staffDesignatedLoading)}-${adminCompanySelectOptions.length}-${staffDesignatedCompany?.id ?? ""}`}
                     name="companyTeamId"
                     required
-                    disabled={
-                      companiesLoading && (!staffDesignatedCompany || staffDesignatedCompany.id.length === 0)
-                    }
+                    disabled={companiesLoading}
                     defaultValue={staffDesignatedCompany?.id ?? ""}
                     className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   >
-                    {staffDesignatedCompany ? (
-                      <option value={staffDesignatedCompany.id}>{staffDesignatedCompany.name}</option>
-                    ) : (
-                      <>
-                        <option value="">
-                          {companiesLoading || staffDesignatedLoading
-                            ? "Loading companies…"
-                            : "Select a company/SBU"}
-                        </option>
-                        {companyTeams.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </>
-                    )}
+                    <option value="">
+                      {companiesLoading ? "Loading companies…" : "Select a company/SBU"}
+                    </option>
+                    {adminCompanySelectOptions.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                        {staffDesignatedCompany?.id === t.id ? " · designated" : ""}
+                      </option>
+                    ))}
                   </Select>
                 </label>
+                <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                  Your designated company is pre-selected when set; choose any roster SBU to route this request to a
+                  different queue.
+                </p>
               </>
             ) : isPersonnelIntake ? (
               <>

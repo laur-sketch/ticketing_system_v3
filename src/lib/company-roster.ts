@@ -2,7 +2,8 @@
 export const COMPANY_ROSTER = [
   "AGC",
   "ALI",
-  "ACI/APMC",
+  "ACI",
+  "APMC",
   "AGOC",
   "AWIC",
   "MCONPINCO",

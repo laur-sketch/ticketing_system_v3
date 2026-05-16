@@ -17,6 +17,7 @@ async function main() {
   await prisma.ticketMessage.deleteMany();
   await prisma.ticketActivity.deleteMany();
   await prisma.ticket.deleteMany();
+  await prisma.kpiMaintenance.deleteMany();
   await prisma.agent.deleteMany();
   await prisma.team.deleteMany();
 
