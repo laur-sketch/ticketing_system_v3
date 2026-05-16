@@ -1,0 +1,11 @@
+{
+  "_note": "Copy to scripts/data/kpi-sheet-march-april.json and replace values from your KPI tab (March & April).",
+  "timeZone": "Asia/Manila",
+  "pillars": {
+    "System Availability": { "2026-03": 98, "2026-04": 99 },
+    "Cybersecurity": { "2026-03": 97, "2026-04": 98 },
+    "Data Backup": { "2026-03": 100, "2026-04": 100 },
+    "System Maintenance": { "2026-03": 96, "2026-04": 97 },
+    "Network Performance": { "2026-03": 95, "2026-04": 96 }
+  }
+}

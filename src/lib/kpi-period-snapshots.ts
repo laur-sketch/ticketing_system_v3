@@ -9,7 +9,7 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import {
-  isDailyInvertedChecklistPillar,
+  isInvertedChecklistPillar,
   kpiChecklistMetricView,
   kpiChecklistProgress,
   type KpiChecklistProgress,
@@ -281,13 +281,11 @@ export async function computeTaskChecklistPillarMetrics(args: {
   return result;
 }
 
-/** Headline percent for a pillar (respects daily inverted pillars). */
+/** Headline percent for a pillar (respects inverted cyber/network pillars). */
 export function pillarMetricPercent(
   pillar: ItTaskPillarTitle,
-  metricsCadence: KpiFrequencyCode,
+  _metricsCadence: KpiFrequencyCode,
   agg: KpiChecklistProgress,
 ): number {
-  const invert =
-    metricsCadence === "DAILY" && isDailyInvertedChecklistPillar(pillar, "DAILY");
-  return kpiChecklistMetricView(agg, invert).percent;
+  return kpiChecklistMetricView(agg, isInvertedChecklistPillar(pillar)).percent;
 }

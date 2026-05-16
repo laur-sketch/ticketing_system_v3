@@ -123,17 +123,24 @@ export function aggregateKpiChecklistProgress(
   return { total, done, missing, percent };
 }
 
-/** Daily cyber/network: checked = incident (breach/downtime), unchecked = clear (safe/uptime). */
-export const DAILY_INVERTED_CHECKLIST_PILLARS = new Set<string>([
+/**
+ * Cybersecurity / network: checked on the task board = breach or downtime;
+ * unchecked items are neutral (safe / uptime), not counted as incidents.
+ */
+export const INVERTED_CHECKLIST_PILLARS = new Set<string>([
   "CYBERSECURITY",
   "NETWORK PERFORMANCE",
 ]);
 
-export function isDailyInvertedChecklistPillar(
-  title: string,
-  frequency: string,
-): boolean {
-  return frequency === "DAILY" && DAILY_INVERTED_CHECKLIST_PILLARS.has(title.trim());
+/** @deprecated Use {@link isInvertedChecklistPillar} — frequency is ignored. */
+export const DAILY_INVERTED_CHECKLIST_PILLARS = INVERTED_CHECKLIST_PILLARS;
+
+export function isInvertedChecklistPillar(title: string): boolean {
+  return INVERTED_CHECKLIST_PILLARS.has(title.trim());
+}
+
+export function isDailyInvertedChecklistPillar(title: string, _frequency?: string): boolean {
+  return isInvertedChecklistPillar(title);
 }
 
 /** Donut/headline view: positive = good state, negative = bad state (may invert raw checklist). */

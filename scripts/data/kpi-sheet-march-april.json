@@ -1,0 +1,11 @@
+{
+  "_source": "Imported from IT SALF - KPI.csv (March/April 2026). Re-run: npx tsx scripts/apply-kpi-sheet-snapshots.ts \"path/to/IT SALF - KPI.csv\" --year=2026",
+  "timeZone": "Asia/Manila",
+  "pillars": {
+    "SYSTEM AVAILABILITY": { "2026-03": 100, "2026-04": 100 },
+    "CYBERSECURITY": { "2026-03": 0, "2026-04": 0 },
+    "DATA BACKUP": { "2026-03": 80, "2026-04": 80 },
+    "SYSTEM MAINTENANCE": { "2026-03": 80, "2026-04": 80 },
+    "NETWORK PERFORMANCE": { "2026-03": 0, "2026-04": 0 }
+  }
+}

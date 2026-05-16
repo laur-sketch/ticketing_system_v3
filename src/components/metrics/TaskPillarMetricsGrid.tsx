@@ -15,7 +15,7 @@ import { cn } from "@/lib/cn";
 import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
-  isDailyInvertedChecklistPillar,
+  isInvertedChecklistPillar,
   kpiChecklistMetricView,
   type KpiChecklistProgress,
 } from "@/lib/kpi-subkpis";
@@ -209,8 +209,8 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
       positiveLabel: string;
       negativeLabel: string;
       metricName: string;
-      /** Daily only: unchecked = good, checked = incident. */
-      invertDailyChecklist?: boolean;
+      /** Unchecked = safe/uptime; checked on task board = breach/downtime. */
+      invertChecklist?: boolean;
     }
   >
 > = {
@@ -219,7 +219,7 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
     positiveLabel: "Safe",
     negativeLabel: "Breached",
     metricName: "safe",
-    invertDailyChecklist: true,
+    invertChecklist: true,
   },
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
@@ -232,7 +232,7 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
     positiveLabel: "Uptime",
     negativeLabel: "Downtime",
     metricName: "uptime",
-    invertDailyChecklist: true,
+    invertChecklist: true,
   },
 };
 
@@ -240,8 +240,9 @@ function checklistProgressSegments(
   view: { positive: number; negative: number },
   positiveLabel: string,
   negativeLabel: string,
+  opts?: { hideZeroNegative?: boolean },
 ): DonutSegment[] {
-  return [
+  const segments: DonutSegment[] = [
     {
       key: "positive",
       label: positiveLabel,
@@ -255,6 +256,10 @@ function checklistProgressSegments(
       color: SEG_COLORS_BINARY_KPI.negative,
     },
   ];
+  if (opts?.hideZeroNegative) {
+    return segments.filter((s) => s.value > 0);
+  }
+  return segments;
 }
 
 function checklistSubline(
@@ -383,10 +388,11 @@ export function TaskPillarMetricsGrid({
             periodsInRange: 0,
           };
           const invert =
-            frequency === "DAILY" &&
-            (cfg.invertDailyChecklist === true || isDailyInvertedChecklistPillar(pillar, frequency));
+            cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
           const view = kpiChecklistMetricView(agg, invert);
-          const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel);
+          const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
+            hideZeroNegative: invert,
+          });
           const headline = agg.total === 0 ? "—" : `${view.percent}% ${cfg.metricName}`;
           return (
             <PillarDonutCard
