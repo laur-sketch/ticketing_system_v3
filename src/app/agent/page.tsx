@@ -677,8 +677,8 @@ export default async function AgentHome({
                 </p>
               ) : isCompanyBoard ? (
                 <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                  All companies = grouped by company requested to. Selecting a company hides that lane and shows
-                  matching tickets under the requestor designated-company lanes.
+                  One column per company with a flat ticket list (number and status). Open a ticket for a read-only
+                  summary; use the ticket board for full details.
                 </p>
               ) : showKpiCompanyFilter ? (
                 <p className="text-[11px] text-zinc-600 dark:text-zinc-500">

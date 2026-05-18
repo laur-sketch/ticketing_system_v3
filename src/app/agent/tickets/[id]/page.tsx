@@ -7,6 +7,7 @@ import { canViewerApproveTransfer, parseTransferRequestDetail } from "@/lib/tick
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { safeReturnToParam } from "@/lib/safe-return-to";
 import { AgentWorkspace } from "./workspace";
+import { CompanyTicketView } from "./company-ticket-view";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export default async function AgentTicketPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string | string[] }>;
+  searchParams: Promise<{ returnTo?: string | string[]; view?: string | string[] }>;
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
@@ -24,6 +25,48 @@ export default async function AgentTicketPage({
   const { id } = await params;
   const sp = await searchParams;
   const backHref = safeReturnToParam(sp.returnTo, "/agent");
+  const viewParam = Array.isArray(sp.view) ? sp.view[0] : sp.view;
+  const companyView =
+    viewParam === "company" || (typeof backHref === "string" && backHref.includes("board=company"));
+
+  if (companyView) {
+    const summary = await prisma.ticket.findUnique({
+      where: { id },
+      select: { id: true, ticketNumber: true, status: true, assignedAgentId: true },
+    });
+    if (!summary) notFound();
+    const isAdmin = session.user.role === "SuperAdmin" || session.user.role === "Admin";
+    if (session.user.role === "Personnel" && !isAdmin) {
+      const normalizedEmail = (session.user.email ?? "").trim().toLowerCase();
+      const normalizedName = (session.user.name ?? "").trim();
+      const operatorByEmail = normalizedEmail
+        ? await prisma.agent.findUnique({ where: { email: normalizedEmail }, select: { id: true } })
+        : null;
+      const operatorByName =
+        !operatorByEmail && normalizedName
+          ? await prisma.agent.findFirst({ where: { name: normalizedName }, select: { id: true } })
+          : null;
+      const operator = operatorByEmail ?? operatorByName;
+      if (!operator || operator.id !== summary.assignedAgentId) {
+        redirect("/agent");
+      }
+    }
+
+    return (
+      <main className="fixed inset-0 z-40 bg-black/55 px-3 py-4 text-zinc-100 backdrop-blur-[2px] sm:px-6 sm:py-6">
+        <div className="mx-auto flex h-full max-w-lg items-center justify-center">
+          <section className="w-full overflow-hidden rounded-2xl border border-zinc-800 bg-[#0b1220] shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+            <CompanyTicketView
+              ticketNumber={summary.ticketNumber}
+              status={summary.status}
+              backHref={backHref}
+            />
+          </section>
+        </div>
+      </main>
+    );
+  }
+
   const ticket = await prisma.ticket.findUnique({
     where: { id },
     include: {
@@ -35,6 +78,7 @@ export default async function AgentTicketPage({
     },
   });
   if (!ticket) notFound();
+
   const assigneeColorMap = await loadStaffAssignmentColorsForAgents([
     { email: ticket.assignedAgent?.email, name: ticket.assignedAgent?.name },
   ]);

@@ -1,24 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
-import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
-import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
-import type { CompanyBoardColumn, CompanyBucketId } from "@/lib/company-board";
-import { cleanIssuePreview, formatRelativeAgo, priorityPillClass } from "@/lib/ticket-board-formatters";
+import type { CompanyBoardColumn, CompanyTicketCard } from "@/lib/company-board";
+import { formatCompanyBoardStatusLabel } from "@/lib/ticket-status-label";
 import { cn } from "@/lib/cn";
-
-const BUCKET_META: { id: CompanyBucketId; label: string; sub: string }[] = [
-  { id: "unassigned", label: "Unassigned", sub: "Not yet assigned to personnel" },
-  { id: "in_progress", label: "In progress", sub: "Actively owned work" },
-  { id: "for_confirmation", label: "For confirmation", sub: "Awaiting customer confirmation" },
-  { id: "closed", label: "Closed", sub: "Recently completed" },
-];
-
-function statusLabel(status: string) {
-  return status.replaceAll("_", " ");
-}
 
 function statusPillClass(status: string) {
   if (status === "OPEN") {
@@ -31,9 +18,88 @@ function statusPillClass(status: string) {
     return "bg-emerald-500/15 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200";
   }
   if (status === "ESCALATED") {
-    return "bg-rose-500/15 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200";
+    return "bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200";
+  }
+  if (status === "PENDING_INFO") {
+    return "bg-violet-500/15 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200";
   }
   return "bg-zinc-200 text-zinc-700 dark:bg-zinc-700/60 dark:text-zinc-200";
+}
+
+function ticketsForColumn(col: CompanyBoardColumn): CompanyTicketCard[] {
+  const merged = [
+    ...col.buckets.unassigned,
+    ...col.buckets.in_progress,
+    ...col.buckets.for_confirmation,
+    ...col.buckets.closed,
+  ];
+  return merged.sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+}
+
+/** Split TKT-2026-00013 into two lines so narrow columns stay readable. */
+function splitTicketNumber(ticketNumber: string): { head: string; tail: string } {
+  const match = /^(TKT-\d{4})-(\d+)$/i.exec(ticketNumber.trim());
+  if (match) return { head: match[1], tail: match[2] };
+  const lastDash = ticketNumber.lastIndexOf("-");
+  if (lastDash > 0) {
+    return { head: ticketNumber.slice(0, lastDash), tail: ticketNumber.slice(lastDash + 1) };
+  }
+  return { head: ticketNumber, tail: "" };
+}
+
+function boardDensity(columnCount: number) {
+  if (columnCount >= 12) {
+    return {
+      gridGap: "gap-1",
+      header: "text-[10px] leading-tight",
+      count: "text-[9px]",
+      ticketHead: "text-[9px]",
+      ticketTail: "text-[10px]",
+      status: "text-[9px] leading-tight",
+      cardPad: "px-1.5 py-2",
+      rowPad: "px-1.5 py-2",
+      headerPad: "px-1.5 py-2",
+    };
+  }
+  if (columnCount >= 9) {
+    return {
+      gridGap: "gap-1.5",
+      header: "text-[11px] leading-tight",
+      count: "text-[9px]",
+      ticketHead: "text-[10px]",
+      ticketTail: "text-[11px]",
+      status: "text-[9px] leading-tight",
+      cardPad: "px-2 py-2",
+      rowPad: "px-2 py-2",
+      headerPad: "px-2 py-2",
+    };
+  }
+  if (columnCount >= 6) {
+    return {
+      gridGap: "gap-2",
+      header: "text-xs leading-snug",
+      count: "text-[10px]",
+      ticketHead: "text-[10px]",
+      ticketTail: "text-xs",
+      status: "text-[10px] leading-snug",
+      cardPad: "px-2 py-2.5",
+      rowPad: "px-2 py-2.5",
+      headerPad: "px-2 py-2.5",
+    };
+  }
+  return {
+    gridGap: "gap-3",
+    header: "text-sm leading-snug",
+    count: "text-xs",
+    ticketHead: "text-[10px]",
+    ticketTail: "text-xs",
+    status: "text-[11px] leading-snug",
+    cardPad: "px-3 py-3",
+    rowPad: "px-3 py-3",
+    headerPad: "px-3 py-3",
+  };
 }
 
 export function CompanyKanban({
@@ -44,6 +110,7 @@ export function CompanyKanban({
   refreshSeconds?: number;
 }) {
   const router = useRouter();
+  const density = useMemo(() => boardDensity(columns.length), [columns.length]);
 
   useEffect(() => {
     if (refreshSeconds <= 0) return;
@@ -64,151 +131,80 @@ export function CompanyKanban({
   return (
     <div className="flex min-h-0 w-full flex-col gap-3">
       <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-        All companies in one row; each lane scrolls vertically. Refreshes about every {refreshSeconds}s.
+        All companies in one row; lists refresh about every {refreshSeconds}s.
       </p>
 
-      <div className="flex min-h-[min(85dvh,880px)] w-full min-w-0 flex-nowrap items-stretch gap-3">
+      <div
+        className={cn("grid min-h-[min(85dvh,880px)] w-full", density.gridGap)}
+        style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}
+      >
         {columns.map((col) => (
-          <article
-            key={col.teamId}
-            className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
-          >
-            <div className="mb-3 flex items-start justify-between gap-2 border-b border-zinc-200 px-1 pb-2 dark:border-zinc-800">
-              <div className="min-w-0">
-                <p className="truncate text-lg font-bold leading-tight text-zinc-900 dark:text-zinc-100">
-                  {col.companyName}
-                </p>
-                <p className="text-xs text-zinc-600 dark:text-zinc-500">Company queue</p>
-              </div>
-              <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                {BUCKET_META.reduce((n, b) => n + col.buckets[b.id].length, 0)}
-              </span>
-            </div>
-
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-0.5">
-              {BUCKET_META.map((meta) => {
-                const list = col.buckets[meta.id];
-                return (
-                  <div key={meta.id}>
-                    <div className="mb-1.5 px-0.5">
-                      <p className="text-[11px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
-                        {meta.label}
-                      </p>
-                      <p className="text-[10px] text-zinc-500 dark:text-zinc-500">{meta.sub}</p>
-                      <p className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-500">{list.length}</p>
-                    </div>
-                    <div className="space-y-2">
-                      {list.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-zinc-300 px-2 py-4 text-center text-[11px] text-zinc-500 dark:border-zinc-700">
-                          None
-                        </div>
-                      ) : col.cardMode === "staff" ? (
-                        list.map((t) => {
-                          const preview = cleanIssuePreview(t.description || t.title);
-                          return (
-                            <AssigneeColorHighlight
-                              key={`${meta.id}-${t.id}`}
-                              assigneeColorKey={t.assigneeColorKey}
-                              className="block rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm transition hover:border-orange-400/60 dark:border-zinc-700 dark:bg-[#101a2f]"
-                            >
-                            <AgentTicketDeepLink
-                              ticketId={t.id}
-                              className="block px-3 py-2.5"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">
-                                  {t.ticketNumber}
-                                </p>
-                                <div className="flex items-center gap-1">
-                                  <span
-                                    className={cn(
-                                      "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                      priorityPillClass(t.priority),
-                                    )}
-                                  >
-                                    {t.priority}
-                                  </span>
-                                  <span
-                                    className={cn(
-                                      "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                      statusPillClass(t.status),
-                                    )}
-                                  >
-                                    {statusLabel(t.status)}
-                                  </span>
-                                </div>
-                              </div>
-                              <p className="mt-1 line-clamp-2 text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-100">
-                                {preview || t.title}
-                              </p>
-                              {t.assignedAgentName ? (
-                                <div className="mt-1 flex items-center gap-1.5">
-                                  <AssigneeInitialsBadge
-                                    agentName={t.assignedAgentName}
-                                    assigneeColorKey={t.assigneeColorKey}
-                                    className="size-5 text-[9px]"
-                                  />
-                                  <p className="min-w-0 text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
-                                    Assigned: {t.assignedAgentName}
-                                  </p>
-                                </div>
-                              ) : null}
-                              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
-                                {formatRelativeAgo(t.updatedAt)}
-                              </p>
-                            </AgentTicketDeepLink>
-                            </AssigneeColorHighlight>
-                          );
-                        })
-                      ) : (
-                        list.map((t) => (
-                          <AssigneeColorHighlight
-                            key={`${meta.id}-${t.id}`}
-                            assigneeColorKey={t.assigneeColorKey}
-                            className="block rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm transition hover:border-orange-400/60 dark:border-zinc-700 dark:bg-[#101a2f]"
-                          >
-                          <AgentTicketDeepLink ticketId={t.id} className="block px-3 py-2.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">
-                                {t.ticketNumber}
-                              </p>
-                              <div className="flex items-center gap-1">
-                                <span
-                                  className={cn(
-                                    "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                    priorityPillClass(t.priority),
-                                  )}
-                                >
-                                  {t.priority}
-                                </span>
-                                <span
-                                  className={cn(
-                                    "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                    statusPillClass(t.status),
-                                  )}
-                                >
-                                  {statusLabel(t.status)}
-                                </span>
-                              </div>
-                            </div>
-                            <p className="mt-1 line-clamp-2 text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-100">
-                              {cleanIssuePreview(t.description || t.title) || t.title}
-                            </p>
-                            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
-                              {formatRelativeAgo(t.updatedAt)}
-                            </p>
-                          </AgentTicketDeepLink>
-                          </AssigneeColorHighlight>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </article>
+          <CompanyColumnList key={col.teamId} col={col} density={density} />
         ))}
       </div>
     </div>
+  );
+}
+
+type Density = ReturnType<typeof boardDensity>;
+
+function CompanyColumnList({ col, density }: { col: CompanyBoardColumn; density: Density }) {
+  const tickets = useMemo(() => ticketsForColumn(col), [col]);
+
+  return (
+    <article className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+      <div className={cn("border-b border-zinc-200 dark:border-zinc-800", density.headerPad)}>
+        <p
+          className={cn("font-bold break-words text-zinc-900 dark:text-zinc-100", density.header)}
+          title={col.companyName}
+        >
+          {col.companyName}
+        </p>
+        <p className={cn("mt-0.5 text-zinc-600 dark:text-zinc-500", density.count)}>
+          {tickets.length} ticket{tickets.length === 1 ? "" : "s"}
+        </p>
+      </div>
+
+      <ul className="min-h-0 flex-1 divide-y divide-zinc-200 overflow-y-auto dark:divide-zinc-800">
+        {tickets.length === 0 ? (
+          <li className={cn("py-8 text-center text-zinc-500 dark:text-zinc-500", density.status)}>
+            No tickets
+          </li>
+        ) : (
+          tickets.map((t) => {
+            const { head, tail } = splitTicketNumber(t.ticketNumber);
+            return (
+              <li key={t.id}>
+                <AgentTicketDeepLink
+                  ticketId={t.id}
+                  companyView
+                  className={cn(
+                    "flex flex-col gap-1.5 transition hover:bg-orange-500/[0.06] dark:hover:bg-orange-500/10",
+                    density.rowPad,
+                  )}
+                >
+                  <span className="font-mono leading-none text-zinc-900 dark:text-zinc-100">
+                    <span className={cn("block font-medium opacity-80", density.ticketHead)}>{head}</span>
+                    {tail ? (
+                      <span className={cn("block font-bold", density.ticketTail)}>{tail}</span>
+                    ) : null}
+                  </span>
+                  <span
+                    className={cn(
+                      "block w-full rounded-md px-1.5 py-1 text-center font-semibold whitespace-normal",
+                      density.status,
+                      statusPillClass(t.status),
+                    )}
+                    title={formatCompanyBoardStatusLabel(t.status)}
+                  >
+                    {formatCompanyBoardStatusLabel(t.status)}
+                  </span>
+                </AgentTicketDeepLink>
+              </li>
+            );
+          })
+        )}
+      </ul>
+    </article>
   );
 }
