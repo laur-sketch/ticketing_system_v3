@@ -12,7 +12,31 @@ type DatePickerFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type"> 
   shellClassName?: string;
   /** @deprecated Use shellClassName */
   inputClassName?: string;
+  /** `month` uses YYYY-MM (no day); default is full calendar date. */
+  granularity?: "date" | "month";
 };
+
+function formatMonthLabel(ym: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym.trim());
+  if (!m) return ym;
+  const monthNames = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const mi = Number(m[2]) - 1;
+  if (mi < 0 || mi > 11) return ym;
+  return `${monthNames[mi]} ${m[1]}`;
+}
 
 export function DatePickerField({
   wrapperClassName,
@@ -21,10 +45,15 @@ export function DatePickerField({
   className,
   disabled,
   value,
+  granularity = "date",
   ...props
 }: DatePickerFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const displayValue = typeof value === "string" ? value : "";
+  const isMonth = granularity === "month";
+  const placeholder = isMonth ? "YYYY-MM" : "YYYY-MM-DD";
+  const shown =
+    isMonth && /^\d{4}-\d{2}$/.test(displayValue) ? formatMonthLabel(displayValue) : displayValue;
 
   function openPicker() {
     const el = inputRef.current;
@@ -55,17 +84,17 @@ export function DatePickerField({
         className={cn(datePickerShellClass, "pointer-events-none", disabled && "opacity-50", shellClassName, inputClassName)}
       >
         <span className={cn("min-w-0 flex-1 tabular-nums", !displayValue && "text-zinc-400 dark:text-zinc-500")}>
-          {displayValue || "YYYY-MM-DD"}
+          {shown || placeholder}
         </span>
         <Calendar className="size-4 shrink-0 text-zinc-600 dark:text-zinc-200" strokeWidth={2} aria-hidden />
       </div>
       <input
         ref={inputRef}
-        type="date"
+        type={isMonth ? "month" : "date"}
         disabled={disabled}
         value={value}
         tabIndex={disabled ? -1 : 0}
-        aria-label={props["aria-label"] ?? props.name ?? "Date"}
+        aria-label={props["aria-label"] ?? props.name ?? (isMonth ? "Month" : "Date")}
         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
         {...props}
       />

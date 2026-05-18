@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 
 const ORANGE = "#f97316";
 const ZINC_LINE = "#a1a1aa";
@@ -8,7 +9,7 @@ const GRID_LIGHT = "#e4e4e7";
 const GRID_DARK = "#27272a";
 
 function formatStatus(status: string) {
-  return status.replaceAll("_", " ");
+  return formatTicketStatusLabel(status);
 }
 
 /** Stable colors per ticket status — shared by pie, strip, and legends. */

@@ -59,11 +59,11 @@ export function EscalationTriggersClient({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-400/95">
-              {BRAND_TITLE} · Escalation automation
+              {BRAND_TITLE} · Priority alerts
             </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-white">Escalation triggers</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-white">Priority alerts</h1>
             <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-300">
-              Configure priority-based escalation automation, including who gets notified for Priority 1 equivalents.
+              Configure who is notified when high-priority tickets are created. Transfer requests are handled separately in the ticket workspace.
             </p>
           </div>
           <div className="hidden items-center justify-end sm:flex">

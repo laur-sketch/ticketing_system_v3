@@ -399,8 +399,10 @@ export async function PATCH(req: Request) {
   if (!row) return NextResponse.json({ error: "KPI not found." }, { status: 404 });
   const kpiRow = row;
 
-  async function captureCompletedPeriod(subKpis: unknown) {
-    if (!kpiRow.isRecurring || !checklistFullyComplete(subKpis)) return;
+  const snapshotTz = timeZoneFromPeriodKey(kpiRow.periodKey) || patchTz;
+
+  async function captureCurrentPeriodSnapshot(subKpis: unknown) {
+    if (!kpiRow.isRecurring) return;
     await upsertKpiPeriodSnapshot(
       {
         id: kpiRow.id,
@@ -413,7 +415,7 @@ export async function PATCH(req: Request) {
         periodCycleStartAt: kpiRow.periodCycleStartAt,
         isRecurring: kpiRow.isRecurring,
       },
-      timeZoneFromPeriodKey(kpiRow.periodKey),
+      snapshotTz,
     );
   }
   const isAssignee = !!perms.operator && perms.operator.id === kpiRow.assignedAgentId;
@@ -506,7 +508,7 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    if (nextComplete) await captureCompletedPeriod(wrapped);
+    await captureCurrentPeriodSnapshot(wrapped);
     return NextResponse.json(updated);
   }
 
@@ -552,6 +554,6 @@ export async function PATCH(req: Request) {
       ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
     },
   });
-  if (nextComplete) await captureCompletedPeriod(updatedJson);
+  await captureCurrentPeriodSnapshot(updatedJson);
   return NextResponse.json(updated);
 }

@@ -108,7 +108,7 @@ function statusLabel(status: TicketStatus) {
     case "IN_PROGRESS":
       return "In progress";
     case "ESCALATED":
-      return "Escalated";
+      return "Transfer pending";
     case "RESOLVED":
       return "Resolved";
     case "OPEN":

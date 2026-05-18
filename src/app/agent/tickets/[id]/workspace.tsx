@@ -22,14 +22,12 @@ type TicketDetail = Ticket & {
 
 export function AgentWorkspace({
   ticket,
-  canEscalate,
   canUpdatePriority,
   canRequestTransfer,
   canApproveTransfer,
   transferPending,
 }: {
   ticket: TicketDetail;
-  canEscalate: boolean;
   canUpdatePriority: boolean;
   canRequestTransfer: boolean;
   canApproveTransfer: boolean;
@@ -217,7 +215,7 @@ export function AgentWorkspace({
 
         <div className="border-t border-zinc-800/90 bg-zinc-950/35 px-5 py-4">
           <div className="text-sm text-zinc-400">
-            Use the right-side controls to continue escalation, reassignment, or resolution workflow.
+            Use the right-side controls to request transfer, update priority, or complete resolution workflow.
           </div>
         </div>
         </div>
@@ -294,45 +292,6 @@ export function AgentWorkspace({
               </button>
             ) : null}
 
-            {canEscalate &&
-            ["IN_PROGRESS", "PENDING_INFO", "OPEN", "ESCALATED"].includes(ticket.status) ? (
-              <div className="space-y-2 rounded-xl border border-rose-900 bg-rose-950/30 p-3">
-                <p className="text-xs font-semibold text-rose-100">Escalation</p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      patch({
-                        action: "status",
-                        status: "ESCALATED",
-                        escalationType: "FUNCTIONAL",
-                        note: "Functional escalation",
-                      })
-                    }
-                    className="min-h-10 flex-1 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
-                  >
-                    Functional
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      patch({
-                        action: "status",
-                        status: "ESCALATED",
-                        escalationType: "HIERARCHICAL",
-                        note: "Hierarchical escalation",
-                      })
-                    }
-                    className="min-h-10 flex-1 rounded-lg border border-rose-400 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-900/40 disabled:opacity-60"
-                  >
-                    Hierarchical
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
             {transferPending ? (
               <div className="space-y-2 rounded-xl border border-amber-700/60 bg-amber-950/20 p-3">
                 <p className="text-xs font-semibold text-amber-200">Transfer request pending admin approval.</p>
@@ -356,7 +315,7 @@ export function AgentWorkspace({
 
             {canRequestTransfer && !transferPending ? (
               <div className="space-y-2 rounded-xl border border-zinc-700 bg-zinc-900/50 p-3">
-                <label className="text-xs font-semibold text-zinc-300">Request task transfer</label>
+                <label className="text-xs font-semibold text-zinc-300">Request for transfer</label>
                 <label className="block text-[11px] font-semibold text-zinc-400">
                   Send approval request to
                   <select

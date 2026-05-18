@@ -36,7 +36,22 @@ type PortalAccountRow = {
 };
 type RosterCompany = { id: string; name: string };
 const ALL_SBUS_VALUE = "__ALL_SBUS__";
+const NO_COMPANY_FILTER = "__NO_COMPANY__";
 const PERSONNEL_REGISTRY_PAGE_SIZE = 10;
+
+function matchesRegistryRoleFilter(role: string, filter: string): boolean {
+  if (!filter) return true;
+  return (normalizePortalRole(role) ?? role) === filter;
+}
+
+function matchesRegistryCompanyFilter(
+  companyId: string | null | undefined,
+  filter: string,
+): boolean {
+  if (!filter) return true;
+  if (filter === NO_COMPANY_FILTER) return !companyId;
+  return companyId === filter;
+}
 
 type PendingAccountRequestRow = {
   id: string;
@@ -83,6 +98,8 @@ export function PersonnelClient({
   const [createCompanyId, setCreateCompanyId] = useState("");
   const [personnelRegistryPage, setPersonnelRegistryPage] = useState(1);
   const [portalRegistryPage, setPortalRegistryPage] = useState(1);
+  const [registryRoleFilter, setRegistryRoleFilter] = useState("");
+  const [registryCompanyFilter, setRegistryCompanyFilter] = useState("");
 
   const { data: session, status: sessionStatus } = useSession();
   const canManagePortalAccounts = session?.user?.role === "SuperAdmin";
@@ -92,19 +109,42 @@ export function PersonnelClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(personnel.length / PERSONNEL_REGISTRY_PAGE_SIZE));
-    setPersonnelRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [personnel.length]);
+  const filteredPersonnel = useMemo(
+    () =>
+      personnel.filter((row) => matchesRegistryRoleFilter(row.staffRole, registryRoleFilter)),
+    [personnel, registryRoleFilter],
+  );
+
+  const filteredPortalAccounts = useMemo(
+    () =>
+      portalAccounts.filter(
+        (a) =>
+          matchesRegistryRoleFilter(a.role, registryRoleFilter) &&
+          matchesRegistryCompanyFilter(a.staffDesignatedCompanyId, registryCompanyFilter),
+      ),
+    [portalAccounts, registryRoleFilter, registryCompanyFilter],
+  );
+
+  const registryFiltersActive = Boolean(registryRoleFilter || registryCompanyFilter);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(portalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(filteredPersonnel.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+    setPersonnelRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [filteredPersonnel.length]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredPortalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE));
     setPortalRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [portalAccounts.length]);
+  }, [filteredPortalAccounts.length]);
 
   useEffect(() => {
     setPortalRegistryPage(1);
   }, [view]);
+
+  useEffect(() => {
+    setPersonnelRegistryPage(1);
+    setPortalRegistryPage(1);
+  }, [registryRoleFilter, registryCompanyFilter]);
 
   useEffect(() => {
     if (sessionStatus === "loading") return;
@@ -344,25 +384,102 @@ export function PersonnelClient({
     return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   };
 
-  const personnelRegistryPageCount = Math.max(1, Math.ceil(personnel.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+  const personnelRegistryPageCount = Math.max(
+    1,
+    Math.ceil(filteredPersonnel.length / PERSONNEL_REGISTRY_PAGE_SIZE),
+  );
   const personnelRegistryPageClamped = Math.min(
     Math.max(1, personnelRegistryPage),
     personnelRegistryPageCount,
   );
   const paginatedPersonnel = useMemo(() => {
     const start = (personnelRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
-    return personnel.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
-  }, [personnel, personnelRegistryPageClamped]);
+    return filteredPersonnel.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
+  }, [filteredPersonnel, personnelRegistryPageClamped]);
 
-  const portalRegistryPageCount = Math.max(1, Math.ceil(portalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE));
+  const portalRegistryPageCount = Math.max(
+    1,
+    Math.ceil(filteredPortalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE),
+  );
   const portalRegistryPageClamped = Math.min(
     Math.max(1, portalRegistryPage),
     portalRegistryPageCount,
   );
   const paginatedPortalAccounts = useMemo(() => {
     const start = (portalRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
-    return portalAccounts.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
-  }, [portalAccounts, portalRegistryPageClamped]);
+    return filteredPortalAccounts.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
+  }, [filteredPortalAccounts, portalRegistryPageClamped]);
+
+  const registryFilterSelectClass = cn(
+    authInputClass,
+    "min-w-[10rem] py-1.5 text-xs sm:min-w-[11rem]",
+  );
+
+  function RegistryFiltersBar({
+    showCompanyFilter,
+    totalCount,
+    filteredCount,
+  }: {
+    showCompanyFilter: boolean;
+    totalCount: number;
+    filteredCount: number;
+  }) {
+    return (
+      <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800/90 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-end">
+        <label className="flex min-w-[10rem] flex-col gap-1">
+          <span className={authLabelClass}>Filter by role</span>
+          <select
+            value={registryRoleFilter}
+            onChange={(e) => setRegistryRoleFilter(e.target.value)}
+            className={registryFilterSelectClass}
+          >
+            <option value="">All roles</option>
+            {PORTAL_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {portalRegistryRoleLabel(r)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {showCompanyFilter ? (
+          <label className="flex min-w-[10rem] flex-col gap-1">
+            <span className={authLabelClass}>Filter by company</span>
+            <select
+              value={registryCompanyFilter}
+              onChange={(e) => setRegistryCompanyFilter(e.target.value)}
+              disabled={rosterCompanies.length === 0 && !registryCompanyFilter}
+              className={registryFilterSelectClass}
+            >
+              <option value="">All companies</option>
+              <option value={NO_COMPANY_FILTER}>No company assigned</option>
+              {rosterCompanies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {registryFiltersActive ? (
+          <button
+            type="button"
+            onClick={() => {
+              setRegistryRoleFilter("");
+              setRegistryCompanyFilter("");
+            }}
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Clear filters
+          </button>
+        ) : null}
+        <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
+          {registryFiltersActive
+            ? `Showing ${filteredCount} of ${totalCount} user${totalCount === 1 ? "" : "s"}`
+            : `${totalCount} user${totalCount === 1 ? "" : "s"}`}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0a0b12] dark:text-zinc-100 sm:px-4 md:py-5">
@@ -602,7 +719,13 @@ export function PersonnelClient({
                 </p>
               </section>
             ) : (
-              <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
+              <section className="space-y-3">
+                <RegistryFiltersBar
+                  showCompanyFilter={false}
+                  totalCount={personnel.length}
+                  filteredCount={filteredPersonnel.length}
+                />
+                <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
                 <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800/80">
                   <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-700 dark:text-zinc-400">
                     Company roster
@@ -625,10 +748,12 @@ export function PersonnelClient({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
-                      {personnel.length === 0 ? (
+                      {filteredPersonnel.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
-                            No personnel are on this company queue yet.
+                            {personnel.length === 0
+                              ? "No personnel are on this company queue yet."
+                              : "No users match the selected role filter. Clear filters to see everyone on this queue."}
                           </td>
                         </tr>
                       ) : (
@@ -676,10 +801,11 @@ export function PersonnelClient({
                 <SimplePaginationBar
                   page={personnelRegistryPage}
                   pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
-                  total={personnel.length}
+                  total={filteredPersonnel.length}
                   onPageChange={setPersonnelRegistryPage}
                   itemLabel="users"
                 />
+                </div>
               </section>
             )}
           </>
@@ -719,12 +845,20 @@ export function PersonnelClient({
                   </div>
                 </div>
 
+                <RegistryFiltersBar
+                  showCompanyFilter
+                  totalCount={portalAccounts.length}
+                  filteredCount={filteredPortalAccounts.length}
+                />
+
                 {view === "cards" ? (
                   <>
                     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {portalAccounts.length === 0 ? (
+                    {filteredPortalAccounts.length === 0 ? (
                       <article className="col-span-full rounded-xl border border-dashed border-zinc-300 bg-zinc-100 px-4 py-6 text-center text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/20 dark:text-zinc-500">
-                        No portal accounts loaded.
+                        {portalAccounts.length === 0
+                          ? "No portal accounts loaded."
+                          : "No accounts match the selected filters. Clear filters to see all portal users."}
                       </article>
                     ) : (
                       paginatedPortalAccounts.map((a) => (
@@ -877,7 +1011,7 @@ export function PersonnelClient({
                   <SimplePaginationBar
                     page={portalRegistryPage}
                     pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
-                    total={portalAccounts.length}
+                    total={filteredPortalAccounts.length}
                     onPageChange={setPortalRegistryPage}
                     itemLabel="users"
                     className="mt-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]"
@@ -900,10 +1034,12 @@ export function PersonnelClient({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
-                        {portalAccounts.length === 0 ? (
+                        {filteredPortalAccounts.length === 0 ? (
                           <tr>
                             <td colSpan={9} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
-                              No portal accounts loaded.
+                              {portalAccounts.length === 0
+                                ? "No portal accounts loaded."
+                                : "No accounts match the selected filters. Clear filters to see all portal users."}
                             </td>
                           </tr>
                         ) : (
@@ -1005,7 +1141,7 @@ export function PersonnelClient({
                     <SimplePaginationBar
                       page={portalRegistryPage}
                       pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
-                      total={portalAccounts.length}
+                      total={filteredPortalAccounts.length}
                       onPageChange={setPortalRegistryPage}
                       itemLabel="users"
                     />

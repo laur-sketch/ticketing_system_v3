@@ -36,7 +36,7 @@ function linksForRole(role: string | undefined): NavItem[] {
       { kind: "link", href: "/admin/personnel", label: "Personnel" },
       { kind: "link", href: "/agent", label: "Board" },
       { kind: "link", href: "/insights", label: "Metrics & Reports" },
-      { kind: "link", href: "/admin/escalation-triggers", label: "Escalation triggers" },
+      { kind: "link", href: "/admin/escalation-triggers", label: "Priority alerts" },
       { kind: "link", href: "/admin/account", label: "My Account" },
     ];
   }
@@ -47,7 +47,7 @@ function linksForRole(role: string | undefined): NavItem[] {
       { kind: "link", href: "/admin/personnel", label: "Personnel" },
       { kind: "link", href: "/agent", label: "Board" },
       { kind: "link", href: "/insights", label: "Metrics & Reports" },
-      { kind: "link", href: "/admin/escalation-triggers", label: "Escalation triggers" },
+      { kind: "link", href: "/admin/escalation-triggers", label: "Priority alerts" },
       { kind: "link", href: "/admin/account", label: "My Account" },
     ];
   }

@@ -5,6 +5,7 @@ import {
   getDailyPeriodKey,
   getMonthlyPeriodKey,
   getWeeklyPeriodKey,
+  isKpiMetricsWorkingDay,
   normalizeTimeZone,
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
@@ -46,15 +47,38 @@ export function resolvePeriodKeyForKpi(
   return computePeriodKey(freq, row.recurrenceWeekday, row.recurrenceMonthDay, at, timeZone);
 }
 
+/** Inclusive local calendar days between two YYYY-MM-DD values. */
+export function enumerateYmdDaysInRange(fromYmd: string, toYmd: string, timeZone: string): string[] {
+  const zone = normalizeTimeZone(timeZone);
+  let cursor = DateTime.fromISO(fromYmd, { zone }).startOf("day");
+  const end = DateTime.fromISO(toYmd, { zone }).startOf("day");
+  if (!cursor.isValid || !end.isValid || cursor > end) return [];
+  const out: string[] = [];
+  while (cursor <= end) {
+    if (isKpiMetricsWorkingDay(cursor)) {
+      const iso = cursor.toISODate();
+      if (iso) out.push(iso);
+    }
+    cursor = cursor.plus({ days: 1 });
+  }
+  return out;
+}
+
 /** Persist checklist progress for the active period (idempotent). */
 export async function upsertKpiPeriodSnapshot(
   row: KpiRowForSnapshot,
   timeZone: string,
   at: Date = new Date(),
+  periodKeyOverride?: string,
 ): Promise<void> {
   if (!row.isRecurring) return;
   const zone = normalizeTimeZone(timeZone);
-  const periodKey = resolvePeriodKeyForKpi(row, at, zone);
+  const atDt = DateTime.fromMillis(at.getTime(), { zone });
+  if ((row.frequency as KpiFrequencyCode) === "DAILY" && !isKpiMetricsWorkingDay(atDt)) {
+    return;
+  }
+  const periodKey =
+    periodKeyOverride?.trim() || resolvePeriodKeyForKpi(row, at, zone);
   const progress = kpiChecklistProgress(row.subKpis);
   const fullyComplete = progress.total > 0 && progress.missing === 0;
 
@@ -107,7 +131,9 @@ export function enumeratePeriodKeysForKpiInRange(
   const keys = new Set<string>();
   if (freq === "DAILY") {
     while (cursor <= end) {
-      keys.add(getDailyPeriodKey(cursor.toJSDate(), zone));
+      if (isKpiMetricsWorkingDay(cursor)) {
+        keys.add(getDailyPeriodKey(cursor.toJSDate(), zone));
+      }
       cursor = cursor.plus({ days: 1 });
     }
     return [...keys];
@@ -130,14 +156,32 @@ export function enumeratePeriodKeysForKpiInRange(
   return [...keys];
 }
 
-/** Which KPI definition cadences contribute to a task-metrics reporting cadence. */
-export function kpiFrequencyMatchesMetricsCadence(
-  kpiFrequency: KpiFrequencyCode,
+type KpiRowForMetrics = Pick<KpiRowForSnapshot, "frequency" | "title">;
+
+/**
+ * Pick which KPI row(s) to use for a pillar in task metrics.
+ * Prefer daily snapshots when a DAILY KPI exists (CSV / task-board history).
+ * Pillars with only MONTHLY rows (e.g. System Maintenance from the KPI sheet) still appear
+ * via their monthly snapshots when no daily KPI is defined.
+ */
+export function selectKpisForPillarTaskMetrics<T extends KpiRowForMetrics>(
+  pillarKpis: T[],
   metricsCadence: KpiFrequencyCode,
-): boolean {
-  if (metricsCadence === "DAILY") return kpiFrequency === "DAILY";
-  if (metricsCadence === "WEEKLY") return kpiFrequency === "DAILY" || kpiFrequency === "WEEKLY";
-  return true;
+): T[] {
+  if (pillarKpis.length === 0) return [];
+  const daily = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "DAILY");
+  const weekly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "WEEKLY");
+  const monthly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "MONTHLY");
+
+  if (metricsCadence === "DAILY") return daily;
+
+  if (daily.length > 0) return daily;
+
+  if (metricsCadence === "WEEKLY") {
+    return weekly.length > 0 ? weekly : monthly;
+  }
+
+  return monthly.length > 0 ? monthly : weekly;
 }
 
 function averageProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress & {
@@ -208,23 +252,41 @@ export async function computeTaskChecklistPillarMetrics(args: {
     },
   });
 
-  const scoped = kpis.filter((k) =>
-    kpiFrequencyMatchesMetricsCadence(k.frequency as KpiFrequencyCode, metricsCadence),
-  );
+  const kpisByPillar = new Map<string, (typeof kpis)[number][]>();
+  for (const kpi of kpis) {
+    const title = kpi.title.trim();
+    const list = kpisByPillar.get(title) ?? [];
+    list.push(kpi);
+    kpisByPillar.set(title, list);
+  }
+
+  const selectedByPillar = new Map<string, (typeof kpis)[number][]>();
+  const allSelectedKpis: (typeof kpis)[number][] = [];
+  for (const pillar of IT_TASK_PILLAR_TITLES) {
+    if (pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
+    const pillarKpis = kpisByPillar.get(pillar) ?? [];
+    const selected = selectKpisForPillarTaskMetrics(pillarKpis, metricsCadence);
+    if (selected.length > 0) {
+      selectedByPillar.set(pillar, selected);
+      allSelectedKpis.push(...selected);
+    }
+  }
+
+  const uniqueSelected = [...new Map(allSelectedKpis.map((k) => [k.id, k])).values()];
 
   const allPeriodKeys = new Set<string>();
-  for (const kpi of scoped) {
+  for (const kpi of uniqueSelected) {
     for (const key of enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone)) {
       allPeriodKeys.add(key);
     }
   }
 
   const snapshots =
-    scoped.length === 0 || allPeriodKeys.size === 0
+    uniqueSelected.length === 0 || allPeriodKeys.size === 0
       ? []
       : await prisma.kpiMaintenancePeriodSnapshot.findMany({
           where: {
-            kpiMaintenanceId: { in: scoped.map((k) => k.id) },
+            kpiMaintenanceId: { in: uniqueSelected.map((k) => k.id) },
             periodKey: { in: [...allPeriodKeys] },
           },
         });
@@ -234,16 +296,18 @@ export async function computeTaskChecklistPillarMetrics(args: {
   );
 
   const now = new Date();
-  const currentPeriodKeyFor = (kpi: (typeof scoped)[number]) =>
-    resolvePeriodKeyForKpi(kpi, now, zone);
+  const currentPeriodKeyFor = (kpi: (typeof kpis)[number]) => resolvePeriodKeyForKpi(kpi, now, zone);
 
   const result: TaskChecklistPillarMetrics = {};
 
   for (const pillar of IT_TASK_PILLAR_TITLES) {
     if (pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
 
-    const pillarKpis = scoped.filter((k) => k.title.trim() === pillar);
-    if (pillarKpis.length === 0) continue;
+    const pillarKpis = selectedByPillar.get(pillar) ?? [];
+    if (pillarKpis.length === 0) {
+      result[pillar] = { total: 0, done: 0, missing: 0, percent: 0, periodsCounted: 0, periodsInRange: 0 };
+      continue;
+    }
 
     const progressRows: KpiChecklistProgress[] = [];
     let periodsInRange = 0;
@@ -251,13 +315,14 @@ export async function computeTaskChecklistPillarMetrics(args: {
     for (const kpi of pillarKpis) {
       const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone);
       periodsInRange += periodKeys.length;
-      const activeKey = currentPeriodKeyFor(kpi);
+      const nowPeriodKey = currentPeriodKeyFor(kpi);
 
       for (const key of periodKeys) {
         const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
         if (snap) {
           progressRows.push(snapshotToProgress(snap));
-        } else if (key === activeKey) {
+        } else if (key === nowPeriodKey) {
+          /** Live checklist only for the current recurrence period (not past reporting days). */
           progressRows.push(kpiChecklistProgress(kpi.subKpis));
         }
       }
@@ -288,4 +353,63 @@ export function pillarMetricPercent(
   agg: KpiChecklistProgress,
 ): number {
   return kpiChecklistMetricView(agg, isInvertedChecklistPillar(pillar)).percent;
+}
+
+/** Backfill daily/weekly/monthly period snapshots across a local date range. */
+export async function backfillKpiPeriodSnapshotsForRange(args: {
+  fromYmd: string;
+  toYmd: string;
+  timeZone: string;
+  fillMissingOnly?: boolean;
+}): Promise<{ applied: number; skipped: number }> {
+  const zone = normalizeTimeZone(args.timeZone);
+  const fillMissingOnly = args.fillMissingOnly !== false;
+  const days = enumerateYmdDaysInRange(args.fromYmd, args.toYmd, zone);
+  if (days.length === 0) return { applied: 0, skipped: 0 };
+
+  const rows = await prisma.kpiMaintenance.findMany({
+    where: { isRecurring: true },
+    select: {
+      id: true,
+      title: true,
+      frequency: true,
+      subKpis: true,
+      periodKey: true,
+      recurrenceWeekday: true,
+      recurrenceMonthDay: true,
+      periodCycleStartAt: true,
+      isRecurring: true,
+    },
+  });
+
+  let applied = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    for (const ymd of days) {
+      const periodKeys = enumeratePeriodKeysForKpiInRange(row, ymd, ymd, zone);
+      const at = DateTime.fromISO(ymd, { zone }).toJSDate();
+      for (const periodKey of periodKeys) {
+        if (fillMissingOnly) {
+          const existing = await prisma.kpiMaintenancePeriodSnapshot.findUnique({
+            where: {
+              kpiMaintenanceId_periodKey: {
+                kpiMaintenanceId: row.id,
+                periodKey,
+              },
+            },
+            select: { id: true },
+          });
+          if (existing) {
+            skipped += 1;
+            continue;
+          }
+        }
+        await upsertKpiPeriodSnapshot(row, zone, at, periodKey);
+        applied += 1;
+      }
+    }
+  }
+
+  return { applied, skipped };
 }

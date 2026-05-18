@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 
 /** Local calendar YYYY-MM-DD (browser timezone). */
@@ -6,6 +7,36 @@ export function calendarYmd(d: Date = new Date()): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Local calendar YYYY-MM (browser timezone). */
+export function calendarYm(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+export function isYearMonthKey(value: string): boolean {
+  return /^\d{4}-\d{2}$/.test(value.trim());
+}
+
+/** Expand `YYYY-MM` start/end to inclusive first/last calendar day (local). */
+export function expandYearMonthRangeToYmd(fromYm: string, toYm: string): { from: string; to: string } {
+  let from = fromYm.trim();
+  let to = toYm.trim();
+  if (!isYearMonthKey(from)) from = calendarYm();
+  if (!isYearMonthKey(to)) to = from;
+  if (from > to) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  const [fy, fm] = from.split("-").map(Number);
+  const [ty, tm] = to.split("-").map(Number);
+  const fromYmd = `${fy}-${String(fm).padStart(2, "0")}-01`;
+  const end = DateTime.fromObject({ year: ty, month: tm, day: 1 }).endOf("month");
+  const toYmd = end.toISODate() ?? calendarYmd();
+  return { from: fromYmd, to: toYmd };
 }
 
 export function defaultTaskMetricsDailyDate(): string {
@@ -23,9 +54,8 @@ export function defaultTaskMetricsWeeklyRange(): { from: string; to: string } {
 }
 
 export function defaultTaskMetricsMonthlyRange(): { from: string; to: string } {
-  const d = new Date();
-  const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-  return { from, to: calendarYmd(d) };
+  const ym = calendarYm();
+  return { from: ym, to: ym };
 }
 
 export function defaultTaskMetricsRangeForCadence(
@@ -54,6 +84,14 @@ export function resolveTaskMetricsQueryRange(
     const day = dailyDate.trim() || defaultTaskMetricsDailyDate();
     return { from: day, to: day };
   }
+  if (cadence === "MONTHLY") {
+    const ym = isYearMonthKey(rangeFrom)
+      ? rangeFrom.trim()
+      : isYearMonthKey(rangeTo)
+        ? rangeTo.trim()
+        : calendarYm();
+    return expandYearMonthRangeToYmd(ym, ym);
+  }
   let from = rangeFrom.trim();
   let to = rangeTo.trim();
   if (!from) from = defaultTaskMetricsWeeklyRange().from;
@@ -64,4 +102,28 @@ export function resolveTaskMetricsQueryRange(
     to = swap;
   }
   return { from, to };
+}
+
+/** Human-readable label for the active task-metrics reporting window. */
+export function formatTaskMetricsPeriodLabel(
+  cadence: KpiFrequencyCode,
+  opts: { dailyDate: string; rangeFrom: string; rangeTo: string },
+): string {
+  const { dailyDate, rangeFrom, rangeTo } = opts;
+  if (cadence === "DAILY") {
+    const dt = DateTime.fromISO(dailyDate.trim());
+    return dt.isValid ? dt.toFormat("MMMM d, yyyy") : dailyDate;
+  }
+  if (cadence === "MONTHLY") {
+    const ym = isYearMonthKey(rangeFrom) ? rangeFrom.trim() : rangeFrom;
+    const dt = DateTime.fromISO(`${ym}-01`);
+    return dt.isValid ? dt.toFormat("MMMM yyyy") : ym;
+  }
+  const from = DateTime.fromISO(rangeFrom.trim());
+  const to = DateTime.fromISO(rangeTo.trim());
+  if (from.isValid && to.isValid) {
+    if (from.hasSame(to, "day")) return from.toFormat("MMMM d, yyyy");
+    return `${from.toFormat("MMM d")} – ${to.toFormat("MMM d, yyyy")}`;
+  }
+  return rangeFrom === rangeTo ? rangeFrom : `${rangeFrom} – ${rangeTo}`;
 }

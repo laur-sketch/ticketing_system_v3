@@ -1,4 +1,4 @@
-import type { EscalationType, Prisma, TicketPriority, TicketStatus } from "@prisma/client";
+import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { customerCanAccessTicket, ensureTicketOwnership, requireSession } from "@/lib/access";
 import { sendResolutionEmail } from "@/lib/email";
@@ -42,15 +42,12 @@ async function ticketJsonWithAssigneeColor<T extends { assignedAgent: { email: s
 function canTransition(from: TicketStatus, to: TicketStatus) {
   const allowed: [TicketStatus, TicketStatus][] = [
     ["OPEN", "IN_PROGRESS"],
-    ["OPEN", "ESCALATED"],
     ["OPEN", "RESOLVED"],
     ["OPEN", "FOR_CONFIRMATION"],
     ["IN_PROGRESS", "PENDING_INFO"],
-    ["IN_PROGRESS", "ESCALATED"],
     ["IN_PROGRESS", "RESOLVED"],
     ["IN_PROGRESS", "FOR_CONFIRMATION"],
     ["PENDING_INFO", "IN_PROGRESS"],
-    ["PENDING_INFO", "ESCALATED"],
     ["PENDING_INFO", "RESOLVED"],
     ["PENDING_INFO", "FOR_CONFIRMATION"],
     ["ESCALATED", "IN_PROGRESS"],
@@ -157,7 +154,6 @@ export async function PATCH(
     (!!ticket.assignedAgent?.email &&
       !!session.user.email &&
       ticket.assignedAgent.email.trim().toLowerCase() === session.user.email.trim().toLowerCase());
-  const canEscalate = roleIsAdmin || roleIsCompanyAdmin;
   const canPrioritize = roleIsAdmin || isAssignedOperator;
   if (session.user.role === "Customer" && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -262,22 +258,13 @@ export async function PATCH(
       }
 
       if (nextStatus === "ESCALATED") {
-        if (!canEscalate) {
-          return NextResponse.json(
-            { error: "Only SuperAdmin, Admin, or company coordinators can escalate tickets." },
-            { status: 403 },
-          );
-        }
-        const escalationType = body.escalationType as EscalationType | undefined;
-        if (!escalationType) {
-          return NextResponse.json(
-            { error: "escalationType required (FUNCTIONAL or HIERARCHICAL)" },
-            { status: 400 },
-          );
-        }
-        data.escalationType = escalationType;
-        data.escalatedAt = new Date();
-        await touchFirstResponse(ticket, "AGENT");
+        return NextResponse.json(
+          {
+            error:
+              "Use Request for transfer instead of changing status to escalated. Transfer requests are submitted from the ticket workspace.",
+          },
+          { status: 400 },
+        );
       }
 
       const updated = await prisma.ticket.update({
@@ -327,7 +314,7 @@ export async function PATCH(
       }
       if (!["OPEN", "IN_PROGRESS", "ESCALATED"].includes(ticket.status)) {
         return NextResponse.json(
-          { error: "More information can only be requested while the ticket is open, in progress, or escalated." },
+          { error: "More information can only be requested while the ticket is open, in progress, or transfer pending." },
           { status: 400 },
         );
       }

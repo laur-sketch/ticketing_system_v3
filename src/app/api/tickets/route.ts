@@ -491,7 +491,7 @@ export async function POST(req: Request) {
       await logActivity(
         ticket.id,
         "SYSTEM",
-        "Escalation trigger fired",
+        "Priority alert sent",
         "Priority-based trigger notified Admin visibility channel.",
       );
     }
@@ -499,7 +499,7 @@ export async function POST(req: Request) {
       await logActivity(
         ticket.id,
         "SYSTEM",
-        "Escalation trigger fired",
+        "Priority alert sent",
         "Priority-based trigger notified SuperAdmin visibility channel.",
       );
     }

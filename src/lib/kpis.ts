@@ -1,7 +1,8 @@
-import type { TicketStatus } from "@prisma/client";
+import type { Prisma, TicketStatus } from "@prisma/client";
 import { DateTime } from "luxon";
 import {
   computeTaskChecklistPillarMetrics,
+  enumerateYmdDaysInRange,
   type TaskChecklistPillarMetrics,
 } from "@/lib/kpi-period-snapshots";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
@@ -126,6 +127,69 @@ function buildCsatStarDistribution(
 
 function rangeFilter(range: KpiRange) {
   return { gte: range.from, lte: range.to };
+}
+
+type WorkingDayInterval = { start: Date; end: Date };
+
+function ymdInTimeZone(d: Date, timeZone: string): string {
+  const iso = DateTime.fromJSDate(d, { zone: normalizeTimeZone(timeZone) }).toISODate();
+  return iso ?? d.toISOString().slice(0, 10);
+}
+
+/** Mon–Sat local days in range (Sundays excluded). */
+function workingDayIntervalsInRange(range: KpiRange, timeZone: string): WorkingDayInterval[] {
+  const zone = normalizeTimeZone(timeZone);
+  return enumerateYmdDaysInRange(ymdInTimeZone(range.from, zone), ymdInTimeZone(range.to, zone), zone).map(
+    (ymd) => {
+      const dt = DateTime.fromISO(ymd, { zone });
+      return {
+        start: dt.startOf("day").toJSDate(),
+        end: dt.endOf("day").toJSDate(),
+      };
+    },
+  );
+}
+
+function timestampOnWorkingDaysWhere(
+  field: "createdAt" | "closedAt" | "updatedAt",
+  intervals: WorkingDayInterval[],
+): Prisma.TicketWhereInput {
+  if (intervals.length === 0) {
+    return { [field]: { lt: new Date(0) } };
+  }
+  if (intervals.length === 1) {
+    const iv = intervals[0]!;
+    return { [field]: { gte: iv.start, lte: iv.end } };
+  }
+  return {
+    OR: intervals.map((iv) => ({
+      [field]: { gte: iv.start, lte: iv.end },
+    })),
+  };
+}
+
+function workingDaysSpanRange(intervals: WorkingDayInterval[]): KpiRange | null {
+  if (intervals.length === 0) return null;
+  return { from: intervals[0]!.start, to: intervals[intervals.length - 1]!.end };
+}
+
+function emptyTaskMetricsUserSupport(): TaskMetricsUserSupportTickets {
+  return { forConfirmation: 0, closed: 0, total: 0 };
+}
+
+function emptyTaskMetricsHelpdesk(
+  cadence: HelpdeskTaskCadence,
+  openBacklog: number,
+): TaskMetricsHelpdeskTickets {
+  return {
+    cadence,
+    closedCount: 0,
+    denominator: 0,
+    ratio: null,
+    openBacklog,
+    openTicketsInPeriod: 0,
+    requestsInRange: 0,
+  };
 }
 
 /**
@@ -256,43 +320,66 @@ export async function computeTaskMetrics(
   const scoped = scope.assignedAgentId
     ? ({ assignedAgentId: scope.assignedAgentId } as const)
     : {};
-  const createdInRange = { createdAt: rangeFilter(range), ...scoped };
-  const closedInRangeWhere = { closedAt: rangeFilter(range), ...scoped };
+  const timeZone = normalizeTimeZone(opts.timeZone);
+  const workingDays = workingDayIntervalsInRange(range, timeZone);
 
-  const [backlog, closedInRange, openInRange, volume, userSupportTicketsByStatus] = await Promise.all([
+  const backlogOpen = await prisma.ticket.count({
+    where: { status: "OPEN", ...scoped },
+  });
+
+  let closedInRange = 0;
+  let openInRange = 0;
+  let volume = 0;
+  let userSupportTicketsByStatus: { status: TicketStatus; _count: number }[] = [];
+
+  if (workingDays.length > 0) {
+    const span = workingDaysSpanRange(workingDays)!;
+    const [closedN, openN, volumeN, userSupportRows] = await Promise.all([
       prisma.ticket.count({
-        where: { status: { not: "CLOSED" }, ...scoped },
+        where: {
+          ...scoped,
+          AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDays)],
+        },
       }),
-      prisma.ticket.count({ where: closedInRangeWhere }),
-      prisma.ticket.count({ where: openTicketsInRangeWhere(range, scoped) }),
-      prisma.ticket.count({ where: createdInRange }),
+      prisma.ticket.count({ where: openTicketsInRangeWhere(span, scoped) }),
+      prisma.ticket.count({
+        where: { ...timestampOnWorkingDaysWhere("createdAt", workingDays), ...scoped },
+      }),
       prisma.ticket.groupBy({
         by: ["status"],
         where: {
           status: { in: ["FOR_CONFIRMATION", "CLOSED"] },
-          updatedAt: rangeFilter(range),
+          ...timestampOnWorkingDaysWhere("updatedAt", workingDays),
           ...scoped,
         },
         _count: true,
       }),
     ]);
-
-  const taskMetricsHelpdesk = computeTaskMetricsHelpdesk({
-    cadence: helpdeskCadence,
-    openBacklog: backlog,
-    closedInRange,
-    openTicketsInPeriod: openInRange,
-    requestsInRange: volume,
-  });
-  const taskMetricsUserSupport = summarizeUserSupportTickets(
-    userSupportTicketsByStatus.map((r) => ({
+    closedInRange = closedN;
+    openInRange = openN;
+    volume = volumeN;
+    userSupportTicketsByStatus = userSupportRows.map((r) => ({
       status: r.status as TicketStatus,
       _count: r._count,
-    })),
-  );
+    }));
+  }
+
+  const taskMetricsHelpdesk =
+    workingDays.length === 0
+      ? emptyTaskMetricsHelpdesk(helpdeskCadence, backlogOpen)
+      : computeTaskMetricsHelpdesk({
+          cadence: helpdeskCadence,
+          openBacklog: backlogOpen,
+          closedInRange,
+          openTicketsInPeriod: openInRange,
+          requestsInRange: volume,
+        });
+  const taskMetricsUserSupport =
+    workingDays.length === 0
+      ? emptyTaskMetricsUserSupport()
+      : summarizeUserSupportTickets(userSupportTicketsByStatus);
 
   const { fromYmd, toYmd } = rangeToYmd(range);
-  const timeZone = normalizeTimeZone(opts.timeZone);
   const kpiWhere = scope.assignedAgentId ? { assignedAgentId: scope.assignedAgentId } : {};
   const taskChecklistPillars = await computeTaskChecklistPillarMetrics({
     metricsCadence: helpdeskCadence,
@@ -319,8 +406,9 @@ export async function computeKpis(
 
   const [
     volume,
-    backlog,
-    escalated,
+    backlogOpen,
+    forConfirmationBacklog,
+    transferRequestsInRange,
     reopened,
     firstResponseSamples,
     resolutionSamples,
@@ -332,13 +420,21 @@ export async function computeKpis(
     queueByStatus,
     kpisAdded,
     feedbackCsatByStar,
+    confirmationClosedSamples,
   ] = await Promise.all([
     prisma.ticket.count({ where: createdInRange }),
     prisma.ticket.count({
-      where: { status: { not: "CLOSED" }, ...scoped },
+      where: { status: "OPEN", ...scoped },
     }),
     prisma.ticket.count({
-      where: { ...createdInRange, escalationType: { not: null } },
+      where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED"] }, ...scoped },
+    }),
+    prisma.ticketActivity.count({
+      where: {
+        summary: "Transfer requested",
+        createdAt: rangeFilter(range),
+        ...(scope.assignedAgentId ? { ticket: { assignedAgentId: scope.assignedAgentId } } : {}),
+      },
     }),
     prisma.ticket.count({
       where: { ...createdInRange, reopenCount: { gt: 0 } },
@@ -410,6 +506,14 @@ export async function computeKpis(
       },
       _count: true,
     }),
+    prisma.ticket.findMany({
+      where: {
+        closedAt: rangeFilter(range),
+        resolvedAt: { not: null },
+        ...scoped,
+      },
+      select: { resolvedAt: true, closedAt: true },
+    }),
   ]);
 
   const dayLabels = enumerateDaysLocal(range.from, range.to);
@@ -446,6 +550,14 @@ export async function computeKpis(
       ? null
       : artValues.reduce((a, b) => a + b, 0) / artValues.length;
 
+  const confirmationValues = confirmationClosedSamples
+    .map((t) => (t.closedAt && t.resolvedAt ? ms(t.resolvedAt, t.closedAt) : null))
+    .filter((v): v is number => v !== null && v >= 0);
+  const avgConfirmationMs =
+    confirmationValues.length === 0
+      ? null
+      : confirmationValues.reduce((a, b) => a + b, 0) / confirmationValues.length;
+
   const firstResponseSlaMet = firstResponseSamples.filter(
     (t) => t.firstResponseAt! <= t.firstResponseDueAt,
   ).length;
@@ -471,7 +583,7 @@ export async function computeKpis(
       : fcrEligible.filter((t) => t.messages.length <= 2).length /
         fcrEligible.length;
 
-  const escalationRate = volume === 0 ? null : escalated / volume;
+  const transferRequestRate = volume === 0 ? null : transferRequestsInRange / volume;
   const reopenRate = volume === 0 ? null : reopened / volume;
 
   const agentIds = perAgent
@@ -507,15 +619,18 @@ export async function computeKpis(
     range,
     operational: {
       ticketVolume: volume,
-      backlogSize: backlog,
+      /** OPEN status only (active intake queue). */
+      backlogSize: backlogOpen,
+      forConfirmationSize: forConfirmationBacklog,
       firstResponseTimeMsAvg: avgFrtMs,
       resolutionTimeMsAvg: avgArtMs,
+      confirmationTimeMsAvg: avgConfirmationMs,
       firstContactResolutionApprox: fcrApprox,
     },
     sla: {
       firstResponseComplianceRate: firstResponseSlaRate,
       resolutionComplianceRate: resolutionSlaRate,
-      escalationRate,
+      transferRequestRate,
       reopenRate,
       ticketsClosedInRange: closedCount,
     },

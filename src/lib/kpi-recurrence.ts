@@ -24,6 +24,17 @@ function atZone(now: Date, timeZone: string): DateTime {
   return DateTime.fromMillis(now.getTime(), { zone: timeZone });
 }
 
+/** Luxon weekday 7 = Sunday — excluded from daily KPI task metrics and snapshots. */
+export function isKpiMetricsWorkingDay(dt: DateTime): boolean {
+  return dt.weekday !== 7;
+}
+
+export function isKpiMetricsWorkingYmd(ymd: string, timeZone: string): boolean {
+  const zone = normalizeTimeZone(timeZone);
+  const dt = DateTime.fromISO(ymd, { zone }).startOf("day");
+  return dt.isValid && isKpiMetricsWorkingDay(dt);
+}
+
 /** Luxon weekday 1=Mon … 7=Sun; input is JS getDay() 0=Sun … 6=Sat. */
 function jsWeekdayToLuxon(js: number): number {
   return js === 0 ? 7 : js;

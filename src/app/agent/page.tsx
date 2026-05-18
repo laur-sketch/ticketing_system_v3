@@ -46,7 +46,7 @@ const statusOptions: Array<{ label: string; value: TicketStatus | "ALL" }> = [
   { label: "Open", value: "OPEN" },
   { label: "In Progress", value: "IN_PROGRESS" },
   { label: "Pending Info", value: "PENDING_INFO" },
-  { label: "Escalated", value: "ESCALATED" },
+  { label: "Transfer pending", value: "ESCALATED" },
   { label: "For confirmation", value: "FOR_CONFIRMATION" },
   { label: "Resolved (legacy)", value: "RESOLVED" },
   { label: "Closed", value: "CLOSED" },
@@ -507,7 +507,11 @@ export default async function AgentHome({
                 <div className="flex flex-wrap gap-3">
                   <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
                   <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
-                  <StatCard label="SLA at Risk" value={statSla} valueClass="text-amber-400" />
+                  <StatCard
+                    label={isCompanyBoard ? "Transfer pending" : "SLA at Risk"}
+                    value={statSla}
+                    valueClass="text-amber-400"
+                  />
                 </div>
               </div>
             </div>
@@ -918,6 +922,6 @@ function statusTone(status: string) {
   if (status === "FOR_CONFIRMATION" || status === "RESOLVED" || status === "CLOSED")
     return "text-orange-800 dark:text-orange-300";
   if (status === "IN_PROGRESS") return "text-orange-800 dark:text-orange-300";
-  if (status === "ESCALATED") return "text-rose-800 dark:text-rose-300";
+  if (status === "ESCALATED") return "text-amber-800 dark:text-amber-300";
   return "text-zinc-700 dark:text-zinc-300";
 }

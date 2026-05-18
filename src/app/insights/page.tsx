@@ -17,7 +17,7 @@ import {
 } from "@/components/metrics/MetricsCharts";
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
-import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import { type KpiFrequencyCode, isKpiMetricsWorkingYmd } from "@/lib/kpi-recurrence";
 import type {
   CsatStarDistributionRow,
   TaskChecklistPillarMetrics,
@@ -26,6 +26,7 @@ import type {
 } from "@/lib/kpis";
 import {
   defaultTaskMetricsRangeForCadence,
+  formatTaskMetricsPeriodLabel,
   resolveTaskMetricsQueryRange,
 } from "@/lib/task-metrics-range";
 
@@ -34,14 +35,16 @@ type KpiPayload = {
   operational: {
     ticketVolume: number;
     backlogSize: number;
+    forConfirmationSize: number;
     firstResponseTimeMsAvg: number | null;
     resolutionTimeMsAvg: number | null;
+    confirmationTimeMsAvg: number | null;
     firstContactResolutionApprox: number | null;
   };
   sla: {
     firstResponseComplianceRate: number | null;
     resolutionComplianceRate: number | null;
-    escalationRate: number | null;
+    transferRequestRate: number | null;
     reopenRate: number | null;
     ticketsClosedInRange: number;
   };
@@ -233,8 +236,18 @@ export default function InsightsPage() {
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
+    function onVisibility() {
+      if (document.visibilityState === "visible" && activeTab === "task-metrics") {
+        void loadTaskMetrics();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [activeTab, loadTaskMetrics]);
+
+  useEffect(() => {
     if (activeTab !== "task-metrics") return;
-    const id = setInterval(() => void loadTaskMetrics(), 45_000);
+    const id = setInterval(() => void loadTaskMetrics(), 15_000);
     return () => clearInterval(id);
   }, [activeTab, loadTaskMetrics]);
 
@@ -304,6 +317,10 @@ export default function InsightsPage() {
         value: seg.count,
         color: colorForTicketStatus(seg.status),
       })),
+    [charts.queueStatusMix],
+  );
+  const activeQueueTotal = useMemo(
+    () => charts.queueStatusMix.reduce((sum, row) => sum + row.count, 0),
     [charts.queueStatusMix],
   );
   const satisfactionRows = useMemo(() => {
@@ -418,6 +435,7 @@ export default function InsightsPage() {
             onRangeFromChange={setTaskMetricsFrom}
             onRangeToChange={setTaskMetricsTo}
             onApplyDates={() => void loadTaskMetrics()}
+            reportingTimeZone={recurrenceTz}
           />
         </div>
       ) : (
@@ -463,21 +481,30 @@ export default function InsightsPage() {
               Operational load
             </h2>
             <div className="mt-4 space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <MetricTile
                   label="Ticket volume"
                   value={String(data.operational.ticketVolume)}
-                  hint="Total number of tickets"
+                  hint="Created in selected period"
                   accent
                 />
-                <MetricTile label="Backlog (open)" value={String(data.operational.backlogSize)} />
+                <MetricTile
+                  label="Backlog"
+                  value={String(data.operational.backlogSize)}
+                  hint="OPEN tickets only"
+                />
+                <MetricTile
+                  label="For Confirmation"
+                  value={String(data.operational.forConfirmationSize)}
+                  hint="Awaiting requestor sign-off"
+                />
                 <MetricTile
                   label="Closed"
                   value={String(data.sla.ticketsClosedInRange)}
                   hint="Closed in selected period"
                 />
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <MetricTile
                   label="Avg first response"
                   value={formatDuration(data.operational.firstResponseTimeMsAvg)}
@@ -485,6 +512,11 @@ export default function InsightsPage() {
                 <MetricTile
                   label="Avg resolution time"
                   value={formatDuration(data.operational.resolutionTimeMsAvg)}
+                />
+                <MetricTile
+                  label="Avg confirmation time"
+                  value={formatDuration(data.operational.confirmationTimeMsAvg)}
+                  hint="Resolved → closed in period"
                 />
               </div>
             </div>
@@ -539,7 +571,7 @@ export default function InsightsPage() {
             <div className="stoic-card p-5 sm:p-7">
               <h2 className="stoic-label">Queue composition</h2>
               <p className="mt-1 text-sm text-muted">
-                Non-closed tickets by status ({data.operational.backlogSize} total open)
+                Non-closed tickets by status ({activeQueueTotal} active)
               </p>
               <div className="mt-6">
                 <MetricsPieChart
@@ -579,10 +611,10 @@ export default function InsightsPage() {
               <div className="mt-6 grid grid-cols-2 gap-3 border-t border-border pt-6">
                 <div className="rounded-xl border border-border bg-surface-muted px-3 py-4 text-center">
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                    Escalation rate
+                    Transfer request rate
                   </p>
                   <p className="mt-1 text-2xl font-bold tabular-nums text-brand">
-                    {pct(data.sla.escalationRate)}
+                    {pct(data.sla.transferRequestRate)}
                   </p>
                 </div>
                 <div className="rounded-xl border border-border bg-surface-muted px-3 py-4 text-center">
@@ -753,6 +785,7 @@ function TaskMetricsPanel({
   onRangeFromChange,
   onRangeToChange,
   onApplyDates,
+  reportingTimeZone,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
@@ -768,9 +801,19 @@ function TaskMetricsPanel({
   onRangeFromChange: (v: string) => void;
   onRangeToChange: (v: string) => void;
   onApplyDates: () => void;
+  reportingTimeZone: string;
 }) {
   const freq = taskMetricsCadence;
   const isDaily = freq === "DAILY";
+  const isMonthly = freq === "MONTHLY";
+  const reportingDayIsSunday =
+    isDaily && dailyDate.trim() !== "" && !isKpiMetricsWorkingYmd(dailyDate, reportingTimeZone);
+
+  const reportingPeriodLabel = formatTaskMetricsPeriodLabel(freq, {
+    dailyDate,
+    rangeFrom,
+    rangeTo,
+  });
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
@@ -780,11 +823,12 @@ function TaskMetricsPanel({
             Task metrics
           </h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Daily checklist pillars are recorded when completed (before the next recurrence). Weekly and monthly views
-            average those daily scores across the range; weekly/monthly KPIs use their own period snapshots.{" "}
+            Daily checklist pillars update in near real time when items are checked on the task board (snapshots refresh
+            about every 15 seconds on this tab). <strong className="font-semibold">Sundays are excluded</strong> from
+            daily KPI metrics and averages. Weekly and monthly views average working days in the range.{" "}
             <span className="font-medium text-zinc-700 dark:text-zinc-300">Helpdesk</span> and{" "}
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">User support</span> use ticket counts in the
-            reporting window below.
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">User support</span> ticket counts also exclude
+            Sundays in the reporting window.
           </p>
         </div>
         <div className="flex w-full shrink-0 flex-col gap-4 sm:min-w-[17rem] lg:w-auto lg:items-end">
@@ -813,11 +857,11 @@ function TaskMetricsPanel({
           <div
             className={cn(
               "w-full rounded-xl border border-zinc-200 bg-zinc-50/90 p-3 dark:border-zinc-700/80 dark:bg-zinc-900/50",
-              isDaily ? "sm:max-w-[14rem]" : "sm:max-w-[22rem]",
+              isDaily || isMonthly ? "sm:max-w-[14rem]" : "sm:max-w-[22rem]",
             )}
           >
             <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-              {isDaily ? "Reporting day" : "Reporting range"}
+              {isDaily ? "Reporting day" : isMonthly ? "Reporting month" : "Reporting range"}
             </span>
             {isDaily ? (
               <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
@@ -825,6 +869,21 @@ function TaskMetricsPanel({
                 <DatePickerField
                   value={dailyDate}
                   onChange={(e) => onDailyDateChange(e.target.value)}
+                  wrapperClassName="mt-1.5"
+                  inputClassName="min-w-[10.5rem]"
+                />
+              </label>
+            ) : isMonthly ? (
+              <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                Month
+                <DatePickerField
+                  granularity="month"
+                  value={rangeFrom}
+                  onChange={(e) => {
+                    const ym = e.target.value;
+                    onRangeFromChange(ym);
+                    onRangeToChange(ym);
+                  }}
                   wrapperClassName="mt-1.5"
                   inputClassName="min-w-[10.5rem]"
                 />
@@ -869,10 +928,17 @@ function TaskMetricsPanel({
           {error}
         </p>
       ) : null}
+      {reportingDayIsSunday ? (
+        <p className="mt-4 rounded-xl border border-zinc-300 bg-zinc-100 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">
+          Sundays are not counted for task metrics (checklist KPIs, helpdesk, and user support). Pick a
+          Monday–Saturday reporting day, or use weekly / monthly cadence.
+        </p>
+      ) : null}
       <div className={cn("mt-6", loading && "pointer-events-none opacity-60")}>
         <TaskPillarMetricsGrid
           checklistPillars={checklistPillars}
-          frequency={freq}
+          metricsCadence={freq}
+          reportingPeriodLabel={reportingPeriodLabel}
           helpdeskTickets={helpdeskTickets}
           userSupportTickets={userSupportTickets}
         />

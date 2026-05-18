@@ -33,48 +33,10 @@ export function getTicketSlaState(ticket: Ticket): SlaState {
   return remainingMs <= riskWindowMs ? "AT_RISK" : "ON_TRACK";
 }
 
+/** SLA sweep no longer auto-escalates; personnel use Request for transfer instead. */
 export async function runSlaEscalationSweep() {
-  const now = new Date();
-  const [scanned, breached] = await Promise.all([
-    prisma.ticket.count({
-      where: { status: { notIn: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] } },
-    }),
-    prisma.ticket.findMany({
-      where: {
-        status: { notIn: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] },
-        resolutionDueAt: { lt: now },
-        NOT: {
-          status: "ESCALATED",
-          escalationType: "HIERARCHICAL",
-        },
-      },
-      select: { id: true },
-    }),
-  ]);
-
-  if (breached.length === 0) {
-    return { scanned, escalated: 0 };
-  }
-
-  const ids = breached.map((t) => t.id);
-  await prisma.$transaction([
-    prisma.ticket.updateMany({
-      where: { id: { in: ids } },
-      data: {
-        status: "ESCALATED",
-        escalationType: "HIERARCHICAL",
-        escalatedAt: now,
-      },
-    }),
-    prisma.ticketActivity.createMany({
-      data: ids.map((ticketId) => ({
-        ticketId,
-        actor: "SYSTEM",
-        summary: "SLA breach escalation",
-        detail: "Resolution due time passed. Escalated hierarchically by SLA sweep.",
-      })),
-    }),
-  ]);
-
-  return { scanned, escalated: ids.length };
+  const scanned = await prisma.ticket.count({
+    where: { status: { notIn: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] } },
+  });
+  return { scanned, escalated: 0 };
 }

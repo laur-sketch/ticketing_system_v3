@@ -9,6 +9,7 @@ import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import type { TicketStatus } from "@prisma/client";
 import { cn } from "@/lib/cn";
+import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 
 export type KanbanTicket = {
@@ -79,7 +80,7 @@ function statusBadgeClass(status: TicketStatus) {
 
 function statusBadgeLabel(status: TicketStatus) {
   if (status === "FOR_CONFIRMATION" || status === "RESOLVED") return "FOR CONFIRMATION";
-  return status.replaceAll("_", " ");
+  return formatTicketStatusLabel(status).toUpperCase();
 }
 
 export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket[] }) {

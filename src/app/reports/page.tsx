@@ -13,7 +13,7 @@ export default async function ReportsPage() {
 
   const { from, to } = parseKpiRangeFromQuery(null, null);
 
-  const [kpis, escalated, openByPriority, resolvedToday, statusMix, openByTeam, recentClosed] = await Promise.all([
+  const [kpis, transferPending, openByPriority, resolvedToday, statusMix, openByTeam, recentClosed] = await Promise.all([
     computeKpis({ from, to }),
     prisma.ticket.count({ where: { status: "ESCALATED" } }),
     prisma.ticket.groupBy({
@@ -72,16 +72,17 @@ export default async function ReportsPage() {
           </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-white md:text-4xl">Metrics & reports</h1>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-400">
-            Admin reporting workspace for escalation posture, open queue mix, and recent resolution throughput.
+            Admin reporting workspace for transfer posture, open queue mix, and recent resolution throughput.
           </p>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <ReportCard label="Currently escalated tickets" value={String(escalated)} />
+          <ReportCard label="Transfer pending" value={String(transferPending)} />
           <ReportCard label="Resolved in last 24 hours" value={resolvedN} />
           <ReportCard label="Open priority bands" value={openBands} />
           <ReportCard label="30-day ticket volume" value={String(kpis.operational.ticketVolume)} />
-          <ReportCard label="Current backlog" value={String(kpis.operational.backlogSize)} />
+          <ReportCard label="Open backlog" value={String(kpis.operational.backlogSize)} />
+          <ReportCard label="For confirmation" value={String(kpis.operational.forConfirmationSize)} />
           <ReportCard label="Resolution SLA compliance" value={kpis.sla.resolutionComplianceRate === null ? "—" : `${Math.round(kpis.sla.resolutionComplianceRate * 100)}%`} />
         </section>
 

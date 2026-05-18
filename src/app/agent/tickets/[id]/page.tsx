@@ -2,9 +2,9 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
-import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { canViewerApproveTransfer, parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
+import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { safeReturnToParam } from "@/lib/safe-return-to";
 import { AgentWorkspace } from "./workspace";
 
@@ -94,8 +94,6 @@ export default async function AgentTicketPage({
   if (session.user.role === "Personnel" && !isAssignedOperator) {
     redirect("/agent");
   }
-  const isCompanyCoordinator = await portalCompanyAdminPrivilegesForEmail(operator?.email ?? session.user.email);
-  const canEscalate = isAdmin || isCompanyCoordinator;
   const canUpdatePriority = isAdmin || isAssignedOperator;
   const canRequestTransfer = !isAdmin && isAssignedOperator;
   const myPortal = normalizedEmail
@@ -150,7 +148,7 @@ export default async function AgentTicketPage({
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-fit rounded-full bg-zinc-700 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
-                  {ticketForWorkspace.status.replaceAll("_", " ")}
+                  {formatTicketStatusLabel(ticketForWorkspace.status)}
                 </span>
                 <Link
                   href={backHref}
@@ -164,7 +162,6 @@ export default async function AgentTicketPage({
             <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <AgentWorkspace
                 ticket={ticketForWorkspace}
-                canEscalate={canEscalate}
                 canUpdatePriority={canUpdatePriority}
                 canRequestTransfer={canRequestTransfer}
                 canApproveTransfer={canApproveTransfer}
