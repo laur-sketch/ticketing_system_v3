@@ -22,6 +22,7 @@
     "db:backfill-kpi-snapshots-range": "npx tsx scripts/backfill-kpi-period-snapshots-range.ts",
     "db:apply-kpi-sheet": "npx tsx scripts/apply-kpi-sheet-snapshots.ts",
     "db:apply-kpi-daily": "npx tsx scripts/apply-kpi-daily-snapshots.ts --dir=\"C:\\Users\\jlsms\\Downloads\"",
+    "db:apply-helpdesk-csv": "npx tsx scripts/apply-helpdesk-csv.ts",
     "postinstall": "node scripts/prisma-generate-retry.cjs",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop ticket_system_v3",

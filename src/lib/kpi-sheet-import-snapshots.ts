@@ -8,7 +8,10 @@ import {
   isKpiMetricsWorkingDay,
   normalizeTimeZone,
 } from "@/lib/kpi-recurrence";
+import { parseCsvLine } from "@/lib/csv-parse";
 import { prisma } from "@/lib/prisma";
+
+export { parseCsvLine };
 
 /** Map KPI sheet labels (any case/spacing) to canonical pillar titles. */
 const PILLAR_LOOKUP: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
@@ -134,31 +137,6 @@ const MONTH_NAME_TO_NUM: Record<string, number> = {
   december: 12,
   dec: 12,
 };
-
-/** Handles quoted fields that contain commas (e.g. `"Monday, March 2, 2026"`). */
-function parseCsvLine(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        cur += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (ch === "," && !inQuotes) {
-      out.push(cur.trim().replace(/^"|"$/g, ""));
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  out.push(cur.trim().replace(/^"|"$/g, ""));
-  return out;
-}
 
 function parseEffPercentCell(raw: string | undefined): number | null {
   const t = (raw ?? "").trim().replace(/%/g, "");

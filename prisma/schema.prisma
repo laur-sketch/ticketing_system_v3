@@ -276,6 +276,27 @@ model KpiMaintenancePeriodSnapshot {
   @@index([kpiMaintenanceId, capturedAt])
 }
 
+/// Rows imported from IT SALF / Google Form helpdesk export (e.g. "IT SALF - HELPDESK.csv").
+/// Used for Insights task metrics when present: sheet "Completed" maps to **For confirmation** in UI.
+model HelpdeskCsvTicket {
+  id               String    @id @default(cuid())
+  /// Stable id from export Column 1 (e.g. 000002)
+  sheetRowId       String    @unique
+  reportedAt       DateTime
+  /// Parsed STAMP cell when trustworthy; completes the status transition date
+  resolvedAt       DateTime?
+  statusRaw        String
+  /// FOR_CONFIRMATION = sheet Completed (awaiting confirmation); CLOSED = sheet Closed
+  normalizedBucket String
+  userEmail        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([reportedAt])
+  @@index([resolvedAt])
+  @@index([normalizedBucket, reportedAt])
+}
+
 model TaskItem {
   id              String      @id @default(cuid())
   title           String

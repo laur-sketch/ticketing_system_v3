@@ -109,6 +109,7 @@ Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** 
 ### 4.2 Database  
 
 - **Prisma:** `npx prisma migrate deploy` *or* `npx prisma db push` (depending on how the environment was baselined).  
+- **Helpdesk Google Form CSV (Insights task metrics):** after deploy, upload the sheet export once per environment — `npm run db:apply-helpdesk-csv path/to/"IT SALF - HELPDESK.csv"` (spreadsheet **Completed** is counted as **For confirmation** alongside **Closed**).  
 - **Seed (optional):** `npm run db:seed` for demo data.  
 - One-off: `npx tsx scripts/ensure-unset-priority-data.ts` if using **UNSET** priority and SLA rows need ensuring after `db push`.  
 

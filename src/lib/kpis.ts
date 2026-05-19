@@ -6,6 +6,7 @@ import {
   type TaskChecklistPillarMetrics,
 } from "@/lib/kpi-period-snapshots";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
+import { loadHelpdeskCsvTaskMetricCounts } from "@/lib/helpdesk-csv";
 import { prisma } from "./prisma";
 
 export type { TaskChecklistPillarMetrics, TaskChecklistPillarMetric } from "@/lib/kpi-period-snapshots";
@@ -334,34 +335,49 @@ export async function computeTaskMetrics(
 
   if (workingDays.length > 0) {
     const span = workingDaysSpanRange(workingDays)!;
-    const [closedN, openN, volumeN, userSupportRows] = await Promise.all([
-      prisma.ticket.count({
-        where: {
-          ...scoped,
-          AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDays)],
-        },
-      }),
-      prisma.ticket.count({ where: openTicketsInRangeWhere(span, scoped) }),
-      prisma.ticket.count({
-        where: { ...timestampOnWorkingDaysWhere("createdAt", workingDays), ...scoped },
-      }),
-      prisma.ticket.groupBy({
-        by: ["status"],
-        where: {
-          status: { in: ["FOR_CONFIRMATION", "CLOSED"] },
-          ...timestampOnWorkingDaysWhere("updatedAt", workingDays),
-          ...scoped,
-        },
-        _count: true,
-      }),
-    ]);
-    closedInRange = closedN;
-    openInRange = openN;
-    volume = volumeN;
-    userSupportTicketsByStatus = userSupportRows.map((r) => ({
-      status: r.status as TicketStatus,
-      _count: r._count,
-    }));
+    const useHelpdeskCsv = !scope.assignedAgentId;
+    const csvCounts = useHelpdeskCsv
+      ? await loadHelpdeskCsvTaskMetricCounts({ workingDayIntervals: workingDays, span })
+      : null;
+
+    if (csvCounts) {
+      closedInRange = csvCounts.closedInRange;
+      openInRange = csvCounts.openTicketsInPeriod;
+      volume = csvCounts.requestsInRange;
+      userSupportTicketsByStatus = [
+        { status: "FOR_CONFIRMATION" as const, _count: csvCounts.userSupport.forConfirmation },
+        { status: "CLOSED" as const, _count: csvCounts.userSupport.closed },
+      ];
+    } else {
+      const [closedN, openN, volumeN, userSupportRows] = await Promise.all([
+        prisma.ticket.count({
+          where: {
+            ...scoped,
+            AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDays)],
+          },
+        }),
+        prisma.ticket.count({ where: openTicketsInRangeWhere(span, scoped) }),
+        prisma.ticket.count({
+          where: { ...timestampOnWorkingDaysWhere("createdAt", workingDays), ...scoped },
+        }),
+        prisma.ticket.groupBy({
+          by: ["status"],
+          where: {
+            status: { in: ["FOR_CONFIRMATION", "CLOSED"] },
+            ...timestampOnWorkingDaysWhere("updatedAt", workingDays),
+            ...scoped,
+          },
+          _count: true,
+        }),
+      ]);
+      closedInRange = closedN;
+      openInRange = openN;
+      volume = volumeN;
+      userSupportTicketsByStatus = userSupportRows.map((r) => ({
+        status: r.status as TicketStatus,
+        _count: r._count,
+      }));
+    }
   }
 
   const taskMetricsHelpdesk =
