@@ -1,12 +1,15 @@
 import type { Prisma } from "@prisma/client";
 import { DateTime } from "luxon";
+import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
 import { normalizeTimeZone } from "./kpi-recurrence";
 
-/** Optional `dueDate` / `actualDate` are calendar days `YYYY-MM-DD` (IT Project Implementation sub-tasks). */
+/** Optional schedule fields are calendar days `YYYY-MM-DD` (IT Project Implementation sub-tasks). */
 export type SubKpiItem = {
   id: string;
   title: string;
   done?: boolean;
+  startDate?: string | null;
+  /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
   actualDate?: string | null;
 };
@@ -24,12 +27,14 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const id = String(r?.id ?? "");
   const title = String(r?.title ?? "");
   const done = Boolean(r?.done);
+  const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(r?.actualDate);
   return {
     id,
     title,
     done,
+    ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
   };
@@ -89,6 +94,16 @@ export function normalizeSubKpis(raw: unknown): NormalizedSubKpis {
 export function collectAllSubKpiItems(norm: NormalizedSubKpis): SubKpiItem[] {
   if (norm.segmented) return norm.segments.flatMap((s) => s.items);
   return norm.flat;
+}
+
+/** IT Project tasks: all phases flattened (legacy segmented JSON is flattened for display). */
+export function normalizeSubKpisForItProject(raw: unknown): NormalizedSubKpis {
+  if (isItProjectEnvelope(raw)) {
+    return { segmented: false, flat: itProjectAllItems(parseItProjectSubKpis(raw)) };
+  }
+  const n = normalizeSubKpis(raw);
+  if (!n.segmented) return n;
+  return { segmented: false, flat: collectAllSubKpiItems(n) };
 }
 
 /** Checklist completion: percent = (total − missing) / total, missing = unchecked items. */
@@ -241,9 +256,11 @@ export function applyItProjectSubTaskDoneMeta(
 export function setSubKpiItemScheduleMeta(
   raw: unknown,
   subKpiId: string,
-  meta: { dueDate?: string | null; actualDate?: string | null },
+  meta: { startDate?: string | null; dueDate?: string | null; actualDate?: string | null },
 ): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
+  const start =
+    meta.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(meta.startDate) ?? null;
   const due =
     meta.dueDate === undefined ? undefined : normalizeOptionalSubKpiYmd(meta.dueDate) ?? null;
   const act =
@@ -251,6 +268,12 @@ export function setSubKpiItemScheduleMeta(
   const touch = (it: SubKpiItem): SubKpiItem => {
     if (it.id !== subKpiId) return it;
     let next = { ...it };
+    if (start !== undefined) {
+      if (start) next = { ...next, startDate: start };
+      else {
+        delete (next as { startDate?: string }).startDate;
+      }
+    }
     if (due !== undefined) {
       if (due) next = { ...next, dueDate: due };
       else {
@@ -293,15 +316,43 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   const title = typeof it.title === "string" ? it.title.trim() : "";
   if (!title) return null;
   const id = typeof it.id === "string" && it.id.trim() ? it.id.trim() : crypto.randomUUID();
+  const startDate = normalizeOptionalSubKpiYmd(it.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(it.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(it.actualDate);
   return {
     id,
     title,
     done: Boolean(it.done),
+    ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
   };
+}
+
+export type ItProjectSubKpiDraft = { title: string; startDate: string; endDate: string };
+
+/** Build flat checklist for IT Project Implementation (no segments, no task-level dates). */
+export function buildItProjectSubKpis(
+  items: ItProjectSubKpiDraft[],
+): { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string } {
+  const flat: SubKpiItem[] = [];
+  for (const item of items) {
+    const title = item.title.trim();
+    const startDate = normalizeOptionalSubKpiYmd(item.startDate);
+    const endDate = normalizeOptionalSubKpiYmd(item.endDate);
+    if (!title) continue;
+    if (!startDate || !endDate) {
+      return { ok: false, error: "Each sub-task needs a start date and end date." };
+    }
+    if (endDate < startDate) {
+      return { ok: false, error: `Sub-task "${title}": end date must be on or after start date.` };
+    }
+    flat.push({ id: crypto.randomUUID(), title, done: false, startDate, dueDate: endDate });
+  }
+  if (flat.length === 0) {
+    return { ok: false, error: "Add at least one sub-task with start and end dates." };
+  }
+  return { ok: true, norm: { segmented: false, flat } };
 }
 
 /** Exported for client-side save validation (must match segmented KPI rules). */

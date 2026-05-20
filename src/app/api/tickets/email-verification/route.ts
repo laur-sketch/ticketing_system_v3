@@ -4,6 +4,10 @@ import { verifyEmailVerificationToken } from "@/lib/email-verification-token";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { logActivity } from "@/lib/ticket-actions";
+import {
+  normalizeFeedbackComment,
+  validateFeedbackForRating,
+} from "@/lib/ticket-feedback-policy";
 
 const RATING_ALLOWED_STATUSES = ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] as const;
 
@@ -61,13 +65,13 @@ function htmlRatingForm(ticketNumber: string, token: string, message?: string) {
       <p style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#a1a1aa;margin:0 0 10px;">Requestor feedback</p>
       <h1 style="margin:0 0 10px;font-size:24px;">Ticket ${safeTicketNumber}</h1>
       ${safeMessage}
-      <p style="margin:0 0 12px;color:#d4d4d8;">Choose your star rating and add optional feedback for the team.</p>
+      <p style="margin:0 0 12px;color:#d4d4d8;">Choose your star rating. Feedback is required for ratings of 3 stars or below.</p>
       <form method="get" action="/api/tickets/email-verification" style="display:grid;gap:12px;">
         <input type="hidden" name="token" value="${safeToken}" />
         <input type="hidden" name="action" value="rate" />
         <label style="display:grid;gap:6px;">
           <span style="font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#a1a1aa;">Star rating</span>
-          <select name="stars" required style="background:#0a0a0a;border:1px solid #3f3f46;color:#f5f5f5;border-radius:10px;padding:10px 12px;">
+          <select id="stars" name="stars" required style="background:#0a0a0a;border:1px solid #3f3f46;color:#f5f5f5;border-radius:10px;padding:10px 12px;">
             <option value="">Select rating</option>
             <option value="5">5 - Excellent</option>
             <option value="4">4 - Good</option>
@@ -77,14 +81,29 @@ function htmlRatingForm(ticketNumber: string, token: string, message?: string) {
           </select>
         </label>
         <label style="display:grid;gap:6px;">
-          <span style="font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#a1a1aa;">Feedback</span>
-          <textarea name="comment" rows="5" placeholder="Tell us what went well or what we can improve..."
+          <span style="font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#a1a1aa;">Feedback <span id="feedback-required-label" style="color:#fdba74;"></span></span>
+          <textarea id="comment" name="comment" rows="5" placeholder="Tell us what went well or what we can improve..."
             style="background:#0a0a0a;border:1px solid #3f3f46;color:#f5f5f5;border-radius:10px;padding:10px 12px;resize:vertical;"></textarea>
         </label>
         <button type="submit" style="background:#f97316;color:#fff;border:0;border-radius:999px;padding:11px 14px;font-weight:700;cursor:pointer;">Submit review</button>
       </form>
     </section>
   </main>
+  <script>
+    const stars = document.getElementById("stars");
+    const comment = document.getElementById("comment");
+    const requiredLabel = document.getElementById("feedback-required-label");
+    function updateFeedbackRequirement() {
+      const required = Number(stars.value) <= 3 && Number(stars.value) >= 1;
+      comment.required = required;
+      requiredLabel.textContent = required ? "(required)" : "(optional)";
+      comment.placeholder = required
+        ? "Please share what went wrong or what we should improve."
+        : "Tell us what went well or what we can improve...";
+    }
+    stars.addEventListener("change", updateFeedbackRequirement);
+    updateFeedbackRequirement();
+  </script>
 </body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8" } },
   );
@@ -173,10 +192,15 @@ export async function GET(req: Request) {
     if (!verifiedFromActivities(ticket.activities)) {
       return htmlMessage("Verification required", "Please click Verify first before selecting a star review.", "warn");
     }
+    const normalizedComment = normalizeFeedbackComment(comment);
+    const feedbackError = validateFeedbackForRating(stars, normalizedComment);
+    if (feedbackError) {
+      return htmlRatingForm(ticket.ticketNumber, token, feedbackError);
+    }
     await prisma.ticketFeedback.upsert({
       where: { ticketId: ticket.id },
-      create: { ticketId: ticket.id, csat: stars, comment: comment || null },
-      update: { csat: stars, comment: comment || null },
+      create: { ticketId: ticket.id, csat: stars, comment: normalizedComment },
+      update: { csat: stars, comment: normalizedComment },
     });
     await prisma.ticket.update({
       where: { id: ticket.id },
@@ -186,7 +210,7 @@ export async function GET(req: Request) {
       ticket.id,
       "USER",
       "Feedback captured",
-      comment ? `CSAT ${stars}/5. Comment: ${comment}` : `CSAT ${stars}/5 via email action link.`,
+      normalizedComment ? `CSAT ${stars}/5. Comment: ${normalizedComment}` : `CSAT ${stars}/5 via email action link.`,
     );
     await logActivity(ticket.id, "USER", "Status → CLOSED", "Ticket closed after verified star rating.");
     return htmlMessage("Thanks for your review", `Your ${stars}-star review was recorded. Ticket is now fully resolved.`, "ok");
@@ -290,23 +314,33 @@ export async function POST(req: Request) {
       if (!Number.isFinite(stars) || stars < 1 || stars > 5) {
         return NextResponse.json({ error: "stars must be 1-5." }, { status: 400 });
       }
+      const comment = normalizeFeedbackComment(body.comment);
+      const feedbackError = validateFeedbackForRating(stars, comment);
+      if (feedbackError) {
+        return NextResponse.json({ error: feedbackError }, { status: 400 });
+      }
       await prisma.ticketFeedback.upsert({
         where: { ticketId: ticket.id },
         create: {
           ticketId: ticket.id,
           csat: stars,
-          comment: (body.comment || "").trim() || null,
+          comment,
         },
         update: {
           csat: stars,
-          comment: (body.comment || "").trim() || null,
+          comment,
         },
       });
       await prisma.ticket.update({
         where: { id: ticket.id },
         data: { status: "CLOSED", closedAt: new Date() },
       });
-      await logActivity(ticket.id, "USER", "Feedback captured", "CSAT via email verification flow.");
+      await logActivity(
+        ticket.id,
+        "USER",
+        "Feedback captured",
+        comment ? `CSAT ${stars}/5. Comment: ${comment}` : "CSAT via email verification flow.",
+      );
       await logActivity(ticket.id, "USER", "Status → CLOSED", "Ticket closed after verified star rating.");
       return NextResponse.json({ ok: true });
     }

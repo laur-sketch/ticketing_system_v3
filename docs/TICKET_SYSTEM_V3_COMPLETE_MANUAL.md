@@ -2,7 +2,7 @@
 
 ## Complete manual — project rundown & user guide  
 
-**Document version:** 1.0 · **Product:** Ticket System v3 · **Audience:** operators, staff, customers, and administrators · **May 2026**
+**Document version:** 1.1 · **Product:** Ticket System v3 · **Audience:** operators, staff, customers, and administrators · **May 2026**
 
 ---
 
@@ -34,7 +34,7 @@ Ticket System v3 is a full-stack **service desk / ticketing** application for su
 | Application | **Next.js** (App Router), **React**, **Tailwind CSS** |
 | API | **Next.js Route Handlers** (`src/app/api/**`) |
 | Database | **PostgreSQL** with **Prisma ORM** |
-| Authentication | **NextAuth.js** — credentials, optional **Google OAuth**, optional **corporate OIDC (OpenID Connect)** |
+| Authentication | **NextAuth.js** — local credentials and optional **Google OAuth** |
 | Email | **SMTP** (e.g. Brevo) for resolution and verification flows |
 
 ### 1.3 Repository layout (high level)  
@@ -79,11 +79,11 @@ If a customer has a **resolved** ticket that still needs **verification and mand
 ### 3.1 Sign-in  
 
 - **URL:** `/signin`  
-- Methods: **local credentials** (username or email + password), **Google** (if configured), **corporate SSO** (if OIDC env vars are set).  
+- Methods: **local credentials** (username or email + password) and **Google** (if configured).  
 
 ### 3.2 Role resolution (typical)  
 
-1. Claims from IdP profile (`role`, `roles`, `groups`) when present.  
+1. Portal account role from the database when an account exists.  
 2. Env lists **`ADMIN_EMAILS`** / **`AGENT_EMAILS`** for bootstrap mapping.  
 3. Default **Customer** where no other rule applies.  
 
@@ -91,10 +91,9 @@ If a customer has a **resolved** ticket that still needs **verification and mand
 
 | Role | Typical access |
 |------|----------------|
-| **Customer** | Home, **Create ticket**, **My tickets**, ticket detail, verification/rating, customer profile. |
-| **Personnel** | Own **assignment queue** (`/agent`), ticket workspace for assigned items, insights as configured. |
-| **Agent** | Broader operational queue/board patterns (org-dependent). |
-| **Admin / SuperAdmin** | Dashboard, personnel, escalation triggers, assignment oversight, SLA sweep, reports as configured. |
+| **Customer** | Dashboard (`/`), **Active Tickets**, **Create ticket**, knowledge base, verification/rating, **`/admin/account`**. |
+| **Personnel** | **`/my-requests`**, **Ticket** and **Task** boards (`/agent`), insights, optional assignment board. |
+| **Admin / SuperAdmin** | Ticket dashboard, create requests, personnel, all board tabs, priority alerts, task definitions, insights, SLA sweep. |
 
 **Head / privileged portal flags** may grant coordination powers (e.g. escalation) per implementation.  
 
@@ -104,7 +103,7 @@ If a customer has a **resolved** ticket that still needs **verification and mand
 
 ### 4.1 Environment  
 
-Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** secret and URL, **OIDC / Google** client settings, **SMTP (Brevo)** for mail, **`APP_BASE_URL` / `NEXTAUTH_URL`** for correct email links, optional admin email lists.  
+Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** secret and URL, optional **Google** client settings, **SMTP (Brevo)** for mail, **`APP_BASE_URL` / `NEXTAUTH_URL`** for correct email links, optional admin email lists.  
 
 ### 4.2 Database  
 
@@ -126,27 +125,42 @@ Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** 
 
 ### 5.1 First steps  
 
-1. Open **`/signin`** (or **`/signup`** if self-registration is enabled).  
+1. Open **`/signin`** (legacy **`/customer/signin`** redirects here; **`/signup`** when self-registration is enabled).  
 2. Use the account your organization provided, or register per policy.  
+3. After sign-in, the **Dashboard** (`/`) shows a kanban of your tickets.  
+
+**Portal navigation**
+
+| Area | Path |
+|------|------|
+| Dashboard | `/` |
+| Active Tickets | `/my-tickets` |
+| Knowledge Base | `/tickets/knowledge` |
+| Create Request | `/tickets/new` |
+
+Use the **notification bell** for updates and verification reminders.
 
 ### 5.2 Submit a ticket  
 
 1. Go to **`/tickets/new`**.  
 2. Complete **department / business unit**, **name**, and **issue** description.  
-3. If you use **Google**, emails for resolution/verification go to your **Google address**. If you use a **portal** account, notification email follows your **registered work email** (optional override only when it matches your portal email).  
-4. Submit; track from **`/my-tickets`**.  
+3. Attach screenshots if helpful (image limits apply).  
+4. If you use **Google**, emails for resolution/verification go to your **Google address**. If you use a **portal** account, notification email follows your **registered work email** (optional override only when it matches your portal email).  
+5. Submit; track from **`/my-tickets`** or the dashboard.  
 
 ### 5.3 Track and participate  
 
-- Open a ticket from the list or a shared link.  
+- Open a ticket from **Active Tickets**, the dashboard kanban, or a shared link.  
 - Read the **activity timeline** and **conversation** thread.  
+- Dashboard columns group work as **Open**, **In progress**, and **For confirmation** (resolved, awaiting your verify/rate).  
 - If **new requests are blocked** because a **resolved** ticket awaits your **confirmation and rating**, open the **notification** or the linked **verification** page and complete the steps.  
 
 ### 5.4 Resolution, verification, and rating  
 
 1. When staff marks the ticket **Resolved**, you may receive email with verify / reject links.  
 2. In the portal, complete **verification** and **star rating / feedback** when prompted.  
-3. Until mandatory steps are done, **creating another ticket** may be disabled **policy**.  
+3. Ratings of **3 stars or below** require written feedback before closure.  
+4. Until mandatory steps are done, **creating another ticket** may be disabled **policy**.  
 
 ### 5.5 Ticket statuses (customer view)  
 
@@ -161,7 +175,7 @@ Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** 
 
 ### 5.6 My account  
 
-From **`/customer/profile`** or account entry points, update profile where allowed. **Security** changes (username, email, password) may sign you out and require a fresh sign-in.  
+Open **`/admin/account`** → **Security** tab (customers, personnel, and admins). **Security** changes (username, email, password) sign you out and require a fresh sign-in. Submit suspension/deletion requests for admin review when needed.  
 
 ---
 
@@ -170,8 +184,9 @@ From **`/customer/profile`** or account entry points, update profile where allow
 ### 6.1 Daily routine  
 
 1. Sign in at **`/signin`**.  
-2. Open **`/agent`** — orchestration board, kanban, and assigned ticket access.  
-3. Review **`/insights`** for personal or team KPI visibility as granted.  
+2. **Personnel** land on **`/agent`**; personal ticket list is **`/my-requests`**.  
+3. Use board tabs: **Ticket Board** (`/agent?board=ticket`) and **Task Board** (`/agent?board=kpi`).  
+4. Review **`/insights`** — ticket metrics, task metrics, and (coordinators only) **My Task Management**.  
 
 ### 6.2 Working a ticket  
 
@@ -179,11 +194,25 @@ From **`/customer/profile`** or account entry points, update profile where allow
 2. Update status honestly (drag-and-drop where enabled).  
 3. Use **request more information** per policy (may log activity **without** forcing “pending info” status depending on configuration).  
 4. Resolve with clear **resolution notes**; customer receives email to **verify**.  
+5. Staff ticket workspace: **`/agent/tickets/[id]`**.  
 
 ### 6.3 KPI / task hygiene  
 
 - Complete checklist items only where you are the assignee (when restricted).  
-- Respect recurrence boundaries (daily / weekly / monthly cycles).  
+- Respect recurrence boundaries (daily / weekly / monthly cycles); period boundaries use browser/reporting timezone in API calls.  
+- **Recurring tasks:** flat or **segmented** sub-KPI checklists; checklists reset on period rollover.  
+- **IT Project Implementation:** non-recurring; phases and per-sub-task due dates (**MM/DD/YYYY** in UI); record **actual date** when completing sub-tasks. **Delayed** column applies only to this pillar (late sub-task or actual after due); fully complete but late work stays in **Delayed**, not **Done**.  
+- Other recurring KPIs: late completion may show **Done** with a delayed indicator.  
+
+### 6.4 Metrics & Reports (`/insights`)  
+
+| Tab | Audience | Content |
+|-----|----------|---------|
+| Ticket metrics | Admin, Personnel | SLA, volume, CSAT, charts (date range) |
+| Task metrics | Admin, Personnel | Helpdesk / checklist pillar metrics |
+| Task Management | Personnel coordinators | KPI definitions (when `canAccessAssignmentBoard`) |
+
+Admins define tasks on **Task Board** (`/agent?board=kpi`), not the Insights Task Management tab.
 
 ---
 
@@ -191,10 +220,16 @@ From **`/customer/profile`** or account entry points, update profile where allow
 
 ### 7.1 Oversight  
 
-- **`/`** — Operational dashboard (role-dependent).  
+- **`/`** — Ticket dashboard (on-duty, activity, priority stack).  
+- **`/admin/ticket-requests`** — Create requests on behalf of users.  
 - **`/admin/personnel`** — Personnel registry and assignment readiness.  
-- **`/admin/manual-assignment`** — Assignment board where configured.  
-- **`/admin/escalation-triggers`** — Priority-linked escalation behavior.  
+- **`/admin/manual-assignment`** — Assignment board (drag to personnel lanes).  
+- **`/agent?board=company`** — Company board.  
+- **`/agent?board=ticket`** — Ticket board.  
+- **`/agent?board=kpi`** — Task board + **Task Definition** console.  
+- **`/admin/escalation-triggers`** — **Priority alerts** (escalation configuration).  
+- **`/insights`** — Metrics & reports.  
+- **`/process`** — Process / lifecycle reference.  
 - **`/reports`** — Reporting views as implemented.  
 
 ### 7.2 SLA sweep  
@@ -209,7 +244,7 @@ From **`/customer/profile`** or account entry points, update profile where allow
 
 ## 8) Account security (My Account)  
 
-Staff typically use **`/admin/account`**.  
+All roles with portal access use **`/admin/account`** (Security tab).  
 
 ### Change username  
 
@@ -231,11 +266,13 @@ Suspension or deletion requests may be submitted for admin review.
 
 | Symptom | What to try |
 |---------|-------------|
-| Cannot sign in | Verify credentials, caps lock; try SSO status; confirm account active. |
+| Cannot sign in | Verify credentials, caps lock, Google sign-in status if used, and account active state. |
 | “Forbidden” or missing menu | Your **role** may not include that feature — contact Admin. |
 | Cannot create new ticket | Complete **pending resolved** verification/rating on existing ticket. |
 | Email link expired / invalid | Request staff to re-send resolution flow or open ticket in portal. |
 | Cannot move ticket to In progress | Set **priority** above **Set Priority Level (UNSET)**. |
+| Task stuck in Delayed (IT Project) | Complete overdue sub-tasks or correct actual/due dates. |
+| Cannot edit KPI checklist | Confirm you are the assignee; IT Project requires per-sub-task actual dates. |
 | Database / deploy errors | Check **`DATABASE_URL`**, run Prisma migrate or push, rebuild, restart PM2. |
 
 ---
@@ -246,19 +283,28 @@ Suspension or deletion requests may be submitted for admin review.
 |------|-------------|
 | `/signin` | Sign in |
 | `/signup` | Self-registration (if enabled) |
-| `/` | Role-aware home |
+| `/` | Customer dashboard or admin ticket dashboard |
+| `/my-tickets` | Customer active tickets |
+| `/my-requests` | Personnel ticket dashboard |
 | `/tickets/new` | New ticket |
-| `/my-tickets` | Customer ticket list |
+| `/tickets/knowledge` | Knowledge base |
 | `/tickets/[id]` | Ticket detail |
 | `/tickets/[id]/verification` | Resolution verification |
 | `/tickets/[id]/rate` | Rating / feedback |
-| `/agent` | Staff board / queue |
+| `/agent` | Staff boards (default ticket view) |
+| `/agent?board=ticket` | Ticket board |
+| `/agent?board=kpi` | Task board |
+| `/agent?board=company` | Company board (admin) |
 | `/agent/tickets/[id]` | Staff ticket workspace |
-| `/insights` | KPI / insights |
+| `/admin/manual-assignment` | Assignment board |
+| `/admin/ticket-requests` | Admin create requests |
+| `/insights` | Metrics & reports |
 | `/process` | Process / lifecycle info |
 | `/reports` | Reports |
 | `/admin/personnel` | Personnel admin |
-| `/admin/account` | Account & security |
+| `/admin/escalation-triggers` | Priority alerts |
+| `/admin/account-management` | Portal account admin |
+| `/admin/account` | My Account & security |
 
 ---
 

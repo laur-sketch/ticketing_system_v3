@@ -224,9 +224,9 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "IT PROJECT IMPLEMENTATION": {
-    positiveLabel: "Complete",
-    negativeLabel: "Missing",
-    metricName: "complete",
+    positiveLabel: "On time",
+    negativeLabel: "Delayed",
+    metricName: "on time",
   },
   "NETWORK PERFORMANCE": {
     positiveLabel: "Uptime",
@@ -307,6 +307,9 @@ function checklistSubline(
   }
   if (view.inverted) {
     return `${view.positive}/${agg.total} ${cfg.positiveLabel.toLowerCase()} · ${view.negative} ${cfg.negativeLabel.toLowerCase()} · ${view.percent}%${periodNote}`;
+  }
+  if (cfg.positiveLabel === "On time" && cfg.negativeLabel === "Delayed") {
+    return `${agg.done}/${agg.total} on time · ${agg.missing} delayed · ${view.percent}%${periodNote}`;
   }
   return `${agg.done}/${agg.total} checked · ${agg.missing} missing · ${view.percent}%${periodNote}`;
 }

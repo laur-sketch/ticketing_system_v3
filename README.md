@@ -5,7 +5,7 @@ General-purpose ticketing system with:
 - Frontend: ReactJS + Tailwind CSS (Next.js App Router)
 - Backend: Node.js (Next.js Route Handlers)
 - Database: PostgreSQL + Prisma
-- Auth: SSO-ready OIDC login with role-based access control
+- Auth: local credentials with optional Google sign-in and role-based access control
 
 ## Roles
 
@@ -13,16 +13,16 @@ General-purpose ticketing system with:
 - `Agent`: queue handling, assignment, lifecycle transitions
 - `Customer`: create/view own tickets, reply, validate resolution, leave feedback
 
-## SSO Integration
+## Authentication
 
 Authentication is implemented with NextAuth and supports:
 
-- Corporate OIDC SSO via `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`
-- Local credentials login for development fallback (`/signin`)
+- Local credentials login (`/signin`)
+- Optional Google sign-in via `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
 
 Role resolution order:
 
-1. Role claims from SSO profile (`role`, `roles`, `groups`)
+1. Portal account role from the database
 2. Email mapping from `ADMIN_EMAILS` / `AGENT_EMAILS`
 3. Default role: `Customer`
 

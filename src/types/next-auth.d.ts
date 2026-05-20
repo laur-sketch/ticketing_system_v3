@@ -5,7 +5,7 @@ declare module "next-auth" {
   interface Session {
     user: DefaultSession["user"] & {
       role: UserRole;
-      /** OAuth / credentials provider id (e.g. google, credentials, corporate-sso). */
+      /** OAuth / credentials provider id (e.g. google, credentials). */
       authProvider?: string | null;
       /** Customer portal: linked company (Team id). */
       companyId?: string | null;

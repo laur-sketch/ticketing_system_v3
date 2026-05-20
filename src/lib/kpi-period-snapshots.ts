@@ -15,7 +15,12 @@ import {
   kpiChecklistProgress,
   type KpiChecklistProgress,
 } from "@/lib/kpi-subkpis";
-import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
+import { countItProjectSubKpiStatus } from "@/lib/it-project-subkpis";
+import {
+  IT_PROJECT_IMPLEMENTATION_TITLE,
+  IT_TASK_PILLAR_TITLES,
+  type ItTaskPillarTitle,
+} from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
 
 export type KpiRowForSnapshot = {
@@ -224,6 +229,39 @@ export type TaskChecklistPillarMetric = KpiChecklistProgress & {
 
 export type TaskChecklistPillarMetrics = Partial<Record<ItTaskPillarTitle, TaskChecklistPillarMetric>>;
 
+async function computeItProjectImplementationPillarMetric(args: {
+  kpiWhere: { assignedAgentId?: string };
+  timeZone: string;
+}): Promise<TaskChecklistPillarMetric> {
+  const rows = await prisma.kpiMaintenance.findMany({
+    where: {
+      title: IT_PROJECT_IMPLEMENTATION_TITLE,
+      isRecurring: false,
+      ...args.kpiWhere,
+    },
+    select: { subKpis: true },
+  });
+  const nowMs = Date.now();
+  let total = 0;
+  let completedOnTime = 0;
+  let delayed = 0;
+  for (const row of rows) {
+    const counts = countItProjectSubKpiStatus(row.subKpis, nowMs, args.timeZone);
+    total += counts.total;
+    completedOnTime += counts.completedOnTime;
+    delayed += counts.delayed;
+  }
+  const percent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
+  return {
+    total,
+    done: completedOnTime,
+    missing: delayed,
+    percent,
+    periodsCounted: rows.length,
+    periodsInRange: rows.length,
+  };
+}
+
 export async function computeTaskChecklistPillarMetrics(args: {
   metricsCadence: KpiFrequencyCode;
   fromYmd: string;
@@ -302,6 +340,11 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
   for (const pillar of IT_TASK_PILLAR_TITLES) {
     if (pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
+
+    if (pillar === IT_PROJECT_IMPLEMENTATION_TITLE) {
+      result[pillar] = await computeItProjectImplementationPillarMetric({ kpiWhere, timeZone: zone });
+      continue;
+    }
 
     const pillarKpis = selectedByPillar.get(pillar) ?? [];
     if (pillarKpis.length === 0) {

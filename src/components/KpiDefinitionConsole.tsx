@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { cn } from "@/lib/cn";
 import {
   IT_TASK_PILLAR_SELECT_OPTIONS,
   isItProjectImplementationPillar,
@@ -19,6 +20,8 @@ const INSIGHTS_VIEW_ONLY = false;
 
 type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly";
 type DraftSegmentRow = { id: string; label: string; items: SubKpi[] };
+type ItProjectSubDraft = { id: string; title: string; dueDate: string };
+type ItProjectPhaseDraft = { id: string; name: string; items: ItProjectSubDraft[] };
 
 export type KpiDefinitionMaintenanceRecord = {
   id: string;
@@ -65,7 +68,20 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const [kpiMaintenanceAssignWork, setKpiMaintenanceAssignWork] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [itProjectNameDraft, setItProjectNameDraft] = useState("");
-  const [itProjectPhaseDraft, setItProjectPhaseDraft] = useState("");
+  const [itProjectPhases, setItProjectPhases] = useState<ItProjectPhaseDraft[]>([]);
+  const [activePhaseId, setActivePhaseId] = useState<string | null>(null);
+  const [itProjectPhaseName, setItProjectPhaseName] = useState("Phase 1");
+  const [itProjectSubDraft, setItProjectSubDraft] = useState<ItProjectSubDraft[]>([]);
+  const [itProjectSubTitle, setItProjectSubTitle] = useState("");
+  const [itProjectSubDue, setItProjectSubDue] = useState("");
+
+  const isItProject = isItProjectImplementationPillar(maintenanceTitle);
+
+  useEffect(() => {
+    if (isItProject && !activePhaseId) {
+      setActivePhaseId(crypto.randomUUID());
+    }
+  }, [isItProject, activePhaseId]);
 
   useEffect(() => {
     try {
@@ -97,7 +113,72 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     ? draftSegments.reduce((a, s) => a + s.items.length, 0)
     : subKpisDraft.length;
   const showSegmentedCreateOption =
-    draftUseSegments || draftSubKpiTotal >= MIN_SUB_FOR_SEGMENT_OPTION;
+    !isItProject && (draftUseSegments || draftSubKpiTotal >= MIN_SUB_FOR_SEGMENT_OPTION);
+
+  function snapshotCurrentItProjectPhase(phases: ItProjectPhaseDraft[]): ItProjectPhaseDraft[] {
+    if (!activePhaseId) return phases;
+    const snap: ItProjectPhaseDraft = {
+      id: activePhaseId,
+      name: itProjectPhaseName.trim() || `Phase ${phases.length + 1}`,
+      items: [...itProjectSubDraft],
+    };
+    const idx = phases.findIndex((p) => p.id === activePhaseId);
+    if (idx >= 0) {
+      const next = [...phases];
+      next[idx] = snap;
+      return next;
+    }
+    return [...phases, snap];
+  }
+
+  const itProjectPhasesForUi = useMemo(
+    () => snapshotCurrentItProjectPhase(itProjectPhases),
+    [activePhaseId, itProjectPhaseName, itProjectPhases, itProjectSubDraft],
+  );
+
+  function switchItProjectPhase(phaseId: string) {
+    const merged = snapshotCurrentItProjectPhase(itProjectPhases);
+    const target = merged.find((p) => p.id === phaseId);
+    if (!target) return;
+    setItProjectPhases(merged);
+    setActivePhaseId(target.id);
+    setItProjectPhaseName(target.name);
+    setItProjectSubDraft([...target.items]);
+    setLocalError(null);
+  }
+
+  function addItProjectPhase() {
+    const merged = snapshotCurrentItProjectPhase(itProjectPhases);
+    const newId = crypto.randomUUID();
+    setItProjectPhases(merged);
+    setActivePhaseId(newId);
+    setItProjectPhaseName(`Phase ${merged.length + 1}`);
+    setItProjectSubDraft([]);
+    setItProjectSubTitle("");
+    setItProjectSubDue("");
+    setLocalError(null);
+  }
+
+  function addItProjectSubDraft() {
+    const title = itProjectSubTitle.trim();
+    if (!title) return;
+    if (!itProjectSubDue) {
+      setLocalError("Each sub-task needs a due date.");
+      return;
+    }
+    if (!activePhaseId) setActivePhaseId(crypto.randomUUID());
+    setItProjectSubDraft((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), title, dueDate: itProjectSubDue },
+    ]);
+    setItProjectSubTitle("");
+    setItProjectSubDue("");
+    setLocalError(null);
+  }
+
+  function removeItProjectSubDraft(id: string) {
+    setItProjectSubDraft((prev) => prev.filter((s) => s.id !== id));
+  }
 
   function addSubKpiDraft() {
     const trimmed = subKpiDraft.trim();
@@ -180,7 +261,14 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     }
     const freqUpper = maintenanceFrequency.toUpperCase() as KpiFrequencyCode;
 
-    if (draftUseSegments) {
+    if (isItProject) {
+      const phasesForSubmit = snapshotCurrentItProjectPhase(itProjectPhases);
+      const hasTasks = phasesForSubmit.some((p) => p.items.length > 0);
+      if (!hasTasks) {
+        setLocalError("Add at least one sub-task with a due date in at least one phase.");
+        return;
+      }
+    } else if (draftUseSegments) {
       for (const seg of draftSegments) {
         if (!seg.label.trim()) {
           setLocalError('Each checklist segment needs a label (or turn off "Segment this checklist").');
@@ -206,9 +294,15 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     const body: Record<string, unknown> = {
       title,
       frequency: freqUpper,
-      isRecurring: maintenanceIsRecurring,
+      isRecurring: isItProject ? false : maintenanceIsRecurring,
     };
-    if (draftUseSegments) {
+    if (isItProject) {
+      const phasesForSubmit = snapshotCurrentItProjectPhase(itProjectPhases).filter((p) => p.items.length > 0);
+      body.itProjectPhases = phasesForSubmit.map((p) => ({
+        name: p.name,
+        items: p.items.map((s) => ({ title: s.title, dueDate: s.dueDate })),
+      }));
+    } else if (draftUseSegments) {
       body.subKpisSegmented = true;
       body.segments = draftSegments.map((s) => ({
         label: s.label.trim(),
@@ -218,9 +312,13 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       body.subKpis = subKpisDraft.map((s) => ({ title: s.title }));
     }
 
-    if (maintenanceIsRecurring && freqUpper === "WEEKLY") body.recurrenceWeekday = recurrenceWeekday;
-    if (maintenanceIsRecurring && freqUpper === "MONTHLY") body.recurrenceMonthDay = recurrenceMonthDay;
-    if (!maintenanceIsRecurring) {
+    if (!isItProject && maintenanceIsRecurring && freqUpper === "WEEKLY") {
+      body.recurrenceWeekday = recurrenceWeekday;
+    }
+    if (!isItProject && maintenanceIsRecurring && freqUpper === "MONTHLY") {
+      body.recurrenceMonthDay = recurrenceMonthDay;
+    }
+    if (!isItProject && !maintenanceIsRecurring) {
       if (!nonRecurringStartDate || !nonRecurringEndDate) {
         setLocalError("Choose start and end dates for this one-off task.");
         return;
@@ -242,9 +340,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
 
     if (isItProjectImplementationPillar(title)) {
       const pn = itProjectNameDraft.trim();
-      const ph = itProjectPhaseDraft.trim();
       if (pn) body.itProjectName = pn;
-      if (ph) body.itProjectPhase = ph;
     }
 
     const res = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, {
@@ -286,7 +382,12 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     setDraftSegments([]);
     setSegItemDraft({});
     setItProjectNameDraft("");
-    setItProjectPhaseDraft("");
+    setItProjectPhases([]);
+    setActivePhaseId(null);
+    setItProjectPhaseName("Phase 1");
+    setItProjectSubDraft([]);
+    setItProjectSubTitle("");
+    setItProjectSubDue("");
     void loadAssignFlag();
   }
 
@@ -314,9 +415,20 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
               const v = e.target.value;
               setMaintenanceTitle(v);
               setLocalError(null);
-              if (!isItProjectImplementationPillar(v)) {
+              if (isItProjectImplementationPillar(v)) {
+                setMaintenanceIsRecurring(false);
+                setDraftUseSegments(false);
+                setDraftSegments([]);
+                setNonRecurringStartDate("");
+                setNonRecurringEndDate("");
+              } else {
                 setItProjectNameDraft("");
-                setItProjectPhaseDraft("");
+                setItProjectPhases([]);
+                setActivePhaseId(null);
+                setItProjectPhaseName("Phase 1");
+                setItProjectSubDraft([]);
+                setItProjectSubTitle("");
+                setItProjectSubDue("");
               }
             }}
             required
@@ -330,7 +442,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
             ))}
           </select>
         </label>
-        {isItProjectImplementationPillar(maintenanceTitle) ? (
+        {isItProject ? (
           <>
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
               Project name
@@ -342,27 +454,19 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                 className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
             </label>
-            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
-              Phase
-              <input
-                type="text"
-                value={itProjectPhaseDraft}
-                onChange={(e) => setItProjectPhaseDraft(e.target.value)}
-                placeholder="e.g. Discovery, Build, UAT"
-                className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-              />
-            </label>
           </>
         ) : null}
-        <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
-          <input
-            type="checkbox"
-            checked={maintenanceIsRecurring}
-            onChange={(e) => setMaintenanceIsRecurring(e.target.checked)}
-          />
-          Recurring task
-        </label>
-        {!maintenanceIsRecurring ? (
+        {!isItProject ? (
+          <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
+            <input
+              type="checkbox"
+              checked={maintenanceIsRecurring}
+              onChange={(e) => setMaintenanceIsRecurring(e.target.checked)}
+            />
+            Recurring task
+          </label>
+        ) : null}
+        {!isItProject && !maintenanceIsRecurring ? (
           <>
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
               Start date
@@ -382,17 +486,19 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
             </label>
           </>
         ) : null}
-        <select
-          value={maintenanceFrequency}
-          onChange={(e) => setMaintenanceFrequency(e.target.value as MaintenanceFrequency)}
-          disabled={!maintenanceIsRecurring}
-          className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-        >
-          <option value="Daily">Daily</option>
-          <option value="Weekly">Weekly</option>
-          <option value="Monthly">Monthly</option>
-        </select>
-        {maintenanceIsRecurring && maintenanceFrequency === "Weekly" ? (
+        {!isItProject ? (
+          <select
+            value={maintenanceFrequency}
+            onChange={(e) => setMaintenanceFrequency(e.target.value as MaintenanceFrequency)}
+            disabled={!maintenanceIsRecurring}
+            className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          >
+            <option value="Daily">Daily</option>
+            <option value="Weekly">Weekly</option>
+            <option value="Monthly">Monthly</option>
+          </select>
+        ) : null}
+        {!isItProject && maintenanceIsRecurring && maintenanceFrequency === "Weekly" ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Week starts on ({recurrenceTz})
             <select
@@ -410,7 +516,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
             </select>
           </label>
         ) : null}
-        {maintenanceIsRecurring && maintenanceFrequency === "Monthly" ? (
+        {!isItProject && maintenanceIsRecurring && maintenanceFrequency === "Monthly" ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Month cycle starts on day (1–31, {recurrenceTz})
             <select
@@ -426,8 +532,10 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
             </select>
           </label>
         ) : null}
-        <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
-          Assignment is on the Task Assignment Board below.
+        <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
+          {isItProject
+            ? "IT Project tasks are not recurring. Add phases and set a due date on each sub-task. Assignees enter actual dates (MM/DD/YYYY) when work is done."
+            : "Assignment is on the Task Assignment Board below."}
         </div>
       </div>
 
@@ -445,7 +553,93 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         </label>
       ) : null}
 
-      {!draftUseSegments ? (
+      {isItProject ? (
+        <div className="mt-4 space-y-3">
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            Build one phase at a time. Use <strong>Add another phase</strong> to save the current phase and start the
+            next. Switch phases to edit earlier steps before saving the KPI.
+          </p>
+          <label className="flex max-w-md flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+            Phase name
+            <input
+              value={itProjectPhaseName}
+              onChange={(e) => setItProjectPhaseName(e.target.value)}
+              placeholder="e.g. Discovery"
+              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+          </label>
+          {itProjectPhasesForUi.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {itProjectPhasesForUi.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => switchItProjectPhase(p.id)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-semibold transition",
+                    p.id === activePhaseId
+                      ? "border-orange-500 bg-orange-500/15 text-orange-900 dark:border-orange-400 dark:text-orange-100"
+                      : "border-zinc-300 bg-white text-zinc-700 hover:border-orange-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-300",
+                  )}
+                >
+                  {p.name}
+                  <span className="ml-1 opacity-70">({p.items.length})</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
+              Sub-task title
+              <input
+                value={itProjectSubTitle}
+                onChange={(e) => setItProjectSubTitle(e.target.value)}
+                placeholder="e.g. Discovery workshop"
+                className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              Due date
+              <DatePickerField
+                value={itProjectSubDue}
+                onChange={(e) => setItProjectSubDue(e.target.value)}
+                inputClassName="font-normal normal-case tracking-normal"
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={addItProjectSubDraft} className="rounded-xl px-4">
+              Add sub-task
+            </Button>
+            <Button type="button" variant="outline" onClick={addItProjectPhase} className="rounded-xl px-4">
+              Add another phase
+            </Button>
+            <Button type="button" onClick={() => void createMaintenanceRecord()} className="rounded-xl px-4">
+              Save KPI maintenance
+            </Button>
+          </div>
+          {itProjectSubDraft.length > 0 ? (
+            <ul className="space-y-2">
+              {itProjectSubDraft.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950/40"
+                >
+                  <span className="font-medium text-zinc-900 dark:text-zinc-100">{s.title}</span>
+                  <span className="text-xs text-zinc-600 dark:text-zinc-400">Due {s.dueDate}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeItProjectSubDraft(s.id)}
+                    className="text-xs font-semibold text-rose-600 hover:underline dark:text-rose-400"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : !draftUseSegments ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <input
             value={subKpiDraft}
@@ -544,7 +738,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         </div>
       )}
 
-      {!draftUseSegments && subKpisDraft.length > 0 ? (
+      {!isItProject && !draftUseSegments && subKpisDraft.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {subKpisDraft.map((s) => (
             <button

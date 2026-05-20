@@ -8,18 +8,27 @@ import {
   incompletePastDeadlineDelayMs,
   nonRecurringDeadline,
   recurringDeadlineExclusive,
-  recurringDoneDelayedMs,
   taskKanbanDerivedStatus,
 } from "@/lib/kpi-cycle-state";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import {
+  isItProjectSubTaskComplete,
+  isItProjectSubTaskDelayed,
+  itProjectAggregatedProgressFromRaw,
+  itProjectChecklistProgressFromRaw,
+  itProjectPhaseProgressFromItems,
+  parseItProjectSubKpis,
+} from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   isDailyInvertedChecklistPillar,
   kpiChecklistMetricView,
   kpiChecklistProgress,
+  collectAllSubKpiItems,
   normalizeSubKpis,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
+import { hasValidActualDate } from "@/lib/us-date-format";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
@@ -28,8 +37,25 @@ type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
 
 const TASK_ASSIGNMENT_LANES_PAGE_SIZE = 6;
 
-function subTaskStatusLabel(s: SubKpiItem): string {
-  return s.done ? "Complete" : "Pending";
+function subTaskStatusLabel(s: SubKpiItem, timeZone: string): string {
+  if (isItProjectSubTaskDelayed(s, Date.now(), timeZone)) return "Delayed";
+  if (hasValidActualDate(s)) return "On time";
+  return "Pending";
+}
+
+function ChecklistProgressBar({
+  percent,
+  barClassName,
+}: {
+  percent: number;
+  barClassName: string;
+}) {
+  const clamped = Math.min(100, Math.max(0, percent));
+  return (
+    <div className="h-2 rounded-full bg-zinc-200/70 dark:bg-zinc-800/60">
+      <div className={cn("h-full rounded-full transition-[width]", barClassName)} style={{ width: `${clamped}%` }} />
+    </div>
+  );
 }
 
 type KpiRecord = {
@@ -123,7 +149,9 @@ export function AgentKpiKanbanFlow({
   }, [tz, companyFilterTeamId]);
 
   function progress(r: KpiRecord) {
-    const p = kpiChecklistProgress(r.subKpis);
+    const p = isItProjectImplementationPillar(r.title)
+      ? itProjectChecklistProgressFromRaw(r.subKpis)
+      : kpiChecklistProgress(r.subKpis);
     const view = kpiChecklistMetricView(p, isDailyInvertedChecklistPillar(r.title, r.frequency));
     return {
       total: view.total,
@@ -141,15 +169,10 @@ export function AgentKpiKanbanFlow({
     return recurringDeadlineExclusive(r, tz);
   }
 
-  function delayMs(r: KpiRecord) {
-    const p = progress(r);
-    if (p.total === 0 || p.done !== p.total) return 0;
-    const doneAt = new Date(r.updatedAt).getTime();
-    if (!Number.isFinite(doneAt)) return 0;
-    return recurringDoneDelayedMs(r, tz, doneAt);
-  }
-
   function incompleteOverdueMs(r: KpiRecord) {
+    if (isItProjectImplementationPillar(r.title)) {
+      return incompletePastDeadlineDelayMs(r, Date.now(), tz);
+    }
     const p = progress(r);
     if (p.total === 0 || p.done === p.total) return 0;
     return incompletePastDeadlineDelayMs(r, Date.now(), tz);
@@ -420,7 +443,8 @@ export function AgentKpiKanbanFlow({
             Hold and slide a task to <strong>Done</strong> or <strong>Current</strong> (touch or mouse).{" "}
             <span className="text-zinc-500 dark:text-zinc-500">
               The <strong>Delayed</strong> column applies only to <strong>IT Project Implementation</strong> tasks
-              (period deadline passed with incomplete sub-tasks).
+              (sub-task past due or actual date after due date). Fully complete but late tasks stay in{" "}
+              <strong>Delayed</strong>, not Done.
             </span>
           </p>
         </div>
@@ -474,11 +498,27 @@ export function AgentKpiKanbanFlow({
                     list.map((r) => {
                       const editable = canEditChecklist(r);
                       const p = progress(r);
-                      const late = delayMs(r);
                       const incLate = incompleteOverdueMs(r);
                       const end = periodEnd(r);
-                      const normalized = normalizeSubKpis(r.subKpis);
                       const itProject = isItProjectImplementationPillar(r.title);
+                      const normalized = normalizeSubKpis(r.subKpis);
+                      const itProjectData = itProject
+                        ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase)
+                        : null;
+                      const itProjectProgress =
+                        itProject && itProjectData
+                          ? itProjectAggregatedProgressFromRaw(r.subKpis, r.itProjectPhase)
+                          : null;
+                      const checklistItems = collectAllSubKpiItems(normalized);
+                      const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
+                      const mainBarClass =
+                        col === "DONE"
+                          ? "bg-emerald-500"
+                          : col === "DELAYED"
+                            ? "bg-rose-500"
+                            : itProject
+                              ? "bg-orange-500"
+                              : "bg-blue-500";
                       return (
                         <div
                           key={r.id}
@@ -504,10 +544,10 @@ export function AgentKpiKanbanFlow({
                               </p>
                             </div>
                             <span className="rounded-full border border-zinc-200 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-200">
-                              {r.frequency}
+                              {itProject ? "Project" : r.frequency}
                             </span>
                           </div>
-                          {normalized.segmented ? (
+                          {!itProject && normalized.segmented ? (
                             <span className="mt-2 inline-flex rounded-full border border-orange-400/60 bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100">
                               Segmented
                             </span>
@@ -538,62 +578,47 @@ export function AgentKpiKanbanFlow({
                                   className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
                                 />
                               </label>
-                              <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                Phase
-                                <input
-                                  key={`ipp-${r.id}-${r.updatedAt}`}
-                                  type="text"
-                                  defaultValue={r.itProjectPhase ?? ""}
-                                  disabled={!editable || busyId === r.id}
-                                  placeholder="e.g. UAT / Rollout"
-                                  onBlur={(e) => {
-                                    const v = e.target.value.trim();
-                                    const prev = (r.itProjectPhase ?? "").trim();
-                                    if (v !== prev) void patchItProjectMeta(r.id, { itProjectPhase: v || null });
-                                  }}
-                                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-                                />
-                              </label>
                             </div>
                           ) : null}
                           <div className="mt-3">
                             <div className="flex items-center justify-between">
-                              <p className="text-xs text-zinc-700 dark:text-zinc-200">Progress</p>
+                              <p className="text-xs text-zinc-700 dark:text-zinc-200">
+                                {itProjectProgress ? "Project progress (phase average)" : "Progress"}
+                              </p>
                               <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                                {p.total > 0
-                                  ? p.inverted
-                                    ? `${p.positive}/${p.total} clear · ${p.negative} flagged · ${p.pct}%`
-                                    : `${p.done}/${p.total} checked · ${p.missing} missing · ${p.pct}%`
-                                  : `${p.done}/${p.total} · ${p.pct}%`}
+                                {itProjectProgress
+                                  ? itProjectProgress.totalItems > 0
+                                    ? `${itProjectProgress.averagePercent}% avg · ${itProjectProgress.totalDone}/${itProjectProgress.totalItems} sub-tasks`
+                                    : "0%"
+                                  : p.total > 0
+                                    ? p.inverted
+                                      ? `${p.positive}/${p.total} clear · ${p.negative} flagged · ${p.pct}%`
+                                      : `${p.done}/${p.total} checked · ${p.missing} missing · ${p.pct}%`
+                                    : `${p.done}/${p.total} · ${p.pct}%`}
                               </p>
                             </div>
-                            <div className="mt-2 h-2 rounded-full bg-zinc-200/70 dark:bg-zinc-800/60">
-                              <div
-                                className={cn(
-                                  "h-full rounded-full",
-                                  col === "DONE" ? "bg-emerald-500" : col === "DELAYED" ? "bg-rose-500" : "bg-blue-500",
-                                )}
-                                style={{ width: `${p.pct}%` }}
-                              />
-                            </div>
+                            <ChecklistProgressBar percent={mainBarPct} barClassName={mainBarClass} />
+                            {itProjectProgress && itProjectProgress.phases.filter((ph) => ph.total > 0).length > 1 ? (
+                              <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                Average of{" "}
+                                {itProjectProgress.phases
+                                  .filter((ph) => ph.total > 0)
+                                  .map((ph) => `${ph.phaseName} ${ph.percent}%`)
+                                  .join(" · ")}
+                              </p>
+                            ) : null}
                             <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-                              {r.isRecurring === false || !end
-                                ? `Non-recurring task${r.nonRecurringStartAt && r.nonRecurringEndAt ? ` (${new Date(r.nonRecurringStartAt).toLocaleDateString()} - ${new Date(r.nonRecurringEndAt).toLocaleDateString()})` : ""}`
-                                : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`}
+                              {itProject
+                                ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
+                                : r.isRecurring === false || !end
+                                  ? `Non-recurring task${r.nonRecurringStartAt && r.nonRecurringEndAt ? ` (${new Date(r.nonRecurringStartAt).toLocaleDateString()} - ${new Date(r.nonRecurringEndAt).toLocaleDateString()})` : ""}`
+                                  : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`}
                             </p>
-                            {itProject && late > 0 ? (
-                              <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                                Done but delayed by {fmtDelay(late)}
-                              </p>
-                            ) : itProject && incLate > 0 ? (
+                            {itProject && incLate > 0 ? (
                               <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
-                                {p.inverted
-                                  ? p.negative > 0
-                                    ? `${p.negative} flagged item${p.negative === 1 ? "" : "s"} · overdue by ${fmtDelay(incLate)}`
-                                    : `Incomplete · overdue by ${fmtDelay(incLate)}`
-                                  : p.missing > 0
-                                    ? `${p.missing} missing checkbox${p.missing === 1 ? "" : "es"} · overdue by ${fmtDelay(incLate)}`
-                                    : `Incomplete · overdue by ${fmtDelay(incLate)}`}
+                                {p.done === p.total
+                                  ? `All sub-tasks complete · delayed by ${fmtDelay(incLate)}`
+                                  : `Delayed by ${fmtDelay(incLate)}`}
                               </p>
                             ) : p.inverted
                               ? p.negative > 0 && p.positive < p.total ? (
@@ -608,7 +633,7 @@ export function AgentKpiKanbanFlow({
                                 ) : null}
                           </div>
                           <div className="mt-3 space-y-2">
-                            {normalized.segmented
+                            {!itProject && normalized.segmented
                               ? normalized.segments.map((seg) => (
                                   <div
                                     key={seg.id}
@@ -618,115 +643,89 @@ export function AgentKpiKanbanFlow({
                                       {seg.label}
                                     </p>
                                     <div className="mt-1 space-y-2">
-                                      {seg.items.map((s) =>
-                                        itProject ? (
-                                          <div
-                                            key={s.id}
-                                            className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
-                                          >
-                                            <label className="flex items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200">
-                                              <input
-                                                type="checkbox"
-                                                className="mt-0.5"
-                                                disabled={!editable || busyId === r.id}
-                                                checked={Boolean(s.done)}
-                                                onChange={() =>
-                                                  void toggleSubKpi(r.id, s.id, Boolean(s.done))
-                                                }
-                                              />
-                                              <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
-                                                {s.title}
-                                              </span>
-                                            </label>
-                                            <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                                              Sub-task
-                                            </p>
-                                            <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
-                                              <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                                Due date
-                                                <DatePickerField
-                                                  value={s.dueDate ?? ""}
-                                                  disabled={!editable || busyId === r.id}
-                                                  onChange={(e) =>
-                                                    void patchSubKpiSchedule(r.id, s.id, {
-                                                      dueDate: e.target.value || null,
-                                                    })
-                                                  }
-                                                  wrapperClassName="mt-1"
-                                                  aria-label={`Due date for ${s.title}`}
-                                                />
-                                              </label>
-                                              <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                                Actual date
-                                                <DatePickerField
-                                                  value={s.actualDate ?? ""}
-                                                  disabled={!editable || busyId === r.id}
-                                                  onChange={(e) =>
-                                                    void patchSubKpiSchedule(r.id, s.id, {
-                                                      actualDate: e.target.value || null,
-                                                    })
-                                                  }
-                                                  wrapperClassName="mt-1"
-                                                  aria-label={`Actual date for ${s.title}`}
-                                                />
-                                              </label>
-                                            </div>
-                                            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-                                              Status:{" "}
-                                              <span
-                                                className={cn(
-                                                  "font-semibold",
-                                                  s.done
-                                                    ? "text-emerald-600 dark:text-emerald-400"
-                                                    : "text-amber-700 dark:text-amber-300",
-                                                )}
-                                              >
-                                                {subTaskStatusLabel(s)}
-                                              </span>
-                                            </p>
-                                          </div>
-                                        ) : (
-                                          <label
-                                            key={s.id}
-                                            className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              disabled={!editable || busyId === r.id}
-                                              checked={Boolean(s.done)}
-                                              onChange={() =>
-                                                void toggleSubKpi(r.id, s.id, Boolean(s.done))
-                                              }
-                                            />
-                                            <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
-                                              {s.title}
-                                            </span>
-                                          </label>
-                                        ),
-                                      )}
+                                      {seg.items.map((s) => (
+                                        <label
+                                          key={s.id}
+                                          className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            disabled={!editable || busyId === r.id}
+                                            checked={Boolean(s.done)}
+                                            onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
+                                          />
+                                          <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
+                                            {s.title}
+                                          </span>
+                                        </label>
+                                      ))}
                                     </div>
                                   </div>
                                 ))
-                              : normalized.flat.map((s) =>
-                                  itProject ? (
-                                    <div
-                                      key={s.id}
-                                      className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
-                                    >
+                              : itProject && itProjectData
+                                ? itProjectData.phases.map((phase) => {
+                                    const phaseProgress = itProjectPhaseProgressFromItems(phase);
+                                    return (
+                                      <div
+                                        key={phase.id}
+                                        className="rounded-lg border border-orange-400/45 bg-orange-500/[0.06] p-3 dark:border-orange-500/35 dark:bg-orange-500/10"
+                                      >
+                                        <div className="border-b border-orange-400/25 pb-2 dark:border-orange-500/25">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+                                              {phase.name}
+                                            </p>
+                                            <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
+                                              {phaseProgress.total > 0
+                                                ? `${phaseProgress.done}/${phaseProgress.total} · ${phaseProgress.percent}%`
+                                                : "No sub-tasks"}
+                                            </span>
+                                          </div>
+                                          {phaseProgress.total > 0 ? (
+                                            <ChecklistProgressBar
+                                              percent={phaseProgress.percent}
+                                              barClassName="bg-orange-500"
+                                            />
+                                          ) : null}
+                                        </div>
+                                        <div className="mt-2 space-y-2">
+                                          {phase.items.length === 0 ? (
+                                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                              No sub-tasks in this phase.
+                                            </p>
+                                          ) : (
+                                            phase.items.map((s) => (
+                                              <div
+                                                key={s.id}
+                                                className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
+                                              >
                                       <label className="flex items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200">
                                         <input
                                           type="checkbox"
                                           className="mt-0.5"
                                           disabled={!editable || busyId === r.id}
-                                          checked={Boolean(s.done)}
+                                          checked={isItProjectSubTaskComplete(s)}
                                           onChange={() =>
-                                            void toggleSubKpi(r.id, s.id, Boolean(s.done))
+                                            void toggleSubKpi(
+                                              r.id,
+                                              s.id,
+                                              isItProjectSubTaskComplete(s),
+                                            )
                                           }
                                         />
-                                        <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
+                                        <span
+                                          className={cn(
+                                            isItProjectSubTaskComplete(s) && "line-through opacity-70",
+                                          )}
+                                        >
                                           {s.title}
                                         </span>
                                       </label>
+                                      {!hasValidActualDate(s) ? (
+                                        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                                          Pick an actual date to complete this sub-task (on time vs delayed is set automatically).
+                                        </p>
+                                      ) : null}
                                       <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                                         Sub-task
                                       </p>
@@ -765,16 +764,24 @@ export function AgentKpiKanbanFlow({
                                         <span
                                           className={cn(
                                             "font-semibold",
-                                            s.done
-                                              ? "text-emerald-600 dark:text-emerald-400"
-                                              : "text-amber-700 dark:text-amber-300",
+                                            isItProjectSubTaskDelayed(s, Date.now(), tz)
+                                              ? "text-rose-700 dark:text-rose-400"
+                                              : hasValidActualDate(s)
+                                                ? "text-emerald-600 dark:text-emerald-400"
+                                                : "text-amber-700 dark:text-amber-300",
                                           )}
                                         >
-                                          {subTaskStatusLabel(s)}
+                                          {subTaskStatusLabel(s, tz)}
                                         </span>
                                       </p>
-                                    </div>
-                                  ) : (
+                                              </div>
+                                            ))
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                : checklistItems.map((s: SubKpiItem) => (
                                     <label
                                       key={s.id}
                                       className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
@@ -785,10 +792,11 @@ export function AgentKpiKanbanFlow({
                                         checked={Boolean(s.done)}
                                         onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
                                       />
-                                      <span className={cn(Boolean(s.done) && "line-through opacity-70")}>{s.title}</span>
+                                      <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
+                                        {s.title}
+                                      </span>
                                     </label>
-                                  ),
-                                )}
+                                  ))}
                           </div>
                             </div>
                           </div>

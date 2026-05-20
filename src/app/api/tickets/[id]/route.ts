@@ -10,6 +10,7 @@ import { parseTransferRequestDetail, serializeTransferRequest } from "@/lib/tick
 import { getTicketSlaState } from "@/lib/sla";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticket-feedback-policy";
 
 async function ticketJsonWithAssigneeColor<T extends { assignedAgent: { email: string; name?: string } | null }>(
   ticket: T,
@@ -485,6 +486,11 @@ export async function PATCH(
       if (!Number.isFinite(csat) || csat < 1 || csat > 5) {
         return NextResponse.json({ error: "csat must be 1-5" }, { status: 400 });
       }
+      const comment = normalizeFeedbackComment(body.comment);
+      const feedbackError = validateFeedbackForRating(csat, comment);
+      if (feedbackError) {
+        return NextResponse.json({ error: feedbackError }, { status: 400 });
+      }
       const nps =
         body.nps === undefined || body.nps === null
           ? null
@@ -508,13 +514,13 @@ export async function PATCH(
           csat,
           nps,
           ces,
-          comment: (body.comment as string | undefined) ?? null,
+          comment,
         },
         update: {
           csat,
           nps,
           ces,
-          comment: (body.comment as string | undefined) ?? null,
+          comment,
         },
       });
 

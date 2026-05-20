@@ -1,210 +1,245 @@
-# Ticket System v3 User Manual
+# Ticket System v3 — User Manual
 
 ## 1) Overview
 
 Ticket System v3 is a service desk platform for:
 
 - submitting and tracking support tickets
-- managing assigned work through board-based workflows
-- monitoring KPI and operational metrics
+- managing assigned work through **ticket** and **task** boards
+- monitoring KPI and operational metrics in **Metrics & Reports**
 - handling account security and profile settings
 
-This manual is written for daily users (Customer, Personnel/Agent, Admin, SuperAdmin).
+This manual covers daily use for **Customer**, **Personnel**, **Admin**, and **SuperAdmin** roles.
 
-## 2) Access and Sign-in
+## 2) Access and sign-in
 
 ### Sign-in methods
 
-- Go to `/signin`
-- Sign in using:
-  - local credentials (username/email + password), or
-  - configured SSO provider (if enabled by your organization)
+- Go to **`/signin`**
+- Sign in with:
+  - local credentials (username or email + password), or
+  - **Google OAuth**, when configured
 
 ### First-time access
 
-- New users can register through `/signup` when enabled.
-- If your account is created by Admin, use the credentials provided to you.
+- Self-registration: **`/signup`** when enabled
+- Admin-provisioned accounts: use credentials provided by your administrator
 
 ### Sign-out
 
-- Use the sign-out action in the UI (for example in My Account).
-- For security-sensitive updates (email/username/password), the system signs you out after success.
+- Use **Sign out** in the header (or My Account).
+- Username, email, and password changes sign you out automatically after success.
 
-## 3) Roles and What They Can See
+## 3) Roles and navigation
+
+Navigation is **role-based** (sidebar on large screens; menu button on mobile).
 
 ### Customer
 
-- Home dashboard
-- Create ticket (`/tickets/new`)
-- View own tickets and conversations
-- Verify/confirm ticket resolution
-- Submit rating/feedback (when available)
+| Item | Path |
+|------|------|
+| Dashboard | `/` |
+| Active Tickets | `/my-tickets` |
+| Knowledge Base | `/tickets/knowledge` |
+| Create ticket | `/tickets/new` |
+| My Account | `/admin/account` |
 
-### Personnel / Agent
+Customers are redirected away from `/agent` and `/insights`.
 
-- Board (`/agent`) for assigned operational work
-- Personal metrics view in `/insights`
-- My Account (`/admin/account`)
+### Personnel
+
+| Item | Path |
+|------|------|
+| Ticket Dashboard | `/my-requests` |
+| Board → Ticket Board | `/agent` or `/agent?board=ticket` |
+| Board → Task Board | `/agent?board=kpi` |
+| Metrics & Reports | `/insights` |
+| My Account | `/admin/account` |
+
+Personnel landing: **`/agent`** (home redirects here).
+
+Optional (when granted **assignment-board** permission):
+
+- **Assignment Board** — `/admin/manual-assignment`
+- **Task Management** tab on **`/insights`** (KPI definitions for coordinators)
 
 ### Admin / SuperAdmin
 
-- Ticket Dashboard (`/`)
-- Personnel management (`/admin/personnel`)
-- Board (`/agent`)
-- Metrics & Reports (`/insights`)
-- Escalation Triggers (`/admin/escalation-triggers`)
-- My Account (`/admin/account`)
+| Item | Path |
+|------|------|
+| Ticket Dashboard | `/` |
+| Create requests | `/admin/ticket-requests` |
+| Personnel | `/admin/personnel` |
+| Board | `/agent` (see board tabs below) |
+| Metrics & Reports | `/insights` |
+| Priority alerts | `/admin/escalation-triggers` |
+| My Account | `/admin/account` |
 
-## 4) Core Navigation
+On **`/agent`**, admins also use sub-tabs:
 
-- `/` - main dashboard (role-aware landing)
-- `/agent` - orchestration board and KPI kanban operations
-- `/insights` - metrics and reports (KPI/task visibility depends on role)
-- `/admin/personnel` - personnel and assignment controls
-- `/admin/account` - profile, security, billing tabs
-- `/tickets/new` - create ticket
-- `/my-tickets` - ticket list for customer flow
+- **Assignment Board** — `/admin/manual-assignment`
+- **Company Board** — `/agent?board=company`
+- **Ticket Board** — `/agent?board=ticket`
+- **Task Board** — `/agent?board=kpi` (KPI kanban + task definitions)
 
-## 5) Customer Guide
+Header utilities (staff): ticket search, notifications, **Process** (`/process`).
+
+## 4) Customer guide
 
 ### Submit a ticket
 
-1. Open `/tickets/new`.
-2. Fill title, description, category/priority (if shown).
-3. Submit.
-4. Save the ticket ID for tracking.
+1. Open **`/tickets/new`**.
+2. Complete title, description, department/business unit, and contact fields.
+3. Attach screenshots if helpful (limits apply).
+4. Submit; save the **ticket number**.
+
+**Intake lock:** If a resolved ticket still needs verification/rating, new tickets may be blocked until that flow is finished.
 
 ### Track and reply
 
-1. Open your ticket from `/my-tickets` (or direct ticket link).
-2. Review status and timeline updates.
-3. Add replies/attachments as needed.
+1. Use **`/my-tickets`** or the dashboard kanban at **`/`**.
+2. Review status, timeline, and conversation.
+3. Reply when support requests more information.
 
-### Resolution verification and rating
+### Verification and rating
 
-- When a ticket is marked resolved, verify outcome in the ticket page.
-- Submit confirmation and rating if the flow is enabled for your ticket state.
+- Resolved tickets: complete **`/tickets/[id]/verification`** and rating when prompted.
+- Ratings of **3 stars or below** require written feedback before the ticket can close.
+- Email links may also point to verification actions.
 
-## 6) Personnel / Agent Guide
+## 5) Personnel guide
 
-### A) Board (`/agent`)
+### Ticket Dashboard (`/my-requests`)
 
-- Use the board to manage work items and progress.
-- Drag-and-drop is used where enabled for status transitions.
-- KPI kanban flow is handled here as the main operational area.
+- Personal view of tickets you submitted or own per policy.
+- Same intake-lock rules as customers when you are the requestor.
 
-### B) KPI checklist behavior
+### Ticket Board (`/agent?board=ticket`)
 
-- KPIs can include flat or segmented sub-KPI checklists.
-- Only the assigned personnel can edit their own checklist completion.
-- If a KPI/task is completed after due time, it can still appear in Done with delayed indicator.
+- Kanban/table views for operational ticket work.
+- Set **priority** above **Set Priority Level (UNSET)** before moving to **In progress** (policy enforced).
+- Drag-and-drop status updates where enabled.
 
-### C) Metrics (`/insights`)
+### Task Board (`/agent?board=kpi`)
 
-- Personnel users see personal metric views.
-- Some management controls are hidden for personnel-only roles by design.
+- **Task kanban** columns: **Current**, **Done**, **Delayed** (see KPI section).
+- Complete **sub-KPI checklists** only on tasks assigned to you (when restricted).
+- Coordinators with assignment permission may use **Task Management** on **`/insights`**.
 
-## 7) Admin / SuperAdmin Guide
+### Metrics & Reports (`/insights`)
 
-### A) Ticket Dashboard
+Tabs (role-dependent):
 
-- Monitor queue health and ticket distribution.
-- Review statuses, SLA risk, and escalations.
+- **Ticket metrics** — volume, SLA, CSAT, charts (date range filter).
+- **Task metrics** / **My task metrics** — helpdesk and checklist pillar metrics.
+- **Task Management** (Personnel coordinators only) — define recurring tasks when permitted.
 
-### B) Personnel Management
+## 6) Admin / SuperAdmin guide
 
-- Create/manage personnel records.
-- Control assignment readiness and workforce setup.
+### Ticket Dashboard (`/`)
 
-### C) Board and KPI assignment
+- Queue health, on-duty roster, recent activity, priority stack.
 
-- Assign and organize KPI workload.
-- Admin can set and assign KPI work.
-- Checklist completion rights remain with the assigned person.
+### Create requests (`/admin/ticket-requests`)
 
-### D) Escalation Triggers
+- Admin intake for tickets on behalf of users; links to assignment and board views.
 
-- Configure escalation behavior for SLA and process controls.
+### Personnel (`/admin/personnel`)
 
-## 8) KPI and Task Behavior Notes
+- Personnel registry, portal accounts, assignment readiness, account-request review.
 
-- KPI operations are centered on the board flow.
-- Recurrence supports daily, weekly (configurable weekday), and monthly (configurable month day) cycles.
-- Sub-KPI checklists reset when a new KPI period starts.
-- Delayed-but-completed items are marked accordingly in Done state.
+### Boards
 
-## 9) My Account and Security
+| Board | Purpose |
+|-------|---------|
+| Assignment | Drag tickets to assign owners (`/admin/manual-assignment`) |
+| Company | Cross-team company-line view |
+| Ticket | Main operational ticket kanban |
+| Task | KPI/task kanban + **Task Definition** console (admins) |
 
-Open `/admin/account` then use the **Security** tab.
+### Priority alerts (`/admin/escalation-triggers`)
+
+- Configure priority-linked escalation behavior.
+
+### Metrics & Reports (`/insights`)
+
+- Full ticket and task metrics; reporting window and cadence controls.
+- Admins define tasks on **Task Board**, not the Insights Task Management tab.
+
+### Other admin paths
+
+- **`/admin/account-management`** — portal account administration (when deployed)
+- **`/reports`** — reporting views as implemented
+- **`POST /api/sla/sweep`** — SLA breach scan (secured; admin automation)
+
+## 7) KPI and task behavior
+
+### Recurring tasks
+
+- Frequencies: **Daily**, **Weekly** (configurable weekday), **Monthly** (configurable day of month).
+- Sub-KPI checklists can be **flat** or **segmented** (grouped sections).
+- On period rollover, checklist completion resets for the new cycle.
+- Timezone: browser/reporting zone is sent to the API for period boundaries.
+
+### IT Project Implementation
+
+Special non-recurring pillar:
+
+- Organized by **project name** and **phases**; each sub-task has its own **due date**.
+- Dates are entered/displayed as **MM/DD/YYYY**; stored as calendar days.
+- Assignees record an **actual date** when marking a sub-task complete.
+- **Delayed** column applies **only** to this pillar when a sub-task is past due or completed after due date.
+- Fully complete but late work stays in **Delayed**, not **Done**.
+
+### Other recurring tasks
+
+- Completed after the due period may still appear in **Done** with a delayed indicator (recurring KPIs).
+- Only the **assignee** can edit checklist items in restricted flows.
+
+## 8) My Account and security
+
+Open **`/admin/account`** → **Security** tab (available to Customer, Personnel, and Admin roles).
 
 ### Change username
 
-1. Enter new username.
-2. Enter current password.
-3. Click **Update username**.
-4. System signs you out; sign in again with the new username.
+1. New username + current password → **Update username**.
+2. Sign in again with the new username.
 
-Rules:
+Rules: 3–32 characters; letters, numbers, `.`, `_`, `-`; unique.
 
-- 3-32 characters
-- allowed: letters, numbers, `.`, `_`, `-`
-- must be unique
+### Change email / password
 
-### Change email
+Same pattern: current password required; automatic sign-out on success.
 
-1. Enter new email.
-2. Enter current password.
-3. Click **Update email**.
-4. System signs you out; sign in again using the new email.
+### Account requests
 
-### Change password
+Submit suspension or deletion requests; Admin/SuperAdmin reviews in Personnel or account workflows.
 
-1. Enter current password.
-2. Enter new password and confirm.
-3. Click **Update password**.
-4. System signs you out; sign in again with the new password.
+## 9) Troubleshooting
 
-### Account suspension/deletion request
+| Issue | What to try |
+|-------|-------------|
+| Cannot sign in | Verify credentials; check Google sign-in if used; confirm account active |
+| Unauthorized / missing menu | Role may not include that feature — contact Admin |
+| Cannot create ticket | Complete pending resolved verification/rating |
+| Cannot move to In progress | Set priority above **UNSET** |
+| Cannot edit checklist | Confirm you are the assignee |
+| KPI dates look wrong | Confirm timezone around weekly/monthly rollover |
 
-- Submit a request in Security tab.
-- Admin/SuperAdmin reviews request history and status.
+## 10) Quick reference
 
-## 10) Troubleshooting
-
-### Cannot sign in
-
-- Verify username/email and password.
-- Confirm account is active.
-- If using SSO, confirm identity provider availability.
-
-### "Unauthorized" or missing page/section
-
-- Your role may not have access to that function.
-- Contact Admin for role/access updates.
-
-### KPI/task cannot be edited
-
-- Only assignee can edit checklist/task status in restricted flows.
-- Confirm the item is assigned to your account.
-
-### Username/email update fails
-
-- Re-check current password.
-- Ensure new username/email is not already used.
-- Ensure username matches format requirements.
-
-## 11) Best Practices
-
-- Keep account credentials private; rotate passwords regularly.
-- Use clear, complete ticket descriptions to reduce back-and-forth.
-- Update work item statuses in real time.
-- Review delayed labels to improve planning and SLA performance.
-
-## 12) Quick Reference
-
-- Sign in: `/signin`
-- Create ticket: `/tickets/new`
-- Board: `/agent`
-- Metrics: `/insights`
-- My Account: `/admin/account`
-
+| Path | Description |
+|------|-------------|
+| `/signin` | Sign in |
+| `/signup` | Self-registration |
+| `/` | Home (customer dashboard or admin ticket dashboard) |
+| `/my-tickets` | Customer ticket list |
+| `/my-requests` | Personnel ticket dashboard |
+| `/tickets/new` | New ticket |
+| `/agent` | Staff boards (use `?board=` tabs) |
+| `/admin/manual-assignment` | Assignment board |
+| `/insights` | Metrics & reports |
+| `/process` | Process / lifecycle reference |
+| `/admin/personnel` | Personnel admin |
+| `/admin/escalation-triggers` | Priority alerts |
+| `/admin/account` | My Account |

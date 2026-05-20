@@ -11,8 +11,8 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import {
-  applyItProjectSubTaskDoneMeta,
   collectAllSubKpiItems,
+  type NormalizedSubKpis,
   markEverySubKpiDone,
   normalizeSubKpis,
   resetAllSubKpiDone,
@@ -22,6 +22,19 @@ import {
   validateStructuredUpdate,
   wrapForPersist,
 } from "@/lib/kpi-subkpis";
+import {
+  buildItProjectFromPhaseDrafts,
+  isItProjectEnvelope,
+  itProjectActivePhase,
+  itProjectAllItems,
+  parseItProjectSubKpis,
+  setItProjectActivePhase,
+  setItProjectSubKpiDone,
+  setItProjectSubKpiSchedule,
+  updateItProjectPhases,
+  wrapItProjectSubKpis,
+  type ItProjectData,
+} from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
@@ -31,7 +44,9 @@ import { resolveOpsPermissions } from "@/lib/ops-permissions";
 const allowedFrequencies = new Set(Object.values(KpiFrequency));
 
 function checklistFullyComplete(subKpis: unknown): boolean {
-  const items = collectAllSubKpiItems(normalizeSubKpis(subKpis));
+  const items = isItProjectEnvelope(subKpis)
+    ? itProjectAllItems(parseItProjectSubKpis(subKpis))
+    : collectAllSubKpiItems(normalizeSubKpis(subKpis));
   if (items.length === 0) return false;
   return items.every((x) => x.done);
 }
@@ -84,7 +99,7 @@ export async function GET(req: Request) {
   const updates: Promise<unknown>[] = [];
 
   for (const row of rows) {
-    if (!row.isRecurring) {
+    if (!row.isRecurring || isItProjectImplementationPillar(row.title)) {
       continue;
     }
 
@@ -181,7 +196,7 @@ export async function POST(req: Request) {
     title?: string;
     frequency?: string;
     subKpisSegmented?: boolean;
-    subKpis?: Array<{ title?: string }>;
+    subKpis?: Array<{ title?: string; startDate?: string; endDate?: string; dueDate?: string }>;
     segments?: Array<{ label?: string; items?: Array<{ title?: string }> }>;
     assignedAgentId?: string;
     recurrenceWeekday?: number;
@@ -192,13 +207,22 @@ export async function POST(req: Request) {
     nonRecurringEndAt?: string;
     itProjectName?: string;
     itProjectPhase?: string;
+    itProjectPhases?: Array<{ name?: string; items?: Array<{ title?: string; dueDate?: string }> }>;
+    itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
   };
   const title = body.title?.trim() ?? "";
-  const frequency = body.frequency?.toUpperCase() as KpiFrequency;
+  const isItProject = isItProjectImplementationPillar(title);
+  const frequency = (body.frequency?.toUpperCase() ?? "DAILY") as KpiFrequency;
   if (!title || !allowedFrequencies.has(frequency)) {
     return NextResponse.json({ error: "title and frequency are required." }, { status: 400 });
   }
-  const isRecurring = body.isRecurring !== false;
+  if (isItProject && body.subKpisSegmented === true) {
+    return NextResponse.json(
+      { error: "IT Project Implementation does not use segmented checklists." },
+      { status: 400 },
+    );
+  }
+  const isRecurring = isItProject ? false : body.isRecurring !== false;
   let nonRecurringStartAt: Date | null = null;
   let nonRecurringEndAt: Date | null = null;
 
@@ -224,7 +248,7 @@ export async function POST(req: Request) {
     }
     recurrenceMonthDay = dom;
   }
-  if (!isRecurring) {
+  if (!isRecurring && !isItProject) {
     const startIso = body.nonRecurringStartAt?.trim() ?? "";
     const endIso = body.nonRecurringEndAt?.trim() ?? "";
     if (!startIso || !endIso) {
@@ -260,32 +284,58 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
   }
 
-  const flatTitles =
-    Array.isArray(body.subKpis) && !body.subKpisSegmented
-      ? body.subKpis.map((s) => (s.title ?? "").trim()).filter((t) => t.length > 0)
-      : [];
+  let built: { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string };
 
-  const segmentsInput =
-    body.subKpisSegmented === true && Array.isArray(body.segments)
-      ? body.segments.map((seg) => ({
-          label: (seg.label ?? "").trim(),
-          items: Array.isArray(seg.items)
-            ? seg.items.map((i) => (i.title ?? "").trim()).filter((t) => t.length > 0)
+  let itProjectPersist: Prisma.InputJsonValue | null = null;
+  let itProjectPhaseLabel: string | null = null;
+
+  if (isItProject) {
+    const phaseDrafts = Array.isArray(body.itProjectPhases)
+      ? body.itProjectPhases.map((p) => ({
+          name: (p.name ?? "").trim(),
+          items: Array.isArray(p.items)
+            ? p.items.map((it) => ({
+                title: (it.title ?? "").trim(),
+                dueDate: (it.dueDate ?? "").trim(),
+              }))
             : [],
         }))
-      : undefined;
+      : [];
+    const projectBuilt = buildItProjectFromPhaseDrafts(phaseDrafts);
+    if (!projectBuilt.ok) {
+      return NextResponse.json({ error: projectBuilt.error }, { status: 400 });
+    }
+    itProjectPersist = wrapItProjectSubKpis(projectBuilt.data);
+    itProjectPhaseLabel = itProjectActivePhase(projectBuilt.data).name;
+    built = { ok: true, norm: { segmented: false, flat: [] } };
+  } else {
+    const flatTitles =
+      Array.isArray(body.subKpis) && !body.subKpisSegmented
+        ? body.subKpis.map((s) => (s.title ?? "").trim()).filter((t) => t.length > 0)
+        : [];
 
-  const built = validateSegmentStructureForPersist(
-    body.subKpisSegmented === true,
-    flatTitles,
-    segmentsInput,
-  );
+    const segmentsInput =
+      body.subKpisSegmented === true && Array.isArray(body.segments)
+        ? body.segments.map((seg) => ({
+            label: (seg.label ?? "").trim(),
+            items: Array.isArray(seg.items)
+              ? seg.items.map((i) => (i.title ?? "").trim()).filter((t) => t.length > 0)
+              : [],
+          }))
+        : undefined;
+
+    built = validateSegmentStructureForPersist(
+      body.subKpisSegmented === true,
+      flatTitles,
+      segmentsInput,
+    );
+  }
 
   if (!built.ok) {
     return NextResponse.json({ error: built.error }, { status: 400 });
   }
 
-  const subKpisPersist = wrapForPersist(built.norm) as Prisma.InputJsonValue;
+  const subKpisPersist = (itProjectPersist ?? wrapForPersist(built.norm)) as Prisma.InputJsonValue;
 
   const timeZone = normalizeTimeZone(body.timeZone);
   const periodKey = isRecurring
@@ -306,8 +356,9 @@ export async function POST(req: Request) {
     isItProjectImplementationPillar(title) && typeof body.itProjectName === "string"
       ? body.itProjectName.trim() || null
       : null;
-  const itProjectPhase =
-    isItProjectImplementationPillar(title) && typeof body.itProjectPhase === "string"
+  const itProjectPhase = isItProject
+    ? itProjectPhaseLabel
+    : isItProjectImplementationPillar(title) && typeof body.itProjectPhase === "string"
       ? body.itProjectPhase.trim() || null
       : null;
 
@@ -370,7 +421,12 @@ export async function PATCH(req: Request) {
     assignedAgentId?: string;
     itProjectName?: string | null;
     itProjectPhase?: string | null;
-    subKpiSchedule?: { subKpiId?: string; dueDate?: string | null; actualDate?: string | null };
+    itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
+    subKpiSchedule?: {
+      subKpiId?: string;
+      dueDate?: string | null;
+      actualDate?: string | null;
+    };
   };
   const id = body.id?.trim() ?? "";
 
@@ -440,6 +496,37 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.itProjectState != null && typeof body.itProjectState === "object") {
+    if (!isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json({ error: "Phase updates apply only to IT Project Implementation." }, { status: 400 });
+    }
+    let wrapped: Prisma.InputJsonValue;
+    if (Array.isArray(body.itProjectState.phases) && body.itProjectState.phases.length > 0) {
+      const parsed = parseItProjectSubKpis(kpiRow.subKpis, kpiRow.itProjectPhase);
+      const activePhaseId =
+        typeof body.itProjectState.activePhaseId === "string" && body.itProjectState.activePhaseId.trim()
+          ? body.itProjectState.activePhaseId.trim()
+          : parsed.activePhaseId;
+      wrapped = updateItProjectPhases(kpiRow.subKpis, {
+        activePhaseId,
+        phases: body.itProjectState.phases as ItProjectData["phases"],
+      });
+    } else if (typeof body.itProjectState.activePhaseId === "string" && body.itProjectState.activePhaseId.trim()) {
+      wrapped = setItProjectActivePhase(kpiRow.subKpis, body.itProjectState.activePhaseId.trim());
+    } else {
+      return NextResponse.json({ error: "Provide activePhaseId or phases." }, { status: 400 });
+    }
+    const active = itProjectActivePhase(parseItProjectSubKpis(wrapped, kpiRow.itProjectPhase));
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: wrapped, itProjectPhase: active.name },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiSchedule != null && typeof body.subKpiSchedule === "object") {
     if (!isAssignee) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -452,11 +539,24 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "subKpiSchedule.subKpiId is required." }, { status: 400 });
     }
     const sched = body.subKpiSchedule;
-    const updatedJson = setSubKpiItemScheduleMeta(kpiRow.subKpis, subKpiIdSched, {
+    const updatedJson = setItProjectSubKpiSchedule(kpiRow.subKpis, subKpiIdSched, {
       dueDate: sched.dueDate,
       actualDate: sched.actualDate,
     });
-    const updated = await prisma.kpiMaintenance.update({ where: { id }, data: { subKpis: updatedJson } });
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(updatedJson);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: updatedJson,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
+    });
     return NextResponse.json(updated);
   }
 
@@ -493,6 +593,12 @@ export async function PATCH(req: Request) {
     if (!validated.ok) {
       return NextResponse.json({ error: validated.error }, { status: 400 });
     }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Use phase controls to edit IT Project Implementation checklists." },
+        { status: 400 },
+      );
+    }
     const wrapped = wrapForPersist(validated.norm);
     const prevComplete = checklistFullyComplete(kpiRow.subKpis);
     const nextComplete = checklistFullyComplete(wrapped);
@@ -525,17 +631,24 @@ export async function PATCH(req: Request) {
     );
   }
 
-  const updatedJsonRaw =
-    typeof markAllDone === "boolean"
-      ? markEverySubKpiDone(kpiRow.subKpis, markAllDone)
-      : setSubKpiItemDone(kpiRow.subKpis, subKpiId, body.done!);
-  let updatedJson: Prisma.InputJsonValue = updatedJsonRaw;
-  if (
-    isItProjectImplementationPillar(kpiRow.title) &&
-    typeof body.done === "boolean" &&
-    subKpiId
-  ) {
-    updatedJson = applyItProjectSubTaskDoneMeta(updatedJsonRaw, subKpiId, body.done, patchTz);
+  let updatedJson: Prisma.InputJsonValue;
+  if (isItProjectImplementationPillar(kpiRow.title)) {
+    if (typeof markAllDone === "boolean") {
+      return NextResponse.json(
+        { error: "Mark-all is not supported for IT Project Implementation. Complete each sub-task with an actual date." },
+        { status: 400 },
+      );
+    }
+    const toggled = setItProjectSubKpiDone(kpiRow.subKpis, subKpiId, body.done!);
+    if (!toggled.ok) {
+      return NextResponse.json({ error: toggled.error }, { status: 400 });
+    }
+    updatedJson = toggled.json;
+  } else {
+    updatedJson =
+      typeof markAllDone === "boolean"
+        ? markEverySubKpiDone(kpiRow.subKpis, markAllDone)
+        : setSubKpiItemDone(kpiRow.subKpis, subKpiId, body.done!);
   }
 
   const prevComplete = checklistFullyComplete(kpiRow.subKpis);

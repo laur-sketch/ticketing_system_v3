@@ -4,6 +4,7 @@ import { verifyEmailVerificationToken } from "@/lib/email-verification-token";
 import { prisma } from "@/lib/prisma";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
 import { logActivity } from "@/lib/ticket-actions";
+import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticket-feedback-policy";
 
 const RATING_ALLOWED_STATUSES = ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"];
 
@@ -21,9 +22,9 @@ function verifiedFromActivities(activities: Array<{ summary: string }>) {
 export default async function EmailActionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ token?: string; action?: string; stars?: string }>;
+  searchParams: Promise<{ token?: string; action?: string; stars?: string; comment?: string }>;
 }) {
-  const { token, action, stars } = await searchParams;
+  const { token, action, stars, comment } = await searchParams;
   const parsed = token ? verifyEmailVerificationToken(token) : null;
   if (!parsed || !action) notFound();
   const act = action as Action;
@@ -103,22 +104,33 @@ export default async function EmailActionPage({
     } else if (!verifiedFromActivities(ticket.activities)) {
       title = "Verification required";
       message = "Please click Verify first before submitting star rating.";
+    } else if (validateFeedbackForRating(value, comment)) {
+      title = "Feedback required";
+      message = "Ratings of 3 stars or below require written feedback. Please open the portal rating form to complete your review.";
     } else {
+      const normalizedComment = normalizeFeedbackComment(comment);
       await prisma.ticketFeedback.upsert({
         where: { ticketId: ticket.id },
         create: {
           ticketId: ticket.id,
           csat: value,
+          comment: normalizedComment,
         },
         update: {
           csat: value,
+          comment: normalizedComment,
         },
       });
       await prisma.ticket.update({
         where: { id: ticket.id },
         data: { status: "CLOSED", closedAt: new Date() },
       });
-      await logActivity(ticket.id, "USER", "Feedback captured", `CSAT ${value}/5 via email action link.`);
+      await logActivity(
+        ticket.id,
+        "USER",
+        "Feedback captured",
+        normalizedComment ? `CSAT ${value}/5. Comment: ${normalizedComment}` : `CSAT ${value}/5 via email action link.`,
+      );
       await logActivity(ticket.id, "USER", "Status → CLOSED", "Ticket closed after verified star rating.");
       title = "Thank you for your rating";
       message = `Your ${value}-star review was recorded and the ticket is now fully resolved.`;

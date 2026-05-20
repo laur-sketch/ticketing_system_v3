@@ -1,5 +1,7 @@
+import { DateTime } from "luxon";
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { itProjectHasAnyDelay, itProjectMaxDelayMs } from "@/lib/it-project-subkpis";
 import {
   getPeriodEndExclusiveFromCycleStart,
   getRolloverEligibleAfterCompletion,
@@ -42,7 +44,29 @@ export function nonRecurringDeadline(record: Pick<KpiMaintenanceLike, "nonRecurr
   return toJsDateMaybe(record.nonRecurringEndAt);
 }
 
-export function incompletePastDeadlineDelayMs(record: KpiMaintenanceLike, nowMs: number, timeZone: string): number {
+function endOfYmdMs(ymd: string, timeZone: string): number | null {
+  const dt = DateTime.fromISO(ymd, { zone: normalizeTimeZone(timeZone) }).endOf("day");
+  if (!dt.isValid) return null;
+  return dt.toMillis();
+}
+
+/** Max overdue ms for IT Project (incomplete past due or actual date after due). */
+export function itProjectIncompleteOverdueMs(
+  subKpis: unknown,
+  nowMs: number,
+  timeZone: string,
+): number {
+  return itProjectMaxDelayMs(subKpis, nowMs, timeZone);
+}
+
+export function incompletePastDeadlineDelayMs(
+  record: KpiMaintenanceLike & { subKpis?: unknown },
+  nowMs: number,
+  timeZone: string,
+): number {
+  if (isItProjectImplementationPillar(String(record.title ?? ""))) {
+    return itProjectIncompleteOverdueMs(record.subKpis, nowMs, timeZone);
+  }
   const deadline =
     record.isRecurring === false
       ? nonRecurringDeadline(record)
@@ -53,7 +77,14 @@ export function incompletePastDeadlineDelayMs(record: KpiMaintenanceLike, nowMs:
   return Math.max(0, nowMs - end);
 }
 
-export function recurringDoneDelayedMs(record: KpiMaintenanceLike, timeZone: string, doneAtMs: number): number {
+export function recurringDoneDelayedMs(
+  record: KpiMaintenanceLike & { subKpis?: unknown },
+  timeZone: string,
+  doneAtMs: number,
+): number {
+  if (isItProjectImplementationPillar(String(record.title ?? ""))) {
+    return itProjectMaxDelayMs(record.subKpis, doneAtMs, timeZone);
+  }
   const deadline =
     record.isRecurring === false
       ? nonRecurringDeadline(record)
@@ -64,16 +95,18 @@ export function recurringDoneDelayedMs(record: KpiMaintenanceLike, timeZone: str
   return Math.max(0, doneAtMs - end);
 }
 
-/** Board column for task kanban: Done when checklist complete; Delayed only when overdue and incomplete (IT Project Implementation only). */
+/** Board column: IT Project → Delayed when any sub-task is late; Done only when all complete and on time. */
 export function taskKanbanDerivedStatus(
-  record: KpiMaintenanceLike,
+  record: KpiMaintenanceLike & { subKpis?: unknown },
   args: { total: number; done: number; nowMs: number; timeZone: string },
 ): "CURRENT" | "DONE" | "DELAYED" {
   const { total, done, nowMs, timeZone } = args;
-  if (total > 0 && done === total) return "DONE";
   if (total === 0) return "CURRENT";
-  if (!isItProjectImplementationPillar(String(record.title ?? ""))) return "CURRENT";
-  return incompletePastDeadlineDelayMs(record, nowMs, timeZone) > 0 ? "DELAYED" : "CURRENT";
+  if (!isItProjectImplementationPillar(String(record.title ?? ""))) {
+    return done === total ? "DONE" : "CURRENT";
+  }
+  if (itProjectHasAnyDelay(record.subKpis, nowMs, timeZone)) return "DELAYED";
+  return done === total ? "DONE" : "CURRENT";
 }
 
 export function nextRolloverEligibleAtUtc(lastFullCompletionAt: Date | null, timeZone: string): Date | null {

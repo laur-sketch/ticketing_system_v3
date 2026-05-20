@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { normalizeFeedbackComment, requiresFeedbackForRating } from "@/lib/ticket-feedback-policy";
 
 export function TicketRatingForm({
   ticketId,
@@ -16,10 +17,16 @@ export function TicketRatingForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const feedbackRequired = requiresFeedbackForRating(stars);
 
   async function submit() {
     if (!Number.isFinite(stars) || stars < 1 || stars > 5) {
       setError("Star rating is required.");
+      return;
+    }
+    const normalizedComment = normalizeFeedbackComment(comment);
+    if (feedbackRequired && !normalizedComment) {
+      setError("Please tell us what went wrong so the team can improve.");
       return;
     }
     setBusy(true);
@@ -30,7 +37,7 @@ export function TicketRatingForm({
       body: JSON.stringify({
         action: "feedback",
         csat: stars,
-        comment: comment.trim() || null,
+        comment: normalizedComment,
       }),
     });
     setBusy(false);
@@ -66,14 +73,25 @@ export function TicketRatingForm({
       </div>
 
       <label className="mt-4 block text-sm text-zinc-300">
-        Optional comment
+        {feedbackRequired ? "Feedback (required for 3 stars or below)" : "Optional comment"}
         <textarea
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           rows={3}
+          required={feedbackRequired}
           className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+          placeholder={
+            feedbackRequired
+              ? "Please share what went wrong or what we should improve."
+              : "Tell us what went well or what we can improve."
+          }
         />
       </label>
+      {feedbackRequired ? (
+        <p className="mt-2 text-xs text-amber-300">
+          Feedback is required when rating 3 stars or below.
+        </p>
+      ) : null}
 
       <button
         type="button"

@@ -1,120 +1,166 @@
-# Ticket System v3 Staff SOP Manual
+# Ticket System v3 — Staff SOP Manual
 
 ## Purpose
 
-This SOP is for Personnel/Agent, Admin, and SuperAdmin users who operate tickets, board flows, and KPI work.
+Standard operating procedures for **Personnel**, **Admin**, and **SuperAdmin** users operating tickets, boards, and KPI/task work.
 
 ## 1) Daily startup checklist
 
-1. Sign in at `/signin`.
-2. Open `/agent` (Board) and check current assignments.
-3. Open `/insights` to review metrics and risk indicators.
-4. Prioritize overdue and high-priority tickets first.
+1. Sign in at **`/signin`**.
+2. Open the appropriate board:
+   - **Personnel:** `/agent` → **Ticket Board** and **Task Board**
+   - **Admin:** `/agent` → review **Assignment**, **Company**, **Ticket**, and **Task** boards as needed
+3. Open **`/insights`** — ticket metrics, task metrics, and (if coordinator) Task Management.
+4. Check notifications (bell) for new **Open** tickets and (admins) pending **account requests**.
+5. Prioritize overdue items, **UNSET** priority tickets, and **Delayed** IT project sub-tasks.
 
 ## 2) Ticket handling SOP
 
 ### Intake
 
-1. Review new/unassigned tickets.
-2. Validate ticket completeness (title, impact, repro steps).
-3. Request missing details immediately if needed.
+1. Review new/unassigned tickets on **Ticket Board** or dashboard.
+2. Validate completeness: title, impact, reproduction steps, attachments.
+3. Set **priority** (not **Set Priority Level**) before **In progress**.
+4. Request missing details in the thread; log major decisions in the timeline.
 
 ### Assignment
 
-1. Assign ticket to appropriate personnel/owner queue.
-2. Confirm ownership is visible on board/dashboard.
+1. Use **Assignment Board** (`/admin/manual-assignment`) or ticket assignment controls.
+2. Confirm assignee and team are visible on the card.
+3. For admin-created tickets, use **Create requests** (`/admin/ticket-requests`) when submitting on behalf of a user.
 
 ### Work-in-progress
 
-1. Move ticket status according to actual progress.
-2. Add timeline updates for major actions/decisions.
-3. Keep user-facing comments clear and actionable.
+1. Move status to match reality (kanban drag or ticket workspace).
+2. Document significant actions in activity/comments.
+3. Use **request more information** per policy when waiting on the requestor.
 
 ### Resolution and closure
 
-1. Verify acceptance criteria are met.
-2. Mark resolved with concise resolution note.
-3. Close when user confirms or according to policy.
+1. Confirm acceptance criteria before **Resolved**.
+2. Add a concise resolution note; customer receives verification email when configured.
+3. Move to **Closed** after customer verification/rating per policy.
+4. If the customer rates **3 stars or below**, written feedback is required and should be reviewed for follow-up.
+5. Do not leave tickets in **Resolved** without driving verification when it is mandatory.
 
 ## 3) Board operations (`/agent`)
 
+### Board tabs (Admin)
+
+| Tab | Route | Use |
+|-----|-------|-----|
+| Assignment Board | `/admin/manual-assignment` | Assign tickets to personnel lanes |
+| Company Board | `/agent?board=company` | Company-line operational view |
+| Ticket Board | `/agent?board=ticket` | Primary ticket kanban |
+| Task Board | `/agent?board=kpi` | KPI/task kanban and definitions |
+
+### Board tabs (Personnel)
+
+- **Ticket Board** — `/agent?board=ticket`
+- **Task Board** — `/agent?board=kpi`
+- **Assignment Board** — only if `canAccessAssignmentBoard` permission is granted
+
 ### Standard practice
 
-- Use drag-and-drop status updates where enabled.
-- Keep work-in-progress load realistic.
-- Avoid stale cards by updating status same day.
+- Update statuses the same business day; avoid stale cards.
+- Use header search to jump to a ticket by number or keyword.
+- Personnel home redirects to **`/agent`**; personal ticket list is **`/my-requests`**.
 
-### KPI kanban operations
+## 4) Task / KPI SOP
 
-- KPI workflow is managed in `/agent`.
-- KPI cards can include flat or segmented sub-KPI checklists.
-- Only assigned personnel can edit checklist completion items.
-- Admin can assign/reassign KPI workload where permissions allow.
+### Task Board kanban
 
-### Delayed completed items
+Columns: **Current**, **Done**, **Delayed**.
 
-- If completed after due period, item still moves to Done with delayed label.
-- Use delayed indicators in daily review to improve planning.
+- Drag tasks between columns where enabled (mouse or touch).
+- **Assignment lanes** (admins/coordinators): drag tasks onto personnel lanes to assign.
 
-## 4) KPI recurrence SOP
+### Recurring tasks
 
-- Daily KPIs reset by calendar date.
-- Weekly KPIs reset using configured start weekday.
-- Monthly KPIs reset using configured day of month.
-- On period rollover, sub-KPI checklist states reset.
+- **Daily / Weekly / Monthly** cycles; weekly/monthly use configured weekday or month-day.
+- **Segmented** checklists: grouped sub-tasks; **flat** checklists: single list.
+- Checklist state resets when a new KPI period starts (timezone-aware API).
 
-Operational note: verify correct timezone behavior during weekly/monthly transitions.
+### IT Project Implementation (non-recurring)
 
-## 5) Role-based controls
+1. Admins define on **Task Board** via **Task Definition** (project name, phases, sub-tasks with due dates).
+2. Assignee completes each sub-task with an **actual date** (**MM/DD/YYYY** in UI).
+3. **Delayed** column: sub-task past due, or actual date after due date.
+4. Do not use **mark all complete** for this pillar — complete sub-tasks individually.
+5. Late but fully complete work remains in **Delayed**, not **Done**.
 
-### Personnel/Agent
+### Other recurring KPIs
 
-- Work assigned tickets/KPIs.
-- Edit only own task/checklist in restricted flows.
+- Late completion may show in **Done** with a delayed indicator.
+- Only the assignee edits checklist items in restricted flows.
 
-### Admin/SuperAdmin
+### Where to define tasks
 
-- Configure assignment and personnel setup.
-- Monitor escalations and SLA compliance.
-- Set and assign KPI workload.
+| Role | Location |
+|------|----------|
+| Admin / SuperAdmin | **Task Board** → Task Definition console |
+| Personnel (coordinator) | **`/insights`** → **My Task Management** tab |
 
-## 6) Escalation and SLA SOP
+## 5) Metrics & Reports SOP (`/insights`)
 
-1. Review SLA risk signals on dashboard/insights.
-2. Trigger or validate escalations as configured.
-3. Ensure escalated tickets include clear activity logs.
-4. Coordinate handoff when queue ownership changes.
+### Ticket metrics tab
 
-## 7) Account and security SOP
+- Set **reporting window** (from/to) before reviews or stand-ups.
+- Monitor SLA compliance, backlog, CSAT, and throughput charts.
 
-Open `/admin/account` > `Security`:
+### Task metrics tab
 
-- Change username (requires current password)
-- Change email (requires current password)
-- Change password
-- Submit account suspension/deletion request
+- Choose cadence (daily/weekly/monthly) and date range.
+- Review helpdesk exports, user-support counts, and checklist pillar completion.
 
-Security rule: credential changes force sign-out; re-authenticate immediately.
+### Refresh discipline
 
-## 8) Shift-end checklist
+- Tabs auto-refresh on an interval when active; reload after major board changes if numbers look stale.
 
-1. Ensure all active tickets have updated status.
-2. Leave handoff notes for unresolved high-priority work.
-3. Verify KPI checklist updates are complete for your assignments.
-4. Sign out of shared devices.
+## 6) Role-based controls
 
-## 9) Incident troubleshooting quick guide
+### Personnel
 
-### Cannot update checklist/task
+- Work assigned tickets and tasks.
+- Edit own checklist/task completion only (when restricted).
+- Optional: assignment board + Task Management on Insights (coordinator permission).
 
-- Confirm item is assigned to current user in restricted flow.
+### Admin / SuperAdmin
 
-### Page/action missing
+- Full personnel, priority alerts, board access, and task definition.
+- Review account suspension/deletion/password-reset requests (notifications → **`/admin/account`**).
+- SLA sweep and deployment operations per runbook.
 
-- Verify role permissions with Admin/SuperAdmin.
+## 7) Escalation and SLA SOP
 
-### Build/deploy discrepancy (admin ops)
+1. Review SLA risk on dashboard and **`/insights`**.
+2. Configure triggers under **Priority alerts** (`/admin/escalation-triggers`).
+3. Run or schedule **`POST /api/sla/sweep`** per operational policy.
+4. Escalated tickets must have clear activity logs and ownership on handoff.
 
-- Confirm current deployed process status in PM2.
-- Rebuild/restart according to deployment procedure.
+## 8) Account and security SOP
 
+**`/admin/account`** → **Security**:
+
+- Change username, email, or password (current password required).
+- Submit account suspension/deletion requests (customers/personnel).
+
+**Rule:** credential changes force sign-out — re-authenticate immediately on shared machines.
+
+## 9) Shift-end checklist
+
+1. All active tickets reflect current status.
+2. Handoff notes on unresolved high-priority or escalated work.
+3. KPI/task checklists updated for your assignments.
+4. IT Project sub-tasks: due dates and actual dates current.
+5. Sign out on shared devices.
+
+## 10) Incident troubleshooting quick guide
+
+| Symptom | Action |
+|---------|--------|
+| Cannot update checklist | Confirm assignee; check IT Project vs recurring rules |
+| Task stuck in Delayed | Complete overdue sub-tasks or correct actual/due dates |
+| Missing board tab | Verify role and `canAccessAssignmentBoard` permission |
+| Missing menu item | Contact Admin for role update |
+| Deploy/build mismatch | Follow deployment runbook (build, Prisma migrate, PM2 restart) |

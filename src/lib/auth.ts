@@ -82,10 +82,6 @@ function roleFromJwt(token: JWT): UserRole {
   return normalizeRole(typeof token.role === "string" ? token.role : null) ?? "Customer";
 }
 
-const oidcReady =
-  !!process.env.OIDC_ISSUER &&
-  !!process.env.OIDC_CLIENT_ID &&
-  !!process.env.OIDC_CLIENT_SECRET;
 const googleReady = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
 export const authOptions: NextAuthOptions = {
@@ -97,32 +93,6 @@ export const authOptions: NextAuthOptions = {
             clientId: process.env.GOOGLE_CLIENT_ID!,
             clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
           }),
-        ]
-      : []),
-    ...(oidcReady
-      ? [
-          {
-            id: "corporate-sso",
-            name: "Corporate SSO",
-            type: "oauth" as const,
-            wellKnown: `${process.env.OIDC_ISSUER}/.well-known/openid-configuration`,
-            clientId: process.env.OIDC_CLIENT_ID!,
-            clientSecret: process.env.OIDC_CLIENT_SECRET!,
-            authorization: { params: { scope: "openid profile email" } },
-            idToken: true,
-            profile(profile: Record<string, unknown>) {
-              return {
-                id: String(profile.sub ?? profile.id ?? crypto.randomUUID()),
-                name: String(profile.name ?? profile.preferred_username ?? "SSO User"),
-                email: String(profile.email ?? ""),
-                role:
-                  extractRoleFromProfile(profile) ??
-                  roleFromEmail(
-                    typeof profile.email === "string" ? profile.email : undefined,
-                  ),
-              };
-            },
-          },
         ]
       : []),
     CredentialsProvider({
