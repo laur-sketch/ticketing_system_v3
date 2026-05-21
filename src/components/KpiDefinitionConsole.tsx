@@ -18,7 +18,7 @@ import {
 const MIN_SUB_FOR_SEGMENT_OPTION = 3;
 const INSIGHTS_VIEW_ONLY = false;
 
-type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly";
+type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly" | "Quarterly";
 type DraftSegmentRow = { id: string; label: string; items: SubKpi[] };
 type ItProjectSubDraft = { id: string; title: string; dueDate: string };
 type ItProjectPhaseDraft = { id: string; name: string; items: ItProjectSubDraft[] };
@@ -388,7 +388,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     if (!isItProject && maintenanceIsRecurring && freqUpper === "WEEKLY") {
       body.recurrenceWeekday = recurrenceWeekday;
     }
-    if (!isItProject && maintenanceIsRecurring && freqUpper === "MONTHLY") {
+    if (!isItProject && maintenanceIsRecurring && (freqUpper === "MONTHLY" || freqUpper === "QUARTERLY")) {
       body.recurrenceMonthDay = recurrenceMonthDay;
     }
     if (!isItProject && !maintenanceIsRecurring) {
@@ -544,17 +544,17 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                   const nextRecurring = e.target.checked;
                   setMaintenanceIsRecurring(nextRecurring);
                   if (nextRecurring) {
-        const recurringDaily = maintenanceFrequency === "Daily";
-        if (recurringDaily) {
-          setSubKpiScheduleDate("");
-          setSegItemScheduleDate({});
-        }
+                    const recurringDaily = maintenanceFrequency === "Daily";
+                    if (recurringDaily) {
+                      setSubKpiScheduleDate("");
+                      setSegItemScheduleDate({});
+                    }
                     setSubKpiTargetDate("");
                     setSegItemTargetDate({});
                     setSubKpisDraft((prev) =>
                       prev.map((item) => {
                         const next = { ...item };
-            if (recurringDaily) delete next.startDate;
+                        if (recurringDaily) delete next.startDate;
                         delete next.dueDate;
                         return next;
                       }),
@@ -633,6 +633,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
               <option value="Daily">Daily</option>
               <option value="Weekly">Weekly</option>
               <option value="Monthly">Monthly</option>
+              <option value="Quarterly">Quarterly</option>
             </select>
           </label>
         ) : null}
@@ -654,9 +655,12 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
             </select>
           </label>
         ) : null}
-        {!isItProject && maintenanceIsRecurring && maintenanceFrequency === "Monthly" ? (
+        {!isItProject &&
+        maintenanceIsRecurring &&
+        (maintenanceFrequency === "Monthly" || maintenanceFrequency === "Quarterly") ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-            Month cycle starts on day (1–31, {recurrenceTz})
+            {maintenanceFrequency === "Quarterly" ? "4-month cycle" : "Month cycle"} starts on day (1–31,{" "}
+            {recurrenceTz})
             <select
               value={recurrenceMonthDay}
               onChange={(e) => setRecurrenceMonthDay(Number(e.target.value))}

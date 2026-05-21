@@ -51,11 +51,11 @@ export type KpiScope = {
 };
 
 /** Matches KPI pillar cadence on Insights → Task metrics. */
-export type HelpdeskTaskCadence = "DAILY" | "WEEKLY" | "MONTHLY";
+export type HelpdeskTaskCadence = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY";
 
 export function parseHelpdeskCadence(param: string | null): HelpdeskTaskCadence {
   const u = param?.trim().toUpperCase();
-  if (u === "WEEKLY" || u === "MONTHLY") return u;
+  if (u === "WEEKLY" || u === "MONTHLY" || u === "QUARTERLY") return u;
   return "DAILY";
 }
 

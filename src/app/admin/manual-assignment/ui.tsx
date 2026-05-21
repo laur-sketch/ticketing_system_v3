@@ -67,13 +67,15 @@ export function ManualAssignmentBoard({
   const canChooseCompanyFilter = Array.isArray(companyFilterOptions) && companyFilterOptions.length > 0;
 
   useEffect(() => {
-    setCards(unassigned);
-    setColumns(personnel);
+    queueMicrotask(() => {
+      setCards(unassigned);
+      setColumns(personnel);
+    });
   }, [unassigned, personnel]);
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(columns.length / ASSIGNMENT_LANES_PAGE_SIZE));
-    setLanePage((p) => Math.min(Math.max(1, p), totalPages));
+    queueMicrotask(() => setLanePage((p) => Math.min(Math.max(1, p), totalPages)));
   }, [columns.length]);
 
   const lanePageCount = Math.max(1, Math.ceil(columns.length / ASSIGNMENT_LANES_PAGE_SIZE));
@@ -82,8 +84,6 @@ export function ManualAssignmentBoard({
     const start = (lanePageClamped - 1) * ASSIGNMENT_LANES_PAGE_SIZE;
     return columns.slice(start, start + ASSIGNMENT_LANES_PAGE_SIZE);
   }, [columns, lanePageClamped]);
-
-  const clearHref = pathname || "/admin/manual-assignment";
 
   async function assign(ticket: TicketCard, agentId: string) {
     setBusyTicketId(ticket.id);
@@ -164,7 +164,12 @@ export function ManualAssignmentBoard({
             </p>
           ) : null}
           {canChooseCompanyFilter ? (
-            <form method="get" action={pathname} className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+            <form
+              method="get"
+              action={pathname}
+              onChange={(e) => e.currentTarget.requestSubmit()}
+              className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end"
+            >
               <div className="flex min-w-[200px] max-w-xs flex-col gap-1.5">
                 <label className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
                   Company / SBU (personnel lanes)
@@ -183,22 +188,8 @@ export function ManualAssignmentBoard({
                   ))}
                 </select>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="submit"
-                  className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                >
-                  Apply
-                </button>
-                <Link
-                  href={clearHref}
-                  className="inline-flex items-center justify-center rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                >
-                  Clear
-                </Link>
-              </div>
               <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500">
-                Choose an SBU and click Apply to show only personnel with that staff designation. Clear removes the filter.
+                Choose an SBU to update the personnel lanes automatically. Select all companies/SBUs to remove the filter.
               </p>
             </form>
           ) : null}

@@ -4,6 +4,7 @@ import {
   computePeriodKey,
   getDailyPeriodKey,
   getMonthlyPeriodKey,
+  getQuarterlyPeriodKey,
   getWeeklyPeriodKey,
   isKpiMetricsWorkingDay,
   normalizeTimeZone,
@@ -154,8 +155,9 @@ export function enumeratePeriodKeysForKpiInRange(
   }
 
   const dom = typeof kpi.recurrenceMonthDay === "number" ? kpi.recurrenceMonthDay : 1;
+  const getPeriodKey = freq === "QUARTERLY" ? getQuarterlyPeriodKey : getMonthlyPeriodKey;
   while (cursor <= end) {
-    keys.add(getMonthlyPeriodKey(cursor.toJSDate(), dom, zone));
+    keys.add(getPeriodKey(cursor.toJSDate(), dom, zone));
     cursor = cursor.plus({ days: 1 });
   }
   return [...keys];
@@ -177,6 +179,7 @@ export function selectKpisForPillarTaskMetrics<T extends KpiRowForMetrics>(
   const daily = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "DAILY");
   const weekly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "WEEKLY");
   const monthly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "MONTHLY");
+  const quarterly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "QUARTERLY");
 
   if (metricsCadence === "DAILY") return daily;
 
@@ -186,7 +189,11 @@ export function selectKpisForPillarTaskMetrics<T extends KpiRowForMetrics>(
     return weekly.length > 0 ? weekly : monthly;
   }
 
-  return monthly.length > 0 ? monthly : weekly;
+  if (metricsCadence === "MONTHLY") {
+    return monthly.length > 0 ? monthly : quarterly.length > 0 ? quarterly : weekly;
+  }
+
+  return quarterly.length > 0 ? quarterly : monthly.length > 0 ? monthly : weekly;
 }
 
 function averageProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress & {

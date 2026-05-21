@@ -78,7 +78,7 @@ type KpiRecord = {
   recurrenceMonthDay?: number | null;
   /** Active cycle anchor (UTC); backlog rows may be null until first GET normalizes */
   periodCycleStartAt?: string | null;
-  assignedAgent?: { id: string; name: string; team?: { name?: string | null } | null } | null;
+  assignedAgent?: { id: string; name: string; team?: { id?: string | null; name?: string | null } | null } | null;
   itProjectName?: string | null;
   itProjectPhase?: string | null;
 };
@@ -87,7 +87,7 @@ type AssignableAgent = {
   id: string;
   name: string;
   email?: string | null;
-  team?: { name?: string | null } | null;
+  team?: { id?: string | null; name?: string | null } | null;
 };
 
 function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
@@ -115,6 +115,7 @@ export function AgentKpiKanbanFlow({
   const [rows, setRows] = useState<KpiRecord[]>([]);
   const [agents, setAgents] = useState<AssignableAgent[]>([]);
   const [canAssignWork, setCanAssignWork] = useState(false);
+  const [canUnassignWork, setCanUnassignWork] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -147,9 +148,10 @@ export function AgentKpiKanbanFlow({
   async function load() {
     const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}${companyQs}`, { cache: "no-store" });
     if (!res.ok) return;
-    const payload = (await res.json()) as { rows?: KpiRecord[]; canAssignWork?: boolean };
+    const payload = (await res.json()) as { rows?: KpiRecord[]; canAssignWork?: boolean; canUnassignWork?: boolean };
     if (Array.isArray(payload.rows)) setRows(payload.rows);
     setCanAssignWork(Boolean(payload.canAssignWork));
+    setCanUnassignWork(Boolean(payload.canUnassignWork));
   }
 
   async function loadContext() {
@@ -256,14 +258,16 @@ export function AgentKpiKanbanFlow({
   }
 
   async function assignKpi(id: string, assignedAgentId: string) {
-    if (!canAssignWork || !assignedAgentId) return;
+    if (!canAssignWork) return;
+    const nextAssigneeId = assignedAgentId === "__UNASSIGNED__" ? "" : assignedAgentId;
+    if (!nextAssigneeId && !canUnassignWork) return;
     setBusyId(id);
     setError(null);
     try {
       const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, assignedAgentId }),
+        body: JSON.stringify({ id, assignedAgentId: nextAssigneeId }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -473,22 +477,38 @@ export function AgentKpiKanbanFlow({
     if (!canAssignWork) {
       return <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{subKpiAssigneeLabel(s)}</p>;
     }
+    const mainTeamId = r.assignedAgent?.team?.id ?? null;
+    const mainTeamName = r.assignedAgent?.team?.name?.trim().toLowerCase() ?? "";
+    const companyScopedAgents = agents.filter((a) => {
+      if (mainTeamId) return a.team?.id === mainTeamId;
+      if (mainTeamName) return a.team?.name?.trim().toLowerCase() === mainTeamName;
+      return false;
+    });
+    const assignedStillVisible = assignedId && !companyScopedAgents.some((a) => a.id === assignedId);
     return (
       <label className="mt-2 flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
         Sub-task assignee
         <select
           value={assignedId}
-          disabled={busyId === r.id}
+          disabled={busyId === r.id || (!r.assignedAgent?.id && !assignedId)}
           onChange={(e) => void assignSubKpi(r.id, s.id, e.target.value)}
           className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
         >
           <option value="">Unassigned</option>
-          {agents.map((a) => (
+          {assignedStillVisible ? (
+            <option value={assignedId}>{agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"}</option>
+          ) : null}
+          {companyScopedAgents.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
             </option>
           ))}
         </select>
+        {!r.assignedAgent?.id ? (
+          <span className="text-[10px] font-medium normal-case tracking-normal text-zinc-500 dark:text-zinc-500">
+            Assign the main task first to show personnel from that company.
+          </span>
+        ) : null}
       </label>
     );
   }
@@ -706,7 +726,8 @@ export function AgentKpiKanbanFlow({
             Task Assignment Board
           </h4>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            Hold and slide a task, then release over a lane (works on touch and desktop).
+            Hold and slide a task, then release over a personnel lane
+            {canUnassignWork ? " or the Unassigned lane" : ""} (works on touch and desktop).
           </p>
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
             Up to six personnel lanes per page; use pagination below the lanes when there are more. Sub-tasks can also
@@ -714,7 +735,14 @@ export function AgentKpiKanbanFlow({
             Before/after screenshots are available for non-IT Project tasks and accept JPEG or PNG only, up to 10MB each.
           </p>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
-            <div className="rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
+            <div
+              ref={canUnassignWork ? assignLaneDrag.registerColumn("__UNASSIGNED__") : undefined}
+              className={cn(
+                "rounded-xl border border-zinc-300 bg-white p-3 transition dark:border-zinc-700 dark:bg-zinc-900/40",
+                canUnassignWork && assignLaneDrag.hoverColumn === "__UNASSIGNED__" &&
+                  "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
+              )}
+            >
               <div className="mb-2 flex items-center justify-between">
                 <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">Unassigned</p>
                 <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
@@ -767,9 +795,17 @@ export function AgentKpiKanbanFlow({
                         .filter((r) => r.assignedAgent?.id === a.id)
                         .slice(0, 5)
                         .map((r) => (
-                          <p key={`lane-item-${r.id}`} className="truncate rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700">
+                          <div
+                            key={`lane-item-${r.id}`}
+                            {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => r.title })}
+                            className={cn(
+                              "touch-pan-y select-none truncate rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700",
+                              assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
+                              busyId === r.id && "pointer-events-none opacity-50",
+                            )}
+                          >
                             {r.title}
-                          </p>
+                          </div>
                         ))}
                     </div>
                   </div>

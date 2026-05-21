@@ -58,6 +58,14 @@ export function defaultTaskMetricsMonthlyRange(): { from: string; to: string } {
   return { from: ym, to: ym };
 }
 
+export function defaultTaskMetricsQuarterlyRange(): { from: string; to: string } {
+  const now = new Date();
+  const startMonth = Math.floor(now.getMonth() / 4) * 4;
+  const start = new Date(now.getFullYear(), startMonth, 1);
+  const end = new Date(now.getFullYear(), startMonth + 4, 0);
+  return { from: calendarYmd(start), to: calendarYmd(end) };
+}
+
 export function defaultTaskMetricsRangeForCadence(
   cadence: KpiFrequencyCode,
 ): { dailyDate: string; from: string; to: string } {
@@ -67,6 +75,10 @@ export function defaultTaskMetricsRangeForCadence(
   }
   if (cadence === "WEEKLY") {
     const { from, to } = defaultTaskMetricsWeeklyRange();
+    return { dailyDate: defaultTaskMetricsDailyDate(), from, to };
+  }
+  if (cadence === "QUARTERLY") {
+    const { from, to } = defaultTaskMetricsQuarterlyRange();
     return { dailyDate: defaultTaskMetricsDailyDate(), from, to };
   }
   const { from, to } = defaultTaskMetricsMonthlyRange();
@@ -94,7 +106,9 @@ export function resolveTaskMetricsQueryRange(
   }
   let from = rangeFrom.trim();
   let to = rangeTo.trim();
-  if (!from) from = defaultTaskMetricsWeeklyRange().from;
+  if (!from) {
+    from = cadence === "QUARTERLY" ? defaultTaskMetricsQuarterlyRange().from : defaultTaskMetricsWeeklyRange().from;
+  }
   if (!to) to = calendarYmd();
   if (from > to) {
     const swap = from;

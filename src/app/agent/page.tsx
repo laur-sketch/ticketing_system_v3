@@ -17,6 +17,7 @@ import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
+import { AutoSubmitForm } from "@/components/AutoSubmitForm";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -369,12 +370,6 @@ export default async function AgentHome({
   const canNext = currentPage < totalPages;
   const prevHref = buildHref({ page: String(currentPage - 1) });
   const nextHref = buildHref({ page: String(currentPage + 1) });
-  const clearHref = isCompanyBoard
-    ? "/agent?board=company"
-    : boardTab === "kpi"
-      ? "/agent?board=kpi"
-      : "/agent";
-
   const applySortClass = (column: string) =>
     `px-4 py-3 ${isSorted(column) ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"} hover:text-zinc-950 dark:hover:text-zinc-200`;
   const tableRows = tickets;
@@ -529,7 +524,7 @@ export default async function AgentHome({
           </div>
 
           <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-            <form className="mb-4 flex flex-col gap-3" method="get">
+            <AutoSubmitForm className="mb-4 flex flex-col gap-3" method="get">
               {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
               {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
               <div className="flex flex-wrap items-end justify-between gap-3">
@@ -626,18 +621,6 @@ export default async function AgentHome({
                       </select>
                     </label>
                   ) : null}
-                  <button
-                    type="submit"
-                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                  >
-                    Apply
-                  </button>
-                  <Link
-                    href={clearHref}
-                    className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                  >
-                    Clear
-                  </Link>
                 </div>
                 <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
                   <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
@@ -697,7 +680,7 @@ export default async function AgentHome({
                   shows only personnel designated to that company.
                 </p>
               ) : null}
-            </form>
+            </AutoSubmitForm>
 
             {isCompanyBoard && companyBoardPayload ? (
               <>

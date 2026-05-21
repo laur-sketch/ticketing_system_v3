@@ -2,7 +2,6 @@
 
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -69,27 +68,6 @@ type KpiPayload = {
   };
 };
 
-type MaintenanceRecord = {
-  id: string;
-  title: string;
-  isRecurring?: boolean;
-  nonRecurringStartAt?: string | null;
-  nonRecurringEndAt?: string | null;
-  frequency: KpiFrequencyCode;
-  createdAt: string;
-  updatedAt: string;
-  subKpis: unknown;
-  recurrenceWeekday?: number | null;
-  recurrenceMonthDay?: number | null;
-  periodCycleStartAt?: string | null;
-  periodKey?: string | null;
-  assignedAgent?: {
-    id: string;
-    name: string;
-    team?: { name?: string | null } | null;
-  } | null;
-};
-
 function formatDuration(ms: number | null) {
   if (ms === null) return "—";
   const hours = ms / 3_600_000;
@@ -111,24 +89,21 @@ export default function InsightsPage() {
   const [data, setData] = useState<KpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [throughputView, setThroughputView] = useState<"cards" | "table">("table");
-  const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
   const [canAssignKpi, setCanAssignKpi] = useState(false);
   /** IANA zone for KPI period boundaries (browser); starts UTC until hydrated on client. */
   const [recurrenceTz, setRecurrenceTz] = useState("UTC");
 
   useEffect(() => {
-    try {
-      const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (z) setRecurrenceTz(z);
-    } catch {
-      setRecurrenceTz("UTC");
-    }
+    queueMicrotask(() => {
+      try {
+        const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (z) setRecurrenceTz(z);
+      } catch {
+        setRecurrenceTz("UTC");
+      }
+    });
   }, []);
 
-  const kpiMaintenanceSearch = useMemo(
-    () => `?tz=${encodeURIComponent(recurrenceTz)}`,
-    [recurrenceTz],
-  );
   /** Personnel with coordinator access: keep KPI definition tab on Insights. SuperAdmin/Admin use Task Board. */
   const showKpiTasksTab = isPersonnel && canAssignKpi;
 
@@ -213,7 +188,7 @@ export default function InsightsPage() {
   }
 
   useEffect(() => {
-    void loadKpis();
+    queueMicrotask(() => void loadKpis());
   }, [loadKpis]);
 
   useEffect(() => {
@@ -232,7 +207,7 @@ export default function InsightsPage() {
 
   useEffect(() => {
     if (activeTab !== "task-metrics") return;
-    void loadTaskMetrics();
+    queueMicrotask(() => void loadTaskMetrics());
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
@@ -267,24 +242,16 @@ export default function InsightsPage() {
       } else {
         if (!cancelled) setCanAssignKpi(!!permission.canAccessAssignmentBoard);
       }
-
-      const kpiRes = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, { cache: "no-store" });
-      if (!cancelled && kpiRes.ok) {
-        const payload = (await kpiRes.json()) as {
-          rows: MaintenanceRecord[];
-        };
-        setMaintenanceRecords(payload.rows);
-      }
     }
     void loadMaintenanceForMetrics();
     return () => {
       cancelled = true;
     };
-  }, [session?.user?.role, kpiMaintenanceSearch]);
+  }, [session?.user?.role]);
 
   useEffect(() => {
     if (!showKpiTasksTab && activeTab === "kpi-mgmt") {
-      setActiveTab("ticket-metrics");
+      queueMicrotask(() => setActiveTab("ticket-metrics"));
     }
   }, [showKpiTasksTab, activeTab]);
 
@@ -412,11 +379,7 @@ export default function InsightsPage() {
 
       {activeTab === "kpi-mgmt" ? (
         <div className="space-y-6">
-          <KpiDefinitionConsole
-            onMaintenanceRecordsUpdated={(rows) => {
-              setMaintenanceRecords(rows);
-            }}
-          />
+          <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => {}} />
         </div>
       ) : activeTab === "task-metrics" ? (
         <div className="space-y-6">
@@ -434,7 +397,6 @@ export default function InsightsPage() {
             rangeTo={taskMetricsTo}
             onRangeFromChange={setTaskMetricsFrom}
             onRangeToChange={setTaskMetricsTo}
-            onApplyDates={() => void loadTaskMetrics()}
             reportingTimeZone={recurrenceTz}
           />
         </div>
@@ -784,7 +746,6 @@ function TaskMetricsPanel({
   rangeTo,
   onRangeFromChange,
   onRangeToChange,
-  onApplyDates,
   reportingTimeZone,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
@@ -800,7 +761,6 @@ function TaskMetricsPanel({
   rangeTo: string;
   onRangeFromChange: (v: string) => void;
   onRangeToChange: (v: string) => void;
-  onApplyDates: () => void;
   reportingTimeZone: string;
 }) {
   const freq = taskMetricsCadence;
@@ -825,7 +785,8 @@ function TaskMetricsPanel({
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             Daily checklist pillars update in near real time when items are checked on the task board (snapshots refresh
             about every 15 seconds on this tab). <strong className="font-semibold">Sundays are excluded</strong> from
-            daily KPI metrics and averages. Weekly and monthly views average working days in the range.{" "}
+            daily KPI metrics and averages. Weekly, monthly, and quarterly views average working days in the range;
+            quarterly covers 4-month cycles.{" "}
             <span className="font-medium text-zinc-700 dark:text-zinc-300">Helpdesk</span> and{" "}
             <span className="font-medium text-zinc-700 dark:text-zinc-300">User support</span> ticket counts also exclude
             Sundays in the reporting window.
@@ -837,7 +798,7 @@ function TaskMetricsPanel({
               Cadence
             </span>
             <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
-              {(["DAILY", "WEEKLY", "MONTHLY"] as const).map((f) => (
+              {(["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -849,7 +810,7 @@ function TaskMetricsPanel({
                       : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
                   )}
                 >
-                  {f === "DAILY" ? "Daily" : f === "WEEKLY" ? "Weekly" : "Monthly"}
+                  {f === "DAILY" ? "Daily" : f === "WEEKLY" ? "Weekly" : f === "MONTHLY" ? "Monthly" : "Quarterly"}
                 </button>
               ))}
             </div>
@@ -912,14 +873,9 @@ function TaskMetricsPanel({
                 </label>
               </div>
             )}
-            <Button
-              type="button"
-              onClick={onApplyDates}
-              disabled={loading}
-              className="mt-3 h-9 w-full rounded-lg text-xs font-semibold"
-            >
-              {loading ? "Updating…" : "Apply dates"}
-            </Button>
+            {loading ? (
+              <p className="mt-3 text-xs font-semibold text-orange-700 dark:text-orange-300">Updating metrics…</p>
+            ) : null}
           </div>
         </div>
       </div>

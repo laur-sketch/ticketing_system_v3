@@ -460,18 +460,6 @@ export function PersonnelClient({
             </select>
           </label>
         ) : null}
-        {registryFiltersActive ? (
-          <button
-            type="button"
-            onClick={() => {
-              setRegistryRoleFilter("");
-              setRegistryCompanyFilter("");
-            }}
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
-            Clear filters
-          </button>
-        ) : null}
         <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
           {registryFiltersActive
             ? `Showing ${filteredCount} of ${totalCount} user${totalCount === 1 ? "" : "s"}`
@@ -753,7 +741,7 @@ export function PersonnelClient({
                           <td colSpan={7} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
                             {personnel.length === 0
                               ? "No personnel are on this company queue yet."
-                              : "No users match the selected role filter. Clear filters to see everyone on this queue."}
+                              : "No users match the selected role filter. Choose All roles to see everyone on this queue."}
                           </td>
                         </tr>
                       ) : (
@@ -858,7 +846,7 @@ export function PersonnelClient({
                       <article className="col-span-full rounded-xl border border-dashed border-zinc-300 bg-zinc-100 px-4 py-6 text-center text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/20 dark:text-zinc-500">
                         {portalAccounts.length === 0
                           ? "No portal accounts loaded."
-                          : "No accounts match the selected filters. Clear filters to see all portal users."}
+                          : "No accounts match the selected filters. Choose All roles and All companies to see all portal users."}
                       </article>
                     ) : (
                       paginatedPortalAccounts.map((a) => (
@@ -1039,7 +1027,7 @@ export function PersonnelClient({
                             <td colSpan={9} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
                               {portalAccounts.length === 0
                                 ? "No portal accounts loaded."
-                                : "No accounts match the selected filters. Clear filters to see all portal users."}
+                                : "No accounts match the selected filters. Choose All roles and All companies to see all portal users."}
                             </td>
                           </tr>
                         ) : (

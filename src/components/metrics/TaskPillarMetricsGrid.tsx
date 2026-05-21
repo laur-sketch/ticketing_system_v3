@@ -33,6 +33,7 @@ const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
   "DATA BACKUP": Cloud,
   "SYSTEM MAINTENANCE": Wrench,
   MONITORING: Activity,
+  "PREVENTIVE MAINTENANCE": Wrench,
   "USER SUPPORT": Smile,
   "IT PROJECT IMPLEMENTATION": LayoutGrid,
   "NETWORK PERFORMANCE": Router,
@@ -226,6 +227,7 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   MONITORING: { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
+  "PREVENTIVE MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "IT PROJECT IMPLEMENTATION": {
     positiveLabel: "On time",
     negativeLabel: "Delayed",
@@ -273,7 +275,8 @@ function checklistPeriodNote(
   if (inRange <= 1 && counted <= 1) {
     if (metricsCadence === "DAILY") return " · this day";
     if (metricsCadence === "WEEKLY") return " · this week";
-    return " · this month";
+    if (metricsCadence === "MONTHLY") return " · this month";
+    return " · this 4-month period";
   }
   if (metricsCadence === "DAILY") {
     return inRange > 1 ? ` · ${counted}/${inRange} days` : " · recorded snapshot";
@@ -282,8 +285,10 @@ function checklistPeriodNote(
     if (inRange <= 1) return " · monthly snapshot in week";
     return ` · avg of ${counted}/${inRange} working day${inRange === 1 ? "" : "s"} in week`;
   }
-  if (inRange <= 1) return " · monthly snapshot";
-  return ` · avg of ${counted}/${inRange} working day${inRange === 1 ? "" : "s"} in month`;
+  if (inRange <= 1) return metricsCadence === "MONTHLY" ? " · monthly snapshot" : " · 4-month snapshot";
+  return ` · avg of ${counted}/${inRange} working day${inRange === 1 ? "" : "s"} in ${
+    metricsCadence === "MONTHLY" ? "month" : "4-month period"
+  }`;
 }
 
 function checklistEmptySubline(metricsCadence: KpiFrequencyCode, inRange: number): string {
@@ -293,7 +298,10 @@ function checklistEmptySubline(metricsCadence: KpiFrequencyCode, inRange: number
   if (metricsCadence === "WEEKLY") {
     return inRange > 0 ? "No recorded checklist data for this week" : "No daily checklist KPI for this pillar";
   }
-  return inRange > 0 ? "No recorded checklist data for this month" : "No daily checklist KPI for this pillar";
+  if (metricsCadence === "MONTHLY") {
+    return inRange > 0 ? "No recorded checklist data for this month" : "No daily checklist KPI for this pillar";
+  }
+  return inRange > 0 ? "No recorded checklist data for this 4-month period" : "No daily checklist KPI for this pillar";
 }
 
 function checklistSubline(
@@ -362,7 +370,13 @@ export function TaskPillarMetricsGrid({
   userSupportTickets: TaskMetricsUserSupportTickets | null;
 }) {
   const cadenceHeadline =
-    metricsCadence === "DAILY" ? "Daily" : metricsCadence === "WEEKLY" ? "Weekly" : "Monthly";
+    metricsCadence === "DAILY"
+      ? "Daily"
+      : metricsCadence === "WEEKLY"
+        ? "Weekly"
+        : metricsCadence === "MONTHLY"
+          ? "Monthly"
+          : "Quarterly";
 
   return (
     <div className="space-y-3">
@@ -391,7 +405,9 @@ export function TaskPillarMetricsGrid({
               ? "this day"
               : metricsCadence === "WEEKLY"
                 ? "this week"
-                : "this month";
+                : metricsCadence === "MONTHLY"
+                  ? "this month"
+                  : "this 4-month period";
           const subline =
             !ht ? "" : `${ht.closedCount} closed ÷ ${ht.openTicketsInPeriod} open · ${rangeLabel}`;
           return (
@@ -415,7 +431,9 @@ export function TaskPillarMetricsGrid({
               ? "this day"
               : metricsCadence === "WEEKLY"
                 ? "this week"
-                : "this month";
+                : metricsCadence === "MONTHLY"
+                  ? "this month"
+                  : "this 4-month period";
           const subline =
             total === 0
               ? `No For Confirmation or Closed tickets updated in ${rangeLabel}`

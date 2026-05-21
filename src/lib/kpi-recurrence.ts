@@ -5,12 +5,12 @@
 
 import { DateTime } from "luxon";
 
-export type KpiFrequencyCode = "DAILY" | "WEEKLY" | "MONTHLY";
+export type KpiFrequencyCode = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY";
 
 /** @returns true for keys from the pre-timezone format, e.g. `D:2026-04-29`. */
 export function isLegacyPeriodKey(key: string | null | undefined): boolean {
   if (!key) return false;
-  return /^(D|W|M):\d{4}-\d{2}-\d{2}$/.test(key);
+  return /^(D|W|M|Q):\d{4}-\d{2}-\d{2}$/.test(key);
 }
 
 export function normalizeTimeZone(tz: string | null | undefined): string {
@@ -81,6 +81,25 @@ export function getMonthlyPeriodKey(now: Date, anchorDay: number, timeZone: stri
   return `M:${timeZone}:${start.toISODate()}`;
 }
 
+export function getQuarterlyPeriodStartDt(now: Date, anchorDay: number, timeZone: string): DateTime {
+  const dt = atZone(now, timeZone);
+  const quarterStartMonth = Math.floor((dt.month - 1) / 4) * 4 + 1;
+  const startFor = (year: number, month: number) => {
+    const dim = DateTime.fromObject({ year, month, day: 1 }, { zone: timeZone }).daysInMonth ?? 28;
+    const dom = Math.min(Math.max(1, anchorDay), dim);
+    return DateTime.fromObject({ year, month, day: dom }, { zone: timeZone }).startOf("day");
+  };
+  const candidate = startFor(dt.year, quarterStartMonth);
+  if (dt.startOf("day") >= candidate) return candidate;
+  const prev = candidate.minus({ months: 4 });
+  return startFor(prev.year, prev.month);
+}
+
+export function getQuarterlyPeriodKey(now: Date, anchorDay: number, timeZone: string): string {
+  const start = getQuarterlyPeriodStartDt(now, anchorDay, timeZone);
+  return `Q:${timeZone}:${start.toISODate()}`;
+}
+
 export function computePeriodKey(
   frequency: KpiFrequencyCode,
   recurrenceWeekday: number | null | undefined,
@@ -100,6 +119,10 @@ export function computePeriodKey(
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       return getMonthlyPeriodKey(now, dom, zone);
     }
+    case "QUARTERLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      return getQuarterlyPeriodKey(now, dom, zone);
+    }
     default:
       return getDailyPeriodKey(now, zone);
   }
@@ -108,6 +131,14 @@ export function computePeriodKey(
 export function getNextMonthlyPeriodStartDt(periodStart: DateTime, anchorDay: number): DateTime {
   const z = periodStart.zone;
   const n = periodStart.plus({ months: 1 });
+  const dim = DateTime.fromObject({ year: n.year, month: n.month, day: 1 }, { zone: z }).daysInMonth ?? 28;
+  const dom = Math.min(Math.max(1, anchorDay), dim);
+  return DateTime.fromObject({ year: n.year, month: n.month, day: dom }, { zone: z }).startOf("day");
+}
+
+export function getNextQuarterlyPeriodStartDt(periodStart: DateTime, anchorDay: number): DateTime {
+  const z = periodStart.zone;
+  const n = periodStart.plus({ months: 4 });
   const dim = DateTime.fromObject({ year: n.year, month: n.month, day: 1 }, { zone: z }).daysInMonth ?? 28;
   const dom = Math.min(Math.max(1, anchorDay), dim);
   return DateTime.fromObject({ year: n.year, month: n.month, day: dom }, { zone: z }).startOf("day");
@@ -133,6 +164,11 @@ export function getPeriodEndExclusive(
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       const start = getMonthlyPeriodStartDt(now, dom, zone);
       return getNextMonthlyPeriodStartDt(start, dom).toJSDate();
+    }
+    case "QUARTERLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      const start = getQuarterlyPeriodStartDt(now, dom, zone);
+      return getNextQuarterlyPeriodStartDt(start, dom).toJSDate();
     }
     default:
       return atZone(now, zone).startOf("day").plus({ days: 1 }).toJSDate();
@@ -161,6 +197,10 @@ export function getPeriodEndExclusiveFromCycleStart(
     case "MONTHLY": {
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       return getNextMonthlyPeriodStartDt(start, dom).toJSDate();
+    }
+    case "QUARTERLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      return getNextQuarterlyPeriodStartDt(start, dom).toJSDate();
     }
     default:
       return start.plus({ days: 1 }).toJSDate();

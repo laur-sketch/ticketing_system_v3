@@ -97,7 +97,7 @@ export async function GET(req: Request) {
     where,
     orderBy: { createdAt: "desc" },
     include: {
-      assignedAgent: { select: { id: true, name: true, team: { select: { name: true } } } },
+      assignedAgent: { select: { id: true, name: true, team: { select: { id: true, name: true } } } },
     },
   });
   if (!perms.canAssignWork) {
@@ -113,7 +113,7 @@ export async function GET(req: Request) {
       continue;
     }
 
-    const freq = row.frequency as "DAILY" | "WEEKLY" | "MONTHLY";
+    const freq = row.frequency as KpiFrequencyCode;
     const inferredCycleStart = getPeriodStartInclusive(
       freq,
       row.recurrenceWeekday,
@@ -186,7 +186,7 @@ export async function GET(req: Request) {
       where,
       orderBy: { createdAt: "desc" },
       include: {
-        assignedAgent: { select: { id: true, name: true, team: { select: { name: true } } } },
+        assignedAgent: { select: { id: true, name: true, team: { select: { id: true, name: true } } } },
       },
     });
     if (!perms.canAssignWork) {
@@ -195,7 +195,11 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ rows, canAssignWork: perms.canAssignWork });
+  return NextResponse.json({
+    rows,
+    canAssignWork: perms.canAssignWork,
+    canUnassignWork: session.user.role === "SuperAdmin",
+  });
 }
 
 export async function POST(req: Request) {
@@ -252,11 +256,11 @@ export async function POST(req: Request) {
     }
     recurrenceWeekday = wd;
   }
-  if (isRecurring && frequency === "MONTHLY") {
+  if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY")) {
     const dom = body.recurrenceMonthDay;
     if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
       return NextResponse.json(
-        { error: "recurrenceMonthDay is required for MONTHLY (1–31)." },
+        { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY (1–31)." },
         { status: 400 },
       );
     }
@@ -366,7 +370,7 @@ export async function POST(req: Request) {
   const timeZone = normalizeTimeZone(body.timeZone);
   const periodKey = isRecurring
     ? computePeriodKey(
-        frequency as "DAILY" | "WEEKLY" | "MONTHLY",
+        frequency as KpiFrequencyCode,
         recurrenceWeekday,
         recurrenceMonthDay,
         new Date(),
@@ -498,6 +502,7 @@ export async function PATCH(req: Request) {
       id: true,
       title: true,
       assignedAgentId: true,
+      assignedAgent: { select: { id: true, teamId: true } },
       subKpis: true,
       isRecurring: true,
       frequency: true,
@@ -690,11 +695,26 @@ export async function PATCH(req: Request) {
     const assignee = assignedAgentId
       ? await prisma.agent.findUnique({
           where: { id: assignedAgentId },
-          select: { id: true, name: true },
+          select: { id: true, name: true, teamId: true },
         })
       : null;
     if (assignedAgentId && !assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
+    }
+    if (assignee) {
+      const mainAssigneeTeamId = kpiRow.assignedAgent?.teamId ?? null;
+      if (!mainAssigneeTeamId) {
+        return NextResponse.json(
+          { error: "Assign the main task before assigning sub-tasks to personnel." },
+          { status: 400 },
+        );
+      }
+      if (assignee.teamId !== mainAssigneeTeamId) {
+        return NextResponse.json(
+          { error: "Sub-task assignee must belong to the same company as the main task assignee." },
+          { status: 400 },
+        );
+      }
     }
     const updatedJson = isItProjectImplementationPillar(kpiRow.title)
       ? setItProjectSubKpiAssignee(kpiRow.subKpis, subKpiIdAssign, assignee)
@@ -753,10 +773,23 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
-  const reassignedAgentId = body.assignedAgentId?.trim() ?? "";
-  if (reassignedAgentId) {
+  if (Object.prototype.hasOwnProperty.call(body, "assignedAgentId")) {
     if (!perms.canAssignWork) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const reassignedAgentId = body.assignedAgentId?.trim() ?? "";
+    if (!reassignedAgentId) {
+      if (session.user.role !== "SuperAdmin") {
+        return NextResponse.json({ error: "Only SuperAdmin can move tasks back to unassigned." }, { status: 403 });
+      }
+      const updated = await prisma.kpiMaintenance.update({
+        where: { id },
+        data: {
+          assignedAgentId: null,
+          assignedRole: null,
+        },
+      });
+      return NextResponse.json(updated);
     }
     const assignee = await prisma.agent.findUnique({
       where: { id: reassignedAgentId },

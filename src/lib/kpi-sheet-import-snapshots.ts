@@ -4,9 +4,11 @@ import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pil
 import {
   getDailyPeriodKey,
   getMonthlyPeriodKey,
+  getQuarterlyPeriodKey,
   getWeeklyPeriodKey,
   isKpiMetricsWorkingDay,
   normalizeTimeZone,
+  type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import { parseCsvLine } from "@/lib/csv-parse";
 import { prisma } from "@/lib/prisma";
@@ -20,6 +22,7 @@ const PILLAR_LOOKUP: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
   { match: /^\s*data\s+backup\s*$/i, pillar: "DATA BACKUP" },
   { match: /^\s*system\s+maintenance\s*$/i, pillar: "SYSTEM MAINTENANCE" },
   { match: /^\s*monitoring\s*$/i, pillar: "MONITORING" },
+  { match: /^\s*preventive\s+maintenance\s*$/i, pillar: "PREVENTIVE MAINTENANCE" },
   { match: /^\s*network\s+performance\s*$/i, pillar: "NETWORK PERFORMANCE" },
 ];
 
@@ -85,10 +88,18 @@ function periodKeysForImportedMonth(
   timeZone: string,
 ): string[] {
   const zone = normalizeTimeZone(timeZone);
+  const days = enumerateYmdDaysInMonth(ym, zone);
   if (frequency === "MONTHLY") {
     return [monthlyPeriodKeyForYMonth(ym, recurrenceMonthDay, timeZone)];
   }
-  const days = enumerateYmdDaysInMonth(ym, zone);
+  if (frequency === "QUARTERLY") {
+    const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+    const keys = new Set<string>();
+    for (const ymd of days) {
+      keys.add(getQuarterlyPeriodKey(DateTime.fromISO(ymd, { zone }).toJSDate(), dom, zone));
+    }
+    return [...keys];
+  }
   if (frequency === "DAILY") {
     return days.map((ymd) => getDailyPeriodKey(DateTime.fromISO(ymd, { zone }).toJSDate(), zone));
   }
@@ -216,6 +227,7 @@ export function pillarFromItSalfDailyFilename(filePath: string): ItTaskPillarTit
   if (name.includes("SYSTEM") && name.includes("AVAILABILITY")) return "SYSTEM AVAILABILITY";
   if (name.includes("SYSTEM") && name.includes("MAINTENANCE")) return "SYSTEM MAINTENANCE";
   if (name.includes("MONITORING")) return "MONITORING";
+  if (name.includes("PREVENTIVE") && name.includes("MAINTENANCE")) return "PREVENTIVE MAINTENANCE";
   if (name.includes("DATA") && name.includes("BACKUP")) return "DATA BACKUP";
   return matchPillarFromSheetLabel(name.replace(/\.CSV$/i, "").replace(/^IT SALF\s*-\s*/i, ""));
 }
@@ -273,7 +285,7 @@ async function upsertPercentSnapshotForKpi(args: {
     create: {
       kpiMaintenanceId: kpi.id,
       periodKey,
-      frequency: kpi.frequency as "DAILY" | "WEEKLY" | "MONTHLY",
+      frequency: kpi.frequency as KpiFrequencyCode,
       timeZone: zone,
       total,
       done,
@@ -287,7 +299,7 @@ async function upsertPercentSnapshotForKpi(args: {
       missing,
       percent,
       fullyComplete,
-      frequency: kpi.frequency as "DAILY" | "WEEKLY" | "MONTHLY",
+      frequency: kpi.frequency as KpiFrequencyCode,
       timeZone: zone,
       capturedAt: new Date(),
     },
@@ -317,7 +329,7 @@ export async function applyDailyPillarPercentSnapshots(args: {
     where: {
       isRecurring: true,
       title: args.pillar,
-      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY"] },
+      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] },
       ...whereAgent,
     },
     select: {
@@ -374,7 +386,7 @@ export async function applyDailyPillarPercentSnapshots(args: {
 /**
  * Writes `KpiMaintenancePeriodSnapshot` rows from headline percentages (0–100).
  * Each snapshot uses total=100 so Task metrics math matches the target percent.
- * Supports DAILY / WEEKLY / MONTHLY KPI rows: a monthly spreadsheet cell is expanded
+ * Supports DAILY / WEEKLY / MONTHLY / QUARTERLY KPI rows: a monthly spreadsheet cell is expanded
  * to every period key in that month (each day, each distinct week start in the month,
  * or the monthly anchor key) so Task metrics averages match the sheet headline %.
  */
@@ -410,7 +422,7 @@ export async function applyPillarPercentSnapshots(args: {
       where: {
         isRecurring: true,
         title: pillar,
-        frequency: { in: ["DAILY", "WEEKLY", "MONTHLY"] },
+        frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] },
         ...whereAgent,
       },
       select: {

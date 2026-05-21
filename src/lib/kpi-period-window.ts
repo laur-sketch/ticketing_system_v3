@@ -2,6 +2,7 @@ import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   getMonthlyPeriodStartDt,
   getPeriodEndExclusive,
+  getQuarterlyPeriodStartDt,
   getWeeklyPeriodStartDt,
   normalizeTimeZone,
 } from "@/lib/kpi-recurrence";
@@ -26,6 +27,10 @@ export function getPeriodStartInclusive(
     case "MONTHLY": {
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       return getMonthlyPeriodStartDt(now, dom, zone).toJSDate();
+    }
+    case "QUARTERLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      return getQuarterlyPeriodStartDt(now, dom, zone).toJSDate();
     }
     default:
       return DateTime.fromMillis(now.getTime(), { zone }).startOf("day").toJSDate();

@@ -50,6 +50,7 @@ enum KpiFrequency {
   DAILY
   WEEKLY
   MONTHLY
+  QUARTERLY
 }
 
 enum TaskStatus {
