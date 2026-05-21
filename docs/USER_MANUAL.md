@@ -123,7 +123,8 @@ Header utilities (staff): ticket search, notifications, **Process** (`/process`)
 ### Task Board (`/agent?board=kpi`)
 
 - **Task kanban** columns: **Current**, **Done**, **Delayed** (see KPI section).
-- Complete **sub-KPI checklists** only on tasks assigned to you (when restricted).
+- Complete **sub-KPI checklists** on KPI cards assigned to you, or individual sub-KPIs assigned directly to you.
+- Add **Before** and **After** screenshots to non-IT Project sub-KPIs when evidence is needed. Uploads accept **JPEG/PNG only**, up to **10MB** each.
 - Coordinators with assignment permission may use **Task Management** on **`/insights`**.
 
 ### Metrics & Reports (`/insights`)
@@ -178,6 +179,9 @@ Tabs (role-dependent):
 
 - Frequencies: **Daily**, **Weekly** (configurable weekday), **Monthly** (configurable day of month).
 - Sub-KPI checklists can be **flat** or **segmented** (grouped sections).
+- Admins/coordinators can assign individual sub-KPIs to different personnel from the Task Board.
+- A sub-KPI assignee can see the parent KPI card and update only that assigned sub-task.
+- Non-IT Project sub-KPIs support one **before** screenshot and one **after** screenshot for visual proof of work.
 - On period rollover, checklist completion resets for the new cycle.
 - Timezone: browser/reporting zone is sent to the API for period boundaries.
 
@@ -194,7 +198,7 @@ Special non-recurring pillar:
 ### Other recurring tasks
 
 - Completed after the due period may still appear in **Done** with a delayed indicator (recurring KPIs).
-- Only the **assignee** can edit checklist items in restricted flows.
+- Only the KPI card assignee or the specific sub-KPI assignee can edit checklist items in restricted flows.
 
 ## 8) My Account and security
 

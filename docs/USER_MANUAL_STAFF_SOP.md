@@ -73,12 +73,16 @@ Standard operating procedures for **Personnel**, **Admin**, and **SuperAdmin** u
 Columns: **Current**, **Done**, **Delayed**.
 
 - Drag tasks between columns where enabled (mouse or touch).
-- **Assignment lanes** (admins/coordinators): drag tasks onto personnel lanes to assign.
+- **Assignment lanes** (admins/coordinators): drag tasks onto personnel lanes to assign the full KPI card.
+- **Sub-task assignee** controls (admins/coordinators): assign individual sub-KPIs to other personnel from inside each task card.
+- **Before / After screenshots**: non-IT Project sub-KPIs can include one before image and one after image. Files must be **JPEG or PNG only** and **10MB or smaller** each.
 
 ### Recurring tasks
 
 - **Daily / Weekly / Monthly** cycles; weekly/monthly use configured weekday or month-day.
 - **Segmented** checklists: grouped sub-tasks; **flat** checklists: single list.
+- Personnel assigned to an individual sub-KPI can see the parent KPI card and update only that assigned sub-task.
+- Sub-KPI assignees may upload before/after screenshots as work evidence on non-IT Project items.
 - Checklist state resets when a new KPI period starts (timezone-aware API).
 
 ### IT Project Implementation (non-recurring)
@@ -92,7 +96,7 @@ Columns: **Current**, **Done**, **Delayed**.
 ### Other recurring KPIs
 
 - Late completion may show in **Done** with a delayed indicator.
-- Only the assignee edits checklist items in restricted flows.
+- The KPI card assignee can edit the full checklist; sub-KPI assignees can edit only their assigned items.
 
 ### Where to define tasks
 

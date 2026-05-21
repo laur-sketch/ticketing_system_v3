@@ -8,6 +8,7 @@ import {
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
+import { parseTaskScreenshotMetaList } from "@/lib/task-screenshot-meta";
 import { hasValidActualDate, normalizeOptionalUsDate } from "@/lib/us-date-format";
 
 export type ItProjectPhase = {
@@ -30,6 +31,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const id = String(r?.id ?? "").trim() || crypto.randomUUID();
   const title = String(r?.title ?? "").trim();
+  const assignedAgentId = typeof r?.assignedAgentId === "string" ? r.assignedAgentId.trim() : "";
+  const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
+  const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
+  const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
   const dueDate = normalizeOptionalUsDate(r?.dueDate ?? r?.startDate);
   const actualDate = normalizeOptionalUsDate(r?.actualDate);
   const done = hasValidActualDate({ actualDate });
@@ -37,6 +42,10 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     id,
     title,
     done,
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+    ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
+    ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
   };
@@ -97,6 +106,10 @@ export function wrapItProjectSubKpis(data: ItProjectData): Prisma.InputJsonValue
         id: it.id,
         title: it.title,
         done: hasValidActualDate(it),
+        ...(it.assignedAgentId ? { assignedAgentId: it.assignedAgentId } : {}),
+        ...(it.assignedAgentName ? { assignedAgentName: it.assignedAgentName } : {}),
+        ...(it.beforeScreenshot ? { beforeScreenshot: it.beforeScreenshot } : {}),
+        ...(it.afterScreenshot ? { afterScreenshot: it.afterScreenshot } : {}),
         ...(it.dueDate ? { dueDate: it.dueDate } : {}),
         ...(it.actualDate ? { actualDate: it.actualDate } : {}),
       })),
@@ -336,6 +349,33 @@ export function setItProjectSubKpiSchedule(
     return next;
   };
 
+  return updateItProjectPhases(
+    raw,
+    mapPhases(data, (phase) => ({
+      ...phase,
+      items: phase.items.map(touch),
+    })),
+  );
+}
+
+export function setItProjectSubKpiAssignee(
+  raw: unknown,
+  subKpiId: string,
+  assignee: { id: string; name: string } | null,
+): Prisma.InputJsonValue {
+  const data = parseItProjectSubKpis(raw);
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    const next = { ...it };
+    if (assignee) {
+      next.assignedAgentId = assignee.id;
+      next.assignedAgentName = assignee.name;
+    } else {
+      delete next.assignedAgentId;
+      delete next.assignedAgentName;
+    }
+    return next;
+  };
   return updateItProjectPhases(
     raw,
     mapPhases(data, (phase) => ({

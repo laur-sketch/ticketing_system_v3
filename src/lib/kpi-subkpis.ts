@@ -1,6 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { DateTime } from "luxon";
 import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
+import {
+  parseTaskScreenshotMetaList,
+  type TaskScreenshotMetaItem,
+  type TaskScreenshotSlot,
+} from "@/lib/task-screenshot-meta";
 import { normalizeTimeZone } from "./kpi-recurrence";
 
 /** Optional schedule fields are calendar days `YYYY-MM-DD` (IT Project Implementation sub-tasks). */
@@ -8,6 +13,10 @@ export type SubKpiItem = {
   id: string;
   title: string;
   done?: boolean;
+  assignedAgentId?: string | null;
+  assignedAgentName?: string | null;
+  beforeScreenshot?: TaskScreenshotMetaItem[];
+  afterScreenshot?: TaskScreenshotMetaItem[];
   startDate?: string | null;
   /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
@@ -27,6 +36,10 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const id = String(r?.id ?? "");
   const title = String(r?.title ?? "");
   const done = Boolean(r?.done);
+  const assignedAgentId = typeof r?.assignedAgentId === "string" ? r.assignedAgentId.trim() : "";
+  const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
+  const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
+  const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
   const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(r?.actualDate);
@@ -34,6 +47,10 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     id,
     title,
     done,
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+    ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
+    ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
@@ -154,7 +171,8 @@ export function isInvertedChecklistPillar(title: string): boolean {
   return INVERTED_CHECKLIST_PILLARS.has(title.trim());
 }
 
-export function isDailyInvertedChecklistPillar(title: string, _frequency?: string): boolean {
+export function isDailyInvertedChecklistPillar(title: string, frequency?: string): boolean {
+  void frequency;
   return isInvertedChecklistPillar(title);
 }
 
@@ -215,6 +233,68 @@ export function setSubKpiItemDone(raw: unknown, subKpiId: string, done: boolean)
   }
   const flat = n.flat.map((it) => (it.id === subKpiId ? { ...it, done } : it));
   return wrapForPersist({ segmented: false, flat });
+}
+
+export function subKpiAssignedAgentId(item: SubKpiItem): string | null {
+  const id = item.assignedAgentId?.trim();
+  return id ? id : null;
+}
+
+export function hasSubKpiAssignedTo(raw: unknown, agentId: string | null | undefined): boolean {
+  const id = agentId?.trim();
+  if (!id) return false;
+  const items = isItProjectEnvelope(raw)
+    ? itProjectAllItems(parseItProjectSubKpis(raw))
+    : collectAllSubKpiItems(normalizeSubKpis(raw));
+  return items.some((it) => subKpiAssignedAgentId(it) === id);
+}
+
+export function setSubKpiItemAssignee(
+  raw: unknown,
+  subKpiId: string,
+  assignee: { id: string; name: string } | null,
+): Prisma.InputJsonValue {
+  const n = normalizeSubKpis(raw);
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    const next = { ...it };
+    if (assignee) {
+      next.assignedAgentId = assignee.id;
+      next.assignedAgentName = assignee.name;
+    } else {
+      delete next.assignedAgentId;
+      delete next.assignedAgentName;
+    }
+    return next;
+  };
+  if (n.segmented) {
+    const segments = n.segments.map((seg) => ({
+      ...seg,
+      items: seg.items.map(touch),
+    }));
+    return wrapForPersist({ segmented: true, segments });
+  }
+  const flat = n.flat.map(touch);
+  return wrapForPersist({ segmented: false, flat });
+}
+
+export function setSubKpiItemScreenshots(
+  raw: unknown,
+  subKpiId: string,
+  slot: TaskScreenshotSlot,
+  screenshots: TaskScreenshotMetaItem[],
+): Prisma.InputJsonValue {
+  const n = normalizeSubKpis(raw);
+  const key = slot === "before" ? "beforeScreenshot" : "afterScreenshot";
+  const touch = (it: SubKpiItem): SubKpiItem =>
+    it.id === subKpiId ? { ...it, [key]: screenshots } : it;
+  if (n.segmented) {
+    return wrapForPersist({
+      segmented: true,
+      segments: n.segments.map((seg) => ({ ...seg, items: seg.items.map(touch) })),
+    });
+  }
+  return wrapForPersist({ segmented: false, flat: n.flat.map(touch) });
 }
 
 /** When marking an IT Project sub-task done, default actual date to today (timezone) if unset. Clears actual date when unchecked. */
@@ -316,6 +396,10 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   const title = typeof it.title === "string" ? it.title.trim() : "";
   if (!title) return null;
   const id = typeof it.id === "string" && it.id.trim() ? it.id.trim() : crypto.randomUUID();
+  const assignedAgentId = typeof it.assignedAgentId === "string" ? it.assignedAgentId.trim() : "";
+  const assignedAgentName = typeof it.assignedAgentName === "string" ? it.assignedAgentName.trim() : "";
+  const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
+  const afterScreenshot = parseTaskScreenshotMetaList(it.afterScreenshot);
   const startDate = normalizeOptionalSubKpiYmd(it.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(it.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(it.actualDate);
@@ -323,6 +407,10 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
     id,
     title,
     done: Boolean(it.done),
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+    ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
+    ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),

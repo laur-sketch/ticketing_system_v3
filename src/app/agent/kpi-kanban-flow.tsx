@@ -26,9 +26,16 @@ import {
   kpiChecklistProgress,
   collectAllSubKpiItems,
   normalizeSubKpis,
+  subKpiAssignedAgentId,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import { hasValidActualDate } from "@/lib/us-date-format";
+import {
+  MAX_TASK_SCREENSHOT_BYTES,
+  MAX_TASK_SCREENSHOTS_PER_SLOT,
+  TASK_SCREENSHOT_ACCEPT,
+} from "@/lib/task-screenshot-constants";
+import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
@@ -37,8 +44,8 @@ type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
 
 const TASK_ASSIGNMENT_LANES_PAGE_SIZE = 6;
 
-function subTaskStatusLabel(s: SubKpiItem, timeZone: string): string {
-  if (isItProjectSubTaskDelayed(s, Date.now(), timeZone)) return "Delayed";
+function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): string {
+  if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
   if (hasValidActualDate(s)) return "On time";
   return "Pending";
 }
@@ -80,8 +87,22 @@ type KpiRecord = {
 type AssignableAgent = {
   id: string;
   name: string;
+  email?: string | null;
   team?: { name?: string | null } | null;
 };
+
+function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
+  const seen = new Set<string>();
+  const out: AssignableAgent[] = [];
+  for (const agent of list) {
+    const nameKey = agent.name.trim().toLowerCase().replace(/\s+/g, " ");
+    const key = nameKey || agent.email?.trim().toLowerCase() || agent.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(agent);
+  }
+  return out;
+}
 
 export function AgentKpiKanbanFlow({
   companyFilterTeamId = null,
@@ -99,15 +120,24 @@ export function AgentKpiKanbanFlow({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState("UTC");
+  const [nowMs, setNowMs] = useState(0);
   const [assignmentLanePage, setAssignmentLanePage] = useState(1);
 
   useEffect(() => {
-    try {
-      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (zone) setTz(zone);
-    } catch {
-      setTz("UTC");
-    }
+    queueMicrotask(() => {
+      try {
+        const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (zone) setTz(zone);
+      } catch {
+        setTz("UTC");
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => setNowMs(Date.now()));
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const companyQs =
@@ -138,13 +168,15 @@ export function AgentKpiKanbanFlow({
     }
     if (agentsRes.ok) {
       const a = (await agentsRes.json()) as AssignableAgent[];
-      if (Array.isArray(a)) setAgents(a);
+      if (Array.isArray(a)) setAgents(dedupeAssignableAgents(a));
     }
   }
 
   useEffect(() => {
-    void load();
-    void loadContext();
+    queueMicrotask(() => {
+      void load();
+      void loadContext();
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tz, companyFilterTeamId]);
 
@@ -171,11 +203,11 @@ export function AgentKpiKanbanFlow({
 
   function incompleteOverdueMs(r: KpiRecord) {
     if (isItProjectImplementationPillar(r.title)) {
-      return incompletePastDeadlineDelayMs(r, Date.now(), tz);
+      return incompletePastDeadlineDelayMs(r, nowMs, tz);
     }
     const p = progress(r);
     if (p.total === 0 || p.done === p.total) return 0;
-    return incompletePastDeadlineDelayMs(r, Date.now(), tz);
+    return incompletePastDeadlineDelayMs(r, nowMs, tz);
   }
 
   function fmtDelay(ms: number) {
@@ -190,13 +222,18 @@ export function AgentKpiKanbanFlow({
     return taskKanbanDerivedStatus(r, {
       total: p.total,
       done: p.done,
-      nowMs: Date.now(),
+      nowMs,
       timeZone: tz,
     });
   }
 
   function canEditChecklist(r: KpiRecord) {
     return !!operatorAgentId && r.assignedAgent?.id === operatorAgentId;
+  }
+
+  function canEditSubKpi(r: KpiRecord, s: SubKpiItem) {
+    if (canEditChecklist(r)) return true;
+    return !!operatorAgentId && subKpiAssignedAgentId(s) === operatorAgentId;
   }
 
   async function move(id: string, to: KpiBoardStatus) {
@@ -232,6 +269,82 @@ export function AgentKpiKanbanFlow({
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "Could not reassign KPI.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function assignSubKpi(recordId: string, subKpiId: string, assignedAgentId: string) {
+    if (!canAssignWork) return;
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: recordId,
+          subKpiAssignee: { subKpiId, assignedAgentId: assignedAgentId || null },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not assign sub-task.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function validateTaskScreenshotFile(file: File): string | null {
+    const type = (file.type || "").toLowerCase();
+    const isAllowed = type === "image/jpeg" || type === "image/png" || /\.(jpe?g|png)$/i.test(file.name);
+    if (!isAllowed) return "Only JPEG and PNG screenshots are allowed.";
+    if (file.size > MAX_TASK_SCREENSHOT_BYTES) return "Screenshot must not exceed 10MB.";
+    return null;
+  }
+
+  async function uploadSubKpiScreenshots(
+    recordId: string,
+    subKpiId: string,
+    slot: TaskScreenshotSlot,
+    files: File[],
+    existingCount: number,
+  ) {
+    if (files.length === 0) return;
+    if (existingCount + files.length > MAX_TASK_SCREENSHOTS_PER_SLOT) {
+      setError(`You can upload up to ${MAX_TASK_SCREENSHOTS_PER_SLOT} ${slot} screenshots per sub-task.`);
+      return;
+    }
+    for (const file of files) {
+      const validationError = validateTaskScreenshotFile(file);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("id", recordId);
+      fd.append("subKpiId", subKpiId);
+      fd.append("slot", slot);
+      for (const file of files) {
+        fd.append("screenshot", file);
+      }
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not upload task screenshot.");
         return;
       }
       await load();
@@ -316,10 +429,111 @@ export function AgentKpiKanbanFlow({
       ),
     [agents, rows],
   );
+  const agentNameById = useMemo(
+    () => new Map(agents.map((a) => [a.id, a.name] as const)),
+    [agents],
+  );
+
+  function subKpiAssigneeLabel(s: SubKpiItem) {
+    const id = subKpiAssignedAgentId(s);
+    if (!id) return "Sub-task assignee: unassigned";
+    return `Sub-task assignee: ${agentNameById.get(id) ?? s.assignedAgentName ?? "assigned personnel"}`;
+  }
+
+  function renderSubKpiAssignmentControl(r: KpiRecord, s: SubKpiItem) {
+    const assignedId = subKpiAssignedAgentId(s) ?? "";
+    if (!canAssignWork) {
+      return <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{subKpiAssigneeLabel(s)}</p>;
+    }
+    return (
+      <label className="mt-2 flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+        Sub-task assignee
+        <select
+          value={assignedId}
+          disabled={busyId === r.id}
+          onChange={(e) => void assignSubKpi(r.id, s.id, e.target.value)}
+          className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+        >
+          <option value="">Unassigned</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  function renderScreenshotField(r: KpiRecord, s: SubKpiItem, slot: TaskScreenshotSlot, editable: boolean) {
+    const screenshots = slot === "before" ? s.beforeScreenshot ?? [] : s.afterScreenshot ?? [];
+    const label = slot === "before" ? "Before screenshot" : "After screenshot";
+    const canUpload = editable || canAssignWork;
+    const remainingSlots = Math.max(0, MAX_TASK_SCREENSHOTS_PER_SLOT - screenshots.length);
+    return (
+      <div className="rounded-lg border border-zinc-200 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">{label}</p>
+          <p className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+            {screenshots.length}/{MAX_TASK_SCREENSHOTS_PER_SLOT}
+          </p>
+        </div>
+        {screenshots.length > 0 ? (
+          <div className="mt-1 space-y-1">
+            {screenshots.map((meta, index) => (
+              <div key={meta.storedFileName} className="flex items-center justify-between gap-2 text-[11px]">
+                <a
+                  href={`/api/kpi-maintenance/${r.id}/screenshots/${encodeURIComponent(meta.storedFileName)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0 font-semibold text-orange-700 hover:underline dark:text-orange-300"
+                >
+                  View {index + 1}
+                </a>
+                <span className="truncate text-zinc-500 dark:text-zinc-400">{meta.originalName}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">No image uploaded</p>
+        )}
+        <input
+          type="file"
+          multiple
+          accept={TASK_SCREENSHOT_ACCEPT}
+          disabled={!canUpload || busyId === r.id || remainingSlots === 0}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            e.stopPropagation();
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            void uploadSubKpiScreenshots(r.id, s.id, slot, files, screenshots.length);
+          }}
+          className="mt-2 block w-full text-[11px] text-zinc-600 file:mr-2 file:rounded-full file:border-0 file:bg-orange-600 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-white hover:file:bg-orange-500 disabled:opacity-60 dark:text-zinc-400"
+          aria-label={`Upload 1 to ${remainingSlots} ${label.toLowerCase()} images for ${s.title}`}
+        />
+        <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-500">
+          {remainingSlots > 0
+            ? `Upload 1-${remainingSlots} JPEG/PNG images, 10MB each.`
+            : "Maximum screenshots reached."}
+        </p>
+      </div>
+    );
+  }
+
+  function renderTaskScreenshotFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
+    return (
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {renderScreenshotField(r, s, "before", editable)}
+        {renderScreenshotField(r, s, "after", editable)}
+      </div>
+    );
+  }
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
-    setAssignmentLanePage((p) => Math.min(Math.max(1, p), totalPages));
+    queueMicrotask(() => setAssignmentLanePage((p) => Math.min(Math.max(1, p), totalPages)));
   }, [agents.length]);
 
   const assignmentLanePageCount = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
@@ -357,8 +571,9 @@ export function AgentKpiKanbanFlow({
             Hold and slide a task, then release over a lane (works on touch and desktop).
           </p>
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            Up to six personnel lanes per page; use pagination below the lanes when there are more. On mobile, swipe
-            within the lane row.
+            Up to six personnel lanes per page; use pagination below the lanes when there are more. Sub-tasks can also
+            be assigned from each task card.
+            Before/after screenshots are available for non-IT Project tasks and accept JPEG or PNG only, up to 10MB each.
           </p>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
             <div className="rounded-xl border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
@@ -554,7 +769,7 @@ export function AgentKpiKanbanFlow({
                           ) : null}
                           {canAssignWork ? (
                             <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-400">
-                              Reassign through drag-and-drop lanes above.
+                              Reassign the card through lanes above, or assign individual sub-tasks below.
                             </p>
                           ) : null}
                           {itProject ? (
@@ -643,22 +858,26 @@ export function AgentKpiKanbanFlow({
                                       {seg.label}
                                     </p>
                                     <div className="mt-1 space-y-2">
-                                      {seg.items.map((s) => (
-                                        <label
-                                          key={s.id}
-                                          className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
-                                        >
-                                          <input
-                                            type="checkbox"
-                                            disabled={!editable || busyId === r.id}
-                                            checked={Boolean(s.done)}
-                                            onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
-                                          />
-                                          <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
-                                            {s.title}
-                                          </span>
-                                        </label>
-                                      ))}
+                                      {seg.items.map((s) => {
+                                        const subEditable = canEditSubKpi(r, s);
+                                        return (
+                                          <div key={s.id} className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
+                                            <label className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+                                              <input
+                                                type="checkbox"
+                                                disabled={!subEditable || busyId === r.id}
+                                                checked={Boolean(s.done)}
+                                                onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
+                                              />
+                                              <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
+                                                {s.title}
+                                              </span>
+                                            </label>
+                                            {renderSubKpiAssignmentControl(r, s)}
+                                            {renderTaskScreenshotFields(r, s, subEditable)}
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   </div>
                                 ))
@@ -694,7 +913,9 @@ export function AgentKpiKanbanFlow({
                                               No sub-tasks in this phase.
                                             </p>
                                           ) : (
-                                            phase.items.map((s) => (
+                                            phase.items.map((s) => {
+                                              const subEditable = canEditSubKpi(r, s);
+                                              return (
                                               <div
                                                 key={s.id}
                                                 className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
@@ -703,7 +924,7 @@ export function AgentKpiKanbanFlow({
                                         <input
                                           type="checkbox"
                                           className="mt-0.5"
-                                          disabled={!editable || busyId === r.id}
+                                          disabled={!subEditable || busyId === r.id}
                                           checked={isItProjectSubTaskComplete(s)}
                                           onChange={() =>
                                             void toggleSubKpi(
@@ -721,6 +942,7 @@ export function AgentKpiKanbanFlow({
                                           {s.title}
                                         </span>
                                       </label>
+                                      {renderSubKpiAssignmentControl(r, s)}
                                       {!hasValidActualDate(s) ? (
                                         <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
                                           Pick an actual date to complete this sub-task (on time vs delayed is set automatically).
@@ -748,7 +970,7 @@ export function AgentKpiKanbanFlow({
                                           Actual date
                                           <DatePickerField
                                             value={s.actualDate ?? ""}
-                                            disabled={!editable || busyId === r.id}
+                                            disabled={!subEditable || busyId === r.id}
                                             onChange={(e) =>
                                               void patchSubKpiSchedule(r.id, s.id, {
                                                 actualDate: e.target.value || null,
@@ -764,39 +986,47 @@ export function AgentKpiKanbanFlow({
                                         <span
                                           className={cn(
                                             "font-semibold",
-                                            isItProjectSubTaskDelayed(s, Date.now(), tz)
+                                            isItProjectSubTaskDelayed(s, nowMs, tz)
                                               ? "text-rose-700 dark:text-rose-400"
                                               : hasValidActualDate(s)
                                                 ? "text-emerald-600 dark:text-emerald-400"
                                                 : "text-amber-700 dark:text-amber-300",
                                           )}
                                         >
-                                          {subTaskStatusLabel(s, tz)}
+                                          {subTaskStatusLabel(s, nowMs, tz)}
                                         </span>
                                       </p>
                                               </div>
-                                            ))
+                                              );
+                                            })
                                           )}
                                         </div>
                                       </div>
                                     );
                                   })
-                                : checklistItems.map((s: SubKpiItem) => (
-                                    <label
-                                      key={s.id}
-                                      className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        disabled={!editable || busyId === r.id}
-                                        checked={Boolean(s.done)}
-                                        onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
-                                      />
-                                      <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
-                                        {s.title}
-                                      </span>
-                                    </label>
-                                  ))}
+                                : checklistItems.map((s: SubKpiItem) => {
+                                    const subEditable = canEditSubKpi(r, s);
+                                    return (
+                                      <div
+                                        key={s.id}
+                                        className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40"
+                                      >
+                                        <label className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+                                          <input
+                                            type="checkbox"
+                                            disabled={!subEditable || busyId === r.id}
+                                            checked={Boolean(s.done)}
+                                            onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
+                                          />
+                                          <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
+                                            {s.title}
+                                          </span>
+                                        </label>
+                                        {renderSubKpiAssignmentControl(r, s)}
+                                        {renderTaskScreenshotFields(r, s, subEditable)}
+                                      </div>
+                                    );
+                                  })}
                           </div>
                             </div>
                           </div>

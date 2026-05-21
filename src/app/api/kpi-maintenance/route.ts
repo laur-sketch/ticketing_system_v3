@@ -12,12 +12,15 @@ import {
 } from "@/lib/kpi-recurrence";
 import {
   collectAllSubKpiItems,
+  hasSubKpiAssignedTo,
   type NormalizedSubKpis,
   markEverySubKpiDone,
   normalizeSubKpis,
   resetAllSubKpiDone,
+  setSubKpiItemAssignee,
   setSubKpiItemDone,
-  setSubKpiItemScheduleMeta,
+  setSubKpiItemScreenshots,
+  subKpiAssignedAgentId,
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
   wrapForPersist,
@@ -29,6 +32,7 @@ import {
   itProjectAllItems,
   parseItProjectSubKpis,
   setItProjectActivePhase,
+  setItProjectSubKpiAssignee,
   setItProjectSubKpiDone,
   setItProjectSubKpiSchedule,
   updateItProjectPhases,
@@ -40,6 +44,9 @@ import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
+import { persistTaskScreenshot, validateTaskScreenshotFile } from "@/lib/task-screenshots";
+import { MAX_TASK_SCREENSHOTS_PER_SLOT } from "@/lib/task-screenshot-constants";
+import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 
 const allowedFrequencies = new Set(Object.values(KpiFrequency));
 
@@ -59,9 +66,7 @@ export async function GET(req: Request) {
   const timeZone = normalizeTimeZone(searchParams.get("tz"));
 
   const perms = await resolveOpsPermissions(session);
-  let where: Prisma.KpiMaintenanceWhereInput = perms.canAssignWork
-    ? {}
-    : { assignedAgentId: perms.operator?.id ?? "__none__" };
+  let where: Prisma.KpiMaintenanceWhereInput = perms.canAssignWork ? {} : {};
 
   const companyTeamId = searchParams.get("company")?.trim();
   if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
@@ -94,6 +99,10 @@ export async function GET(req: Request) {
       assignedAgent: { select: { id: true, name: true, team: { select: { name: true } } } },
     },
   });
+  if (!perms.canAssignWork) {
+    const operatorId = perms.operator?.id ?? null;
+    rows = rows.filter((row) => row.assignedAgentId === operatorId || hasSubKpiAssignedTo(row.subKpis, operatorId));
+  }
 
   const now = new Date();
   const updates: Promise<unknown>[] = [];
@@ -179,6 +188,10 @@ export async function GET(req: Request) {
         assignedAgent: { select: { id: true, name: true, team: { select: { name: true } } } },
       },
     });
+    if (!perms.canAssignWork) {
+      const operatorId = perms.operator?.id ?? null;
+      rows = rows.filter((row) => row.assignedAgentId === operatorId || hasSubKpiAssignedTo(row.subKpis, operatorId));
+    }
   }
 
   return NextResponse.json({ rows, canAssignWork: perms.canAssignWork });
@@ -412,7 +425,8 @@ export async function PATCH(req: Request) {
   if (unauthorized || !session) return unauthorized;
   const perms = await resolveOpsPermissions(session);
   const patchTz = normalizeTimeZone(new URL(req.url).searchParams.get("tz"));
-  const body = (await req.json()) as {
+  let screenshotFiles: File[] = [];
+  let body: {
     id?: string;
     subKpiId?: string;
     done?: boolean;
@@ -427,7 +441,31 @@ export async function PATCH(req: Request) {
       dueDate?: string | null;
       actualDate?: string | null;
     };
+    subKpiAssignee?: {
+      subKpiId?: string;
+      assignedAgentId?: string | null;
+    };
+    subKpiScreenshot?: {
+      subKpiId?: string;
+      slot?: TaskScreenshotSlot;
+    };
   };
+  const contentType = req.headers.get("content-type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    const fd = await req.formData();
+    screenshotFiles = fd
+      .getAll("screenshot")
+      .filter((file): file is File => file instanceof File && file.size > 0);
+    body = {
+      id: String(fd.get("id") ?? ""),
+      subKpiScreenshot: {
+        subKpiId: String(fd.get("subKpiId") ?? ""),
+        slot: String(fd.get("slot") ?? "") as TaskScreenshotSlot,
+      },
+    };
+  } else {
+    body = (await req.json()) as typeof body;
+  }
   const id = body.id?.trim() ?? "";
 
   if (!id) {
@@ -475,6 +513,16 @@ export async function PATCH(req: Request) {
     );
   }
   const isAssignee = !!perms.operator && perms.operator.id === kpiRow.assignedAgentId;
+  const subKpiItems = isItProjectImplementationPillar(kpiRow.title)
+    ? itProjectAllItems(parseItProjectSubKpis(kpiRow.subKpis, kpiRow.itProjectPhase))
+    : collectAllSubKpiItems(normalizeSubKpis(kpiRow.subKpis));
+  const canEditSubKpi = (subKpiId: string) => {
+    if (isAssignee) return true;
+    const operatorId = perms.operator?.id;
+    if (!operatorId) return false;
+    const item = subKpiItems.find((it) => it.id === subKpiId);
+    return item ? subKpiAssignedAgentId(item) === operatorId : false;
+  };
 
   if (body.itProjectName !== undefined || body.itProjectPhase !== undefined) {
     if (!isAssignee) {
@@ -528,15 +576,15 @@ export async function PATCH(req: Request) {
   }
 
   if (body.subKpiSchedule != null && typeof body.subKpiSchedule === "object") {
-    if (!isAssignee) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
     if (!isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json({ error: "Per sub-task scheduling applies only to IT Project Implementation." }, { status: 400 });
     }
     const subKpiIdSched = String(body.subKpiSchedule.subKpiId ?? "").trim();
     if (!subKpiIdSched) {
       return NextResponse.json({ error: "subKpiSchedule.subKpiId is required." }, { status: 400 });
+    }
+    if (!canEditSubKpi(subKpiIdSched)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const sched = body.subKpiSchedule;
     const updatedJson = setItProjectSubKpiSchedule(kpiRow.subKpis, subKpiIdSched, {
@@ -556,6 +604,87 @@ export async function PATCH(req: Request) {
         ...(nextComplete ? { rolledOverIncomplete: false } : {}),
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.subKpiAssignee != null && typeof body.subKpiAssignee === "object") {
+    if (!perms.canAssignWork) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const subKpiIdAssign = String(body.subKpiAssignee.subKpiId ?? "").trim();
+    if (!subKpiIdAssign) {
+      return NextResponse.json({ error: "subKpiAssignee.subKpiId is required." }, { status: 400 });
+    }
+    const target = subKpiItems.find((it) => it.id === subKpiIdAssign);
+    if (!target) {
+      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
+    const assignedAgentIdRaw = body.subKpiAssignee.assignedAgentId;
+    const assignedAgentId =
+      typeof assignedAgentIdRaw === "string" ? assignedAgentIdRaw.trim() : "";
+    const assignee = assignedAgentId
+      ? await prisma.agent.findUnique({
+          where: { id: assignedAgentId },
+          select: { id: true, name: true },
+        })
+      : null;
+    if (assignedAgentId && !assignee) {
+      return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
+    }
+    const updatedJson = isItProjectImplementationPillar(kpiRow.title)
+      ? setItProjectSubKpiAssignee(kpiRow.subKpis, subKpiIdAssign, assignee)
+      : setSubKpiItemAssignee(kpiRow.subKpis, subKpiIdAssign, assignee);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.subKpiScreenshot != null && typeof body.subKpiScreenshot === "object") {
+    const subKpiIdShot = String(body.subKpiScreenshot.subKpiId ?? "").trim();
+    const slot = body.subKpiScreenshot.slot;
+    if (!subKpiIdShot || (slot !== "before" && slot !== "after")) {
+      return NextResponse.json({ error: "subKpiId and screenshot slot (before/after) are required." }, { status: 400 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { status: 400 },
+      );
+    }
+    if (!perms.canAssignWork && !canEditSubKpi(subKpiIdShot)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const target = subKpiItems.find((it) => it.id === subKpiIdShot);
+    if (!target) {
+      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
+    if (screenshotFiles.length === 0) {
+      return NextResponse.json({ error: "Screenshot file is required." }, { status: 400 });
+    }
+    const existingScreenshots = slot === "before" ? target.beforeScreenshot ?? [] : target.afterScreenshot ?? [];
+    if (existingScreenshots.length + screenshotFiles.length > MAX_TASK_SCREENSHOTS_PER_SLOT) {
+      return NextResponse.json(
+        { error: `You can upload up to ${MAX_TASK_SCREENSHOTS_PER_SLOT} ${slot} screenshots per sub-task.` },
+        { status: 400 },
+      );
+    }
+    for (const file of screenshotFiles) {
+      const fileCheck = validateTaskScreenshotFile(file);
+      if (!fileCheck.ok) {
+        return NextResponse.json({ error: fileCheck.error }, { status: 400 });
+      }
+    }
+    const uploaded = await Promise.all(screenshotFiles.map((file) => persistTaskScreenshot(kpiRow.id, file)));
+    const updatedJson = setSubKpiItemScreenshots(kpiRow.subKpis, subKpiIdShot, slot, [
+      ...existingScreenshots,
+      ...uploaded,
+    ]);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
     });
     return NextResponse.json(updated);
   }
@@ -618,12 +747,15 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
-  if (!isAssignee) {
+  const markAllDone = body.markAllDone;
+  const subKpiId = body.subKpiId?.trim() ?? "";
+  if (subKpiId && !canEditSubKpi(subKpiId)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!subKpiId && !isAssignee) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const markAllDone = body.markAllDone;
-  const subKpiId = body.subKpiId?.trim() ?? "";
   if (typeof markAllDone !== "boolean" && (!subKpiId || typeof body.done !== "boolean")) {
     return NextResponse.json(
       { error: "Provide either markAllDone OR (subKpiId + done). Use structuredSubKpis to reorganize checklist." },

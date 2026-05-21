@@ -198,7 +198,9 @@ Open **`/admin/account`** → **Security** tab (customers, personnel, and admins
 
 ### 6.3 KPI / task hygiene  
 
-- Complete checklist items only where you are the assignee (when restricted).  
+- Complete checklist items where you are the KPI card assignee, or where an individual sub-KPI is assigned directly to you.  
+- Admins/coordinators can assign individual sub-KPIs to other personnel from inside each Task Board card.  
+- Non-IT Project sub-KPIs can store one **before** screenshot and one **after** screenshot for evidence; uploads must be **JPEG or PNG** and no larger than **10MB** each.  
 - Respect recurrence boundaries (daily / weekly / monthly cycles); period boundaries use browser/reporting timezone in API calls.  
 - **Recurring tasks:** flat or **segmented** sub-KPI checklists; checklists reset on period rollover.  
 - **IT Project Implementation:** non-recurring; phases and per-sub-task due dates (**MM/DD/YYYY** in UI); record **actual date** when completing sub-tasks. **Delayed** column applies only to this pillar (late sub-task or actual after due); fully complete but late work stays in **Delayed**, not **Done**.  
