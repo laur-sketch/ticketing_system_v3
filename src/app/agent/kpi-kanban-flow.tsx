@@ -558,9 +558,10 @@ export function AgentKpiKanbanFlow({
 
   function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem) {
     const subEditable = canEditSubKpi(r, s);
+    const canEditWorkDetails = subEditable || canAssignWork;
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
-    const finished = hasValidActualDate(s);
+    const finished = Boolean(s.done);
     return (
       <div
         key={s.id}
@@ -570,9 +571,17 @@ export function AgentKpiKanbanFlow({
         )}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <p className={cn("text-sm font-semibold text-zinc-900 dark:text-zinc-100", finished && "line-through opacity-70")}>
-            {s.title}
-          </p>
+          <label className="flex min-w-0 items-start gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!subEditable || busyId === r.id}
+              checked={finished}
+              onChange={() => void toggleSubKpi(r.id, s.id, finished)}
+              aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
+            />
+            <span className={cn("min-w-0", finished && "line-through opacity-70")}>{s.title}</span>
+          </label>
           <span
             className={cn(
               "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
@@ -624,8 +633,10 @@ export function AgentKpiKanbanFlow({
               key={`loc-${r.id}-${s.id}-${s.location ?? ""}`}
               type="text"
               defaultValue={s.location ?? ""}
-              disabled={!subEditable || busyId === r.id}
+              disabled={!canEditWorkDetails || busyId === r.id}
               placeholder="Enter location"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
               onBlur={(e) => {
                 const next = e.target.value.trim();
                 const prev = (s.location ?? "").trim();

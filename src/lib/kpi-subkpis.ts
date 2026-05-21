@@ -417,11 +417,8 @@ export function setSubKpiItemWorkMeta(
       else delete (next as { dueDate?: string }).dueDate;
     }
     if (act !== undefined) {
-      if (act) next = { ...next, actualDate: act, done: true };
-      else {
-        next = { ...next, done: false };
-        delete (next as { actualDate?: string }).actualDate;
-      }
+      if (act) next = { ...next, actualDate: act };
+      else delete (next as { actualDate?: string }).actualDate;
     }
     if (location !== undefined) {
       if (location) next = { ...next, location };
