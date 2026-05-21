@@ -329,7 +329,7 @@ export async function POST(req: Request) {
             .map((s) => ({
               title: (s.title ?? "").trim(),
               startDate: (s.startDate ?? "").trim(),
-              dueDate: (s.dueDate ?? s.endDate ?? "").trim(),
+              dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
             }))
             .filter((s) => s.title.length > 0)
         : [];
@@ -343,7 +343,7 @@ export async function POST(req: Request) {
                   .map((i) => ({
                     title: (i.title ?? "").trim(),
                     startDate: (i.startDate ?? "").trim(),
-                    dueDate: (i.dueDate ?? i.endDate ?? "").trim(),
+                    dueDate: isRecurring ? "" : (i.dueDate ?? i.endDate ?? "").trim(),
                   }))
                   .filter((i) => i.title.length > 0)
               : [],
@@ -614,10 +614,11 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
     }
     const meta = body.subKpiWorkMeta;
+    const recurring = kpiRow.isRecurring !== false;
     const updatedJson = setSubKpiItemWorkMeta(kpiRow.subKpis, subKpiIdMeta, {
       startDate: meta.startDate,
-      dueDate: meta.dueDate,
-      actualDate: meta.actualDate,
+      dueDate: recurring ? undefined : meta.dueDate,
+      actualDate: recurring ? undefined : meta.actualDate,
       location: meta.location,
     });
     const prevComplete = checklistFullyComplete(kpiRow.subKpis);

@@ -122,6 +122,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const draftSubKpiTotal = draftUseSegments
     ? draftSegments.reduce((a, s) => a + s.items.length, 0)
     : subKpisDraft.length;
+  const hideSubTaskScheduleDate = !isItProject && maintenanceIsRecurring && maintenanceFrequency === "Daily";
   const showSegmentedCreateOption =
     !isItProject && (draftUseSegments || draftSubKpiTotal >= MIN_SUB_FOR_SEGMENT_OPTION);
 
@@ -196,7 +197,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   function addSubKpiDraft() {
     const trimmed = subKpiDraft.trim();
     if (!trimmed || draftUseSegments) return;
-    if (subKpiScheduleDate && subKpiTargetDate && subKpiTargetDate < subKpiScheduleDate) {
+    const scheduleDate = hideSubTaskScheduleDate ? "" : subKpiScheduleDate;
+    const targetDate = maintenanceIsRecurring ? "" : subKpiTargetDate;
+    if (scheduleDate && targetDate && targetDate < scheduleDate) {
       setLocalError("Target date must be on or after the schedule date.");
       return;
     }
@@ -205,12 +208,12 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       {
         id: crypto.randomUUID(),
         title: trimmed,
-        ...(subKpiScheduleDate ? { startDate: subKpiScheduleDate } : {}),
-        ...(subKpiTargetDate ? { dueDate: subKpiTargetDate } : {}),
+        ...(scheduleDate ? { startDate: scheduleDate } : {}),
+        ...(targetDate ? { dueDate: targetDate } : {}),
       },
     ]);
     setSubKpiDraft("");
-    setSubKpiScheduleDate("");
+    if (!hideSubTaskScheduleDate) setSubKpiScheduleDate("");
     setSubKpiTargetDate("");
     setLocalError(null);
   }
@@ -255,8 +258,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     if (!raw) return;
     const seg = draftSegments.find((s) => s.id === segmentId);
     if (!seg?.label.trim()) return;
-    const scheduleDate = segItemScheduleDate[segmentId] ?? "";
-    const targetDate = segItemTargetDate[segmentId] ?? "";
+    const scheduleDate = hideSubTaskScheduleDate ? "" : segItemScheduleDate[segmentId] ?? "";
+    const targetDate = maintenanceIsRecurring ? "" : segItemTargetDate[segmentId] ?? "";
     if (scheduleDate && targetDate && targetDate < scheduleDate) {
       setLocalError("Target date must be on or after the schedule date.");
       return;
@@ -280,7 +283,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       ),
     );
     setSegItemDraft((prev) => ({ ...prev, [segmentId]: "" }));
-    setSegItemScheduleDate((prev) => ({ ...prev, [segmentId]: "" }));
+    if (!hideSubTaskScheduleDate) {
+      setSegItemScheduleDate((prev) => ({ ...prev, [segmentId]: "" }));
+    }
     setSegItemTargetDate((prev) => ({ ...prev, [segmentId]: "" }));
     setLocalError(null);
   }
@@ -368,15 +373,15 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         label: s.label.trim(),
         items: s.items.map((it) => ({
           title: it.title.trim(),
-          startDate: it.startDate ?? "",
-          dueDate: it.dueDate ?? "",
+          startDate: hideSubTaskScheduleDate ? "" : it.startDate ?? "",
+          dueDate: maintenanceIsRecurring ? "" : it.dueDate ?? "",
         })),
       }));
     } else {
       body.subKpis = subKpisDraft.map((s) => ({
         title: s.title,
-        startDate: s.startDate ?? "",
-        dueDate: s.dueDate ?? "",
+        startDate: hideSubTaskScheduleDate ? "" : s.startDate ?? "",
+        dueDate: maintenanceIsRecurring ? "" : s.dueDate ?? "",
       }));
     }
 
@@ -529,14 +534,48 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
           </>
         ) : null}
         {!isItProject ? (
-          <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
-            <input
-              type="checkbox"
-              checked={maintenanceIsRecurring}
-              onChange={(e) => setMaintenanceIsRecurring(e.target.checked)}
-            />
-            Recurring task
-          </label>
+          <div className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+            Task schedule type
+            <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
+              <input
+                type="checkbox"
+                checked={maintenanceIsRecurring}
+                onChange={(e) => {
+                  const nextRecurring = e.target.checked;
+                  setMaintenanceIsRecurring(nextRecurring);
+                  if (nextRecurring) {
+        const recurringDaily = maintenanceFrequency === "Daily";
+        if (recurringDaily) {
+          setSubKpiScheduleDate("");
+          setSegItemScheduleDate({});
+        }
+                    setSubKpiTargetDate("");
+                    setSegItemTargetDate({});
+                    setSubKpisDraft((prev) =>
+                      prev.map((item) => {
+                        const next = { ...item };
+            if (recurringDaily) delete next.startDate;
+                        delete next.dueDate;
+                        return next;
+                      }),
+                    );
+                    setDraftSegments((prev) =>
+                      prev.map((seg) => ({
+                        ...seg,
+                        items: seg.items.map((item) => {
+                          const next = { ...item };
+                          if (recurringDaily) delete next.startDate;
+                          delete next.dueDate;
+                          return next;
+                        }),
+                      })),
+                    );
+                  }
+                }}
+              />
+              Recurring task
+            </label>
+          </div>
         ) : null}
         {!isItProject && !maintenanceIsRecurring ? (
           <>
@@ -559,16 +598,43 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
           </>
         ) : null}
         {!isItProject ? (
-          <select
-            value={maintenanceFrequency}
-            onChange={(e) => setMaintenanceFrequency(e.target.value as MaintenanceFrequency)}
-            disabled={!maintenanceIsRecurring}
-            className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-          >
-            <option value="Daily">Daily</option>
-            <option value="Weekly">Weekly</option>
-            <option value="Monthly">Monthly</option>
-          </select>
+          <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+            Frequency
+            <select
+              value={maintenanceFrequency}
+              onChange={(e) => {
+                const nextFrequency = e.target.value as MaintenanceFrequency;
+                setMaintenanceFrequency(nextFrequency);
+                if (maintenanceIsRecurring && nextFrequency === "Daily") {
+                  setSubKpiScheduleDate("");
+                  setSegItemScheduleDate({});
+                  setSubKpisDraft((prev) =>
+                    prev.map((item) => {
+                      const next = { ...item };
+                      delete next.startDate;
+                      return next;
+                    }),
+                  );
+                  setDraftSegments((prev) =>
+                    prev.map((seg) => ({
+                      ...seg,
+                      items: seg.items.map((item) => {
+                        const next = { ...item };
+                        delete next.startDate;
+                        return next;
+                      }),
+                    })),
+                  );
+                }
+              }}
+              disabled={!maintenanceIsRecurring}
+              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              <option value="Daily">Daily</option>
+              <option value="Weekly">Weekly</option>
+              <option value="Monthly">Monthly</option>
+            </select>
+          </label>
         ) : null}
         {!isItProject && maintenanceIsRecurring && maintenanceFrequency === "Weekly" ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
@@ -714,30 +780,43 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       ) : !draftUseSegments ? (
         <div className="mt-3 space-y-3">
           <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto]">
-            <input
-              value={subKpiDraft}
-              onChange={(e) => setSubKpiDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addSubKpiDraft();
-                }
-              }}
-              placeholder="Add sub-task (press Enter)"
-              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-            <DatePickerField
-              value={subKpiScheduleDate}
-              onChange={(e) => setSubKpiScheduleDate(e.target.value)}
-              aria-label="Schedule date"
-              shellClassName="h-10"
-            />
-            <DatePickerField
-              value={subKpiTargetDate}
-              onChange={(e) => setSubKpiTargetDate(e.target.value)}
-              aria-label="Target date"
-              shellClassName="h-10"
-            />
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              Sub-task title
+              <input
+                value={subKpiDraft}
+                onChange={(e) => setSubKpiDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addSubKpiDraft();
+                  }
+                }}
+                placeholder="Add sub-task (press Enter)"
+                className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+            </label>
+          {!hideSubTaskScheduleDate ? (
+            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              Schedule date
+              <DatePickerField
+                value={subKpiScheduleDate}
+                onChange={(e) => setSubKpiScheduleDate(e.target.value)}
+                aria-label="Schedule date"
+                shellClassName="h-10"
+              />
+            </label>
+          ) : null}
+            {!maintenanceIsRecurring ? (
+              <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                Target date
+                <DatePickerField
+                  value={subKpiTargetDate}
+                  onChange={(e) => setSubKpiTargetDate(e.target.value)}
+                  aria-label="Target date"
+                  shellClassName="h-10"
+                />
+              </label>
+            ) : null}
             <Button type="button" onClick={addSubKpiDraft} className="rounded-xl px-4">
               Add sub-task
             </Button>
@@ -781,35 +860,48 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                 </Button>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-[minmax(200px,1fr)_180px_180px_auto]">
-                <input
-                  value={segItemDraft[seg.id] ?? ""}
-                  disabled={!seg.label.trim()}
-                  onChange={(e) => setSegItemDraft((p) => ({ ...p, [seg.id]: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      pushItemToDraftSegment(seg.id);
+                <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
+                  Sub-task title
+                  <input
+                    value={segItemDraft[seg.id] ?? ""}
+                    disabled={!seg.label.trim()}
+                    onChange={(e) => setSegItemDraft((p) => ({ ...p, [seg.id]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        pushItemToDraftSegment(seg.id);
+                      }
+                    }}
+                    placeholder={
+                      seg.label.trim() ? "Add sub-task under this segment" : "Enter segment label first"
                     }
-                  }}
-                  placeholder={
-                    seg.label.trim() ? "Add sub-task under this segment" : "Enter segment label first"
-                  }
-                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                />
-                <DatePickerField
-                  value={segItemScheduleDate[seg.id] ?? ""}
-                  disabled={!seg.label.trim()}
-                  onChange={(e) => setSegItemScheduleDate((p) => ({ ...p, [seg.id]: e.target.value }))}
-                  aria-label={`Schedule date for ${seg.label || "segment item"}`}
-                  shellClassName="h-10 rounded-lg"
-                />
-                <DatePickerField
-                  value={segItemTargetDate[seg.id] ?? ""}
-                  disabled={!seg.label.trim()}
-                  onChange={(e) => setSegItemTargetDate((p) => ({ ...p, [seg.id]: e.target.value }))}
-                  aria-label={`Target date for ${seg.label || "segment item"}`}
-                  shellClassName="h-10 rounded-lg"
-                />
+                    className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </label>
+                {!hideSubTaskScheduleDate ? (
+                  <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
+                    Schedule date
+                    <DatePickerField
+                      value={segItemScheduleDate[seg.id] ?? ""}
+                      disabled={!seg.label.trim()}
+                      onChange={(e) => setSegItemScheduleDate((p) => ({ ...p, [seg.id]: e.target.value }))}
+                      aria-label={`Schedule date for ${seg.label || "segment item"}`}
+                      shellClassName="h-10 rounded-lg"
+                    />
+                  </label>
+                ) : null}
+                {!maintenanceIsRecurring ? (
+                  <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
+                    Target date
+                    <DatePickerField
+                      value={segItemTargetDate[seg.id] ?? ""}
+                      disabled={!seg.label.trim()}
+                      onChange={(e) => setSegItemTargetDate((p) => ({ ...p, [seg.id]: e.target.value }))}
+                      aria-label={`Target date for ${seg.label || "segment item"}`}
+                      shellClassName="h-10 rounded-lg"
+                    />
+                  </label>
+                ) : null}
                 <Button
                   type="button"
                   disabled={!seg.label.trim()}

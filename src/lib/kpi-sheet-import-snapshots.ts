@@ -19,6 +19,7 @@ const PILLAR_LOOKUP: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
   { match: /^\s*cybersecurity\s*$/i, pillar: "CYBERSECURITY" },
   { match: /^\s*data\s+backup\s*$/i, pillar: "DATA BACKUP" },
   { match: /^\s*system\s+maintenance\s*$/i, pillar: "SYSTEM MAINTENANCE" },
+  { match: /^\s*monitoring\s*$/i, pillar: "MONITORING" },
   { match: /^\s*network\s+performance\s*$/i, pillar: "NETWORK PERFORMANCE" },
 ];
 
@@ -214,6 +215,7 @@ export function pillarFromItSalfDailyFilename(filePath: string): ItTaskPillarTit
   if (name.includes("CYBER")) return "CYBERSECURITY";
   if (name.includes("SYSTEM") && name.includes("AVAILABILITY")) return "SYSTEM AVAILABILITY";
   if (name.includes("SYSTEM") && name.includes("MAINTENANCE")) return "SYSTEM MAINTENANCE";
+  if (name.includes("MONITORING")) return "MONITORING";
   if (name.includes("DATA") && name.includes("BACKUP")) return "DATA BACKUP";
   return matchPillarFromSheetLabel(name.replace(/\.CSV$/i, "").replace(/^IT SALF\s*-\s*/i, ""));
 }

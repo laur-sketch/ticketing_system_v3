@@ -3,6 +3,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Cloud,
+  Activity,
   Headphones,
   LayoutGrid,
   Router,
@@ -31,6 +32,7 @@ const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
   CYBERSECURITY: Shield,
   "DATA BACKUP": Cloud,
   "SYSTEM MAINTENANCE": Wrench,
+  MONITORING: Activity,
   "USER SUPPORT": Smile,
   "IT PROJECT IMPLEMENTATION": LayoutGrid,
   "NETWORK PERFORMANCE": Router,
@@ -223,6 +225,7 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
   },
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
+  MONITORING: { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "IT PROJECT IMPLEMENTATION": {
     positiveLabel: "On time",
     negativeLabel: "Delayed",

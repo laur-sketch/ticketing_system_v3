@@ -558,6 +558,8 @@ export function AgentKpiKanbanFlow({
 
   function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem) {
     const subEditable = canEditSubKpi(r, s);
+    const recurring = r.isRecurring !== false;
+    const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = hasValidActualDate(s);
     return (
       <div
@@ -584,34 +586,38 @@ export function AgentKpiKanbanFlow({
         </div>
         {renderSubKpiAssignmentControl(r, s)}
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Schedule date
-            <DatePickerField
-              value={s.startDate ?? ""}
-              disabled={!canAssignWork || busyId === r.id}
-              onChange={(e) =>
-                void patchSubKpiWorkMeta(r.id, s.id, {
-                  startDate: e.target.value || null,
-                })
-              }
-              wrapperClassName="mt-1"
-              aria-label={`Schedule date for ${s.title}`}
-            />
-          </label>
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Target date
-            <DatePickerField
-              value={s.dueDate ?? ""}
-              disabled={!canAssignWork || busyId === r.id}
-              onChange={(e) =>
-                void patchSubKpiWorkMeta(r.id, s.id, {
-                  dueDate: e.target.value || null,
-                })
-              }
-              wrapperClassName="mt-1"
-              aria-label={`Target date for ${s.title}`}
-            />
-          </label>
+          {!dailyRecurring ? (
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Schedule date
+              <DatePickerField
+                value={s.startDate ?? ""}
+                disabled={!canAssignWork || busyId === r.id}
+                onChange={(e) =>
+                  void patchSubKpiWorkMeta(r.id, s.id, {
+                    startDate: e.target.value || null,
+                  })
+                }
+                wrapperClassName="mt-1"
+                aria-label={`Schedule date for ${s.title}`}
+              />
+            </label>
+          ) : null}
+          {!recurring ? (
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Target date
+              <DatePickerField
+                value={s.dueDate ?? ""}
+                disabled={!canAssignWork || busyId === r.id}
+                onChange={(e) =>
+                  void patchSubKpiWorkMeta(r.id, s.id, {
+                    dueDate: e.target.value || null,
+                  })
+                }
+                wrapperClassName="mt-1"
+                aria-label={`Target date for ${s.title}`}
+              />
+            </label>
+          ) : null}
           <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             Location
             <input
@@ -630,20 +636,22 @@ export function AgentKpiKanbanFlow({
               className="mt-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
           </label>
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Date finished
-            <DatePickerField
-              value={s.actualDate ?? ""}
-              disabled={!subEditable || busyId === r.id}
-              onChange={(e) =>
-                void patchSubKpiWorkMeta(r.id, s.id, {
-                  actualDate: e.target.value || null,
-                })
-              }
-              wrapperClassName="mt-1"
-              aria-label={`Date finished for ${s.title}`}
-            />
-          </label>
+          {!recurring ? (
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Date finished
+              <DatePickerField
+                value={s.actualDate ?? ""}
+                disabled={!subEditable || busyId === r.id}
+                onChange={(e) =>
+                  void patchSubKpiWorkMeta(r.id, s.id, {
+                    actualDate: e.target.value || null,
+                  })
+                }
+                wrapperClassName="mt-1"
+                aria-label={`Date finished for ${s.title}`}
+              />
+            </label>
+          ) : null}
         </div>
         {renderTaskScreenshotFields(r, s, subEditable)}
       </div>
