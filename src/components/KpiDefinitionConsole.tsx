@@ -61,10 +61,14 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const [recurrenceWeekday, setRecurrenceWeekday] = useState(1);
   const [recurrenceMonthDay, setRecurrenceMonthDay] = useState(1);
   const [subKpiDraft, setSubKpiDraft] = useState("");
+  const [subKpiScheduleDate, setSubKpiScheduleDate] = useState("");
+  const [subKpiTargetDate, setSubKpiTargetDate] = useState("");
   const [subKpisDraft, setSubKpisDraft] = useState<SubKpi[]>([]);
   const [draftUseSegments, setDraftUseSegments] = useState(false);
   const [draftSegments, setDraftSegments] = useState<DraftSegmentRow[]>([]);
   const [segItemDraft, setSegItemDraft] = useState<Record<string, string>>({});
+  const [segItemScheduleDate, setSegItemScheduleDate] = useState<Record<string, string>>({});
+  const [segItemTargetDate, setSegItemTargetDate] = useState<Record<string, string>>({});
   const [kpiMaintenanceAssignWork, setKpiMaintenanceAssignWork] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [itProjectNameDraft, setItProjectNameDraft] = useState("");
@@ -78,18 +82,22 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const isItProject = isItProjectImplementationPillar(maintenanceTitle);
 
   useEffect(() => {
-    if (isItProject && !activePhaseId) {
-      setActivePhaseId(crypto.randomUUID());
-    }
+    queueMicrotask(() => {
+      if (isItProject && !activePhaseId) {
+        setActivePhaseId(crypto.randomUUID());
+      }
+    });
   }, [isItProject, activePhaseId]);
 
   useEffect(() => {
-    try {
-      const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (z) setRecurrenceTz(z);
-    } catch {
-      setRecurrenceTz("UTC");
-    }
+    queueMicrotask(() => {
+      try {
+        const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (z) setRecurrenceTz(z);
+      } catch {
+        setRecurrenceTz("UTC");
+      }
+    });
   }, []);
 
   const kpiMaintenanceSearch = useMemo(
@@ -106,7 +114,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   }, [kpiMaintenanceSearch]);
 
   useEffect(() => {
-    void loadAssignFlag();
+    queueMicrotask(() => {
+      void loadAssignFlag();
+    });
   }, [loadAssignFlag]);
 
   const draftSubKpiTotal = draftUseSegments
@@ -115,25 +125,28 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const showSegmentedCreateOption =
     !isItProject && (draftUseSegments || draftSubKpiTotal >= MIN_SUB_FOR_SEGMENT_OPTION);
 
-  function snapshotCurrentItProjectPhase(phases: ItProjectPhaseDraft[]): ItProjectPhaseDraft[] {
-    if (!activePhaseId) return phases;
-    const snap: ItProjectPhaseDraft = {
-      id: activePhaseId,
-      name: itProjectPhaseName.trim() || `Phase ${phases.length + 1}`,
-      items: [...itProjectSubDraft],
-    };
-    const idx = phases.findIndex((p) => p.id === activePhaseId);
-    if (idx >= 0) {
-      const next = [...phases];
-      next[idx] = snap;
-      return next;
-    }
-    return [...phases, snap];
-  }
+  const snapshotCurrentItProjectPhase = useCallback(
+    (phases: ItProjectPhaseDraft[]): ItProjectPhaseDraft[] => {
+      if (!activePhaseId) return phases;
+      const snap: ItProjectPhaseDraft = {
+        id: activePhaseId,
+        name: itProjectPhaseName.trim() || `Phase ${phases.length + 1}`,
+        items: [...itProjectSubDraft],
+      };
+      const idx = phases.findIndex((p) => p.id === activePhaseId);
+      if (idx >= 0) {
+        const next = [...phases];
+        next[idx] = snap;
+        return next;
+      }
+      return [...phases, snap];
+    },
+    [activePhaseId, itProjectPhaseName, itProjectSubDraft],
+  );
 
   const itProjectPhasesForUi = useMemo(
     () => snapshotCurrentItProjectPhase(itProjectPhases),
-    [activePhaseId, itProjectPhaseName, itProjectPhases, itProjectSubDraft],
+    [itProjectPhases, snapshotCurrentItProjectPhase],
   );
 
   function switchItProjectPhase(phaseId: string) {
@@ -183,8 +196,23 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   function addSubKpiDraft() {
     const trimmed = subKpiDraft.trim();
     if (!trimmed || draftUseSegments) return;
-    setSubKpisDraft((prev) => [...prev, { id: crypto.randomUUID(), title: trimmed }]);
+    if (subKpiScheduleDate && subKpiTargetDate && subKpiTargetDate < subKpiScheduleDate) {
+      setLocalError("Target date must be on or after the schedule date.");
+      return;
+    }
+    setSubKpisDraft((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        title: trimmed,
+        ...(subKpiScheduleDate ? { startDate: subKpiScheduleDate } : {}),
+        ...(subKpiTargetDate ? { dueDate: subKpiTargetDate } : {}),
+      },
+    ]);
     setSubKpiDraft("");
+    setSubKpiScheduleDate("");
+    setSubKpiTargetDate("");
+    setLocalError(null);
   }
 
   function removeSubKpiDraft(id: string) {
@@ -227,17 +255,49 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     if (!raw) return;
     const seg = draftSegments.find((s) => s.id === segmentId);
     if (!seg?.label.trim()) return;
+    const scheduleDate = segItemScheduleDate[segmentId] ?? "";
+    const targetDate = segItemTargetDate[segmentId] ?? "";
+    if (scheduleDate && targetDate && targetDate < scheduleDate) {
+      setLocalError("Target date must be on or after the schedule date.");
+      return;
+    }
     setDraftSegments((prev) =>
       prev.map((s) =>
-        s.id === segmentId ? { ...s, items: [...s.items, { id: crypto.randomUUID(), title: raw }] } : s,
+        s.id === segmentId
+          ? {
+              ...s,
+              items: [
+                ...s.items,
+                {
+                  id: crypto.randomUUID(),
+                  title: raw,
+                  ...(scheduleDate ? { startDate: scheduleDate } : {}),
+                  ...(targetDate ? { dueDate: targetDate } : {}),
+                },
+              ],
+            }
+          : s,
       ),
     );
     setSegItemDraft((prev) => ({ ...prev, [segmentId]: "" }));
+    setSegItemScheduleDate((prev) => ({ ...prev, [segmentId]: "" }));
+    setSegItemTargetDate((prev) => ({ ...prev, [segmentId]: "" }));
+    setLocalError(null);
   }
 
   function removeDraftSegmentRow(segmentId: string) {
     setDraftSegments((prev) => prev.filter((s) => s.id !== segmentId));
     setSegItemDraft((prev) => {
+      const n = { ...prev };
+      delete n[segmentId];
+      return n;
+    });
+    setSegItemScheduleDate((prev) => {
+      const n = { ...prev };
+      delete n[segmentId];
+      return n;
+    });
+    setSegItemTargetDate((prev) => {
       const n = { ...prev };
       delete n[segmentId];
       return n;
@@ -306,10 +366,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       body.subKpisSegmented = true;
       body.segments = draftSegments.map((s) => ({
         label: s.label.trim(),
-        items: s.items.map((it) => ({ title: it.title.trim() })),
+        items: s.items.map((it) => ({
+          title: it.title.trim(),
+          startDate: it.startDate ?? "",
+          dueDate: it.dueDate ?? "",
+        })),
       }));
     } else {
-      body.subKpis = subKpisDraft.map((s) => ({ title: s.title }));
+      body.subKpis = subKpisDraft.map((s) => ({
+        title: s.title,
+        startDate: s.startDate ?? "",
+        dueDate: s.dueDate ?? "",
+      }));
     }
 
     if (!isItProject && maintenanceIsRecurring && freqUpper === "WEEKLY") {
@@ -378,9 +446,13 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     setRecurrenceMonthDay(1);
     setSubKpisDraft([]);
     setSubKpiDraft("");
+    setSubKpiScheduleDate("");
+    setSubKpiTargetDate("");
     setDraftUseSegments(false);
     setDraftSegments([]);
     setSegItemDraft({});
+    setSegItemScheduleDate({});
+    setSegItemTargetDate({});
     setItProjectNameDraft("");
     setItProjectPhases([]);
     setActivePhaseId(null);
@@ -397,7 +469,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         Task management
       </h2>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        Choose an IT pillar as the task title, add checklist items, then save. Use the Task Assignment Board below to
+        Choose an IT pillar as the task title, add task rows, then save. Use the Task Assignment Board below to
         assign personnel to KPI cards.
       </p>
       {localError ? (
@@ -535,7 +607,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
           {isItProject
             ? "IT Project tasks are not recurring. Add phases and set a due date on each sub-task. Assignees enter actual dates (MM/DD/YYYY) when work is done."
-            : "Assignment is on the Task Assignment Board below."}
+            : "Add task rows with schedule and target dates. Assignees fill location and date finished on the Task Board."}
         </div>
       </div>
 
@@ -640,22 +712,36 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
           ) : null}
         </div>
       ) : !draftUseSegments ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <input
-            value={subKpiDraft}
-            onChange={(e) => setSubKpiDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addSubKpiDraft();
-              }
-            }}
-            placeholder="Add sub-task (press Enter)"
-            className="min-w-[240px] flex-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-          />
-          <Button type="button" onClick={addSubKpiDraft} className="rounded-xl px-4">
-            Add sub-task
-          </Button>
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto]">
+            <input
+              value={subKpiDraft}
+              onChange={(e) => setSubKpiDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addSubKpiDraft();
+                }
+              }}
+              placeholder="Add sub-task (press Enter)"
+              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            <DatePickerField
+              value={subKpiScheduleDate}
+              onChange={(e) => setSubKpiScheduleDate(e.target.value)}
+              aria-label="Schedule date"
+              shellClassName="h-10"
+            />
+            <DatePickerField
+              value={subKpiTargetDate}
+              onChange={(e) => setSubKpiTargetDate(e.target.value)}
+              aria-label="Target date"
+              shellClassName="h-10"
+            />
+            <Button type="button" onClick={addSubKpiDraft} className="rounded-xl px-4">
+              Add sub-task
+            </Button>
+          </div>
           <Button type="button" onClick={() => void createMaintenanceRecord()} className="rounded-xl px-4">
             Save KPI maintenance
           </Button>
@@ -694,7 +780,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                   Remove segment
                 </Button>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 grid gap-2 md:grid-cols-[minmax(200px,1fr)_180px_180px_auto]">
                 <input
                   value={segItemDraft[seg.id] ?? ""}
                   disabled={!seg.label.trim()}
@@ -708,7 +794,21 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                   placeholder={
                     seg.label.trim() ? "Add sub-task under this segment" : "Enter segment label first"
                   }
-                  className="min-w-[200px] flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+                <DatePickerField
+                  value={segItemScheduleDate[seg.id] ?? ""}
+                  disabled={!seg.label.trim()}
+                  onChange={(e) => setSegItemScheduleDate((p) => ({ ...p, [seg.id]: e.target.value }))}
+                  aria-label={`Schedule date for ${seg.label || "segment item"}`}
+                  shellClassName="h-10 rounded-lg"
+                />
+                <DatePickerField
+                  value={segItemTargetDate[seg.id] ?? ""}
+                  disabled={!seg.label.trim()}
+                  onChange={(e) => setSegItemTargetDate((p) => ({ ...p, [seg.id]: e.target.value }))}
+                  aria-label={`Target date for ${seg.label || "segment item"}`}
+                  shellClassName="h-10 rounded-lg"
                 />
                 <Button
                   type="button"
@@ -728,7 +828,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                       onClick={() => removeDraftSegmentItem(seg.id, it.id)}
                       className="rounded-full border border-zinc-300 bg-white px-3 py-1 text-xs text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
-                      {it.title} ×
+                      {it.title}
+                      {it.startDate ? ` · Schedule ${it.startDate}` : ""}
+                      {it.dueDate ? ` · Target ${it.dueDate}` : ""} ×
                     </button>
                   ))}
                 </div>
@@ -748,7 +850,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
               className="rounded-full border border-zinc-300 bg-zinc-100 px-3 py-1 text-xs text-zinc-700 hover:bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
               title="Remove sub-task"
             >
-              {s.title} ×
+              {s.title}
+              {s.startDate ? ` · Schedule ${s.startDate}` : ""}
+              {s.dueDate ? ` · Target ${s.dueDate}` : ""} ×
             </button>
           ))}
         </div>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import type { TicketLogEntry } from "@/lib/ticket-activity-log";
 import { formatRelativeAgo } from "@/lib/ticket-board-formatters";
@@ -5,11 +6,25 @@ import { formatRelativeAgo } from "@/lib/ticket-board-formatters";
 export function TicketActivityLogPanel({
   entries,
   linkTickets = true,
+  pagination,
 }: {
   entries: TicketLogEntry[];
   /** Personnel cannot open arbitrary tickets — show plain ticket numbers instead of links. */
   linkTickets?: boolean;
+  pagination?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    prevHref: string;
+    nextHref: string;
+  };
 }) {
+  const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / pagination.pageSize)) : 1;
+  const safePage = pagination ? Math.min(Math.max(1, pagination.page), totalPages) : 1;
+  const start = pagination && pagination.total > 0 ? (safePage - 1) * pagination.pageSize + 1 : 0;
+  const end = pagination ? Math.min(pagination.total, safePage * pagination.pageSize) : entries.length;
+  const showPagination = Boolean(pagination && pagination.total > pagination.pageSize);
+
   return (
     <section className="mt-8 rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800">
@@ -61,6 +76,46 @@ export function TicketActivityLogPanel({
           ))}
         </ul>
       )}
+      {showPagination && pagination ? (
+        <div className="mt-4 flex flex-col gap-2 border-t border-zinc-200 pt-3 text-[11px] text-zinc-600 sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800 dark:text-zinc-400">
+          <p>
+            Showing{" "}
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+              {start}-{end}
+            </span>{" "}
+            of <span className="font-semibold text-zinc-800 dark:text-zinc-200">{pagination.total}</span> logs
+          </p>
+          <div className="flex items-center gap-2">
+            {safePage <= 1 ? (
+              <span className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200">
+                Previous
+              </span>
+            ) : (
+              <Link
+                href={pagination.prevHref}
+                className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Previous
+              </Link>
+            )}
+            <span className="tabular-nums text-zinc-500 dark:text-zinc-500">
+              Page {safePage} / {totalPages}
+            </span>
+            {safePage >= totalPages ? (
+              <span className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200">
+                Next
+              </span>
+            ) : (
+              <Link
+                href={pagination.nextHref}
+                className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Next
+              </Link>
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -20,6 +20,7 @@ import {
   setSubKpiItemAssignee,
   setSubKpiItemDone,
   setSubKpiItemScreenshots,
+  setSubKpiItemWorkMeta,
   subKpiAssignedAgentId,
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
@@ -210,7 +211,7 @@ export async function POST(req: Request) {
     frequency?: string;
     subKpisSegmented?: boolean;
     subKpis?: Array<{ title?: string; startDate?: string; endDate?: string; dueDate?: string }>;
-    segments?: Array<{ label?: string; items?: Array<{ title?: string }> }>;
+    segments?: Array<{ label?: string; items?: Array<{ title?: string; startDate?: string; endDate?: string; dueDate?: string }> }>;
     assignedAgentId?: string;
     recurrenceWeekday?: number;
     recurrenceMonthDay?: number;
@@ -322,9 +323,15 @@ export async function POST(req: Request) {
     itProjectPhaseLabel = itProjectActivePhase(projectBuilt.data).name;
     built = { ok: true, norm: { segmented: false, flat: [] } };
   } else {
-    const flatTitles =
+    const flatItems =
       Array.isArray(body.subKpis) && !body.subKpisSegmented
-        ? body.subKpis.map((s) => (s.title ?? "").trim()).filter((t) => t.length > 0)
+        ? body.subKpis
+            .map((s) => ({
+              title: (s.title ?? "").trim(),
+              startDate: (s.startDate ?? "").trim(),
+              dueDate: (s.dueDate ?? s.endDate ?? "").trim(),
+            }))
+            .filter((s) => s.title.length > 0)
         : [];
 
     const segmentsInput =
@@ -332,14 +339,20 @@ export async function POST(req: Request) {
         ? body.segments.map((seg) => ({
             label: (seg.label ?? "").trim(),
             items: Array.isArray(seg.items)
-              ? seg.items.map((i) => (i.title ?? "").trim()).filter((t) => t.length > 0)
+              ? seg.items
+                  .map((i) => ({
+                    title: (i.title ?? "").trim(),
+                    startDate: (i.startDate ?? "").trim(),
+                    dueDate: (i.dueDate ?? i.endDate ?? "").trim(),
+                  }))
+                  .filter((i) => i.title.length > 0)
               : [],
           }))
         : undefined;
 
     built = validateSegmentStructureForPersist(
       body.subKpisSegmented === true,
-      flatTitles,
+      flatItems,
       segmentsInput,
     );
   }
@@ -440,6 +453,13 @@ export async function PATCH(req: Request) {
       subKpiId?: string;
       dueDate?: string | null;
       actualDate?: string | null;
+    };
+    subKpiWorkMeta?: {
+      subKpiId?: string;
+      startDate?: string | null;
+      dueDate?: string | null;
+      actualDate?: string | null;
+      location?: string | null;
     };
     subKpiAssignee?: {
       subKpiId?: string;
@@ -571,6 +591,49 @@ export async function PATCH(req: Request) {
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
       data: { subKpis: wrapped, itProjectPhase: active.name },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.subKpiWorkMeta != null && typeof body.subKpiWorkMeta === "object") {
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Task work details are not available for IT Project Implementation tasks." },
+        { status: 400 },
+      );
+    }
+    const subKpiIdMeta = String(body.subKpiWorkMeta.subKpiId ?? "").trim();
+    if (!subKpiIdMeta) {
+      return NextResponse.json({ error: "subKpiWorkMeta.subKpiId is required." }, { status: 400 });
+    }
+    if (!perms.canAssignWork && !canEditSubKpi(subKpiIdMeta)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const target = subKpiItems.find((it) => it.id === subKpiIdMeta);
+    if (!target) {
+      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
+    const meta = body.subKpiWorkMeta;
+    const updatedJson = setSubKpiItemWorkMeta(kpiRow.subKpis, subKpiIdMeta, {
+      startDate: meta.startDate,
+      dueDate: meta.dueDate,
+      actualDate: meta.actualDate,
+      location: meta.location,
+    });
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(updatedJson);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+    if (nextComplete) await captureCurrentPeriodSnapshot(updatedJson);
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: updatedJson,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
     });
     return NextResponse.json(updated);
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import type { CompanyBoardColumn, CompanyTicketCard } from "@/lib/company-board";
 import { formatCompanyBoardStatusLabel } from "@/lib/ticket-status-label";
@@ -25,6 +25,8 @@ function statusPillClass(status: string) {
   }
   return "bg-zinc-200 text-zinc-700 dark:bg-zinc-700/60 dark:text-zinc-200";
 }
+
+const COMPANY_TICKETS_PAGE_SIZE = 10;
 
 function ticketsForColumn(col: CompanyBoardColumn): CompanyTicketCard[] {
   const merged = [
@@ -149,7 +151,13 @@ export function CompanyKanban({
 type Density = ReturnType<typeof boardDensity>;
 
 function CompanyColumnList({ col, density }: { col: CompanyBoardColumn; density: Density }) {
+  const [page, setPage] = useState(1);
   const tickets = useMemo(() => ticketsForColumn(col), [col]);
+  const totalPages = Math.max(1, Math.ceil(tickets.length / COMPANY_TICKETS_PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const start = tickets.length === 0 ? 0 : (safePage - 1) * COMPANY_TICKETS_PAGE_SIZE + 1;
+  const end = Math.min(tickets.length, safePage * COMPANY_TICKETS_PAGE_SIZE);
+  const visibleTickets = tickets.slice(start === 0 ? 0 : start - 1, end);
 
   return (
     <article className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
@@ -171,13 +179,12 @@ function CompanyColumnList({ col, density }: { col: CompanyBoardColumn; density:
             No tickets
           </li>
         ) : (
-          tickets.map((t) => {
+          visibleTickets.map((t) => {
             const { head, tail } = splitTicketNumber(t.ticketNumber);
             return (
               <li key={t.id}>
                 <AgentTicketDeepLink
                   ticketId={t.id}
-                  companyView
                   className={cn(
                     "flex flex-col gap-1.5 transition hover:bg-orange-500/[0.06] dark:hover:bg-orange-500/10",
                     density.rowPad,
@@ -205,6 +212,34 @@ function CompanyColumnList({ col, density }: { col: CompanyBoardColumn; density:
           })
         )}
       </ul>
+      {tickets.length > COMPANY_TICKETS_PAGE_SIZE ? (
+        <div className="border-t border-zinc-200 px-2 py-2 text-[10px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+          <p className="mb-1 text-center">
+            {start}-{end} of {tickets.length}
+          </p>
+          <div className="flex items-center justify-center gap-1.5">
+            <button
+              type="button"
+              disabled={safePage <= 1}
+              onClick={() => setPage(safePage - 1)}
+              className="rounded-md border border-zinc-300 bg-white px-2 py-1 font-medium text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+            >
+              Prev
+            </button>
+            <span className="tabular-nums text-zinc-500 dark:text-zinc-500">
+              {safePage}/{totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={safePage >= totalPages}
+              onClick={() => setPage(safePage + 1)}
+              className="rounded-md border border-zinc-300 bg-white px-2 py-1 font-medium text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }

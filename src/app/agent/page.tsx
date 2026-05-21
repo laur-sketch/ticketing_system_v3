@@ -75,6 +75,7 @@ export default async function AgentHome({
     sort?: string | string[];
     dir?: string | string[];
     page?: string | string[];
+    logsPage?: string | string[];
     notifications?: string | string[];
     view?: string | string[];
     assigned?: string | string[];
@@ -121,8 +122,10 @@ export default async function AgentHome({
   const sort = firstQuery(params.sort) ?? "updatedAt";
   const dir = firstQuery(params.dir) === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number.parseInt(firstQuery(params.page) ?? "1", 10) || 1);
+  const companyLogPage = Math.max(1, Number.parseInt(firstQuery(params.logsPage) ?? "1", 10) || 1);
   const notificationsOpen = firstQuery(params.notifications) === "1";
   const pageSize = 20;
+  const companyLogPageSize = 10;
   const hideCompanyPriorityFilter =
     !companyCoordinator && session.user.role === "Personnel";
 
@@ -332,6 +335,7 @@ export default async function AgentHome({
     if (sort !== "updatedAt") qs.set("sort", sort);
     if (dir !== "desc") qs.set("dir", dir);
     if (page !== 1) qs.set("page", String(page));
+    if (isCompanyBoard && companyLogPage !== 1) qs.set("logsPage", String(companyLogPage));
     if (notificationsOpen) qs.set("notifications", "1");
     if (boardTab !== "ticket") qs.set("board", boardTab);
     if ((isCompanyBoard || boardTab === "kpi") && selectedCompany !== "ALL") {
@@ -399,6 +403,13 @@ export default async function AgentHome({
   const statCritical = isCompanyBoard ? (companyAggregates?.critical ?? 0) : critical;
   const statOpen = isCompanyBoard ? (companyAggregates?.openPipeline ?? 0) : open;
   const statSla = isCompanyBoard ? (companyAggregates?.slaEscalated ?? 0) : slaAtRisk;
+  const companyLogTotal = companyActivityLogs.length;
+  const companyLogTotalPages = Math.max(1, Math.ceil(companyLogTotal / companyLogPageSize));
+  const safeCompanyLogPage = Math.min(companyLogPage, companyLogTotalPages);
+  const pagedCompanyActivityLogs = companyActivityLogs.slice(
+    (safeCompanyLogPage - 1) * companyLogPageSize,
+    safeCompanyLogPage * companyLogPageSize,
+  );
 
   return (
     <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100 sm:px-4">
@@ -697,8 +708,17 @@ export default async function AgentHome({
                 ) : null}
                 <CompanyKanban columns={companyBoardPayload.columns} />
                 <TicketActivityLogPanel
-                  entries={companyActivityLogs}
+                  entries={pagedCompanyActivityLogs}
                   linkTickets
+                  pagination={{
+                    page: safeCompanyLogPage,
+                    pageSize: companyLogPageSize,
+                    total: companyLogTotal,
+                    prevHref: buildHref({ logsPage: String(Math.max(1, safeCompanyLogPage - 1)) }),
+                    nextHref: buildHref({
+                      logsPage: String(Math.min(companyLogTotalPages, safeCompanyLogPage + 1)),
+                    }),
+                  }}
                 />
               </>
             ) : isBoard && boardTab === "ticket" ? (

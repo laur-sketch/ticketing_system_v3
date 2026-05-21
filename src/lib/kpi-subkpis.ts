@@ -17,6 +17,7 @@ export type SubKpiItem = {
   assignedAgentName?: string | null;
   beforeScreenshot?: TaskScreenshotMetaItem[];
   afterScreenshot?: TaskScreenshotMetaItem[];
+  location?: string | null;
   startDate?: string | null;
   /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
@@ -40,6 +41,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
+  const location = typeof r?.location === "string" ? r.location.trim() : "";
   const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(r?.actualDate);
@@ -51,6 +53,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(assignedAgentName ? { assignedAgentName } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+    ...(location ? { location } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
@@ -379,6 +382,64 @@ export function setSubKpiItemScheduleMeta(
   return wrapForPersist({ segmented: false, flat });
 }
 
+export function setSubKpiItemWorkMeta(
+  raw: unknown,
+  subKpiId: string,
+  meta: {
+    startDate?: string | null;
+    dueDate?: string | null;
+    actualDate?: string | null;
+    location?: string | null;
+  },
+): Prisma.InputJsonValue {
+  const n = normalizeSubKpis(raw);
+  const start =
+    meta.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(meta.startDate) ?? null;
+  const due =
+    meta.dueDate === undefined ? undefined : normalizeOptionalSubKpiYmd(meta.dueDate) ?? null;
+  const act =
+    meta.actualDate === undefined ? undefined : normalizeOptionalSubKpiYmd(meta.actualDate) ?? null;
+  const location =
+    meta.location === undefined
+      ? undefined
+      : typeof meta.location === "string" && meta.location.trim()
+        ? meta.location.trim().slice(0, 160)
+        : null;
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    let next = { ...it };
+    if (start !== undefined) {
+      if (start) next = { ...next, startDate: start };
+      else delete (next as { startDate?: string }).startDate;
+    }
+    if (due !== undefined) {
+      if (due) next = { ...next, dueDate: due };
+      else delete (next as { dueDate?: string }).dueDate;
+    }
+    if (act !== undefined) {
+      if (act) next = { ...next, actualDate: act, done: true };
+      else {
+        next = { ...next, done: false };
+        delete (next as { actualDate?: string }).actualDate;
+      }
+    }
+    if (location !== undefined) {
+      if (location) next = { ...next, location };
+      else delete (next as { location?: string }).location;
+    }
+    return next;
+  };
+  if (n.segmented) {
+    const segments = n.segments.map((seg) => ({
+      ...seg,
+      items: seg.items.map(touch),
+    }));
+    return wrapForPersist({ segmented: true, segments });
+  }
+  const flat = n.flat.map(touch);
+  return wrapForPersist({ segmented: false, flat });
+}
+
 export function markEverySubKpiDone(raw: unknown, done: boolean): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
   if (n.segmented) {
@@ -400,6 +461,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   const assignedAgentName = typeof it.assignedAgentName === "string" ? it.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(it.afterScreenshot);
+  const location = typeof it.location === "string" ? it.location.trim() : "";
   const startDate = normalizeOptionalSubKpiYmd(it.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(it.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(it.actualDate);
@@ -411,6 +473,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
     ...(assignedAgentName ? { assignedAgentName } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+    ...(location ? { location } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
@@ -447,16 +510,37 @@ export function buildItProjectSubKpis(
 export const MIN_SEGMENTED_SUBKPIS_FOR_CREATE = 3;
 const MIN_SEGMENTED_SUBKPIS = MIN_SEGMENTED_SUBKPIS_FOR_CREATE;
 
+type SubKpiCreateDraft = string | {
+  title?: string | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+  endDate?: string | null;
+};
+
+function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
+  const rawTitle = typeof input === "string" ? input : input.title;
+  const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
+  if (!title) return null;
+  const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
+  const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
+  return {
+    id: crypto.randomUUID(),
+    title,
+    done: false,
+    ...(startDate ? { startDate } : {}),
+    ...(dueDate ? { dueDate } : {}),
+  };
+}
+
 export function validateSegmentStructureForPersist(
   segmented: boolean,
-  flatTitles: string[],
-  segmentsInput: Array<{ label: string; items: string[] }> | undefined,
+  flatInput: SubKpiCreateDraft[],
+  segmentsInput: Array<{ label: string; items: SubKpiCreateDraft[] }> | undefined,
 ): { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string } {
   if (!segmented) {
-    const flat: SubKpiItem[] = flatTitles
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0)
-      .map((title) => ({ id: crypto.randomUUID(), title, done: false }));
+    const flat = flatInput
+      .map(subKpiFromCreateDraft)
+      .filter((item): item is SubKpiItem => item != null);
     if (flat.length === 0) {
       return { ok: false, error: "At least one sub-task is required." };
     }
@@ -464,7 +548,10 @@ export function validateSegmentStructureForPersist(
   }
 
   const total =
-    segmentsInput?.reduce((acc, seg) => acc + seg.items.filter((t) => t.trim().length > 0).length, 0) ?? 0;
+    segmentsInput?.reduce(
+      (acc, seg) => acc + seg.items.map(subKpiFromCreateDraft).filter(Boolean).length,
+      0,
+    ) ?? 0;
   if (total < MIN_SEGMENTED_SUBKPIS) {
     return {
       ok: false,
@@ -483,9 +570,8 @@ export function validateSegmentStructureForPersist(
       return { ok: false, error: "Each segment needs a label before saving." };
     }
     const items = seg.items
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0)
-      .map((title) => ({ id: crypto.randomUUID(), title, done: false }));
+      .map(subKpiFromCreateDraft)
+      .filter((item): item is SubKpiItem => item != null);
     segments.push({ id: crypto.randomUUID(), label, items });
     if (items.length === 0) {
       return { ok: false, error: `Segment "${label}" has no sub-tasks; add titles or remove the segment.` };

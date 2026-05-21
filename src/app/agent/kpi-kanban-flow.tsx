@@ -21,7 +21,6 @@ import {
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
-  isDailyInvertedChecklistPillar,
   kpiChecklistMetricView,
   kpiChecklistProgress,
   collectAllSubKpiItems,
@@ -184,7 +183,7 @@ export function AgentKpiKanbanFlow({
     const p = isItProjectImplementationPillar(r.title)
       ? itProjectChecklistProgressFromRaw(r.subKpis)
       : kpiChecklistProgress(r.subKpis);
-    const view = kpiChecklistMetricView(p, isDailyInvertedChecklistPillar(r.title, r.frequency));
+    const view = kpiChecklistMetricView(p, false);
     return {
       total: view.total,
       done: view.done,
@@ -400,6 +399,35 @@ export function AgentKpiKanbanFlow({
     }
   }
 
+  async function patchSubKpiWorkMeta(
+    recordId: string,
+    subKpiId: string,
+    meta: {
+      startDate?: string | null;
+      dueDate?: string | null;
+      actualDate?: string | null;
+      location?: string | null;
+    },
+  ) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: recordId, subKpiWorkMeta: { subKpiId, ...meta } }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update sub-task details.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function toggleSubKpi(recordId: string, subKpiId: string, done: boolean) {
     setBusyId(recordId);
     setError(null);
@@ -474,14 +502,11 @@ export function AgentKpiKanbanFlow({
       <div className="rounded-lg border border-zinc-200 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">{label}</p>
-          <p className="text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
-            {screenshots.length}/{MAX_TASK_SCREENSHOTS_PER_SLOT}
-          </p>
         </div>
         {screenshots.length > 0 ? (
           <div className="mt-1 space-y-1">
             {screenshots.map((meta, index) => (
-              <div key={meta.storedFileName} className="flex items-center justify-between gap-2 text-[11px]">
+              <div key={meta.storedFileName} className="text-[11px]">
                 <a
                   href={`/api/kpi-maintenance/${r.id}/screenshots/${encodeURIComponent(meta.storedFileName)}`}
                   target="_blank"
@@ -490,34 +515,34 @@ export function AgentKpiKanbanFlow({
                 >
                   View {index + 1}
                 </a>
-                <span className="truncate text-zinc-500 dark:text-zinc-400">{meta.originalName}</span>
               </div>
             ))}
           </div>
-        ) : (
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">No image uploaded</p>
-        )}
-        <input
-          type="file"
-          multiple
-          accept={TASK_SCREENSHOT_ACCEPT}
-          disabled={!canUpload || busyId === r.id || remainingSlots === 0}
+        ) : null}
+        <label
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            e.stopPropagation();
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            void uploadSubKpiScreenshots(r.id, s.id, slot, files, screenshots.length);
-          }}
-          className="mt-2 block w-full text-[11px] text-zinc-600 file:mr-2 file:rounded-full file:border-0 file:bg-orange-600 file:px-3 file:py-1.5 file:text-[11px] file:font-semibold file:text-white hover:file:bg-orange-500 disabled:opacity-60 dark:text-zinc-400"
-          aria-label={`Upload 1 to ${remainingSlots} ${label.toLowerCase()} images for ${s.title}`}
-        />
-        <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-500">
-          {remainingSlots > 0
-            ? `Upload 1-${remainingSlots} JPEG/PNG images, 10MB each.`
-            : "Maximum screenshots reached."}
-        </p>
+          className={cn(
+            "mt-2 inline-flex cursor-pointer rounded-full bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500",
+            (!canUpload || busyId === r.id || remainingSlots === 0) && "cursor-not-allowed opacity-60 hover:bg-orange-600",
+          )}
+        >
+          Choose File
+          <input
+            type="file"
+            multiple
+            accept={TASK_SCREENSHOT_ACCEPT}
+            disabled={!canUpload || busyId === r.id || remainingSlots === 0}
+            onChange={(e) => {
+              e.stopPropagation();
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              void uploadSubKpiScreenshots(r.id, s.id, slot, files, screenshots.length);
+            }}
+            className="sr-only"
+            aria-label={`Upload 1 to ${remainingSlots} ${label.toLowerCase()} images for ${s.title}`}
+          />
+        </label>
       </div>
     );
   }
@@ -527,6 +552,100 @@ export function AgentKpiKanbanFlow({
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {renderScreenshotField(r, s, "before", editable)}
         {renderScreenshotField(r, s, "after", editable)}
+      </div>
+    );
+  }
+
+  function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem) {
+    const subEditable = canEditSubKpi(r, s);
+    const finished = hasValidActualDate(s);
+    return (
+      <div
+        key={s.id}
+        className={cn(
+          "rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40",
+          finished && "border-emerald-300/70 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-950/20",
+        )}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className={cn("text-sm font-semibold text-zinc-900 dark:text-zinc-100", finished && "line-through opacity-70")}>
+            {s.title}
+          </p>
+          <span
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+              finished
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+            )}
+          >
+            {finished ? "Finished" : "Pending"}
+          </span>
+        </div>
+        {renderSubKpiAssignmentControl(r, s)}
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Schedule date
+            <DatePickerField
+              value={s.startDate ?? ""}
+              disabled={!canAssignWork || busyId === r.id}
+              onChange={(e) =>
+                void patchSubKpiWorkMeta(r.id, s.id, {
+                  startDate: e.target.value || null,
+                })
+              }
+              wrapperClassName="mt-1"
+              aria-label={`Schedule date for ${s.title}`}
+            />
+          </label>
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Target date
+            <DatePickerField
+              value={s.dueDate ?? ""}
+              disabled={!canAssignWork || busyId === r.id}
+              onChange={(e) =>
+                void patchSubKpiWorkMeta(r.id, s.id, {
+                  dueDate: e.target.value || null,
+                })
+              }
+              wrapperClassName="mt-1"
+              aria-label={`Target date for ${s.title}`}
+            />
+          </label>
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Location
+            <input
+              key={`loc-${r.id}-${s.id}-${s.location ?? ""}`}
+              type="text"
+              defaultValue={s.location ?? ""}
+              disabled={!subEditable || busyId === r.id}
+              placeholder="Enter location"
+              onBlur={(e) => {
+                const next = e.target.value.trim();
+                const prev = (s.location ?? "").trim();
+                if (next !== prev) {
+                  void patchSubKpiWorkMeta(r.id, s.id, { location: next || null });
+                }
+              }}
+              className="mt-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+          </label>
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Date finished
+            <DatePickerField
+              value={s.actualDate ?? ""}
+              disabled={!subEditable || busyId === r.id}
+              onChange={(e) =>
+                void patchSubKpiWorkMeta(r.id, s.id, {
+                  actualDate: e.target.value || null,
+                })
+              }
+              wrapperClassName="mt-1"
+              aria-label={`Date finished for ${s.title}`}
+            />
+          </label>
+        </div>
+        {renderTaskScreenshotFields(r, s, subEditable)}
       </div>
     );
   }
@@ -808,7 +927,7 @@ export function AgentKpiKanbanFlow({
                                   : p.total > 0
                                     ? p.inverted
                                       ? `${p.positive}/${p.total} clear · ${p.negative} flagged · ${p.pct}%`
-                                      : `${p.done}/${p.total} checked · ${p.missing} missing · ${p.pct}%`
+                                      : `${p.done}/${p.total} finished · ${p.missing} pending · ${p.pct}%`
                                     : `${p.done}/${p.total} · ${p.pct}%`}
                               </p>
                             </div>
@@ -843,7 +962,7 @@ export function AgentKpiKanbanFlow({
                                 ) : null
                               : p.missing > 0 && p.done < p.total ? (
                                   <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                                    {p.missing} missing checkbox{p.missing === 1 ? "" : "es"}
+                                    {p.missing} pending task{p.missing === 1 ? "" : "s"}
                                   </p>
                                 ) : null}
                           </div>
@@ -858,26 +977,7 @@ export function AgentKpiKanbanFlow({
                                       {seg.label}
                                     </p>
                                     <div className="mt-1 space-y-2">
-                                      {seg.items.map((s) => {
-                                        const subEditable = canEditSubKpi(r, s);
-                                        return (
-                                          <div key={s.id} className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
-                                            <label className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
-                                              <input
-                                                type="checkbox"
-                                                disabled={!subEditable || busyId === r.id}
-                                                checked={Boolean(s.done)}
-                                                onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
-                                              />
-                                              <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
-                                                {s.title}
-                                              </span>
-                                            </label>
-                                            {renderSubKpiAssignmentControl(r, s)}
-                                            {renderTaskScreenshotFields(r, s, subEditable)}
-                                          </div>
-                                        );
-                                      })}
+                                      {seg.items.map((s) => renderNonItSubKpiCard(r, s))}
                                     </div>
                                   </div>
                                 ))
@@ -1004,29 +1104,7 @@ export function AgentKpiKanbanFlow({
                                       </div>
                                     );
                                   })
-                                : checklistItems.map((s: SubKpiItem) => {
-                                    const subEditable = canEditSubKpi(r, s);
-                                    return (
-                                      <div
-                                        key={s.id}
-                                        className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40"
-                                      >
-                                        <label className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
-                                          <input
-                                            type="checkbox"
-                                            disabled={!subEditable || busyId === r.id}
-                                            checked={Boolean(s.done)}
-                                            onChange={() => void toggleSubKpi(r.id, s.id, Boolean(s.done))}
-                                          />
-                                          <span className={cn(Boolean(s.done) && "line-through opacity-70")}>
-                                            {s.title}
-                                          </span>
-                                        </label>
-                                        {renderSubKpiAssignmentControl(r, s)}
-                                        {renderTaskScreenshotFields(r, s, subEditable)}
-                                      </div>
-                                    );
-                                  })}
+                                : checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s))}
                           </div>
                             </div>
                           </div>

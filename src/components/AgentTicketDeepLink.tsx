@@ -9,20 +9,17 @@ type Props = {
   className?: string;
   children: ReactNode;
   onNavigate?: () => void;
-  /** Opens read-only company board summary (ticket number + status only). */
-  companyView?: boolean;
 };
 
 /** Preserves current path in ?returnTo so ticket view can close back to notifications (etc.), not always the board. */
-export function AgentTicketDeepLink({ ticketId, className, children, onNavigate, companyView }: Props) {
+export function AgentTicketDeepLink({ ticketId, className, children, onNavigate }: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const qs = searchParams.toString();
   const returnTo = encodeURIComponent(pathname + (qs ? `?${qs}` : ""));
-  const viewQs = companyView ? "&view=company" : "";
   return (
     <Link
-      href={`/agent/tickets/${ticketId}?returnTo=${returnTo}${viewQs}`}
+      href={`/agent/tickets/${ticketId}?returnTo=${returnTo}`}
       className={className}
       onClick={onNavigate}
     >
