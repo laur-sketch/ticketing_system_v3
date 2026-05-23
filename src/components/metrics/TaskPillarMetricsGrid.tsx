@@ -48,8 +48,11 @@ const SEG_COLORS_HELPDESK = {
 
 /** User support pillar: ticket status mix */
 const SEG_COLORS_USER_SUPPORT = {
-  forConfirmation: "#d97706",
-  closed: "#166534",
+  1: "#dc2626",
+  2: "#f97316",
+  3: "#d97706",
+  4: "#65a30d",
+  5: "#166534",
 } as const;
 
 /** Two-bucket pillars: on-track + on-time vs overdue (same underlying kanban logic). */
@@ -285,20 +288,14 @@ function checklistProgressSegments(
 }
 
 function userSupportSegments(us: TaskMetricsUserSupportTickets): DonutSegment[] {
-  return [
-    {
-      key: "forConfirmation",
-      label: "For Confirmation",
-      value: us.forConfirmation,
-      color: SEG_COLORS_USER_SUPPORT.forConfirmation,
-    },
-    {
-      key: "closed",
-      label: "Closed",
-      value: us.closed,
-      color: SEG_COLORS_USER_SUPPORT.closed,
-    },
-  ];
+  return us.starCounts
+    .filter((row) => row.count > 0)
+    .map((row) => ({
+      key: `${row.star}-star`,
+      label: `${row.star} star${row.star === 1 ? "" : "s"}`,
+      value: row.count,
+      color: SEG_COLORS_USER_SUPPORT[row.star],
+    }));
 }
 
 function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
@@ -410,17 +407,19 @@ function csvLayoutRowsForPillar(args: {
     ];
   }
   if (pillar === "USER SUPPORT") {
-    const total = userSupportTickets?.total ?? 0;
+    const average = userSupportTickets?.averageRating;
+    const rated = userSupportTickets?.ratedTickets ?? 0;
+    const total = userSupportTickets?.totalTickets ?? 0;
     return [
       [
         dateLabel,
         month,
-        String(userSupportTickets?.forConfirmation ?? 0),
-        String(userSupportTickets?.closed ?? 0),
+        average == null ? "" : average.toFixed(2),
+        String(rated),
         String(total),
+        String(userSupportTickets?.unratedTickets ?? 0),
         "",
-        "",
-        total > 0 ? "100%" : "0%",
+        average == null ? "No ratings" : `${average.toFixed(2)}/5`,
       ],
     ];
   }
@@ -468,6 +467,7 @@ function sourceDetailsForPillar(args: {
   tableRows: string[][];
   csvColumns: string[];
   csvRows: string[][];
+  showCsvPreview: boolean;
   notes: string[];
 } {
   const { pillar, metricsCadence, reportingPeriodLabel, helpdeskTickets, userSupportTickets, checklistPillars } = args;
@@ -493,28 +493,37 @@ function sourceDetailsForPillar(args: {
       ],
       csvColumns: IT_SALF_CSV_COLUMNS,
       csvRows: csvLayoutRowsForPillar(args),
+      showCsvPreview: false,
       notes: ["The headline percent is closed / (closed + open) for the selected cadence."],
     };
   }
   if (pillar === "USER SUPPORT") {
+    const average = userSupportTickets?.averageRating;
+    const rated = userSupportTickets?.ratedTickets ?? 0;
+    const total = userSupportTickets?.totalTickets ?? 0;
     return {
       title: "User Support Source",
       rows: [
-        { label: "Collected from", value: "Ticket status counts in the selected reporting period" },
-        { label: "Recorded as", value: "For Confirmation and Closed ticket totals" },
-        { label: "For Confirmation", value: String(userSupportTickets?.forConfirmation ?? 0) },
-        { label: "Closed", value: String(userSupportTickets?.closed ?? 0) },
-        { label: "Total", value: String(userSupportTickets?.total ?? 0) },
+        { label: "Collected from", value: "Ticket star ratings submitted for tickets in the selected reporting period" },
+        { label: "Recorded as", value: "Average CSAT star rating across rated tickets" },
+        { label: "Average rating", value: average == null ? "No ratings yet" : `${average.toFixed(2)} / 5` },
+        { label: "Rated tickets", value: String(rated) },
+        { label: "Total tickets", value: String(total) },
       ],
-      tableColumns: ["Ticket status", "Count", "Recorded meaning"],
+      tableColumns: ["Rating", "Count", "Recorded meaning"],
       tableRows: [
-        ["For Confirmation", String(userSupportTickets?.forConfirmation ?? 0), "Resolved work awaiting requester confirmation"],
-        ["Closed", String(userSupportTickets?.closed ?? 0), "Verified or completed support ticket records"],
-        ["Total", String(userSupportTickets?.total ?? 0), "For Confirmation + Closed"],
+        ...(userSupportTickets?.starCounts ?? []).map((row) => [
+          `${row.star} star${row.star === 1 ? "" : "s"}`,
+          String(row.count),
+          row.label,
+        ]),
+        ["Rated tickets", String(rated), "Tickets with submitted star ratings"],
+        ["Unrated tickets", String(userSupportTickets?.unratedTickets ?? 0), "Tickets in the selected period without a rating"],
       ],
       csvColumns: IT_SALF_CSV_COLUMNS,
       csvRows: csvLayoutRowsForPillar(args),
-      notes: ["This pillar reflects support outcomes from ticket workflow statuses."],
+      showCsvPreview: false,
+      notes: ["This pillar reflects customer star ratings instead of ticket confirmation statuses."],
     };
   }
   const agg = checklistPillars?.[pillar];
@@ -562,6 +571,7 @@ function sourceDetailsForPillar(args: {
     ],
     csvColumns: IT_SALF_CSV_COLUMNS,
     csvRows: sourceCsvRows,
+    showCsvPreview: true,
     notes: [
       agg?.csvRows?.length
         ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
@@ -648,8 +658,8 @@ export function TaskPillarMetricsGrid({
         if (pillar === "USER SUPPORT") {
           const us = userSupportTickets;
           const segments = us ? userSupportSegments(us) : [];
-          const total = us?.total ?? 0;
-          const headline = total === 0 ? "—" : `${total} ticket${total === 1 ? "" : "s"}`;
+          const headline =
+            us?.averageRating == null ? "—" : `${us.averageRating.toFixed(2)}/5 avg rating`;
           return (
             <PillarDonutCard
               key={pillar}
@@ -770,99 +780,107 @@ export function TaskPillarMetricsGrid({
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
                   <div>
                     <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      CSV Preview
+                      {inspected.showCsvPreview ? "CSV Preview" : "Extended Details"}
                     </p>
-                    <p className="mt-0.5 font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                      {inspected.title.replace(/\s+/g, "_").toLowerCase()}_metrics.csv
-                    </p>
+                    {inspected.showCsvPreview ? (
+                      <p className="mt-0.5 font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                        {inspected.title.replace(/\s+/g, "_").toLowerCase()}_metrics.csv
+                      </p>
+                    ) : null}
                   </div>
                   <p className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
-                    {inspected.csvRows.length} rows · {inspected.csvColumns.length} columns
+                    {inspected.showCsvPreview
+                      ? `${inspected.csvRows.length} rows · ${inspected.csvColumns.length} columns`
+                      : `${inspected.tableRows.length} details`}
                   </p>
                 </div>
-                <div className="border-b border-zinc-300 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
-                  <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                    {inspected.csvColumns.join(",")}
-                  </p>
-                </div>
-                <div className="max-h-[45vh] overflow-auto bg-white dark:bg-zinc-950">
-                  <table className="w-full min-w-[760px] border-collapse text-left font-mono text-xs">
-                    <thead className="sticky top-0 z-10 bg-zinc-200 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                      <tr>
-                        <th className="w-12 border-b border-r border-zinc-300 px-2 py-1.5 text-center dark:border-zinc-700">
-                          #
-                        </th>
-                        {inspected.csvColumns.map((col, colIndex) => (
-                          <th
-                            key={`col-label-${col}-${colIndex}`}
-                            className="border-b border-r border-zinc-300 px-3 py-1.5 text-center dark:border-zinc-700"
-                          >
-                            {spreadsheetColumnLabel(colIndex)}
-                          </th>
-                        ))}
-                      </tr>
-                      <tr>
-                        <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
-                          1
-                        </th>
-                        {inspected.csvColumns.map((_, colIndex) => (
-                          <th
-                            key={`blank-1-${colIndex}`}
-                            className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
-                          />
-                        ))}
-                      </tr>
-                      <tr>
-                        <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
-                          2
-                        </th>
-                        {inspected.csvColumns.map((_, colIndex) => (
-                          <th
-                            key={`blank-2-${colIndex}`}
-                            className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
-                          />
-                        ))}
-                      </tr>
-                      <tr>
-                        <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
-                          3
-                        </th>
-                        {inspected.csvColumns.map((col, colIndex) => (
-                          <th
-                            key={`${col}-${colIndex}`}
-                            className="border-b border-r border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
-                          >
-                            {col}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {inspected.csvRows.map((row, rowIndex) => (
-                        <tr key={`${row[0]}-${rowIndex}`} className="bg-white even:bg-zinc-50 dark:bg-zinc-950 dark:even:bg-zinc-900/40">
-                          <td className="border-r border-b border-zinc-200 bg-zinc-100 px-2 py-2 text-center text-[10px] font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500">
-                            {rowIndex + 4}
-                          </td>
-                          {row.map((cell, cellIndex) => (
-                            <td
-                              key={`${row[0]}-${cellIndex}`}
-                              className={cn(
-                                "border-r border-b border-zinc-200 px-3 py-2 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-300",
-                                cellIndex === 0 && "font-semibold text-zinc-950 dark:text-zinc-100",
-                                cellIndex === 1 && "tabular-nums text-orange-700 dark:text-orange-300",
-                              )}
-                            >
-                              {cell}
-                            </td>
+                {inspected.showCsvPreview ? (
+                  <>
+                    <div className="border-b border-zinc-300 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+                      <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {inspected.csvColumns.join(",")}
+                      </p>
+                    </div>
+                    <div className="max-h-[45vh] overflow-auto bg-white dark:bg-zinc-950">
+                      <table className="w-full min-w-[760px] border-collapse text-left font-mono text-xs">
+                        <thead className="sticky top-0 z-10 bg-zinc-200 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                          <tr>
+                            <th className="w-12 border-b border-r border-zinc-300 px-2 py-1.5 text-center dark:border-zinc-700">
+                              #
+                            </th>
+                            {inspected.csvColumns.map((col, colIndex) => (
+                              <th
+                                key={`col-label-${col}-${colIndex}`}
+                                className="border-b border-r border-zinc-300 px-3 py-1.5 text-center dark:border-zinc-700"
+                              >
+                                {spreadsheetColumnLabel(colIndex)}
+                              </th>
+                            ))}
+                          </tr>
+                          <tr>
+                            <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
+                              1
+                            </th>
+                            {inspected.csvColumns.map((_, colIndex) => (
+                              <th
+                                key={`blank-1-${colIndex}`}
+                                className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
+                              />
+                            ))}
+                          </tr>
+                          <tr>
+                            <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
+                              2
+                            </th>
+                            {inspected.csvColumns.map((_, colIndex) => (
+                              <th
+                                key={`blank-2-${colIndex}`}
+                                className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
+                              />
+                            ))}
+                          </tr>
+                          <tr>
+                            <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
+                              3
+                            </th>
+                            {inspected.csvColumns.map((col, colIndex) => (
+                              <th
+                                key={`${col}-${colIndex}`}
+                                className="border-b border-r border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+                              >
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {inspected.csvRows.map((row, rowIndex) => (
+                            <tr key={`${row[0]}-${rowIndex}`} className="bg-white even:bg-zinc-50 dark:bg-zinc-950 dark:even:bg-zinc-900/40">
+                              <td className="border-r border-b border-zinc-200 bg-zinc-100 px-2 py-2 text-center text-[10px] font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500">
+                                {rowIndex + 4}
+                              </td>
+                              {row.map((cell, cellIndex) => (
+                                <td
+                                  key={`${row[0]}-${cellIndex}`}
+                                  className={cn(
+                                    "border-r border-b border-zinc-200 px-3 py-2 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-300",
+                                    cellIndex === 0 && "font-semibold text-zinc-950 dark:text-zinc-100",
+                                    cellIndex === 1 && "tabular-nums text-orange-700 dark:text-orange-300",
+                                  )}
+                                >
+                                  {cell}
+                                </td>
+                              ))}
+                            </tr>
                           ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="border-t border-zinc-300 bg-zinc-50 px-3 py-3 dark:border-zinc-700 dark:bg-zinc-900/70">
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : null}
+                <div className={cn("bg-zinc-50 px-3 py-3 dark:bg-zinc-900/70", inspected.showCsvPreview && "border-t border-zinc-300 dark:border-zinc-700")}>
                   <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                    Extra source details
+                    {inspected.showCsvPreview ? "Extra source details" : "Source details"}
                   </p>
                   <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                     <table className="w-full min-w-[640px] border-collapse font-mono text-[11px]">
@@ -892,10 +910,12 @@ export function TaskPillarMetricsGrid({
                     </table>
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-2 border-t border-zinc-300 bg-zinc-100 px-3 py-2 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-                  <span>UTF-8 · comma-separated values</span>
-                  <span>Generated from current Task Metrics payload</span>
-                </div>
+                {inspected.showCsvPreview ? (
+                  <div className="flex items-center justify-between gap-2 border-t border-zinc-300 bg-zinc-100 px-3 py-2 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                    <span>UTF-8 · comma-separated values</span>
+                    <span>Generated from current Task Metrics payload</span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

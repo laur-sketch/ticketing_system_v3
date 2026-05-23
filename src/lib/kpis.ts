@@ -97,24 +97,14 @@ export function helpdeskSupportPercent(closedInRange: number, openInRange: numbe
   return Number(Math.min(100, raw).toFixed(1));
 }
 
-/** Task metrics → USER SUPPORT pillar (tickets by status in Insights date range). */
+/** Task metrics → USER SUPPORT pillar (average star rating in Insights date range). */
 export type TaskMetricsUserSupportTickets = {
-  forConfirmation: number;
-  closed: number;
-  total: number;
+  averageRating: number | null;
+  ratedTickets: number;
+  totalTickets: number;
+  unratedTickets: number;
+  starCounts: CsatStarDistributionRow[];
 };
-
-function summarizeUserSupportTickets(
-  rows: { status: TicketStatus; _count: number }[],
-): TaskMetricsUserSupportTickets {
-  const m = new Map<TicketStatus, number>();
-  for (const r of rows) {
-    m.set(r.status, r._count);
-  }
-  const forConfirmation = m.get("FOR_CONFIRMATION") ?? 0;
-  const closed = m.get("CLOSED") ?? 0;
-  return { forConfirmation, closed, total: forConfirmation + closed };
-}
 
 const CSAT_STAR_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
   1: "Very Poor",
@@ -148,6 +138,33 @@ function buildCsatStarDistribution(
     label: CSAT_STAR_LABELS[star],
     count: counts.get(star) ?? 0,
   }));
+}
+
+function summarizeUserSupportRatings(args: {
+  totalTickets: number;
+  averageRating: number | null;
+  starRows: { csat: number; _count: number }[];
+}): TaskMetricsUserSupportTickets {
+  const starCounts = buildCsatStarDistribution(args.starRows);
+  const ratedTickets = starCounts.reduce((sum, row) => sum + row.count, 0);
+  return {
+    averageRating: args.averageRating == null ? null : Number(args.averageRating.toFixed(2)),
+    ratedTickets,
+    totalTickets: args.totalTickets,
+    unratedTickets: Math.max(0, args.totalTickets - ratedTickets),
+    starCounts,
+  };
+}
+
+function summarizeUserSupportStatusCounts(rows: { status: TicketStatus; _count: number }[]) {
+  const m = new Map<TicketStatus, number>();
+  for (const r of rows) {
+    m.set(r.status, r._count);
+  }
+  return {
+    forConfirmation: m.get("FOR_CONFIRMATION") ?? 0,
+    closed: m.get("CLOSED") ?? 0,
+  };
 }
 
 function rangeFilter(range: KpiRange) {
@@ -226,7 +243,7 @@ async function loadLiveHelpdeskTaskMetricCounts(args: {
       _count: true,
     }),
   ]);
-  const userSupport = summarizeUserSupportTickets(
+  const userSupport = summarizeUserSupportStatusCounts(
     userSupportRows.map((r) => ({
       status: r.status as TicketStatus,
       _count: r._count,
@@ -240,8 +257,46 @@ async function loadLiveHelpdeskTaskMetricCounts(args: {
   };
 }
 
+async function loadUserSupportRatingMetrics(args: {
+  workingDayIntervals: WorkingDayInterval[];
+  scoped: Record<string, unknown>;
+}): Promise<TaskMetricsUserSupportTickets> {
+  const { workingDayIntervals, scoped } = args;
+  const ticketWhere = {
+    ...timestampOnWorkingDaysWhere("createdAt", workingDayIntervals),
+    ...scoped,
+  };
+  const feedbackWhere = {
+    ticket: ticketWhere,
+    csat: { gte: 1, lte: 5 },
+  };
+  const [totalTickets, ratingAgg, starRows] = await Promise.all([
+    prisma.ticket.count({ where: ticketWhere }),
+    prisma.ticketFeedback.aggregate({
+      where: feedbackWhere,
+      _avg: { csat: true },
+    }),
+    prisma.ticketFeedback.groupBy({
+      by: ["csat"],
+      where: feedbackWhere,
+      _count: true,
+    }),
+  ]);
+  return summarizeUserSupportRatings({
+    totalTickets,
+    averageRating: ratingAgg._avg.csat,
+    starRows: starRows.map((r) => ({ csat: r.csat, _count: r._count })),
+  });
+}
+
 function emptyTaskMetricsUserSupport(): TaskMetricsUserSupportTickets {
-  return { forConfirmation: 0, closed: 0, total: 0 };
+  return {
+    averageRating: null,
+    ratedTickets: 0,
+    totalTickets: 0,
+    unratedTickets: 0,
+    starCounts: buildCsatStarDistribution([]),
+  };
 }
 
 function emptyTaskMetricsHelpdesk(
@@ -454,7 +509,7 @@ export async function computeTaskMetrics(
   let closedInRange = 0;
   let openInRange = 0;
   let volume = 0;
-  let userSupportTicketsByStatus: { status: TicketStatus; _count: number }[] = [];
+  let taskMetricsUserSupport = emptyTaskMetricsUserSupport();
 
   if (workingDays.length > 0) {
     const span = workingDaysSpanRange(workingDays)!;
@@ -480,10 +535,7 @@ export async function computeTaskMetrics(
       closedInRange = combined.closedInRange;
       openInRange = combined.openTicketsInPeriod;
       volume = combined.requestsInRange;
-      userSupportTicketsByStatus = [
-        { status: "FOR_CONFIRMATION" as const, _count: combined.userSupport.forConfirmation },
-        { status: "CLOSED" as const, _count: combined.userSupport.closed },
-      ];
+      taskMetricsUserSupport = await loadUserSupportRatingMetrics({ workingDayIntervals: workingDays, scoped });
     }
   }
 
@@ -500,11 +552,6 @@ export async function computeTaskMetrics(
           rangeFromYmd: fromYmd,
           rangeToYmd: toYmd,
         });
-  const taskMetricsUserSupport =
-    workingDays.length === 0
-      ? emptyTaskMetricsUserSupport()
-      : summarizeUserSupportTickets(userSupportTicketsByStatus);
-
   const [taskChecklistPillars, itSalfCsvRows] = await Promise.all([
     computeTaskChecklistPillarMetrics({
       metricsCadence: helpdeskCadence,
