@@ -11,6 +11,14 @@ Ticket System v3 is a service desk platform for:
 
 This manual covers daily use for **Customer**, **Personnel**, **Admin**, and **SuperAdmin** roles.
 
+### Current project status
+
+- Product branding is now **AGCTek Help Desk** in the live UI.
+- Current app stack: **Next.js 16**, **React 19**, Prisma/PostgreSQL, NextAuth, Tailwind CSS, and SMTP email.
+- Ticket escalation is handled as a **Request for transfer** workflow. The former **Escalated** status is shown to users as **Transfer pending** and requires Admin/SuperAdmin approval.
+- KPI/task cycles support **Daily**, **Weekly**, **Monthly**, and **Quarterly** schedules; quarterly cycles currently use 4-month periods.
+- Ticket intake screenshots, task proof screenshots, profile images, account requests, and admin reporting are implemented.
+
 ## 2) Access and sign-in
 
 ### Sign-in methods
@@ -41,10 +49,11 @@ Navigation is **role-based** (sidebar on large screens; menu button on mobile).
 | Dashboard | `/` |
 | Active Tickets | `/my-tickets` |
 | Knowledge Base | `/tickets/knowledge` |
-| Create ticket | `/tickets/new` |
+| Settings | `/tickets/knowledge#settings` |
 | My Account | `/admin/account` |
 
 Customers are redirected away from `/agent` and `/insights`.
+Create tickets from dashboard actions or directly at **`/tickets/new`**.
 
 ### Personnel
 
@@ -90,7 +99,7 @@ Header utilities (staff): ticket search, notifications, **Process** (`/process`)
 
 1. Open **`/tickets/new`**.
 2. Complete title, description, department/business unit, and contact fields.
-3. Attach screenshots if helpful (limits apply).
+3. Attach screenshots if helpful. You can upload, paste, or drag image files; up to **15 screenshots**, **5MB each**.
 4. Submit; save the **ticket number**.
 
 **Intake lock:** If a resolved ticket still needs verification/rating, new tickets may be blocked until that flow is finished.
@@ -119,12 +128,13 @@ Header utilities (staff): ticket search, notifications, **Process** (`/process`)
 - Kanban/table views for operational ticket work.
 - Set **priority** above **Set Priority Level (UNSET)** before moving to **In progress** (policy enforced).
 - Drag-and-drop status updates where enabled.
+- Assigned personnel use the ticket workspace (**`/agent/tickets/[id]`**) to request more information, resolve tickets, and submit **Request for transfer** approval requests when a ticket needs reassignment or higher-level handling.
 
 ### Task Board (`/agent?board=kpi`)
 
 - **Task kanban** columns: **Current**, **Done**, **Delayed** (see KPI section).
 - Complete **sub-KPI checklists** on KPI cards assigned to you, or individual sub-KPIs assigned directly to you.
-- Add **Before** and **After** screenshots to non-IT Project sub-KPIs when evidence is needed. Uploads accept **JPEG/PNG only**, up to **10MB** each.
+- Add **Before** and **After** screenshots to non-IT Project sub-KPIs when evidence is needed. Uploads accept **JPEG/PNG only**, up to **5 screenshots per slot**, **10MB each**.
 - Coordinators with assignment permission may use **Task Management** on **`/insights`**.
 
 ### Metrics & Reports (`/insights`)
@@ -158,9 +168,11 @@ Tabs (role-dependent):
 | Ticket | Main operational ticket kanban |
 | Task | KPI/task kanban + **Task Definition** console (admins) |
 
+Transfer requests are reviewed from the ticket workspace by the selected Admin/SuperAdmin reviewer. A pending request appears as **Transfer pending**.
+
 ### Priority alerts (`/admin/escalation-triggers`)
 
-- Configure priority-linked escalation behavior.
+- Configure priority-linked alert behavior. SLA sweeps report scanned tickets and refresh reporting; transfer/escalation movement is handled through the approval workflow.
 
 ### Metrics & Reports (`/insights`)
 
@@ -169,19 +181,19 @@ Tabs (role-dependent):
 
 ### Other admin paths
 
-- **`/admin/account-management`** — portal account administration (when deployed)
-- **`/reports`** — reporting views as implemented
-- **`POST /api/sla/sweep`** — SLA breach scan (secured; admin automation)
+- **`/admin/account-management`** — redirects to **`/admin/personnel`** for portal account administration.
+- **`/reports`** — Admin/SuperAdmin executive reporting: transfer pending, priority mix, status mix, top queues, recent closures, and SLA summary.
+- **`POST /api/sla/sweep`** — secured Admin SLA scan/report refresh endpoint.
 
 ## 7) KPI and task behavior
 
 ### Recurring tasks
 
-- Frequencies: **Daily**, **Weekly** (configurable weekday), **Monthly** (configurable day of month).
+- Frequencies: **Daily**, **Weekly** (configurable weekday), **Monthly** (configurable day of month), **Quarterly** (4-month cycle with configurable start day).
 - Sub-KPI checklists can be **flat** or **segmented** (grouped sections).
 - Admins/coordinators can assign individual sub-KPIs to different personnel from the Task Board.
 - A sub-KPI assignee can see the parent KPI card and update only that assigned sub-task.
-- Non-IT Project sub-KPIs support one **before** screenshot and one **after** screenshot for visual proof of work.
+- Non-IT Project sub-KPIs support **before** and **after** screenshot sets for visual proof of work.
 - On period rollover, checklist completion resets for the new cycle.
 - Timezone: browser/reporting zone is sent to the API for period boundaries.
 
@@ -204,6 +216,8 @@ Special non-recurring pillar:
 
 Open **`/admin/account`** → **Security** tab (available to Customer, Personnel, and Admin roles).
 
+The **Profile** tab supports a profile photo upload (**PNG/JPG/WEBP**, up to **10MB**) with drag/zoom framing. The **Billing** tab is present as an account area but billing workflows are not part of the current ticket operations.
+
 ### Change username
 
 1. New username + current password → **Update username**.
@@ -217,7 +231,7 @@ Same pattern: current password required; automatic sign-out on success.
 
 ### Account requests
 
-Submit suspension or deletion requests; Admin/SuperAdmin reviews in Personnel or account workflows.
+Submit suspension, deletion, or password reset requests; Admin/SuperAdmin reviews them in Personnel/account workflows. Approved password reset requests set the portal password to the configured default reset password.
 
 ## 9) Troubleshooting
 
@@ -227,6 +241,7 @@ Submit suspension or deletion requests; Admin/SuperAdmin reviews in Personnel or
 | Unauthorized / missing menu | Role may not include that feature — contact Admin |
 | Cannot create ticket | Complete pending resolved verification/rating |
 | Cannot move to In progress | Set priority above **UNSET** |
+| Transfer is pending | Wait for the selected Admin/SuperAdmin reviewer to approve it |
 | Cannot edit checklist | Confirm you are the assignee |
 | KPI dates look wrong | Confirm timezone around weekly/monthly rollover |
 
@@ -240,10 +255,15 @@ Submit suspension or deletion requests; Admin/SuperAdmin reviews in Personnel or
 | `/my-tickets` | Customer ticket list |
 | `/my-requests` | Personnel ticket dashboard |
 | `/tickets/new` | New ticket |
+| `/tickets/[id]` | Ticket detail |
+| `/tickets/[id]/verification` | Resolution verification |
+| `/tickets/[id]/rate` | Rating / feedback |
 | `/agent` | Staff boards (use `?board=` tabs) |
+| `/agent/tickets/[id]` | Staff ticket workspace |
 | `/admin/manual-assignment` | Assignment board |
 | `/insights` | Metrics & reports |
 | `/process` | Process / lifecycle reference |
+| `/reports` | Admin/SuperAdmin reporting |
 | `/admin/personnel` | Personnel admin |
 | `/admin/escalation-triggers` | Priority alerts |
 | `/admin/account` | My Account |

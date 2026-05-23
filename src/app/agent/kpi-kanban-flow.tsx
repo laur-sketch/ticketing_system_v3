@@ -24,7 +24,9 @@ import {
   kpiChecklistMetricView,
   kpiChecklistProgress,
   collectAllSubKpiItems,
+  getPillarScreenshots,
   normalizeSubKpis,
+  pillarScreenshotsEnabled,
   subKpiAssignedAgentId,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
@@ -383,6 +385,49 @@ export function AgentKpiKanbanFlow({
     }
   }
 
+  async function uploadPillarScreenshots(
+    recordId: string,
+    slot: TaskScreenshotSlot,
+    files: File[],
+    existingCount: number,
+  ) {
+    if (files.length === 0) return;
+    if (existingCount + files.length > MAX_TASK_SCREENSHOTS_PER_SLOT) {
+      setError(`You can upload up to ${MAX_TASK_SCREENSHOTS_PER_SLOT} ${slot} screenshots per pillar.`);
+      return;
+    }
+    for (const file of files) {
+      const validationError = validateTaskScreenshotFile(file);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("id", recordId);
+      fd.append("pillarScreenshot", "1");
+      fd.append("slot", slot);
+      for (const file of files) {
+        fd.append("screenshot", file);
+      }
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not upload pillar screenshot.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function patchItProjectMeta(
     recordId: string,
     data: { itProjectName?: string | null; itProjectPhase?: string | null },
@@ -537,6 +582,78 @@ export function AgentKpiKanbanFlow({
           </span>
         ) : null}
       </label>
+    );
+  }
+
+  function renderPillarScreenshotField(r: KpiRecord, slot: TaskScreenshotSlot, editable: boolean) {
+    const screenshots = getPillarScreenshots(r.subKpis, slot);
+    const label = slot === "before" ? "Before screenshot" : "After screenshot";
+    const canUpload = editable || canAssignWork;
+    const remainingSlots = Math.max(0, MAX_TASK_SCREENSHOTS_PER_SLOT - screenshots.length);
+    return (
+      <div className="rounded-lg border border-orange-200 bg-orange-50/60 p-2 dark:border-orange-800/50 dark:bg-orange-950/20">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-orange-800 dark:text-orange-200">{label}</p>
+        {screenshots.length > 0 ? (
+          <div className="mt-1 space-y-1">
+            {screenshots.map((meta, index) => (
+              <div key={meta.storedFileName} className="text-[11px]">
+                <a
+                  href={`/api/kpi-maintenance/${r.id}/screenshots/${encodeURIComponent(meta.storedFileName)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-semibold text-orange-700 hover:underline dark:text-orange-300"
+                >
+                  View {index + 1}
+                </a>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <label
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className={cn(
+            "mt-2 inline-flex cursor-pointer rounded-full bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500",
+            (!canUpload || busyId === r.id || remainingSlots === 0) && "cursor-not-allowed opacity-60 hover:bg-orange-600",
+          )}
+        >
+          Choose File
+          <input
+            type="file"
+            multiple
+            accept={TASK_SCREENSHOT_ACCEPT}
+            disabled={!canUpload || busyId === r.id || remainingSlots === 0}
+            onChange={(e) => {
+              e.stopPropagation();
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              void uploadPillarScreenshots(r.id, slot, files, screenshots.length);
+            }}
+            className="sr-only"
+            aria-label={`Upload 1 to ${remainingSlots} ${label.toLowerCase()} images for ${r.title}`}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  function renderPillarScreenshotFields(r: KpiRecord, editable: boolean) {
+    if (!pillarScreenshotsEnabled(r.subKpis)) return null;
+    return (
+      <div className="mt-3 rounded-lg border border-orange-300/60 bg-orange-50/60 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+            Pillar screenshots
+          </p>
+          <p className="text-[10px] text-orange-700 dark:text-orange-300">
+            Attached to this pillar; checkbox completion is unchanged.
+          </p>
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          {renderPillarScreenshotField(r, "before", editable)}
+          {renderPillarScreenshotField(r, "after", editable)}
+        </div>
+      </div>
     );
   }
 
@@ -1056,6 +1173,7 @@ export function AgentKpiKanbanFlow({
                                   </p>
                                 ) : null}
                           </div>
+                          {!itProject ? renderPillarScreenshotFields(r, editable) : null}
                           <div className="mt-3 space-y-2">
                             {!itProject && normalized.segmented
                               ? normalized.segments.map((seg) => (

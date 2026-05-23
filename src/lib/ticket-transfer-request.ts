@@ -1,6 +1,8 @@
 export type TransferRequestPayload = {
   recipientPortalAccountId: string | null;
   recipientSuperAdmin: boolean;
+  targetTeamId?: string | null;
+  targetTeamName?: string | null;
   reason?: string;
 };
 
@@ -20,6 +22,8 @@ export function parseTransferRequestDetail(detail: string | null | undefined): T
         recipientPortalAccountId:
           typeof o.recipientPortalAccountId === "string" ? o.recipientPortalAccountId : null,
         recipientSuperAdmin: o.recipientSuperAdmin === true,
+        targetTeamId: typeof o.targetTeamId === "string" ? o.targetTeamId : null,
+        targetTeamName: typeof o.targetTeamName === "string" ? o.targetTeamName : null,
         reason: typeof o.reason === "string" ? o.reason : undefined,
       };
     }
@@ -29,6 +33,8 @@ export function parseTransferRequestDetail(detail: string | null | undefined): T
   return {
     recipientPortalAccountId: null,
     recipientSuperAdmin: false,
+    targetTeamId: null,
+    targetTeamName: null,
     reason: detail.trim(),
   };
 }

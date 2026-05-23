@@ -1,12 +1,11 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "@/lib/auth";
 import { MAX_PROFILE_IMAGE_DATA_URL_CHARS } from "@/lib/profile-image-limits";
 import { prisma } from "@/lib/prisma";
+import { safeGetServerSession } from "@/lib/server-session";
 const IMAGE_DATA_URL_RE = /^data:image\/(png|jpe?g|webp);base64,/i;
 
 export async function PATCH(req: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -63,7 +62,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE() {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

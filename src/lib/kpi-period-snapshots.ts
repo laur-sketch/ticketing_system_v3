@@ -234,6 +234,7 @@ function snapshotToProgress(s: {
 export type TaskChecklistPillarMetric = KpiChecklistProgress & {
   periodsCounted: number;
   periodsInRange: number;
+  csvRows?: string[][];
 };
 
 export type TaskChecklistPillarMetrics = Partial<Record<ItTaskPillarTitle, TaskChecklistPillarMetric>>;

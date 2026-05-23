@@ -2,7 +2,7 @@
 
 ## Complete manual — project rundown & user guide  
 
-**Document version:** 1.1 · **Product:** Ticket System v3 · **Audience:** operators, staff, customers, and administrators · **May 2026**
+**Document version:** 1.2 · **Product:** Ticket System v3 / AGCTek Help Desk · **Audience:** operators, staff, customers, and administrators · **May 2026**
 
 ---
 
@@ -25,17 +25,18 @@
 
 ### 1.1 Purpose  
 
-Ticket System v3 is a full-stack **service desk / ticketing** application for submitting requests, assigning work to teams and personnel, tracking **SLA** targets, escalating breached items, managing **KPI** maintenance tasks, and collecting **customer verification and feedback** after resolution.  
+Ticket System v3 is a full-stack **service desk / ticketing** application for submitting requests, assigning work to teams and personnel, tracking **SLA** targets, managing transfer approvals for items that need higher-level handling, managing **KPI** maintenance tasks, and collecting **customer verification and feedback** after resolution.  
 
 ### 1.2 Technology stack  
 
 | Layer | Technology |
 |--------|------------|
-| Application | **Next.js** (App Router), **React**, **Tailwind CSS** |
+| Application | **Next.js 16** (App Router), **React 19**, **Tailwind CSS 4** |
 | API | **Next.js Route Handlers** (`src/app/api/**`) |
 | Database | **PostgreSQL** with **Prisma ORM** |
 | Authentication | **NextAuth.js** — local credentials and optional **Google OAuth** |
 | Email | **SMTP** (e.g. Brevo) for resolution and verification flows |
+| Realtime / UX | Socket.IO dependencies, role-based shells, responsive sidebars, notification polling |
 
 ### 1.3 Repository layout (high level)  
 
@@ -44,13 +45,25 @@ Ticket System v3 is a full-stack **service desk / ticketing** application for su
 - **`src/lib/`** — Business logic: auth, SLA, email, ticket actions, portal accounts.  
 - **`prisma/`** — Schema, migrations, seed.  
 - **`ecosystem.config.cjs`** — **PM2** process definition for production on Node hosts.  
+- **`docs/`** — User manuals, staff SOP, and Mermaid flowcharts.
 
-### 1.4 Core concepts  
+### 1.4 Current implementation status
 
-- **Ticket** — Single customer issue with status (Open → In progress → Resolved → Closed, plus Pending info / Escalated as needed).  
+- Live UI branding is centralized as **AGCTek Help Desk**.
+- Customer portal navigation now includes **Dashboard**, **Active Tickets**, **Knowledge Base**, and **Settings**; ticket creation remains available through dashboard actions or direct URL **`/tickets/new`**.
+- Ticket intake supports screenshot upload/paste/drag-and-drop with stored request screenshots visible from ticket detail/workspace.
+- Operational escalation is now a **Request for transfer** approval workflow. The stored `ESCALATED` status is displayed as **Transfer pending**.
+- KPI/task recurrence supports **Daily**, **Weekly**, **Monthly**, and **Quarterly** cycles; quarterly periods are implemented as 4-month cycles.
+- Account features include profile images, security changes, account action requests, and Admin/SuperAdmin review of pending requests.
+- Admin reporting at **`/reports`** is implemented for transfer posture, queue mix, recent closures, and SLA summary.
+
+### 1.5 Core concepts  
+
+- **Ticket** — Single customer issue with status (Open → In progress → For confirmation → Closed, plus Pending info and Transfer pending as needed).  
 - **Priority** — Includes a **“Set Priority Level” (UNSET)** default until staff sets **Low / Medium / High / Urgent**; work typically cannot move to **In progress** until priority is set (policy enforced in API/board).  
-- **SLA** — First-response and resolution due times derive from **SlaPolicy** per priority; automated sweep can escalate breached unresolved tickets (Admin-triggered API).  
+- **SLA** — First-response and resolution due times derive from **SlaPolicy** per priority; Admin-triggered sweep scans unresolved tickets and refreshes reports. Transfer/escalation movement is handled through the approval workflow rather than automatic sweep escalation.  
 - **Teams & agents** — Tickets route to teams; **Personnel** work assigned queues from **`/agent`**.  
+- **Transfer pending** — User-facing label for tickets awaiting approval of a personnel-submitted transfer request.
 
 ---
 
@@ -60,8 +73,9 @@ Ticket System v3 is a full-stack **service desk / ticketing** application for su
 
 1. User authenticates → session carries **role** and **email**.  
 2. Customer submits ticket → **`POST /api/tickets`** creates row, SLA timestamps, activity log.  
-3. Staff manage lifecycle → **`PATCH /api/tickets/[id]`** (status, priority, escalation, resolution).  
+3. Staff manage lifecycle → **`PATCH /api/tickets/[id]`** (status, priority, more-information requests, transfer requests, resolution).  
 4. On **Resolved**, system may email the **requestor inbox** (SMTP); customer **verifies** and submits **rating** where configured.  
+5. If assigned personnel cannot continue a ticket, they submit **Request for transfer** from **`/agent/tickets/[id]`** to an Admin/SuperAdmin reviewer; approval moves it into the transfer-pending/assignment flow.
 
 ### 2.2 Notification email routing  
 
@@ -95,7 +109,8 @@ If a customer has a **resolved** ticket that still needs **verification and mand
 | **Personnel** | **`/my-requests`**, **Ticket** and **Task** boards (`/agent`), insights, optional assignment board. |
 | **Admin / SuperAdmin** | Ticket dashboard, create requests, personnel, all board tabs, priority alerts, task definitions, insights, SLA sweep. |
 
-**Head / privileged portal flags** may grant coordination powers (e.g. escalation) per implementation.  
+**Head / privileged portal flags** may grant coordination powers per implementation.  
+SuperAdmin can create staff portal accounts, manage roles/designated companies, sync roster entries, and assign staff color tags. Admin users can manage within their designated company scope where enabled.
 
 ---
 
@@ -110,6 +125,7 @@ Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** 
 - **Prisma:** `npx prisma migrate deploy` *or* `npx prisma db push` (depending on how the environment was baselined).  
 - **Helpdesk Google Form CSV (Insights task metrics):** after deploy, upload the sheet export once per environment — `npm run db:apply-helpdesk-csv path/to/"IT SALF - HELPDESK.csv"` (spreadsheet **Completed** is counted as **For confirmation** alongside **Closed**).  
 - **Seed (optional):** `npm run db:seed` for demo data.  
+- **KPI snapshots/backfills:** `npm run db:backfill-kpi-snapshots`, `npm run db:apply-kpi-sheet`, and related range/daily scripts are available for metrics data repair/import.  
 - One-off: `npx tsx scripts/ensure-unset-priority-data.ts` if using **UNSET** priority and SLA rows need ensuring after `db push`.  
 
 ### 4.3 Production (Node + PM2)  
@@ -136,15 +152,15 @@ Copy **`.env.example`** to **`.env`**. Key groups: `DATABASE_URL`, **NextAuth** 
 | Dashboard | `/` |
 | Active Tickets | `/my-tickets` |
 | Knowledge Base | `/tickets/knowledge` |
-| Create Request | `/tickets/new` |
+| Settings | `/tickets/knowledge#settings` |
 
-Use the **notification bell** for updates and verification reminders.
+Use dashboard actions or **`/tickets/new`** to create requests. Use the **notification bell** for updates and verification reminders.
 
 ### 5.2 Submit a ticket  
 
 1. Go to **`/tickets/new`**.  
 2. Complete **department / business unit**, **name**, and **issue** description.  
-3. Attach screenshots if helpful (image limits apply).  
+3. Attach screenshots if helpful. The intake form supports upload, paste, and drag-and-drop; up to **15 images**, **5MB each**.  
 4. If you use **Google**, emails for resolution/verification go to your **Google address**. If you use a **portal** account, notification email follows your **registered work email** (optional override only when it matches your portal email).  
 5. Submit; track from **`/my-tickets`** or the dashboard.  
 
@@ -169,13 +185,13 @@ Use the **notification bell** for updates and verification reminders.
 | Open | Received; queued / triaged. |
 | In progress | Actively worked. |
 | Pending info | Waiting on information (implementation may vary). |
-| Escalated | Elevated for leadership or specialized handling. |
+| Transfer pending | A transfer request is waiting for Admin/SuperAdmin approval. |
 | Resolved | Solution delivered; you should verify and rate. |
 | Closed | Closed after confirmation / feedback per policy. |
 
 ### 5.6 My account  
 
-Open **`/admin/account`** → **Security** tab (customers, personnel, and admins). **Security** changes (username, email, password) sign you out and require a fresh sign-in. Submit suspension/deletion requests for admin review when needed.  
+Open **`/admin/account`**. The **Profile** tab supports profile image upload/framing (**PNG/JPG/WEBP**, up to **10MB**) and local bio notes. The **Security** tab changes username, email, and password; successful security changes sign you out and require a fresh sign-in. Submit suspension, deletion, or password reset requests for admin review when needed.  
 
 ---
 
@@ -193,25 +209,27 @@ Open **`/admin/account`** → **Security** tab (customers, personnel, and admins
 1. Confirm assignment and priority (**set priority** if still **UNSET** — otherwise board/API may block **In progress**).  
 2. Update status honestly (drag-and-drop where enabled).  
 3. Use **request more information** per policy (may log activity **without** forcing “pending info” status depending on configuration).  
-4. Resolve with clear **resolution notes**; customer receives email to **verify**.  
-5. Staff ticket workspace: **`/agent/tickets/[id]`**.  
+4. Use **Request for transfer** from **`/agent/tickets/[id]`** when the assigned personnel needs Admin/SuperAdmin approval to transfer ownership or escalate handling.  
+5. Resolve with clear **resolution notes**; customer receives email to **verify**.  
+6. Staff ticket workspace: **`/agent/tickets/[id]`**.  
 
 ### 6.3 KPI / task hygiene  
 
 - Complete checklist items where you are the KPI card assignee, or where an individual sub-KPI is assigned directly to you.  
 - Admins/coordinators can assign individual sub-KPIs to other personnel from inside each Task Board card.  
-- Non-IT Project sub-KPIs can store one **before** screenshot and one **after** screenshot for evidence; uploads must be **JPEG or PNG** and no larger than **10MB** each.  
+- Non-IT Project sub-KPIs can store **before** and **after** screenshot sets for evidence; uploads must be **JPEG or PNG**, up to **5 screenshots per slot**, no larger than **10MB** each.  
 - Respect recurrence boundaries (daily / weekly / monthly cycles); period boundaries use browser/reporting timezone in API calls.  
-- **Recurring tasks:** flat or **segmented** sub-KPI checklists; checklists reset on period rollover.  
+- **Recurring tasks:** flat or **segmented** sub-KPI checklists; **Daily**, **Weekly**, **Monthly**, and **Quarterly** schedules; checklists reset on period rollover.  
 - **IT Project Implementation:** non-recurring; phases and per-sub-task due dates (**MM/DD/YYYY** in UI); record **actual date** when completing sub-tasks. **Delayed** column applies only to this pillar (late sub-task or actual after due); fully complete but late work stays in **Delayed**, not **Done**.  
 - Other recurring KPIs: late completion may show **Done** with a delayed indicator.  
+Quarterly task metrics currently use 4-month cycles and daily task metrics exclude Sundays from working-day averages.
 
 ### 6.4 Metrics & Reports (`/insights`)  
 
 | Tab | Audience | Content |
 |-----|----------|---------|
 | Ticket metrics | Admin, Personnel | SLA, volume, CSAT, charts (date range) |
-| Task metrics | Admin, Personnel | Helpdesk / checklist pillar metrics |
+| Task metrics | Admin, Personnel | Helpdesk / checklist pillar metrics by daily, weekly, monthly, or quarterly cadence |
 | Task Management | Personnel coordinators | KPI definitions (when `canAccessAssignmentBoard`) |
 
 Admins define tasks on **Task Board** (`/agent?board=kpi`), not the Insights Task Management tab.
@@ -233,20 +251,27 @@ Admins define tasks on **Task Board** (`/agent?board=kpi`), not the Insights Tas
 - **`/insights`** — Metrics & reports.  
 - **`/process`** — Process / lifecycle reference.  
 - **`/reports`** — Reporting views as implemented.  
+- **`/api/brand/logo`** — Serves the configured brand logo from `BRAND_LOGO_PATH` or bundled fallback.
 
 ### 7.2 SLA sweep  
 
-- **`POST /api/sla/sweep`** (secured; Admin context) — scans for SLA breaches and escalates/logs per policy.  
+- **`POST /api/sla/sweep`** (secured; Admin context) — scans unresolved tickets and refreshes reporting paths. Current transfer/escalation movement is not automatic; personnel submit transfer requests for reviewer approval.  
 
 ### 7.3 Accounts  
 
-- **`/admin/account-management`** — Portal account administration where deployed.  
+- **`/admin/account-management`** — Redirects to **`/admin/personnel`**. Portal account administration is handled in Personnel, including account creation, role/designated-company updates, roster sync, duplicate-agent reconciliation, assignment colors, and request review.
 
 ---
 
 ## 8) Account security (My Account)  
 
 All roles with portal access use **`/admin/account`** (Security tab).  
+
+The account area includes **Profile**, **Security**, and **Billing** tabs. Billing is present as a UI area only; ticket operations are managed through the ticket and reporting pages.
+
+### Profile image
+
+Upload a profile image from **`/admin/account`** → **Profile**. Supported formats are **PNG**, **JPG**, and **WEBP**, up to **10MB**. After upload, drag/zoom the framing and save it.
 
 ### Change username  
 
@@ -260,7 +285,7 @@ Similar pattern: confirm current password; after success, **sign in again** with
 
 ### Account requests  
 
-Suspension or deletion requests may be submitted for admin review.  
+Suspension, deletion, or password reset requests may be submitted for admin review. Approved password reset requests reset the portal password to the configured default reset value.  
 
 ---
 
@@ -273,6 +298,7 @@ Suspension or deletion requests may be submitted for admin review.
 | Cannot create new ticket | Complete **pending resolved** verification/rating on existing ticket. |
 | Email link expired / invalid | Request staff to re-send resolution flow or open ticket in portal. |
 | Cannot move ticket to In progress | Set **priority** above **Set Priority Level (UNSET)**. |
+| Ticket shows Transfer pending | A selected Admin/SuperAdmin reviewer must approve the transfer request. |
 | Task stuck in Delayed (IT Project) | Complete overdue sub-tasks or correct actual/due dates. |
 | Cannot edit KPI checklist | Confirm you are the assignee; IT Project requires per-sub-task actual dates. |
 | Database / deploy errors | Check **`DATABASE_URL`**, run Prisma migrate or push, rebuild, restart PM2. |
@@ -302,11 +328,12 @@ Suspension or deletion requests may be submitted for admin review.
 | `/admin/ticket-requests` | Admin create requests |
 | `/insights` | Metrics & reports |
 | `/process` | Process / lifecycle info |
-| `/reports` | Reports |
+| `/reports` | Admin/SuperAdmin executive reporting |
 | `/admin/personnel` | Personnel admin |
 | `/admin/escalation-triggers` | Priority alerts |
-| `/admin/account-management` | Portal account admin |
+| `/admin/account-management` | Redirects to Personnel portal-account admin |
 | `/admin/account` | My Account & security |
+| `/api/brand/logo` | Current brand logo asset |
 
 ---
 

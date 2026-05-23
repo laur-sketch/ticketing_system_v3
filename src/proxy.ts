@@ -9,7 +9,9 @@ function isAllowed(role: string | undefined, allowed: string[]) {
 }
 
 export async function proxy(req: NextRequest) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET }).catch(() => {
+    return null;
+  });
   const { pathname } = req.nextUrl;
 
   if (pathname.startsWith("/agent")) {

@@ -1,10 +1,9 @@
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import type { UserRole } from "./auth";
-import { authOptions } from "./auth";
+import { safeGetServerSession } from "./server-session";
 
 export async function requireSession() {
-  return getServerSession(authOptions);
+  return safeGetServerSession();
 }
 
 export function hasRole(

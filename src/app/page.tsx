@@ -5,9 +5,7 @@ import { LandingAccessVisual } from "@/components/landing/LandingAccessVisual";
 import { LandingHeroVisual } from "@/components/landing/LandingHeroVisual";
 import { LandingWorkflowVisual } from "@/components/landing/LandingWorkflowVisual";
 import { LandingGallery } from "@/components/landing/LandingGallery";
-import { getServerSession } from "next-auth";
 import type { TicketPriority, TicketStatus } from "@prisma/client";
-import { authOptions } from "@/lib/auth";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
 import { OnDutyPanel } from "@/components/dashboard/OnDutyPanel";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
@@ -21,6 +19,7 @@ import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
 import { onDutyCompanyLine, resolveStaffOnDutyAgentIds } from "@/lib/on-duty-company-line";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
+import { safeGetServerSession } from "@/lib/server-session";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +34,7 @@ function priorityTone(priority: TicketPriority) {
 }
 
 export default async function Home() {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
 
   if (session?.user?.role === "Personnel") {
     redirect("/agent");

@@ -86,6 +86,14 @@ const googleReady = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIEN
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
+  logger: {
+    error(code, metadata) {
+      if (code === "JWT_SESSION_ERROR") {
+        return;
+      }
+      console.error(code, metadata);
+    },
+  },
   providers: [
     ...(googleReady
       ? [

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import type { Session } from "next-auth";
 import { SessionProvider, signOut, useSession } from "next-auth/react";
 
 const DEV_SESSION_RESET_ENABLED = false;
@@ -48,9 +49,15 @@ function DevSessionReset() {
   return null;
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({
+  children,
+  session,
+}: {
+  children: ReactNode;
+  session: Session | null;
+}) {
   return (
-    <SessionProvider>
+    <SessionProvider session={session}>
       <DevSessionReset />
       {children}
     </SessionProvider>

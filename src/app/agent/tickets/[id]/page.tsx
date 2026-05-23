@@ -6,6 +6,7 @@ import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-co
 import { canViewerApproveTransfer, parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { safeReturnToParam } from "@/lib/safe-return-to";
+import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { AgentWorkspace } from "./workspace";
 
 export const dynamic = "force-dynamic";
@@ -91,12 +92,10 @@ export default async function AgentTicketPage({
         })
       : null;
   const operator = operatorByEmail ?? operatorByName;
+  const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const isAdmin = session.user.role === "SuperAdmin" || session.user.role === "Admin";
   const isAssignedOperator = !!operator && operator.id === ticketForWorkspace.assignedAgentId;
-  if (session.user.role === "Personnel" && !isAssignedOperator) {
-    redirect("/agent");
-  }
-  const canUpdatePriority = isAdmin || isAssignedOperator;
+  const canUpdatePriority = isAdmin || companyCoordinator || isAssignedOperator;
   const canRequestTransfer = !isAdmin && isAssignedOperator;
   const myPortal = normalizedEmail
     ? await prisma.portalAccount.findFirst({

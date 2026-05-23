@@ -4,7 +4,7 @@ This guide is for **Customer** users who submit and track support requests.
 
 ## Welcome
 
-After sign-in, you land on your **Dashboard** (`/`) with a kanban-style view of your tickets. Use the top navigation or sidebar to move between **Dashboard**, **Active Tickets**, and **Knowledge Base**.
+After sign-in, you land on your **Dashboard** (`/`) with a kanban-style view of your tickets. The current customer portal is branded as **AGCTek Help Desk** and includes **Dashboard**, **Active Tickets**, **Knowledge Base**, and **Settings**.
 
 ## 1) Sign in
 
@@ -19,15 +19,15 @@ After sign-in, you land on your **Dashboard** (`/`) with a kanban-style view of 
 | Dashboard | `/` | Home overview and ticket kanban |
 | Active Tickets | `/my-tickets` | Full list of your requests |
 | Knowledge Base | `/tickets/knowledge` | Help articles (expanding) |
-| Create Request | `/tickets/new` | Submit a new ticket |
+| Settings | `/tickets/knowledge#settings` | Customer portal settings area |
 
-Use the **bell** icon for notifications (status changes, verification reminders). Use the **theme** toggle for light/dark mode.
+Use dashboard actions or open **`/tickets/new`** directly to create a request. Use the **bell** icon for notifications (status changes, verification reminders). Use the **theme** toggle for light/dark mode.
 
 ## 3) Create a support ticket
 
-1. Go to **`/tickets/new`** (or **Create Request** from the dashboard).
+1. Go to **`/tickets/new`** (or use the dashboard create-request action).
 2. Complete the form: title, description, department/business unit, and contact details as shown.
-3. Attach up to **five screenshots** (images only; size limits apply).
+3. Attach screenshots if useful. You can upload, paste, or drag image files; up to **15 screenshots**, **5MB each**.
 4. Submit the ticket and note the **ticket number** for follow-up.
 
 **Tips for faster resolution**
@@ -58,7 +58,7 @@ Customer-facing columns on the dashboard group work roughly as:
 | **Open** | Ticket received; not yet in active work. |
 | **In progress** | Support is working on it. |
 | **Pending info** | Waiting on information (from you or a third party). |
-| **Escalated** | Elevated for specialized or leadership handling. |
+| **Transfer pending** | Support requested transfer or higher-level handling and is waiting for Admin/SuperAdmin approval. |
 | **Resolved** | Solution delivered; verify and rate when prompted. |
 | **Closed** | Closed after confirmation per policy. |
 
@@ -77,14 +77,15 @@ Until mandatory verification is complete, **creating another ticket may be disab
 
 ## 7) My account and security
 
-Open **My Account** at **`/admin/account`** (Security tab).
+Open **My Account** at **`/admin/account`**. Use **Profile** for your profile image and quick account details; use **Security** for credential and request workflows.
 
 You can:
 
+- Upload a **PNG/JPG/WEBP** profile image up to **10MB** and adjust its framing
 - Change your **username** (requires current password)
 - Change your **email** (requires current password)
 - Change your **password**
-- Submit **account suspension or deletion** requests for admin review
+- Submit **account suspension, deletion, or password reset** requests for admin review
 
 **Important:** After username, email, or password changes, you are signed out and must sign in again.
 

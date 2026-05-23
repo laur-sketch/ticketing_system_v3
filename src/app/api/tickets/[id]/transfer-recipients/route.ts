@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { isAdminPortalRole } from "@/lib/staff-role";
+import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const session = await requireSession();
@@ -13,7 +14,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const ticket = await prisma.ticket.findUnique({
     where: { id },
-    select: { id: true, teamId: true, assignedAgentId: true },
+    select: {
+      id: true,
+      assignedAgentId: true,
+      assignedAgent: { select: { teamId: true } },
+    },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -22,7 +27,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const companyTeamId = ticket.teamId ?? operator.teamId;
+  const companyTeamId = ticket.assignedAgent?.teamId ?? operator.teamId;
   if (!companyTeamId) {
     return NextResponse.json({ recipients: [{ id: "__SUPERADMIN__", name: "SuperAdmin", email: "" }] });
   }
@@ -37,11 +42,21 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   });
 
   const admins = portalRows.filter((p) => isAdminPortalRole(p.role));
+  const destinationCompanies = sortByRosterOrder(
+    await prisma.team.findMany({
+      where: {
+        ...rosterTeamNameFilter(),
+        id: { not: companyTeamId },
+      },
+      select: { id: true, name: true },
+    }),
+  );
 
   return NextResponse.json({
     recipients: [
       ...admins.map((a) => ({ id: a.id, name: a.name, email: a.email })),
       { id: "__SUPERADMIN__", name: "SuperAdmin (operations)", email: "" },
     ],
+    destinationCompanies,
   });
 }

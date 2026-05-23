@@ -14,7 +14,12 @@ export function AppChrome({ children }: Props) {
   const { data, status } = useSession();
   const role = data?.user?.role;
 
-  if (pathname === "/signin" || pathname === "/signup" || pathname === "/customer/signup") {
+  if (
+    pathname === "/signin" ||
+    pathname === "/signup" ||
+    pathname === "/customer/signin" ||
+    pathname === "/customer/signup"
+  ) {
     return <>{children}</>;
   }
 

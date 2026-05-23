@@ -1,13 +1,12 @@
 import bcrypt from "bcryptjs";
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { safeGetServerSession } from "@/lib/server-session";
 
 const allowedRequestTypes = new Set(["SUSPENSION", "DELETION", "PASSWORD_RESET"]);
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -26,7 +25,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

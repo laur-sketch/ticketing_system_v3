@@ -6,8 +6,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
+import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
 
 type AgentWithAssigneeColor = Agent & { staffAssignmentColor?: string | null };
+type TransferRecipient = { id: string; name: string; email: string };
+type DestinationCompany = { id: string; name: string };
 
 type TicketDetail = Ticket & {
   team: Team | null;
@@ -40,19 +43,27 @@ export function AgentWorkspace({
   const [priority, setPriority] = useState(ticket.priority);
   const [transferReason, setTransferReason] = useState("");
   const [logModalOpen, setLogModalOpen] = useState(false);
-  const [transferRecipients, setTransferRecipients] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [transferRecipients, setTransferRecipients] = useState<TransferRecipient[]>([]);
   const [transferRecipientId, setTransferRecipientId] = useState("");
+  const [destinationCompanies, setDestinationCompanies] = useState<DestinationCompany[]>([]);
+  const [transferDestinationMode, setTransferDestinationMode] = useState<"same_company" | "other_company">(
+    "same_company",
+  );
+  const [transferTargetTeamId, setTransferTargetTeamId] = useState("");
 
   useEffect(() => {
     if (!canRequestTransfer || transferPending) return;
     let cancelled = false;
     void fetch(`/api/tickets/${ticket.id}/transfer-recipients`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { recipients?: typeof transferRecipients } | null) => {
-        if (!cancelled && data?.recipients?.length) {
-          setTransferRecipients(data.recipients);
-          setTransferRecipientId(data.recipients[0]?.id ?? "");
-        }
+      .then((data: { recipients?: TransferRecipient[]; destinationCompanies?: DestinationCompany[] } | null) => {
+        if (cancelled) return;
+        const recipients = data?.recipients ?? [];
+        const companies = data?.destinationCompanies ?? [];
+        setTransferRecipients(recipients);
+        setTransferRecipientId(recipients[0]?.id ?? "");
+        setDestinationCompanies(companies);
+        setTransferTargetTeamId(companies[0]?.id ?? "");
       })
       .catch(() => {});
     return () => {
@@ -71,6 +82,15 @@ export function AgentWorkspace({
     () => parseIntakeScreenshotMeta(ticket.intakeScreenshotMeta),
     [ticket.intakeScreenshotMeta],
   );
+
+  const pendingTransfer = useMemo(() => {
+    let detail: string | null = null;
+    for (const a of ticket.activities) {
+      if (a.summary === "Transfer requested") detail = a.detail ?? null;
+      if (a.summary === "Transfer approved" || a.summary === "Transfer rejected") detail = null;
+    }
+    return parseTransferRequestDetail(detail);
+  }, [ticket.activities]);
 
   async function patch(body: Record<string, unknown>) {
     setBusy(true);
@@ -295,6 +315,11 @@ export function AgentWorkspace({
             {transferPending ? (
               <div className="space-y-2 rounded-xl border border-amber-700/60 bg-amber-950/20 p-3">
                 <p className="text-xs font-semibold text-amber-200">Transfer request pending admin approval.</p>
+                {pendingTransfer?.targetTeamName ? (
+                  <p className="text-xs text-amber-100/80">
+                    Destination: {pendingTransfer.targetTeamName} unassigned queue.
+                  </p>
+                ) : null}
                 {canApproveTransfer ? (
                   <button
                     type="button"
@@ -335,6 +360,41 @@ export function AgentWorkspace({
                     )}
                   </select>
                 </label>
+                <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5">
+                  <label className="block text-[11px] font-semibold text-zinc-400">
+                    Transfer destination
+                    <select
+                      value={transferDestinationMode}
+                      onChange={(e) =>
+                        setTransferDestinationMode(e.target.value as "same_company" | "other_company")
+                      }
+                      className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                    >
+                      <option value="same_company">Same company unassigned queue</option>
+                      <option value="other_company">Different company unassigned queue</option>
+                    </select>
+                  </label>
+                  {transferDestinationMode === "other_company" ? (
+                    <label className="block text-[11px] font-semibold text-zinc-400">
+                      Destination company
+                      <select
+                        value={transferTargetTeamId}
+                        onChange={(e) => setTransferTargetTeamId(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                      >
+                        {destinationCompanies.length === 0 ? (
+                          <option value="">No other companies available</option>
+                        ) : (
+                          destinationCompanies.map((company) => (
+                            <option key={company.id} value={company.id}>
+                              {company.name}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
                 <textarea
                   value={transferReason}
                   onChange={(e) => setTransferReason(e.target.value)}
@@ -344,7 +404,11 @@ export function AgentWorkspace({
                 />
                 <button
                   type="button"
-                  disabled={busy || !transferRecipientId}
+                  disabled={
+                    busy ||
+                    !transferRecipientId ||
+                    (transferDestinationMode === "other_company" && !transferTargetTeamId)
+                  }
                   onClick={() => {
                     const isSuper = transferRecipientId === "__SUPERADMIN__";
                     patch({
@@ -352,6 +416,8 @@ export function AgentWorkspace({
                       reason: transferReason || "Unable to resolve with current assignment.",
                       recipientSuperAdmin: isSuper,
                       recipientPortalAccountId: isSuper ? undefined : transferRecipientId,
+                      targetTeamId:
+                        transferDestinationMode === "other_company" ? transferTargetTeamId : undefined,
                     });
                   }}
                   className="min-h-10 w-full rounded-lg border border-zinc-600 bg-zinc-900 px-4 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-800 disabled:opacity-60"

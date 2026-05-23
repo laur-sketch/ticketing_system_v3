@@ -11,6 +11,9 @@ import { getTicketSlaState } from "@/lib/sla";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticket-feedback-policy";
+import { isAdminPortalRole } from "@/lib/staff-role";
+import { rosterTeamNameFilter } from "@/lib/company-roster";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 async function ticketJsonWithAssigneeColor<T extends { assignedAgent: { email: string; name?: string } | null }>(
   ticket: T,
@@ -115,8 +118,15 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (session.user.role === "Personnel") {
-    const operator = await findSessionAgentId({ email: session.user.email, name: session.user.name });
-    if (!operator || operator.id !== ticket.assignedAgentId) {
+    const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
+    const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
+    const coordinatorTeamId = companyCoordinator ? await resolveStaffCompanyTeamId(session.user.email) : null;
+    const ticketInCoordinatorScope =
+      !!coordinatorTeamId &&
+      (ticket.teamId === coordinatorTeamId || ticket.assignedAgent?.teamId === coordinatorTeamId);
+    const ticketInOperatorCompany =
+      !!operator?.teamId && (ticket.teamId === operator.teamId || ticket.assignedAgent?.teamId === operator.teamId);
+    if ((!operator || operator.id !== ticket.assignedAgentId) && !ticketInCoordinatorScope && !ticketInOperatorCompany) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
@@ -136,7 +146,7 @@ export async function PATCH(
   const { id } = await ctx.params;
   const ticket = await prisma.ticket.findUnique({
     where: { id },
-    include: { assignedAgent: { select: { email: true } } },
+    include: { assignedAgent: { select: { email: true, teamId: true } } },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const isOwner =
@@ -374,6 +384,7 @@ export async function PATCH(
       const recipientPortalAccountId =
         typeof body.recipientPortalAccountId === "string" ? body.recipientPortalAccountId.trim() : "";
       const recipientSuperAdmin = Boolean(body.recipientSuperAdmin);
+      const targetTeamId = typeof body.targetTeamId === "string" ? body.targetTeamId.trim() : "";
       if ((!recipientPortalAccountId && !recipientSuperAdmin) || (recipientPortalAccountId && recipientSuperAdmin)) {
         return NextResponse.json(
           {
@@ -383,10 +394,45 @@ export async function PATCH(
           { status: 400 },
         );
       }
+      const targetTeam = targetTeamId
+        ? await prisma.team.findFirst({
+            where: {
+              id: targetTeamId,
+              ...rosterTeamNameFilter(),
+            },
+            select: { id: true, name: true },
+          })
+        : null;
+      if (targetTeamId && !targetTeam) {
+        return NextResponse.json({ error: "Choose a valid destination company." }, { status: 400 });
+      }
+      if (targetTeam && targetTeam.id === ticket.assignedAgent?.teamId) {
+        return NextResponse.json(
+          { error: "Choose a different company for a cross-company transfer." },
+          { status: 400 },
+        );
+      }
       const reasonText =
         typeof body.reason === "string" && body.reason.trim()
           ? body.reason.trim()
           : "Unable to resolve with current assignment.";
+      if (recipientPortalAccountId) {
+        const reviewer = await prisma.portalAccount.findUnique({
+          where: { id: recipientPortalAccountId },
+          select: { accountStatus: true, staffDesignatedCompanyId: true, role: true },
+        });
+        if (
+          !reviewer ||
+          reviewer.accountStatus !== "ACTIVE" ||
+          reviewer.staffDesignatedCompanyId !== ticket.assignedAgent?.teamId ||
+          !isAdminPortalRole(reviewer.role)
+        ) {
+          return NextResponse.json(
+            { error: "Choose an active company Admin from the assigned personnel's company." },
+            { status: 400 },
+          );
+        }
+      }
       await logActivity(
         id,
         "AGENT",
@@ -394,6 +440,8 @@ export async function PATCH(
         serializeTransferRequest({
           recipientPortalAccountId: recipientPortalAccountId || null,
           recipientSuperAdmin,
+          targetTeamId: targetTeam?.id ?? null,
+          targetTeamName: targetTeam?.name ?? null,
           reason: reasonText,
         }),
       );
@@ -448,10 +496,24 @@ export async function PATCH(
           { status: 403 },
         );
       }
+      const targetTeam = parsed?.targetTeamId
+        ? await prisma.team.findFirst({
+            where: {
+              id: parsed.targetTeamId,
+              ...rosterTeamNameFilter(),
+            },
+            select: { id: true },
+          })
+        : null;
+      if (parsed?.targetTeamId && !targetTeam) {
+        return NextResponse.json({ error: "Transfer destination company no longer exists." }, { status: 400 });
+      }
+      const destinationTeamId = targetTeam?.id ?? ticket.assignedAgent?.teamId ?? null;
       const updated = await prisma.ticket.update({
         where: { id },
         data: {
           assignedAgentId: null,
+          ...(destinationTeamId ? { teamId: destinationTeamId } : {}),
           status: "OPEN",
         },
         include: { team: true, assignedAgent: true },

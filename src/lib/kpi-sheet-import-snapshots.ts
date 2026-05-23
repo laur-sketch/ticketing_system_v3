@@ -1,4 +1,5 @@
-import { basename } from "path";
+import { readFile } from "fs/promises";
+import { basename, resolve } from "path";
 import type { KpiFrequency } from "@prisma/client";
 import { DateTime } from "luxon";
 import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
@@ -289,6 +290,79 @@ export function parseItSalfPillarCsv(content: string, timeZone: string): DailyPi
   const daily = parseItSalfDailyPillarCsv(content, timeZone);
   if (daily.length > 0) return daily;
   return parseItSalfMonthlySummaryPillarCsv(content, timeZone, { skipZeroPercent: true });
+}
+
+const IT_SALF_DISPLAY_FILENAMES: Partial<Record<ItTaskPillarTitle, string>> = {
+  "SYSTEM AVAILABILITY": "IT SALF - SYSTEM AVAILABILITY.csv",
+  "DATA BACKUP": "IT SALF - DATA BACKUP.csv",
+  CYBERSECURITY: "IT SALF - CYBERSECURITY.csv",
+  "NETWORK PERFORMANCE": "IT SALF - NETWORK PERFORMANCE.csv",
+};
+
+function parseItSalfDisplayDateCell(raw: string, timeZone: string): { ymd: string; isWorkingDay: boolean } | null {
+  const dateCell = raw.replace(/^"|"$/g, "").trim();
+  let dt = DateTime.fromFormat(dateCell, "cccc, MMMM d, yyyy", { zone: timeZone, locale: "en" });
+  if (!dt.isValid) {
+    dt = DateTime.fromFormat(dateCell, "EEEE, MMMM d, yyyy", { zone: timeZone, locale: "en" });
+  }
+  const ymd = dt.isValid ? dt.toISODate() : null;
+  return ymd ? { ymd, isWorkingDay: isKpiMetricsWorkingDay(dt) } : null;
+}
+
+export function parseItSalfDisplayCsvRows(
+  content: string,
+  timeZone: string,
+  fromYmd: string,
+  toYmd: string,
+): string[][] {
+  const rows: string[][] = [];
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const cols = parseCsvLine(line);
+    const parsedDate = parseItSalfDisplayDateCell(cols[0] ?? "", timeZone);
+    if (!parsedDate || !parsedDate.isWorkingDay || parsedDate.ymd < fromYmd || parsedDate.ymd > toYmd) continue;
+    rows.push([
+      (cols[0] ?? "").replace(/^"|"$/g, "").trim(),
+      (cols[1] ?? "").trim(),
+      (cols[2] ?? "").trim(),
+      (cols[3] ?? "").trim(),
+      (cols[4] ?? "").trim(),
+      (cols[5] ?? "").trim(),
+      (cols[6] ?? "").trim(),
+      (cols[7] ?? "").trim(),
+    ]);
+  }
+  return rows;
+}
+
+function itSalfCsvPathForPillar(pillar: ItTaskPillarTitle): string | null {
+  const filename = IT_SALF_DISPLAY_FILENAMES[pillar];
+  if (!filename) return null;
+  const baseDir = process.env.IT_SALF_CSV_DIR ?? resolve(process.env.USERPROFILE ?? "", "Downloads");
+  return resolve(baseDir, filename);
+}
+
+export async function loadItSalfDisplayCsvRowsForTaskMetrics(args: {
+  fromYmd: string;
+  toYmd: string;
+  timeZone: string;
+}): Promise<Partial<Record<ItTaskPillarTitle, string[][]>>> {
+  const zone = normalizeTimeZone(args.timeZone);
+  const out: Partial<Record<ItTaskPillarTitle, string[][]>> = {};
+  await Promise.all(
+    KPI_SHEET_IMPORT_PILLARS.map(async (pillar) => {
+      const filePath = itSalfCsvPathForPillar(pillar);
+      if (!filePath) return;
+      try {
+        const content = await readFile(filePath, "utf8");
+        const rows = parseItSalfDisplayCsvRows(content, zone, args.fromYmd, args.toYmd);
+        if (rows.length > 0) out[pillar] = rows;
+      } catch {
+        // The local CSV files are optional; imported snapshots still power the headline metrics.
+      }
+    }),
+  );
+  return out;
 }
 
 /** Map `IT SALF - SYSTEM AVAILABILITY.csv` style filenames to pillar titles. */

@@ -14,6 +14,7 @@ import {
   resolveHelpdeskMetricBlend,
   type HelpdeskTaskMetricCounts,
 } from "@/lib/helpdesk-csv";
+import { loadItSalfDisplayCsvRowsForTaskMetrics } from "@/lib/kpi-sheet-import-snapshots";
 import { prisma } from "./prisma";
 
 export type { TaskChecklistPillarMetrics, TaskChecklistPillarMetric } from "@/lib/kpi-period-snapshots";
@@ -504,13 +505,29 @@ export async function computeTaskMetrics(
       ? emptyTaskMetricsUserSupport()
       : summarizeUserSupportTickets(userSupportTicketsByStatus);
 
-  const taskChecklistPillars = await computeTaskChecklistPillarMetrics({
-    metricsCadence: helpdeskCadence,
-    fromYmd,
-    toYmd,
-    timeZone: helpdeskTz,
-    kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId),
-  });
+  const [taskChecklistPillars, itSalfCsvRows] = await Promise.all([
+    computeTaskChecklistPillarMetrics({
+      metricsCadence: helpdeskCadence,
+      fromYmd,
+      toYmd,
+      timeZone: helpdeskTz,
+      kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId),
+    }),
+    scope.assignedAgentId
+      ? Promise.resolve({})
+      : loadItSalfDisplayCsvRowsForTaskMetrics({
+          fromYmd,
+          toYmd,
+          timeZone: helpdeskTz,
+        }),
+  ]);
+
+  for (const [pillar, rows] of Object.entries(itSalfCsvRows) as Array<[keyof TaskChecklistPillarMetrics, string[][]]>) {
+    const key = pillar as keyof TaskChecklistPillarMetrics;
+    if (taskChecklistPillars[key]) {
+      taskChecklistPillars[key] = { ...taskChecklistPillars[key], csvRows: rows };
+    }
+  }
 
   return { range, taskMetricsHelpdesk, taskMetricsUserSupport, taskChecklistPillars };
 }

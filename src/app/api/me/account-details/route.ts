@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { safeGetServerSession } from "@/lib/server-session";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +8,7 @@ export const dynamic = "force-dynamic";
  * Portal profile metadata for the signed-in user (account age, optional agent resolve counts).
  */
 export async function GET() {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
   if (!session?.user?.email) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

@@ -12,11 +12,15 @@ import {
 } from "@/lib/kpi-recurrence";
 import {
   collectAllSubKpiItems,
+  enablePillarScreenshots,
+  getPillarScreenshots,
   hasSubKpiAssignedTo,
+  pillarScreenshotsEnabled,
   type NormalizedSubKpis,
   markEverySubKpiDone,
   normalizeSubKpis,
   resetAllSubKpiDone,
+  setPillarScreenshots,
   setSubKpiItemAssignee,
   setSubKpiItemDone,
   setSubKpiItemScreenshots,
@@ -25,6 +29,7 @@ import {
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
   wrapForPersist,
+  wrapForPersistWithExistingMeta,
 } from "@/lib/kpi-subkpis";
 import {
   buildItProjectFromPhaseDrafts,
@@ -282,6 +287,7 @@ export async function POST(req: Request) {
       }>;
     }>;
     assignedAgentId?: string;
+    screenshotAttachmentScope?: "subtask" | "pillar";
     recurrenceWeekday?: number;
     recurrenceMonthDay?: number;
     timeZone?: string;
@@ -392,6 +398,7 @@ export async function POST(req: Request) {
     itProjectPhaseLabel = itProjectActivePhase(projectBuilt.data).name;
     built = { ok: true, norm: { segmented: false, flat: [] } };
   } else {
+    const subTaskScreenshots = body.screenshotAttachmentScope !== "pillar";
     const flatItems =
       Array.isArray(body.subKpis) && !body.subKpisSegmented
         ? body.subKpis
@@ -399,7 +406,7 @@ export async function POST(req: Request) {
               title: (s.title ?? "").trim(),
               startDate: (s.startDate ?? "").trim(),
               dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
-              screenshotsEnabled: s.screenshotsEnabled === true,
+              screenshotsEnabled: subTaskScreenshots && s.screenshotsEnabled === true,
             }))
             .filter((s) => s.title.length > 0)
         : [];
@@ -414,7 +421,7 @@ export async function POST(req: Request) {
                     title: (i.title ?? "").trim(),
                     startDate: (i.startDate ?? "").trim(),
                     dueDate: isRecurring ? "" : (i.dueDate ?? i.endDate ?? "").trim(),
-                    screenshotsEnabled: i.screenshotsEnabled === true,
+                    screenshotsEnabled: subTaskScreenshots && i.screenshotsEnabled === true,
                   }))
                   .filter((i) => i.title.length > 0)
               : [],
@@ -432,7 +439,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: built.error }, { status: 400 });
   }
 
-  const subKpisPersist = (itProjectPersist ?? wrapForPersist(built.norm)) as Prisma.InputJsonValue;
+  let subKpisPersist = (itProjectPersist ?? wrapForPersist(built.norm)) as Prisma.InputJsonValue;
+  if (!isItProject && body.screenshotAttachmentScope === "pillar") {
+    subKpisPersist = enablePillarScreenshots(subKpisPersist);
+  }
 
   const timeZone = normalizeTimeZone(body.timeZone);
   const periodKey = isRecurring
@@ -540,6 +550,9 @@ export async function PATCH(req: Request) {
       subKpiId?: string;
       slot?: TaskScreenshotSlot;
     };
+    pillarScreenshot?: {
+      slot?: TaskScreenshotSlot;
+    };
   };
   const contentType = req.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
@@ -549,10 +562,14 @@ export async function PATCH(req: Request) {
       .filter((file): file is File => file instanceof File && file.size > 0);
     body = {
       id: String(fd.get("id") ?? ""),
-      subKpiScreenshot: {
-        subKpiId: String(fd.get("subKpiId") ?? ""),
-        slot: String(fd.get("slot") ?? "") as TaskScreenshotSlot,
-      },
+      ...(String(fd.get("pillarScreenshot") ?? "") === "1"
+        ? { pillarScreenshot: { slot: String(fd.get("slot") ?? "") as TaskScreenshotSlot } }
+        : {
+            subKpiScreenshot: {
+              subKpiId: String(fd.get("subKpiId") ?? ""),
+              slot: String(fd.get("slot") ?? "") as TaskScreenshotSlot,
+            },
+          }),
     };
   } else {
     body = (await req.json()) as typeof body;
@@ -800,6 +817,54 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.pillarScreenshot != null && typeof body.pillarScreenshot === "object") {
+    const slot = body.pillarScreenshot.slot;
+    if (slot !== "before" && slot !== "after") {
+      return NextResponse.json({ error: "Screenshot slot (before/after) is required." }, { status: 400 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { status: 400 },
+      );
+    }
+    if (!perms.canAssignWork && !isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!pillarScreenshotsEnabled(kpiRow.subKpis)) {
+      return NextResponse.json(
+        { error: "Pillar screenshots were not enabled when this task was created." },
+        { status: 400 },
+      );
+    }
+    if (screenshotFiles.length === 0) {
+      return NextResponse.json({ error: "Screenshot file is required." }, { status: 400 });
+    }
+    const existingScreenshots = getPillarScreenshots(kpiRow.subKpis, slot);
+    if (existingScreenshots.length + screenshotFiles.length > MAX_TASK_SCREENSHOTS_PER_SLOT) {
+      return NextResponse.json(
+        { error: `You can upload up to ${MAX_TASK_SCREENSHOTS_PER_SLOT} ${slot} screenshots per pillar.` },
+        { status: 400 },
+      );
+    }
+    for (const file of screenshotFiles) {
+      const fileCheck = validateTaskScreenshotFile(file);
+      if (!fileCheck.ok) {
+        return NextResponse.json({ error: fileCheck.error }, { status: 400 });
+      }
+    }
+    const uploaded = await Promise.all(screenshotFiles.map((file) => persistTaskScreenshot(kpiRow.id, file)));
+    const updatedJson = setPillarScreenshots(kpiRow.subKpis, slot, [
+      ...existingScreenshots,
+      ...uploaded,
+    ]);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiScreenshot != null && typeof body.subKpiScreenshot === "object") {
     const subKpiIdShot = String(body.subKpiScreenshot.subKpiId ?? "").trim();
     const slot = body.subKpiScreenshot.slot;
@@ -905,7 +970,7 @@ export async function PATCH(req: Request) {
         { status: 400 },
       );
     }
-    const wrapped = wrapForPersist(validated.norm);
+    const wrapped = wrapForPersistWithExistingMeta(validated.norm, kpiRow.subKpis);
     const prevComplete = checklistFullyComplete(kpiRow.subKpis);
     const nextComplete = checklistFullyComplete(wrapped);
     let lastFullCompletionAt: Date | null | undefined;

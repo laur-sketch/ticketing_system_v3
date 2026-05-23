@@ -12,6 +12,7 @@ import {
   Smile,
   Wrench,
 } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
@@ -79,17 +80,21 @@ function donutSlicePath(
 }
 
 type DonutSegment = { key: string; label: string; value: number; color: string };
+const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
 
 function PillarDonutCard({
   pillar,
   segments,
   headline,
+  onInspect,
 }: {
   pillar: ItTaskPillarTitle;
   segments: DonutSegment[];
   headline: string;
+  onInspect: () => void;
 }) {
   const Icon = PILLAR_ICONS[pillar];
+  const [lastTapMs, setLastTapMs] = useState(0);
   const total = segments.reduce((a, s) => a + s.value, 0);
   const cx = 50;
   const cy = 50;
@@ -120,7 +125,21 @@ function PillarDonutCard({
   }
 
   return (
-    <article className="flex flex-col rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:border-zinc-700/80 dark:bg-zinc-900/40 dark:shadow-[0_12px_32px_rgba(0,0,0,0.35)]">
+    <article
+      role="button"
+      tabIndex={0}
+      title="Double-click or double-tap to inspect data source"
+      onDoubleClick={onInspect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onInspect();
+      }}
+      onTouchEnd={() => {
+        const now = Date.now();
+        if (now - lastTapMs < 350) onInspect();
+        setLastTapMs(now);
+      }}
+      className="flex cursor-pointer flex-col rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none transition hover:border-orange-300 focus:ring-2 focus:ring-orange-500/30 dark:border-zinc-700/80 dark:bg-zinc-900/40 dark:shadow-[0_12px_32px_rgba(0,0,0,0.35)] dark:hover:border-orange-700/70"
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
@@ -198,6 +217,7 @@ function PillarDonutCard({
           ))}
         </ul>
       </div>
+      <p className="mt-3 text-[10px] text-zinc-500 dark:text-zinc-500">Double-click/tap to inspect source</p>
     </article>
   );
 }
@@ -294,6 +314,263 @@ function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
   ];
 }
 
+function incidentOnlySegments(view: { negative: number }, label: string): DonutSegment[] {
+  return [
+    {
+      key: label.toLowerCase(),
+      label,
+      value: view.negative,
+      color: SEG_COLORS_BINARY_KPI.negative,
+    },
+  ];
+}
+
+function incidentOnlyHeadline(agg: KpiChecklistProgress, view: { negative: number }, metricName: string): string {
+  const incidentPercent = agg.total > 0 ? Math.round((view.negative / agg.total) * 100) : 0;
+  return `${incidentPercent}% ${metricName}`;
+}
+
+function spreadsheetColumnLabel(index: number): string {
+  let n = index + 1;
+  let label = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    label = String.fromCharCode(65 + rem) + label;
+    n = Math.floor((n - 1) / 26);
+  }
+  return label;
+}
+
+function monthTokenFromLabel(label: string): string {
+  const months = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const compactMonths = label
+    .split(/[^A-Za-z]+/)
+    .filter((part) => months.some((month) => month.toLowerCase().startsWith(part.toLowerCase())))
+    .map((part) => {
+      const month = months.find((m) => m.toLowerCase().startsWith(part.toLowerCase()));
+      return month ? month.toUpperCase() : "";
+    })
+    .filter(Boolean);
+  const unique = [...new Set(compactMonths)];
+  if (unique.length === 0) return "";
+  if (unique.length === 1) return unique[0]!;
+  return `${unique[0]}-${unique[unique.length - 1]}`;
+}
+
+function csvDateLabelForCadence(cadence: KpiFrequencyCode, label: string): string {
+  if (cadence === "DAILY") {
+    const parsed = new Date(label);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed.toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+    return label;
+  }
+  if (cadence === "WEEKLY") return `Week: ${label}`;
+  if (cadence === "MONTHLY") return label;
+  if (cadence === "QUARTERLY") return `Quarterly: ${label}`;
+  return label;
+}
+
+function csvLayoutRowsForPillar(args: {
+  pillar: ItTaskPillarTitle;
+  metricsCadence: KpiFrequencyCode;
+  reportingPeriodLabel?: string;
+  helpdeskTickets: TaskMetricsHelpdeskTickets | null;
+  userSupportTickets: TaskMetricsUserSupportTickets | null;
+  checklistPillars: TaskChecklistPillarMetrics | null;
+}): string[][] {
+  const { pillar, metricsCadence, reportingPeriodLabel, helpdeskTickets, userSupportTickets, checklistPillars } = args;
+  const label = reportingPeriodLabel ?? "Current report";
+  const dateLabel = csvDateLabelForCadence(metricsCadence, label);
+  const month = monthTokenFromLabel(label) || metricsCadence;
+  if (pillar === "HELPDESK SUPPORT") {
+    const closed = helpdeskTickets?.closedCount ?? 0;
+    const open = helpdeskTickets?.openTicketsInPeriod ?? 0;
+    const percent = helpdeskTickets?.percent == null ? "0%" : `${helpdeskTickets.percent}%`;
+    return [
+      [dateLabel, month, String(closed), String(open), String(helpdeskTickets?.requestsInRange ?? 0), String(helpdeskTickets?.openBacklog ?? 0), String(closed + open), percent],
+    ];
+  }
+  if (pillar === "USER SUPPORT") {
+    const total = userSupportTickets?.total ?? 0;
+    return [
+      [
+        dateLabel,
+        month,
+        String(userSupportTickets?.forConfirmation ?? 0),
+        String(userSupportTickets?.closed ?? 0),
+        String(total),
+        "",
+        "",
+        total > 0 ? "100%" : "0%",
+      ],
+    ];
+  }
+  const agg = checklistPillars?.[pillar];
+  const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
+  const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const view = kpiChecklistMetricView(
+    {
+      total: agg?.total ?? 0,
+      done: agg?.done ?? 0,
+      missing: agg?.missing ?? 0,
+      percent: agg?.percent ?? 0,
+    },
+    invert,
+  );
+  const total = agg?.total ?? 0;
+  const positive = view.positive;
+  const negative = view.negative;
+  const percent = total > 0 ? `${view.percent}%` : "0%";
+  return [
+    [
+      dateLabel,
+      month,
+      positive > 0 ? "TRUE" : "FALSE",
+      positive > 1 ? "TRUE" : "FALSE",
+      positive > 2 ? "TRUE" : "FALSE",
+      negative > 0 ? "FALSE" : positive > 3 ? "TRUE" : "",
+      positive > 4 ? "TRUE" : "",
+      percent,
+    ],
+  ];
+}
+
+function sourceDetailsForPillar(args: {
+  pillar: ItTaskPillarTitle;
+  metricsCadence: KpiFrequencyCode;
+  reportingPeriodLabel?: string;
+  helpdeskTickets: TaskMetricsHelpdeskTickets | null;
+  userSupportTickets: TaskMetricsUserSupportTickets | null;
+  checklistPillars: TaskChecklistPillarMetrics | null;
+}): {
+  title: string;
+  rows: Array<{ label: string; value: string }>;
+  tableColumns: string[];
+  tableRows: string[][];
+  csvColumns: string[];
+  csvRows: string[][];
+  notes: string[];
+} {
+  const { pillar, metricsCadence, reportingPeriodLabel, helpdeskTickets, userSupportTickets, checklistPillars } = args;
+  if (pillar === "HELPDESK SUPPORT") {
+    const total = (helpdeskTickets?.closedCount ?? 0) + (helpdeskTickets?.openTicketsInPeriod ?? 0);
+    return {
+      title: "Helpdesk Support Source",
+      rows: [
+        { label: "Collected from", value: "Ticket records plus imported helpdesk CSV snapshots when available" },
+        { label: "Recorded as", value: "Closed vs open ticket counts for the selected working-day range" },
+        { label: "Range", value: reportingPeriodLabel ?? `${helpdeskTickets?.rangeFromYmd ?? "n/a"} to ${helpdeskTickets?.rangeToYmd ?? "n/a"}` },
+        { label: "Closed", value: String(helpdeskTickets?.closedCount ?? 0) },
+        { label: "Open", value: String(helpdeskTickets?.openTicketsInPeriod ?? 0) },
+      ],
+      tableColumns: ["Metric", "Value", "How it is used"],
+      tableRows: [
+        ["Closed tickets", String(helpdeskTickets?.closedCount ?? 0), "Numerator for helpdesk support percent"],
+        ["Open tickets in period", String(helpdeskTickets?.openTicketsInPeriod ?? 0), "Open workload counted in denominator"],
+        ["Closed + open total", String(total), "Denominator for the headline percent"],
+        ["Requests in range", String(helpdeskTickets?.requestsInRange ?? 0), "Ticket volume context for the same range"],
+        ["Open backlog", String(helpdeskTickets?.openBacklog ?? 0), "Current non-closed backlog for the selected scope"],
+        ["Headline percent", helpdeskTickets?.percent == null ? "n/a" : `${helpdeskTickets.percent}%`, "closed / (closed + open)"],
+      ],
+      csvColumns: IT_SALF_CSV_COLUMNS,
+      csvRows: csvLayoutRowsForPillar(args),
+      notes: ["The headline percent is closed / (closed + open) for the selected cadence."],
+    };
+  }
+  if (pillar === "USER SUPPORT") {
+    return {
+      title: "User Support Source",
+      rows: [
+        { label: "Collected from", value: "Ticket status counts in the selected reporting period" },
+        { label: "Recorded as", value: "For Confirmation and Closed ticket totals" },
+        { label: "For Confirmation", value: String(userSupportTickets?.forConfirmation ?? 0) },
+        { label: "Closed", value: String(userSupportTickets?.closed ?? 0) },
+        { label: "Total", value: String(userSupportTickets?.total ?? 0) },
+      ],
+      tableColumns: ["Ticket status", "Count", "Recorded meaning"],
+      tableRows: [
+        ["For Confirmation", String(userSupportTickets?.forConfirmation ?? 0), "Resolved work awaiting requester confirmation"],
+        ["Closed", String(userSupportTickets?.closed ?? 0), "Verified or completed support ticket records"],
+        ["Total", String(userSupportTickets?.total ?? 0), "For Confirmation + Closed"],
+      ],
+      csvColumns: IT_SALF_CSV_COLUMNS,
+      csvRows: csvLayoutRowsForPillar(args),
+      notes: ["This pillar reflects support outcomes from ticket workflow statuses."],
+    };
+  }
+  const agg = checklistPillars?.[pillar];
+  const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
+  const cadenceLabel = metricsCadence.toLowerCase();
+  const sourceCsvRows = agg?.csvRows && agg.csvRows.length > 0 ? agg.csvRows : csvLayoutRowsForPillar(args);
+  const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const view = kpiChecklistMetricView(
+    {
+      total: agg?.total ?? 0,
+      done: agg?.done ?? 0,
+      missing: agg?.missing ?? 0,
+      percent: agg?.percent ?? 0,
+    },
+    invert,
+  );
+  return {
+    title: `${pillar} Source`,
+    rows: [
+      {
+        label: "Collected from",
+        value: agg?.csvRows?.length
+          ? "Imported IT SALF CSV rows for the selected reporting range"
+          : "Task Board KPI checklist rows under this pillar",
+      },
+      { label: "Recorded as", value: "KPI maintenance period snapshots, with the current active period read live" },
+      { label: "Cadence", value: metricsCadence },
+      { label: "Mapped KPI rows", value: `Recurring ${cadenceLabel} KPI rows titled "${pillar}"` },
+      { label: "Counted periods", value: `${agg?.periodsCounted ?? 0} of ${agg?.periodsInRange ?? 0}` },
+      { label: cfg?.positiveLabel ?? "Done", value: String(agg?.done ?? 0) },
+      { label: cfg?.negativeLabel ?? "Missing", value: String(agg?.missing ?? 0) },
+    ],
+    tableColumns: ["Gathered field", "Value", "Recorded source"],
+    tableRows: [
+      ["Task rows counted", String(agg?.total ?? 0), `KPI checklist items for ${pillar}`],
+      ["Checked / done rows", String(agg?.done ?? 0), "Task Board checkbox completions"],
+      ["Unchecked / missing rows", String(agg?.missing ?? 0), "Task Board rows not checked in the counted period"],
+      ["Positive bucket", String(view.positive), `${cfg?.positiveLabel ?? "Positive"} display bucket`],
+      ["Negative bucket", String(view.negative), `${cfg?.negativeLabel ?? "Negative"} display bucket`],
+      ["Stored checklist percent", `${agg?.percent ?? 0}%`, "Raw done / total snapshot percent"],
+      ["Displayed metric percent", `${view.percent}%`, invert ? "Inverted display percent" : "Checklist display percent"],
+      ["Periods with data", String(agg?.periodsCounted ?? 0), "Periods where task data or snapshots were available"],
+      ["Periods in range", String(agg?.periodsInRange ?? 0), "All expected periods for the selected cadence/range"],
+      ["Cadence", metricsCadence, `Recurring ${cadenceLabel} KPI rows selected for this pillar`],
+    ],
+    csvColumns: IT_SALF_CSV_COLUMNS,
+    csvRows: sourceCsvRows,
+    notes: [
+      agg?.csvRows?.length
+        ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
+        : "Checkboxes on the Task Board are the source of completion data.",
+      "Past periods come from immutable snapshots; only the current period uses live task card data.",
+    ],
+  };
+}
+
 export function TaskPillarMetricsGrid({
   checklistPillars,
   metricsCadence,
@@ -308,6 +585,8 @@ export function TaskPillarMetricsGrid({
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
 }) {
+  const [inspectedPillar, setInspectedPillar] = useState<ItTaskPillarTitle | null>(null);
+  const [extendedView, setExtendedView] = useState(false);
   const cadenceHeadline =
     metricsCadence === "DAILY"
       ? "Daily"
@@ -316,6 +595,17 @@ export function TaskPillarMetricsGrid({
         : metricsCadence === "MONTHLY"
           ? "Monthly"
           : "Quarterly";
+
+  const inspected = inspectedPillar
+    ? sourceDetailsForPillar({
+        pillar: inspectedPillar,
+        metricsCadence,
+        reportingPeriodLabel,
+        helpdeskTickets,
+        userSupportTickets,
+        checklistPillars,
+      })
+    : null;
 
   return (
     <div className="space-y-3">
@@ -347,6 +637,10 @@ export function TaskPillarMetricsGrid({
               pillar={pillar}
               segments={segments}
               headline={headline}
+              onInspect={() => {
+                setInspectedPillar(pillar);
+                setExtendedView(false);
+              }}
             />
           );
         }
@@ -362,6 +656,10 @@ export function TaskPillarMetricsGrid({
               pillar={pillar}
               segments={segments}
               headline={headline}
+              onInspect={() => {
+                setInspectedPillar(pillar);
+                setExtendedView(false);
+              }}
             />
           );
         }
@@ -379,16 +677,31 @@ export function TaskPillarMetricsGrid({
           const invert =
             cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
           const view = kpiChecklistMetricView(agg, invert);
-          const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
-            hideZeroNegative: invert,
-          });
-          const headline = agg.total === 0 ? "—" : `${view.percent}% ${cfg.metricName}`;
+          const isNetworkPerformance = pillar === "NETWORK PERFORMANCE";
+          const isCybersecurity = pillar === "CYBERSECURITY";
+          const incidentOnly = isNetworkPerformance || isCybersecurity;
+          const incidentLabel = isCybersecurity ? "Breached" : "Downtime";
+          const incidentMetricName = isCybersecurity ? "breached" : "downtime";
+          const segments = incidentOnly
+            ? incidentOnlySegments(view, incidentLabel)
+            : checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
+                hideZeroNegative: invert,
+              });
+          const headline = incidentOnly
+            ? incidentOnlyHeadline(agg, view, incidentMetricName)
+            : agg.total === 0
+              ? "—"
+              : `${view.percent}% ${cfg.metricName}`;
           return (
             <PillarDonutCard
               key={pillar}
               pillar={pillar}
               segments={segments}
               headline={headline}
+              onInspect={() => {
+                setInspectedPillar(pillar);
+                setExtendedView(false);
+              }}
             />
           );
         }
@@ -396,6 +709,198 @@ export function TaskPillarMetricsGrid({
         return null;
       })}
       </div>
+      {inspected ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setInspectedPillar(null)}
+        >
+          <div
+            className={cn(
+              "w-full rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-700 dark:bg-zinc-950",
+              extendedView ? "max-w-4xl" : "max-w-lg",
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
+                  Task metrics source
+                </p>
+                <h3 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">{inspected.title}</h3>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExtendedView((v) => !v)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-semibold",
+                    extendedView
+                      ? "border-orange-500 bg-orange-500/15 text-orange-800 dark:text-orange-100"
+                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800",
+                  )}
+                >
+                  {extendedView ? "Compact view" : "Extend view"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInspectedPillar(null)}
+                  className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <dl className="mt-4 divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+              {inspected.rows.map((row) => (
+                <div key={row.label} className="grid gap-1 py-2 sm:grid-cols-[10rem_1fr]">
+                  <dt className="font-semibold text-zinc-600 dark:text-zinc-400">{row.label}</dt>
+                  <dd className="text-zinc-950 dark:text-zinc-100">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+            <ul className="mt-4 space-y-1 rounded-xl bg-zinc-100 p-3 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+              {inspected.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+            {extendedView ? (
+              <div className="mt-4 overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                  <div>
+                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                      CSV Preview
+                    </p>
+                    <p className="mt-0.5 font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                      {inspected.title.replace(/\s+/g, "_").toLowerCase()}_metrics.csv
+                    </p>
+                  </div>
+                  <p className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
+                    {inspected.csvRows.length} rows · {inspected.csvColumns.length} columns
+                  </p>
+                </div>
+                <div className="border-b border-zinc-300 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+                  <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {inspected.csvColumns.join(",")}
+                  </p>
+                </div>
+                <div className="max-h-[45vh] overflow-auto bg-white dark:bg-zinc-950">
+                  <table className="w-full min-w-[760px] border-collapse text-left font-mono text-xs">
+                    <thead className="sticky top-0 z-10 bg-zinc-200 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      <tr>
+                        <th className="w-12 border-b border-r border-zinc-300 px-2 py-1.5 text-center dark:border-zinc-700">
+                          #
+                        </th>
+                        {inspected.csvColumns.map((col, colIndex) => (
+                          <th
+                            key={`col-label-${col}-${colIndex}`}
+                            className="border-b border-r border-zinc-300 px-3 py-1.5 text-center dark:border-zinc-700"
+                          >
+                            {spreadsheetColumnLabel(colIndex)}
+                          </th>
+                        ))}
+                      </tr>
+                      <tr>
+                        <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
+                          1
+                        </th>
+                        {inspected.csvColumns.map((_, colIndex) => (
+                          <th
+                            key={`blank-1-${colIndex}`}
+                            className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
+                          />
+                        ))}
+                      </tr>
+                      <tr>
+                        <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
+                          2
+                        </th>
+                        {inspected.csvColumns.map((_, colIndex) => (
+                          <th
+                            key={`blank-2-${colIndex}`}
+                            className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
+                          />
+                        ))}
+                      </tr>
+                      <tr>
+                        <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
+                          3
+                        </th>
+                        {inspected.csvColumns.map((col, colIndex) => (
+                          <th
+                            key={`${col}-${colIndex}`}
+                            className="border-b border-r border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+                          >
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inspected.csvRows.map((row, rowIndex) => (
+                        <tr key={`${row[0]}-${rowIndex}`} className="bg-white even:bg-zinc-50 dark:bg-zinc-950 dark:even:bg-zinc-900/40">
+                          <td className="border-r border-b border-zinc-200 bg-zinc-100 px-2 py-2 text-center text-[10px] font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500">
+                            {rowIndex + 4}
+                          </td>
+                          {row.map((cell, cellIndex) => (
+                            <td
+                              key={`${row[0]}-${cellIndex}`}
+                              className={cn(
+                                "border-r border-b border-zinc-200 px-3 py-2 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-300",
+                                cellIndex === 0 && "font-semibold text-zinc-950 dark:text-zinc-100",
+                                cellIndex === 1 && "tabular-nums text-orange-700 dark:text-orange-300",
+                              )}
+                            >
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="border-t border-zinc-300 bg-zinc-50 px-3 py-3 dark:border-zinc-700 dark:bg-zinc-900/70">
+                  <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    Extra source details
+                  </p>
+                  <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    <table className="w-full min-w-[640px] border-collapse font-mono text-[11px]">
+                      <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                        <tr>
+                          {inspected.tableColumns.map((col) => (
+                            <th key={col} className="border-b border-r border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {inspected.tableRows.map((row, rowIndex) => (
+                          <tr key={`extra-${row[0]}-${rowIndex}`} className="bg-white even:bg-zinc-50 dark:bg-zinc-950 dark:even:bg-zinc-900/40">
+                            {row.map((cell, cellIndex) => (
+                              <td
+                                key={`extra-${row[0]}-${cellIndex}`}
+                                className="border-b border-r border-zinc-200 px-2 py-1.5 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-300"
+                              >
+                                {cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-zinc-300 bg-zinc-100 px-3 py-2 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                  <span>UTF-8 · comma-separated values</span>
+                  <span>Generated from current Task Metrics payload</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

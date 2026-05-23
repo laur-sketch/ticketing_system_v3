@@ -70,6 +70,9 @@ export type SubKpisStoredEnvelope = {
   segmented: boolean;
   items?: SubKpiItem[];
   segments?: SubKpiSegment[];
+  pillarScreenshotsEnabled?: boolean;
+  pillarBeforeScreenshot?: TaskScreenshotMetaItem[];
+  pillarAfterScreenshot?: TaskScreenshotMetaItem[];
 };
 
 export type NormalizedSubKpis =
@@ -209,10 +212,71 @@ export function wrapForPersist(norm: NormalizedSubKpis): Prisma.InputJsonValue {
   return { segmented: false, items: norm.flat } as Prisma.InputJsonValue;
 }
 
+function rawEnvelopeMeta(raw: unknown) {
+  if (!isPlainObject(raw)) {
+    return {
+      pillarScreenshotsEnabled: false,
+      pillarBeforeScreenshot: [] as TaskScreenshotMetaItem[],
+      pillarAfterScreenshot: [] as TaskScreenshotMetaItem[],
+    };
+  }
+  const pillarBeforeScreenshot = parseTaskScreenshotMetaList(raw.pillarBeforeScreenshot);
+  const pillarAfterScreenshot = parseTaskScreenshotMetaList(raw.pillarAfterScreenshot);
+  return {
+    pillarScreenshotsEnabled:
+      raw.pillarScreenshotsEnabled === true ||
+      pillarBeforeScreenshot.length > 0 ||
+      pillarAfterScreenshot.length > 0,
+    pillarBeforeScreenshot,
+    pillarAfterScreenshot,
+  };
+}
+
+function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof rawEnvelopeMeta>): Prisma.InputJsonValue {
+  if (!isPlainObject(base)) return base;
+  return {
+    ...base,
+    ...(meta.pillarScreenshotsEnabled ? { pillarScreenshotsEnabled: true } : {}),
+    ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
+    ...(meta.pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot: meta.pillarAfterScreenshot } : {}),
+  } as Prisma.InputJsonValue;
+}
+
+export function wrapForPersistWithExistingMeta(norm: NormalizedSubKpis, raw: unknown): Prisma.InputJsonValue {
+  return withEnvelopeMeta(wrapForPersist(norm), rawEnvelopeMeta(raw));
+}
+
+export function enablePillarScreenshots(raw: unknown): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarScreenshotsEnabled = true;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function pillarScreenshotsEnabled(raw: unknown): boolean {
+  return rawEnvelopeMeta(raw).pillarScreenshotsEnabled;
+}
+
+export function getPillarScreenshots(raw: unknown, slot: TaskScreenshotSlot): TaskScreenshotMetaItem[] {
+  const meta = rawEnvelopeMeta(raw);
+  return slot === "before" ? meta.pillarBeforeScreenshot : meta.pillarAfterScreenshot;
+}
+
+export function setPillarScreenshots(
+  raw: unknown,
+  slot: TaskScreenshotSlot,
+  screenshots: TaskScreenshotMetaItem[],
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarScreenshotsEnabled = true;
+  if (slot === "before") meta.pillarBeforeScreenshot = screenshots;
+  else meta.pillarAfterScreenshot = screenshots;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
 /** Migrate legacy array to envelope (optional, for consistency). */
 export function ensureEnvelope(raw: unknown): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
-  return wrapForPersist(n);
+  return wrapForPersistWithExistingMeta(n, raw);
 }
 
 export function resetAllSubKpiDone(raw: unknown): Prisma.InputJsonValue {
@@ -222,10 +286,10 @@ export function resetAllSubKpiDone(raw: unknown): Prisma.InputJsonValue {
       ...seg,
       items: seg.items.map((it) => ({ ...it, done: false })),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map((it) => ({ ...it, done: false }));
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 export function setSubKpiItemDone(raw: unknown, subKpiId: string, done: boolean): Prisma.InputJsonValue {
@@ -235,10 +299,10 @@ export function setSubKpiItemDone(raw: unknown, subKpiId: string, done: boolean)
       ...seg,
       items: seg.items.map((it) => (it.id === subKpiId ? { ...it, done } : it)),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map((it) => (it.id === subKpiId ? { ...it, done } : it));
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 export function subKpiAssignedAgentId(item: SubKpiItem): string | null {
@@ -278,10 +342,10 @@ export function setSubKpiItemAssignee(
       ...seg,
       items: seg.items.map(touch),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map(touch);
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 export function setSubKpiItemScreenshots(
@@ -295,12 +359,12 @@ export function setSubKpiItemScreenshots(
   const touch = (it: SubKpiItem): SubKpiItem =>
     it.id === subKpiId ? { ...it, [key]: screenshots } : it;
   if (n.segmented) {
-    return wrapForPersist({
+    return wrapForPersistWithExistingMeta({
       segmented: true,
       segments: n.segments.map((seg) => ({ ...seg, items: seg.items.map(touch) })),
-    });
+    }, raw);
   }
-  return wrapForPersist({ segmented: false, flat: n.flat.map(touch) });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat: n.flat.map(touch) }, raw);
 }
 
 /** When marking an IT Project sub-task done, default actual date to today (timezone) if unset. Clears actual date when unchecked. */
@@ -333,10 +397,10 @@ export function applyItProjectSubTaskDoneMeta(
       ...seg,
       items: seg.items.map(touch),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map(touch);
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 export function setSubKpiItemScheduleMeta(
@@ -379,10 +443,10 @@ export function setSubKpiItemScheduleMeta(
       ...seg,
       items: seg.items.map(touch),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map(touch);
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 export function setSubKpiItemWorkMeta(
@@ -434,10 +498,10 @@ export function setSubKpiItemWorkMeta(
       ...seg,
       items: seg.items.map(touch),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map(touch);
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 export function markEverySubKpiDone(raw: unknown, done: boolean): Prisma.InputJsonValue {
@@ -447,10 +511,10 @@ export function markEverySubKpiDone(raw: unknown, done: boolean): Prisma.InputJs
       ...seg,
       items: seg.items.map((it) => ({ ...it, done })),
     }));
-    return wrapForPersist({ segmented: true, segments });
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map((it) => ({ ...it, done }));
-  return wrapForPersist({ segmented: false, flat });
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 
 function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | null {

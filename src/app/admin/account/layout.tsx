@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { safeGetServerSession } from "@/lib/server-session";
 
 export default async function AdminAccountLayout({ children }: { children: React.ReactNode }) {
-  const session = await getServerSession(authOptions);
+  const session = await safeGetServerSession();
   const role = session?.user?.role;
   const isStaff = role === "SuperAdmin" || role === "Admin" || role === "Personnel";
 

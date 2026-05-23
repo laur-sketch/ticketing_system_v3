@@ -4,6 +4,8 @@
 
 Standard operating procedures for **Personnel**, **Admin**, and **SuperAdmin** users operating tickets, boards, and KPI/task work.
 
+Current project status: the live UI is branded **AGCTek Help Desk**. Ticket escalation now operates as a **Request for transfer** approval workflow, KPI recurrence includes **Quarterly** cycles, and Admin/SuperAdmin reporting is available at **`/reports`**.
+
 ## 1) Daily startup checklist
 
 1. Sign in at **`/signin`**.
@@ -13,13 +15,14 @@ Standard operating procedures for **Personnel**, **Admin**, and **SuperAdmin** u
 3. Open **`/insights`** — ticket metrics, task metrics, and (if coordinator) Task Management.
 4. Check notifications (bell) for new **Open** tickets and (admins) pending **account requests**.
 5. Prioritize overdue items, **UNSET** priority tickets, and **Delayed** IT project sub-tasks.
+6. Admin/SuperAdmin: review **`/reports`** when you need an executive snapshot of transfer posture, queue mix, and recent closures.
 
 ## 2) Ticket handling SOP
 
 ### Intake
 
 1. Review new/unassigned tickets on **Ticket Board** or dashboard.
-2. Validate completeness: title, impact, reproduction steps, attachments.
+2. Validate completeness: title, impact, reproduction steps, attachments, and intake screenshots.
 3. Set **priority** (not **Set Priority Level**) before **In progress**.
 4. Request missing details in the thread; log major decisions in the timeline.
 
@@ -34,6 +37,7 @@ Standard operating procedures for **Personnel**, **Admin**, and **SuperAdmin** u
 1. Move status to match reality (kanban drag or ticket workspace).
 2. Document significant actions in activity/comments.
 3. Use **request more information** per policy when waiting on the requestor.
+4. If assigned personnel cannot continue or needs higher-level handling, use **Request for transfer** from **`/agent/tickets/[id]`** and select the Admin/SuperAdmin reviewer.
 
 ### Resolution and closure
 
@@ -75,15 +79,16 @@ Columns: **Current**, **Done**, **Delayed**.
 - Drag tasks between columns where enabled (mouse or touch).
 - **Assignment lanes** (admins/coordinators): drag tasks onto personnel lanes to assign the full KPI card.
 - **Sub-task assignee** controls (admins/coordinators): assign individual sub-KPIs to other personnel from inside each task card.
-- **Before / After screenshots**: non-IT Project sub-KPIs can include one before image and one after image. Files must be **JPEG or PNG only** and **10MB or smaller** each.
+- **Before / After screenshots**: non-IT Project sub-KPIs can include screenshot sets for evidence. Files must be **JPEG or PNG only**, up to **5 screenshots per slot**, and **10MB or smaller** each.
 
 ### Recurring tasks
 
-- **Daily / Weekly / Monthly** cycles; weekly/monthly use configured weekday or month-day.
+- **Daily / Weekly / Monthly / Quarterly** cycles; weekly/monthly/quarterly use configured weekday or start day. Quarterly cycles currently run as 4-month periods.
 - **Segmented** checklists: grouped sub-tasks; **flat** checklists: single list.
 - Personnel assigned to an individual sub-KPI can see the parent KPI card and update only that assigned sub-task.
 - Sub-KPI assignees may upload before/after screenshots as work evidence on non-IT Project items.
 - Checklist state resets when a new KPI period starts (timezone-aware API).
+Daily task metrics exclude Sundays from working-day averages.
 
 ### IT Project Implementation (non-recurring)
 
@@ -114,7 +119,7 @@ Columns: **Current**, **Done**, **Delayed**.
 
 ### Task metrics tab
 
-- Choose cadence (daily/weekly/monthly) and date range.
+- Choose cadence (daily/weekly/monthly/quarterly) and date range.
 - Review helpdesk exports, user-support counts, and checklist pillar completion.
 
 ### Refresh discipline
@@ -131,30 +136,34 @@ Columns: **Current**, **Done**, **Delayed**.
 
 ### Admin / SuperAdmin
 
-- Full personnel, priority alerts, board access, and task definition.
+- Full personnel, priority alerts, board access, task definition, and reporting.
 - Review account suspension/deletion/password-reset requests (notifications → **`/admin/account`**).
+- Manage portal accounts from **`/admin/personnel`** (the old **`/admin/account-management`** path redirects there), including staff account creation, role/designated-company updates, roster sync, duplicate-agent reconciliation, and staff assignment colors.
 - SLA sweep and deployment operations per runbook.
 
-## 7) Escalation and SLA SOP
+## 7) Transfer and SLA SOP
 
 1. Review SLA risk on dashboard and **`/insights`**.
 2. Configure triggers under **Priority alerts** (`/admin/escalation-triggers`).
-3. Run or schedule **`POST /api/sla/sweep`** per operational policy.
-4. Escalated tickets must have clear activity logs and ownership on handoff.
+3. Run or schedule **`POST /api/sla/sweep`** per operational policy; the current sweep scans unresolved tickets and refreshes reporting instead of automatically moving tickets.
+4. Personnel submit **Request for transfer** from the staff ticket workspace when reassignment or higher-level review is needed.
+5. Admin/SuperAdmin reviewers approve pending transfer requests from the ticket workspace. Pending requests appear as **Transfer pending**.
+6. Transfer-pending tickets must have clear activity logs and ownership on handoff.
 
 ## 8) Account and security SOP
 
 **`/admin/account`** → **Security**:
 
+- Upload/edit profile image from **Profile** (PNG/JPG/WEBP, up to 10MB; drag/zoom framing).
 - Change username, email, or password (current password required).
-- Submit account suspension/deletion requests (customers/personnel).
+- Submit account suspension/deletion/password-reset requests (customers/personnel).
 
 **Rule:** credential changes force sign-out — re-authenticate immediately on shared machines.
 
 ## 9) Shift-end checklist
 
 1. All active tickets reflect current status.
-2. Handoff notes on unresolved high-priority or escalated work.
+2. Handoff notes on unresolved high-priority or transfer-pending work.
 3. KPI/task checklists updated for your assignments.
 4. IT Project sub-tasks: due dates and actual dates current.
 5. Sign out on shared devices.

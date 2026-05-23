@@ -5,6 +5,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { AppChrome } from "@/components/layout/AppChrome";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { BRAND_TITLE } from "@/lib/brand";
+import { safeGetServerSession } from "@/lib/server-session";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,12 +34,13 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   const themeInit = `(function(){try{var k='theme-preference';var d=document.documentElement;var t=localStorage.getItem(k);if(t==='light'){d.classList.remove('dark');}else{d.classList.add('dark');}}catch(e){document.documentElement.classList.add('dark');}})();`;
+  const session = await safeGetServerSession();
 
   return (
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} min-h-dvh antialiased dark`}>
@@ -47,7 +49,7 @@ export default function RootLayout({
           {themeInit}
         </Script>
         <ThemeProvider>
-          <AuthProvider>
+          <AuthProvider session={session}>
             <AppChrome>{children}</AppChrome>
           </AuthProvider>
         </ThemeProvider>

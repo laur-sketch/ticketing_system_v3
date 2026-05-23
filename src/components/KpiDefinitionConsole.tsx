@@ -66,6 +66,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const [subKpisDraft, setSubKpisDraft] = useState<SubKpi[]>([]);
   const [draftUseSegments, setDraftUseSegments] = useState(false);
   const [enableTaskScreenshots, setEnableTaskScreenshots] = useState(false);
+  const [screenshotAttachmentScope, setScreenshotAttachmentScope] = useState<"subtask" | "pillar">("subtask");
   const [draftSegments, setDraftSegments] = useState<DraftSegmentRow[]>([]);
   const [segItemDraft, setSegItemDraft] = useState<Record<string, string>>({});
   const [segItemScheduleDate, setSegItemScheduleDate] = useState<Record<string, string>>({});
@@ -375,7 +376,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
           title: it.title.trim(),
           startDate: hideSubTaskScheduleDate ? "" : it.startDate ?? "",
           dueDate: maintenanceIsRecurring ? "" : it.dueDate ?? "",
-          screenshotsEnabled: enableTaskScreenshots,
+          screenshotsEnabled: enableTaskScreenshots && screenshotAttachmentScope === "subtask",
         })),
       }));
     } else {
@@ -383,8 +384,11 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         title: s.title,
         startDate: hideSubTaskScheduleDate ? "" : s.startDate ?? "",
         dueDate: maintenanceIsRecurring ? "" : s.dueDate ?? "",
-        screenshotsEnabled: enableTaskScreenshots,
+        screenshotsEnabled: enableTaskScreenshots && screenshotAttachmentScope === "subtask",
       }));
+    }
+    if (!isItProject && enableTaskScreenshots) {
+      body.screenshotAttachmentScope = screenshotAttachmentScope;
     }
 
     if (!isItProject && maintenanceIsRecurring && freqUpper === "WEEKLY") {
@@ -457,6 +461,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     setSubKpiTargetDate("");
     setDraftUseSegments(false);
     setEnableTaskScreenshots(false);
+    setScreenshotAttachmentScope("subtask");
     setDraftSegments([]);
     setSegItemDraft({});
     setSegItemScheduleDate({});
@@ -498,6 +503,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
               if (isItProjectImplementationPillar(v)) {
                 setMaintenanceIsRecurring(false);
                 setEnableTaskScreenshots(false);
+                setScreenshotAttachmentScope("subtask");
                 setDraftUseSegments(false);
                 setDraftSegments([]);
                 setNonRecurringStartDate("");
@@ -686,17 +692,58 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       </div>
 
       {!isItProject ? (
-        <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-300">
-          <input
-            type="checkbox"
-            checked={enableTaskScreenshots}
-            onChange={(e) => setEnableTaskScreenshots(e.target.checked)}
-            className="mt-1"
-          />
-          <span>
-            Add before/after screenshot uploads for this task. Leave this off to use the default checkbox-only completion.
-          </span>
-        </label>
+        <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-300">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              checked={enableTaskScreenshots}
+              onChange={(e) => {
+                setEnableTaskScreenshots(e.target.checked);
+                if (!e.target.checked) setScreenshotAttachmentScope("subtask");
+              }}
+              className="mt-1"
+            />
+            <span>
+              Add before/after screenshot uploads for this task. Leave this off to use the default checkbox-only completion.
+            </span>
+          </label>
+          {enableTaskScreenshots ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+                <input
+                  type="radio"
+                  name="screenshotAttachmentScope"
+                  value="subtask"
+                  checked={screenshotAttachmentScope === "subtask"}
+                  onChange={() => setScreenshotAttachmentScope("subtask")}
+                  className="mt-1"
+                />
+                <span>
+                  <strong className="block text-zinc-900 dark:text-zinc-100">Attach to each sub-task</strong>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Current behavior: before/after screenshots are required before checking the sub-task done.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+                <input
+                  type="radio"
+                  name="screenshotAttachmentScope"
+                  value="pillar"
+                  checked={screenshotAttachmentScope === "pillar"}
+                  onChange={() => setScreenshotAttachmentScope("pillar")}
+                  className="mt-1"
+                />
+                <span>
+                  <strong className="block text-zinc-900 dark:text-zinc-100">Attach to the pillar card</strong>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Screenshots live on the pillar card; checklist checkboxes continue to work normally.
+                  </span>
+                </span>
+              </label>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       {showSegmentedCreateOption && kpiMaintenanceAssignWork ? (
