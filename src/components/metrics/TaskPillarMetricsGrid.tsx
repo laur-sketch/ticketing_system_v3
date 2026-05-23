@@ -311,17 +311,6 @@ function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
   ];
 }
 
-function incidentOnlySegments(view: { negative: number }, label: string): DonutSegment[] {
-  return [
-    {
-      key: label.toLowerCase(),
-      label,
-      value: view.negative,
-      color: SEG_COLORS_BINARY_KPI.negative,
-    },
-  ];
-}
-
 function incidentOnlyHeadline(agg: KpiChecklistProgress, view: { negative: number }, metricName: string): string {
   const incidentPercent = agg.total > 0 ? Math.round((view.negative / agg.total) * 100) : 0;
   return `${incidentPercent}% ${metricName}`;
@@ -690,13 +679,10 @@ export function TaskPillarMetricsGrid({
           const isNetworkPerformance = pillar === "NETWORK PERFORMANCE";
           const isCybersecurity = pillar === "CYBERSECURITY";
           const incidentOnly = isNetworkPerformance || isCybersecurity;
-          const incidentLabel = isCybersecurity ? "Breached" : "Downtime";
           const incidentMetricName = isCybersecurity ? "breached" : "downtime";
-          const segments = incidentOnly
-            ? incidentOnlySegments(view, incidentLabel)
-            : checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
-                hideZeroNegative: invert,
-              });
+          const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
+            hideZeroNegative: invert,
+          });
           const headline = incidentOnly
             ? incidentOnlyHeadline(agg, view, incidentMetricName)
             : agg.total === 0
