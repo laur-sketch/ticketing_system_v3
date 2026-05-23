@@ -84,6 +84,7 @@ function donutSlicePath(
 
 type DonutSegment = { key: string; label: string; value: number; color: string };
 const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
+const MONITORING_CSV_COLUMNS = ["DONE", "ON GOING", "NOT STARTED", "EFF %"];
 
 function PillarDonutCard({
   pillar,
@@ -413,6 +414,12 @@ function csvLayoutRowsForPillar(args: {
     ];
   }
   const agg = checklistPillars?.[pillar];
+  if (pillar === "MONITORING") {
+    const done = agg?.done ?? 0;
+    const notStarted = agg?.missing ?? 0;
+    const percent = (agg?.total ?? 0) > 0 ? `${agg?.percent ?? 0}%` : "0%";
+    return [[String(done), "0", String(notStarted), percent]];
+  }
   const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
   const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
   const view = kpiChecklistMetricView(
@@ -519,6 +526,7 @@ function sourceDetailsForPillar(args: {
   const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
   const cadenceLabel = metricsCadence.toLowerCase();
   const sourceCsvRows = agg?.csvRows && agg.csvRows.length > 0 ? agg.csvRows : csvLayoutRowsForPillar(args);
+  const csvColumns = pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
   const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
   const view = kpiChecklistMetricView(
     {
@@ -558,7 +566,7 @@ function sourceDetailsForPillar(args: {
       ["Periods in range", String(agg?.periodsInRange ?? 0), "All expected periods for the selected cadence/range"],
       ["Cadence", metricsCadence, `Recurring ${cadenceLabel} KPI rows selected for this pillar`],
     ],
-    csvColumns: IT_SALF_CSV_COLUMNS,
+    csvColumns,
     csvRows: sourceCsvRows,
     showCsvPreview: true,
     notes: [

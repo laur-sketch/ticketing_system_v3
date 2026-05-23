@@ -298,6 +298,7 @@ const IT_SALF_DISPLAY_FILENAMES: Partial<Record<ItTaskPillarTitle, string>> = {
   CYBERSECURITY: "IT SALF - CYBERSECURITY.csv",
   "NETWORK PERFORMANCE": "IT SALF - NETWORK PERFORMANCE.csv",
 };
+const DAILY_ACTIVITY_MONITORING_FILENAME = "IT DAILY ACTIVITY - DAILY ACTIVITY ROBINA.csv";
 
 function parseItSalfDisplayDateCell(raw: string, timeZone: string): { ymd: string; isWorkingDay: boolean } | null {
   const dateCell = raw.replace(/^"|"$/g, "").trim();
@@ -335,8 +336,56 @@ export function parseItSalfDisplayCsvRows(
   return rows;
 }
 
-function itSalfCsvPathForPillar(pillar: ItTaskPillarTitle): string | null {
-  const filename = IT_SALF_DISPLAY_FILENAMES[pillar];
+function parseDailyActivityDate(raw: string, timeZone: string): { ymd: string; isWorkingDay: boolean } | null {
+  const trimmed = raw.trim();
+  const formats = ["M/d/yyyy", "M/d/yy", "yyyy-MM-dd"];
+  for (const format of formats) {
+    const dt = DateTime.fromFormat(trimmed, format, { zone: timeZone });
+    const ymd = dt.isValid ? dt.toISODate() : null;
+    if (ymd) return { ymd, isWorkingDay: isKpiMetricsWorkingDay(dt) };
+  }
+  const iso = DateTime.fromISO(trimmed, { zone: timeZone });
+  const ymd = iso.isValid ? iso.toISODate() : null;
+  return ymd ? { ymd, isWorkingDay: isKpiMetricsWorkingDay(iso) } : null;
+}
+
+export function parseMonitoringDisplayCsvRows(
+  content: string,
+  timeZone: string,
+  fromYmd: string,
+  toYmd: string,
+): string[][] {
+  const lines = content.split(/\r?\n/).filter((line) => line.trim());
+  const header = parseCsvLine(lines[0] ?? "").map((h) => h.trim().toUpperCase());
+  const dateIdx = header.indexOf("R");
+  const issueIdx = header.indexOf("ISSUE / CONCERN / ACTIVY");
+  const percentIdx = header.indexOf("%");
+  const statusIdx = header.indexOf("STATUS");
+  if (dateIdx < 0 || issueIdx < 0 || percentIdx < 0 || statusIdx < 0) return [];
+
+  const rows: string[][] = [];
+  for (const line of lines.slice(1)) {
+    const cols = parseCsvLine(line);
+    const issue = cols[issueIdx] ?? "";
+    if (!/\bmonitoring\b/i.test(issue)) continue;
+
+    const parsedDate = parseDailyActivityDate(cols[dateIdx] ?? "", timeZone);
+    if (!parsedDate || !parsedDate.isWorkingDay || parsedDate.ymd < fromYmd || parsedDate.ymd > toYmd) continue;
+
+    const status = (cols[statusIdx] ?? "").trim().toUpperCase();
+    const eff = (cols[percentIdx] ?? "").trim();
+    rows.push([
+      status === "DONE" ? "DONE" : "",
+      status === "ON GOING" || status === "ONGOING" ? "ON GOING" : "",
+      status === "NOT STARTED" ? "NOT STARTED" : "",
+      eff,
+    ]);
+  }
+  return rows;
+}
+
+function displayCsvPathForPillar(pillar: ItTaskPillarTitle): string | null {
+  const filename = pillar === "MONITORING" ? DAILY_ACTIVITY_MONITORING_FILENAME : IT_SALF_DISPLAY_FILENAMES[pillar];
   if (!filename) return null;
   const baseDir = process.env.IT_SALF_CSV_DIR ?? resolve(process.env.USERPROFILE ?? "", "Downloads");
   return resolve(baseDir, filename);
@@ -351,11 +400,14 @@ export async function loadItSalfDisplayCsvRowsForTaskMetrics(args: {
   const out: Partial<Record<ItTaskPillarTitle, string[][]>> = {};
   await Promise.all(
     KPI_SHEET_IMPORT_PILLARS.map(async (pillar) => {
-      const filePath = itSalfCsvPathForPillar(pillar);
+      const filePath = displayCsvPathForPillar(pillar);
       if (!filePath) return;
       try {
         const content = await readFile(filePath, "utf8");
-        const rows = parseItSalfDisplayCsvRows(content, zone, args.fromYmd, args.toYmd);
+        const rows =
+          pillar === "MONITORING"
+            ? parseMonitoringDisplayCsvRows(content, zone, args.fromYmd, args.toYmd)
+            : parseItSalfDisplayCsvRows(content, zone, args.fromYmd, args.toYmd);
         if (rows.length > 0) out[pillar] = rows;
       } catch {
         // The local CSV files are optional; imported snapshots still power the headline metrics.
