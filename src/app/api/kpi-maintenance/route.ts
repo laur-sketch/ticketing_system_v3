@@ -59,6 +59,18 @@ function checklistFullyComplete(subKpis: unknown): boolean {
   return items.every((x) => x.done);
 }
 
+function taskScreenshotsEnabled(item: { screenshotsEnabled?: boolean; beforeScreenshot?: unknown[]; afterScreenshot?: unknown[] }): boolean {
+  return (
+    item.screenshotsEnabled === true ||
+    (item.beforeScreenshot?.length ?? 0) > 0 ||
+    (item.afterScreenshot?.length ?? 0) > 0
+  );
+}
+
+function hasBeforeAndAfterScreenshots(item: { beforeScreenshot?: unknown[]; afterScreenshot?: unknown[] }): boolean {
+  return (item.beforeScreenshot?.length ?? 0) > 0 && (item.afterScreenshot?.length ?? 0) > 0;
+}
+
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
   if (unauthorized || !session) return unauthorized;
@@ -114,30 +126,67 @@ export async function GET(req: Request) {
     }
 
     const freq = row.frequency as KpiFrequencyCode;
-    const inferredCycleStart = getPeriodStartInclusive(
+    const currentCycleStart = getPeriodStartInclusive(
       freq,
       row.recurrenceWeekday,
       row.recurrenceMonthDay,
-      row.createdAt,
+      now,
       timeZone,
     );
-    const anchor = row.periodCycleStartAt ?? inferredCycleStart;
+    const anchor =
+      row.periodCycleStartAt ??
+      getPeriodStartInclusive(
+        freq,
+        row.recurrenceWeekday,
+        row.recurrenceMonthDay,
+        row.createdAt,
+        timeZone,
+      );
 
     const patch: Prisma.KpiMaintenanceUpdateInput = {};
+    const expectedKey = computePeriodKey(freq, row.recurrenceWeekday, row.recurrenceMonthDay, now, timeZone);
 
     if (!row.periodCycleStartAt) {
-      patch.periodCycleStartAt = inferredCycleStart;
+      patch.periodCycleStartAt = currentCycleStart;
     }
 
-    const expectedKey = computePeriodKey(freq, row.recurrenceWeekday, row.recurrenceMonthDay, now, timeZone);
-    if (row.periodKey == null || isLegacyPeriodKey(row.periodKey)) {
+    if (row.periodKey == null || isLegacyPeriodKey(row.periodKey) || row.periodKey !== expectedKey) {
       patch.periodKey = expectedKey;
       patch.rolledOverIncomplete = false;
     }
 
     const complete = checklistFullyComplete(row.subKpis);
+    const staleCycle = currentCycleStart.getTime() > anchor.getTime();
+    if (staleCycle) {
+      const snapshotPeriodKey =
+        row.periodKey && !isLegacyPeriodKey(row.periodKey)
+          ? row.periodKey
+          : computePeriodKey(freq, row.recurrenceWeekday, row.recurrenceMonthDay, anchor, timeZone);
+      await upsertKpiPeriodSnapshot(
+        {
+          id: row.id,
+          title: row.title,
+          frequency: row.frequency,
+          subKpis: row.subKpis,
+          periodKey: row.periodKey,
+          recurrenceWeekday: row.recurrenceWeekday,
+          recurrenceMonthDay: row.recurrenceMonthDay,
+          periodCycleStartAt: row.periodCycleStartAt,
+          isRecurring: row.isRecurring,
+        },
+        timeZone,
+        anchor,
+        snapshotPeriodKey,
+      );
+      patch.subKpis = resetAllSubKpiDone(row.subKpis);
+      patch.periodCycleStartAt = currentCycleStart;
+      patch.periodKey = expectedKey;
+      patch.lastFullCompletionAt = null;
+      patch.rolledOverIncomplete = !complete;
+    }
+
     const lastFull = row.lastFullCompletionAt;
-    if (complete && lastFull) {
+    if (!staleCycle && complete && lastFull) {
       const eligible = nextRolloverEligibleAtUtc(lastFull, timeZone);
       if (eligible && now.getTime() >= eligible.getTime()) {
         await upsertKpiPeriodSnapshot(
@@ -199,6 +248,7 @@ export async function GET(req: Request) {
     rows,
     canAssignWork: perms.canAssignWork,
     canUnassignWork: session.user.role === "SuperAdmin",
+    canCompleteUnassignedWork: session.user.role === "SuperAdmin",
   });
 }
 
@@ -214,8 +264,23 @@ export async function POST(req: Request) {
     title?: string;
     frequency?: string;
     subKpisSegmented?: boolean;
-    subKpis?: Array<{ title?: string; startDate?: string; endDate?: string; dueDate?: string }>;
-    segments?: Array<{ label?: string; items?: Array<{ title?: string; startDate?: string; endDate?: string; dueDate?: string }> }>;
+    subKpis?: Array<{
+      title?: string;
+      startDate?: string;
+      endDate?: string;
+      dueDate?: string;
+      screenshotsEnabled?: boolean;
+    }>;
+    segments?: Array<{
+      label?: string;
+      items?: Array<{
+        title?: string;
+        startDate?: string;
+        endDate?: string;
+        dueDate?: string;
+        screenshotsEnabled?: boolean;
+      }>;
+    }>;
     assignedAgentId?: string;
     recurrenceWeekday?: number;
     recurrenceMonthDay?: number;
@@ -334,6 +399,7 @@ export async function POST(req: Request) {
               title: (s.title ?? "").trim(),
               startDate: (s.startDate ?? "").trim(),
               dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
+              screenshotsEnabled: s.screenshotsEnabled === true,
             }))
             .filter((s) => s.title.length > 0)
         : [];
@@ -348,6 +414,7 @@ export async function POST(req: Request) {
                     title: (i.title ?? "").trim(),
                     startDate: (i.startDate ?? "").trim(),
                     dueDate: isRecurring ? "" : (i.dueDate ?? i.endDate ?? "").trim(),
+                    screenshotsEnabled: i.screenshotsEnabled === true,
                   }))
                   .filter((i) => i.title.length > 0)
               : [],
@@ -544,9 +611,16 @@ export async function PATCH(req: Request) {
   const canEditSubKpi = (subKpiId: string) => {
     if (isAssignee) return true;
     const operatorId = perms.operator?.id;
-    if (!operatorId) return false;
     const item = subKpiItems.find((it) => it.id === subKpiId);
-    return item ? subKpiAssignedAgentId(item) === operatorId : false;
+    if (!item) return false;
+    const subAssigneeId = subKpiAssignedAgentId(item);
+    if (operatorId && subAssigneeId === operatorId) return true;
+    return session.user.role === "SuperAdmin" && !kpiRow.assignedAgentId && !subAssigneeId;
+  };
+  const canCompleteSubKpi = (subKpiId: string) => {
+    if (canEditSubKpi(subKpiId)) return true;
+    const item = subKpiItems.find((it) => it.id === subKpiId);
+    return Boolean(item && perms.canAssignWork && taskScreenshotsEnabled(item) && hasBeforeAndAfterScreenshots(item));
   };
 
   if (body.itProjectName !== undefined || body.itProjectPhase !== undefined) {
@@ -745,6 +819,12 @@ export async function PATCH(req: Request) {
     if (!target) {
       return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
     }
+    if (!taskScreenshotsEnabled(target)) {
+      return NextResponse.json(
+        { error: "Before/after screenshots were not enabled when this task was created." },
+        { status: 400 },
+      );
+    }
     if (screenshotFiles.length === 0) {
       return NextResponse.json({ error: "Screenshot file is required." }, { status: 400 });
     }
@@ -846,7 +926,7 @@ export async function PATCH(req: Request) {
 
   const markAllDone = body.markAllDone;
   const subKpiId = body.subKpiId?.trim() ?? "";
-  if (subKpiId && !canEditSubKpi(subKpiId)) {
+  if (subKpiId && !canCompleteSubKpi(subKpiId)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!subKpiId && !isAssignee) {
@@ -858,6 +938,15 @@ export async function PATCH(req: Request) {
       { error: "Provide either markAllDone OR (subKpiId + done). Use structuredSubKpis to reorganize checklist." },
       { status: 400 },
     );
+  }
+  if (!isItProjectImplementationPillar(kpiRow.title) && subKpiId && body.done === true) {
+    const target = subKpiItems.find((it) => it.id === subKpiId);
+    if (target && taskScreenshotsEnabled(target) && !hasBeforeAndAfterScreenshots(target)) {
+      return NextResponse.json(
+        { error: "Upload both before and after screenshots before marking this sub-task done." },
+        { status: 400 },
+      );
+    }
   }
 
   let updatedJson: Prisma.InputJsonValue;

@@ -5,7 +5,7 @@ import { BRAND_TITLE } from "@/lib/brand";
 
 export const runtime = "nodejs";
 
-/** Strip wrapping quotes/spaces so Windows paths like `"C:\logo.png"` work. */
+/** Strip wrapping quotes/spaces around env paths. */
 function normalizeLogoPath(raw: string | undefined): string {
   let p = (raw ?? "").trim();
   while (
@@ -17,8 +17,23 @@ function normalizeLogoPath(raw: string | undefined): string {
   return p;
 }
 
+function publicBrandDir() {
+  return join(process.cwd(), "public", "brand");
+}
+
 function bundledDefaultLogoPath() {
-  return join(process.cwd(), "public", "brand", "agc-logo.svg");
+  return join(publicBrandDir(), "agc-logo.svg");
+}
+
+/** Drop-in files (no env): logo.png | logo.webp | logo.jpg in public/brand/ */
+function publicBrandLogoCandidates() {
+  const d = publicBrandDir();
+  return [
+    join(d, "logo.png"),
+    join(d, "logo.webp"),
+    join(d, "logo.jpg"),
+    join(d, "logo.jpeg"),
+  ];
 }
 
 function escapeXml(s: string) {
@@ -62,7 +77,9 @@ function mimeFor(filePath: string) {
 
 export async function GET() {
   const fromEnv = normalizeLogoPath(process.env.BRAND_LOGO_PATH);
-  const candidates = fromEnv ? [fromEnv] : [bundledDefaultLogoPath()];
+  const candidates = fromEnv
+    ? [fromEnv, ...publicBrandLogoCandidates(), bundledDefaultLogoPath()]
+    : [...publicBrandLogoCandidates(), bundledDefaultLogoPath()];
 
   for (const logoPath of candidates) {
     try {

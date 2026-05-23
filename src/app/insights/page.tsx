@@ -16,7 +16,7 @@ import {
 } from "@/components/metrics/MetricsCharts";
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
-import { type KpiFrequencyCode, isKpiMetricsWorkingYmd } from "@/lib/kpi-recurrence";
+import { DEFAULT_TIME_ZONE, type KpiFrequencyCode, isKpiMetricsWorkingYmd } from "@/lib/kpi-recurrence";
 import type {
   CsatStarDistributionRow,
   TaskChecklistPillarMetrics,
@@ -90,16 +90,15 @@ export default function InsightsPage() {
   const [error, setError] = useState<string | null>(null);
   const [throughputView, setThroughputView] = useState<"cards" | "table">("table");
   const [canAssignKpi, setCanAssignKpi] = useState(false);
-  /** IANA zone for KPI period boundaries (browser); starts UTC until hydrated on client. */
-  const [recurrenceTz, setRecurrenceTz] = useState("UTC");
+  /** IANA zone for KPI period boundaries. */
+  const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
 
   useEffect(() => {
     queueMicrotask(() => {
       try {
-        const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (z) setRecurrenceTz(z);
+        setRecurrenceTz(DEFAULT_TIME_ZONE);
       } catch {
-        setRecurrenceTz("UTC");
+        setRecurrenceTz(DEFAULT_TIME_ZONE);
       }
     });
   }, []);

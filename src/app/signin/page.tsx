@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
@@ -18,11 +18,33 @@ function safeCallbackUrl(raw: string | null): string {
   return "/";
 }
 
+function oauthErrorMessage(code: string | null): string | null {
+  if (!code) return null;
+  switch (code) {
+    case "OAuthSignin":
+    case "OAuthCallback":
+      return "Google sign-in could not complete. Check that NEXTAUTH_URL matches the site URL and the Google OAuth redirect URI is configured.";
+    case "OAuthAccountNotLinked":
+      return "This Google account is not linked to your portal login. Use the same email as your customer account, or sign in with username and password.";
+    case "AccessDenied":
+      return "Sign-in was denied. If the Google app is in Testing mode, add this user as a test user in Google Cloud Console.";
+    case "Configuration":
+      return "Sign-in is misconfigured (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET or NEXTAUTH_URL). Contact your administrator.";
+    default:
+      return "Sign-in failed. Try again or use username and password.";
+  }
+}
+
 function SignInForm() {
   const searchParams = useSearchParams();
   const registered = searchParams.get("registered") === "1";
   const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
-  const banner = registered ? "Account created. Sign in with your username and password." : null;
+  const oauthError = oauthErrorMessage(searchParams.get("error"));
+  const wantsGoogle = searchParams.get("google") === "1";
+  const googleRedirectStarted = useRef(false);
+  const banner = registered
+    ? "Account created. Sign in with your username and password."
+    : oauthError;
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -53,6 +75,12 @@ function SignInForm() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!googleEnabled || !wantsGoogle || googleRedirectStarted.current) return;
+    googleRedirectStarted.current = true;
+    void signIn("google", { callbackUrl });
+  }, [googleEnabled, wantsGoogle, callbackUrl]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -305,7 +333,12 @@ function SignInForm() {
         </span>
       </button>
 
-      <p className="mt-6 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
+      <p className="mt-3 text-center text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-500">
+        Google sign-in uses your Google email. It must match the email on your customer portal account
+        (not username alone).
+      </p>
+
+      <p className="mt-4 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
         New here?{" "}
         <Link href="/signup" className="font-semibold text-[#f97316] hover:text-[#fb923c]">
           Create account

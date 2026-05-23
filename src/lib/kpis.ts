@@ -3,10 +3,17 @@ import { DateTime } from "luxon";
 import {
   computeTaskChecklistPillarMetrics,
   enumerateYmdDaysInRange,
+  kpiMaintenanceWhereForTaskMetrics,
+  snapshotTimeZoneForTaskMetrics,
   type TaskChecklistPillarMetrics,
 } from "@/lib/kpi-period-snapshots";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
-import { loadHelpdeskCsvTaskMetricCounts } from "@/lib/helpdesk-csv";
+import {
+  combineHelpdeskCountsByBlend,
+  loadHelpdeskCsvTaskMetricCounts,
+  resolveHelpdeskMetricBlend,
+  type HelpdeskTaskMetricCounts,
+} from "@/lib/helpdesk-csv";
 import { prisma } from "./prisma";
 
 export type { TaskChecklistPillarMetrics, TaskChecklistPillarMetric } from "@/lib/kpi-period-snapshots";
@@ -64,14 +71,30 @@ export type TaskMetricsHelpdeskTickets = {
   /** Numerator: closed in reporting window */
   closedCount: number;
   denominator: number;
+  /** @deprecated Prefer {@link TaskMetricsHelpdeskTickets.percent}. */
   ratio: number | null;
+  /** Headline %: (closed ÷ (open + closed in range)) × 100, capped at 100 — see {@link helpdeskSupportPercent}. */
+  percent: number | null;
   /** Current non-closed tickets (scoped backlog) */
   openBacklog: number;
   /** Non-closed tickets active in the reporting window (denominator) */
   openTicketsInPeriod: number;
   /** Tickets created in reporting range */
   requestsInRange: number;
+  /** Inclusive reporting window from the date picker (YYYY-MM-DD). */
+  rangeFromYmd: string;
+  rangeToYmd: string;
 };
+
+/**
+ * Helpdesk Support headline: `(closed in range ÷ (open in range + closed in range)) × 100`, capped at 100%.
+ */
+export function helpdeskSupportPercent(closedInRange: number, openInRange: number): number | null {
+  const total = openInRange + closedInRange;
+  if (total <= 0) return null;
+  const raw = (closedInRange / total) * 100;
+  return Number(Math.min(100, raw).toFixed(1));
+}
 
 /** Task metrics → USER SUPPORT pillar (tickets by status in Insights date range). */
 export type TaskMetricsUserSupportTickets = {
@@ -174,6 +197,48 @@ function workingDaysSpanRange(intervals: WorkingDayInterval[]): KpiRange | null 
   return { from: intervals[0]!.start, to: intervals[intervals.length - 1]!.end };
 }
 
+/** Live {@link prisma.ticket} counts for Helpdesk / User Support pillars (Mon–Sat in `timeZone`). */
+async function loadLiveHelpdeskTaskMetricCounts(args: {
+  workingDayIntervals: WorkingDayInterval[];
+  span: KpiRange;
+  scoped: Record<string, unknown>;
+}): Promise<HelpdeskTaskMetricCounts> {
+  const { workingDayIntervals, span, scoped } = args;
+  const [closedN, openN, volumeN, userSupportRows] = await Promise.all([
+    prisma.ticket.count({
+      where: {
+        ...scoped,
+        AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDayIntervals)],
+      },
+    }),
+    prisma.ticket.count({ where: openTicketsInRangeWhere(span, scoped) }),
+    prisma.ticket.count({
+      where: { ...timestampOnWorkingDaysWhere("createdAt", workingDayIntervals), ...scoped },
+    }),
+    prisma.ticket.groupBy({
+      by: ["status"],
+      where: {
+        status: { in: ["FOR_CONFIRMATION", "CLOSED"] },
+        ...timestampOnWorkingDaysWhere("updatedAt", workingDayIntervals),
+        ...scoped,
+      },
+      _count: true,
+    }),
+  ]);
+  const userSupport = summarizeUserSupportTickets(
+    userSupportRows.map((r) => ({
+      status: r.status as TicketStatus,
+      _count: r._count,
+    })),
+  );
+  return {
+    userSupport: { forConfirmation: userSupport.forConfirmation, closed: userSupport.closed },
+    closedInRange: closedN,
+    openTicketsInPeriod: openN,
+    requestsInRange: volumeN,
+  };
+}
+
 function emptyTaskMetricsUserSupport(): TaskMetricsUserSupportTickets {
   return { forConfirmation: 0, closed: 0, total: 0 };
 }
@@ -181,15 +246,20 @@ function emptyTaskMetricsUserSupport(): TaskMetricsUserSupportTickets {
 function emptyTaskMetricsHelpdesk(
   cadence: HelpdeskTaskCadence,
   openBacklog: number,
+  rangeFromYmd = "",
+  rangeToYmd = "",
 ): TaskMetricsHelpdeskTickets {
   return {
     cadence,
     closedCount: 0,
     denominator: 0,
     ratio: null,
+    percent: null,
     openBacklog,
     openTicketsInPeriod: 0,
     requestsInRange: 0,
+    rangeFromYmd,
+    rangeToYmd,
   };
 }
 
@@ -222,23 +292,78 @@ function reportingTzDayIntervalForRange(range: KpiRange): { start: Date; end: Da
   return reportingTzDayIntervalFromYmd(localDayKey(range.from));
 }
 
+function kpiRangeToYmd(range: KpiRange): { fromYmd: string; toYmd: string } {
+  const ymd = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  return { fromYmd: ymd(range.from), toYmd: ymd(range.to) };
+}
+
+async function countHelpdeskTicketsInRange(
+  range: KpiRange,
+  scoped: Record<string, unknown>,
+): Promise<{ closed: number; open: number }> {
+  const [closed, open] = await Promise.all([
+    prisma.ticket.count({ where: { closedAt: rangeFilter(range), ...scoped } }),
+    prisma.ticket.count({ where: openTicketsInRangeWhere(range, scoped) }),
+  ]);
+  return { closed, open };
+}
+
+/** Helpdesk counts + % for the full Insights date-picker window (not split by cadence). */
+async function aggregateHelpdeskForReportingRange(
+  range: KpiRange,
+  scoped: Record<string, unknown>,
+): Promise<{
+  closedCount: number;
+  openTicketsInPeriod: number;
+  percent: number | null;
+  rangeFromYmd: string;
+  rangeToYmd: string;
+}> {
+  const { fromYmd, toYmd } = kpiRangeToYmd(range);
+  const { closed, open } = await countHelpdeskTicketsInRange(range, scoped);
+  return {
+    closedCount: closed,
+    openTicketsInPeriod: open,
+    percent: helpdeskSupportPercent(closed, open),
+    rangeFromYmd: fromYmd,
+    rangeToYmd: toYmd,
+  };
+}
+
 function computeTaskMetricsHelpdesk(args: {
   cadence: HelpdeskTaskCadence;
   openBacklog: number;
   closedInRange: number;
   openTicketsInPeriod: number;
   requestsInRange: number;
+  percent: number | null;
+  rangeFromYmd: string;
+  rangeToYmd: string;
 }): TaskMetricsHelpdeskTickets {
-  const { cadence, openBacklog, closedInRange, openTicketsInPeriod, requestsInRange } = args;
-  const denominator = openTicketsInPeriod;
+  const {
+    cadence,
+    openBacklog,
+    closedInRange,
+    openTicketsInPeriod,
+    requestsInRange,
+    percent,
+    rangeFromYmd,
+    rangeToYmd,
+  } = args;
+  const denominator = openTicketsInPeriod + closedInRange;
+  const ratio = denominator > 0 ? closedInRange / denominator : null;
   return {
     cadence,
     closedCount: closedInRange,
     denominator,
-    ratio: denominator > 0 ? closedInRange / denominator : null,
+    ratio,
+    percent,
     openBacklog,
     openTicketsInPeriod,
     requestsInRange,
+    rangeFromYmd,
+    rangeToYmd,
   };
 }
 
@@ -306,11 +431,6 @@ export type TaskMetricsPayload = {
   taskChecklistPillars: TaskChecklistPillarMetrics;
 };
 
-function rangeToYmd(range: KpiRange): { fromYmd: string; toYmd: string } {
-  const ymd = (d: Date) => d.toISOString().slice(0, 10);
-  return { fromYmd: ymd(range.from), toYmd: ymd(range.to) };
-}
-
 /** Task metrics tab: helpdesk ratio + user support (scoped reporting range). */
 export async function computeTaskMetrics(
   range: KpiRange,
@@ -321,8 +441,10 @@ export async function computeTaskMetrics(
   const scoped = scope.assignedAgentId
     ? ({ assignedAgentId: scope.assignedAgentId } as const)
     : {};
-  const timeZone = normalizeTimeZone(opts.timeZone);
-  const workingDays = workingDayIntervalsInRange(range, timeZone);
+  /** Helpdesk / User Support use Manila working days even when the browser sends UTC before hydration. */
+  const helpdeskTz = snapshotTimeZoneForTaskMetrics(opts.timeZone);
+  const workingDays = workingDayIntervalsInRange(range, helpdeskTz);
+  const { fromYmd, toYmd } = kpiRangeToYmd(range);
 
   const backlogOpen = await prisma.ticket.count({
     where: { status: "OPEN", ...scoped },
@@ -335,74 +457,59 @@ export async function computeTaskMetrics(
 
   if (workingDays.length > 0) {
     const span = workingDaysSpanRange(workingDays)!;
-    const useHelpdeskCsv = !scope.assignedAgentId;
-    const csvCounts = useHelpdeskCsv
-      ? await loadHelpdeskCsvTaskMetricCounts({ workingDayIntervals: workingDays, span })
-      : null;
+    const globalScope = !scope.assignedAgentId;
 
-    if (csvCounts) {
-      closedInRange = csvCounts.closedInRange;
-      openInRange = csvCounts.openTicketsInPeriod;
-      volume = csvCounts.requestsInRange;
+    const [csvCounts, liveCounts] = await Promise.all([
+      globalScope
+        ? loadHelpdeskCsvTaskMetricCounts({ workingDayIntervals: workingDays, span })
+        : Promise.resolve(null),
+      loadLiveHelpdeskTaskMetricCounts({
+        workingDayIntervals: workingDays,
+        span,
+        scoped,
+      }),
+    ]);
+
+    const blend = globalScope ? resolveHelpdeskMetricBlend(fromYmd, toYmd) : "live-only";
+    const combined = globalScope
+      ? combineHelpdeskCountsByBlend(csvCounts, liveCounts, blend)
+      : liveCounts;
+
+    if (combined) {
+      closedInRange = combined.closedInRange;
+      openInRange = combined.openTicketsInPeriod;
+      volume = combined.requestsInRange;
       userSupportTicketsByStatus = [
-        { status: "FOR_CONFIRMATION" as const, _count: csvCounts.userSupport.forConfirmation },
-        { status: "CLOSED" as const, _count: csvCounts.userSupport.closed },
+        { status: "FOR_CONFIRMATION" as const, _count: combined.userSupport.forConfirmation },
+        { status: "CLOSED" as const, _count: combined.userSupport.closed },
       ];
-    } else {
-      const [closedN, openN, volumeN, userSupportRows] = await Promise.all([
-        prisma.ticket.count({
-          where: {
-            ...scoped,
-            AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDays)],
-          },
-        }),
-        prisma.ticket.count({ where: openTicketsInRangeWhere(span, scoped) }),
-        prisma.ticket.count({
-          where: { ...timestampOnWorkingDaysWhere("createdAt", workingDays), ...scoped },
-        }),
-        prisma.ticket.groupBy({
-          by: ["status"],
-          where: {
-            status: { in: ["FOR_CONFIRMATION", "CLOSED"] },
-            ...timestampOnWorkingDaysWhere("updatedAt", workingDays),
-            ...scoped,
-          },
-          _count: true,
-        }),
-      ]);
-      closedInRange = closedN;
-      openInRange = openN;
-      volume = volumeN;
-      userSupportTicketsByStatus = userSupportRows.map((r) => ({
-        status: r.status as TicketStatus,
-        _count: r._count,
-      }));
     }
   }
 
   const taskMetricsHelpdesk =
     workingDays.length === 0
-      ? emptyTaskMetricsHelpdesk(helpdeskCadence, backlogOpen)
+      ? emptyTaskMetricsHelpdesk(helpdeskCadence, backlogOpen, fromYmd, toYmd)
       : computeTaskMetricsHelpdesk({
           cadence: helpdeskCadence,
           openBacklog: backlogOpen,
           closedInRange,
           openTicketsInPeriod: openInRange,
           requestsInRange: volume,
+          percent: helpdeskSupportPercent(closedInRange, openInRange),
+          rangeFromYmd: fromYmd,
+          rangeToYmd: toYmd,
         });
   const taskMetricsUserSupport =
     workingDays.length === 0
       ? emptyTaskMetricsUserSupport()
       : summarizeUserSupportTickets(userSupportTicketsByStatus);
 
-  const { fromYmd, toYmd } = rangeToYmd(range);
-  const kpiWhere = scope.assignedAgentId ? { assignedAgentId: scope.assignedAgentId } : {};
   const taskChecklistPillars = await computeTaskChecklistPillarMetrics({
     metricsCadence: helpdeskCadence,
     fromYmd,
     toYmd,
-    timeZone,
-    kpiWhere,
+    timeZone: helpdeskTz,
+    kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId),
   });
 
   return { range, taskMetricsHelpdesk, taskMetricsUserSupport, taskChecklistPillars };

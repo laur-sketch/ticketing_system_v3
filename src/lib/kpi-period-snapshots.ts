@@ -1,6 +1,7 @@
 import { DateTime } from "luxon";
-import type { KpiFrequency } from "@prisma/client";
+import type { KpiFrequency, Prisma } from "@prisma/client";
 import {
+  DEFAULT_TIME_ZONE,
   computePeriodKey,
   getDailyPeriodKey,
   getMonthlyPeriodKey,
@@ -22,6 +23,7 @@ import {
   IT_TASK_PILLAR_TITLES,
   type ItTaskPillarTitle,
 } from "@/lib/it-task-pillar-titles";
+import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
 import { prisma } from "@/lib/prisma";
 
 export type KpiRowForSnapshot = {
@@ -37,10 +39,10 @@ export type KpiRowForSnapshot = {
 };
 
 export function timeZoneFromPeriodKey(periodKey: string | null | undefined): string {
-  if (!periodKey) return "UTC";
+  if (!periodKey) return DEFAULT_TIME_ZONE;
   const parts = periodKey.split(":");
   if (parts.length >= 3 && parts[1]) return normalizeTimeZone(parts[1]);
-  return "UTC";
+  return DEFAULT_TIME_ZONE;
 }
 
 export function resolvePeriodKeyForKpi(
@@ -236,8 +238,29 @@ export type TaskChecklistPillarMetric = KpiChecklistProgress & {
 
 export type TaskChecklistPillarMetrics = Partial<Record<ItTaskPillarTitle, TaskChecklistPillarMetric>>;
 
+/** IANA zone used when writing/reading imported KPI period snapshots (defaults to REPORT_TZ). */
+export function snapshotTimeZoneForTaskMetrics(clientTz?: string | null): string {
+  const fromEnv = process.env.KPI_SNAPSHOT_TZ ?? process.env.REPORT_TZ;
+  if (fromEnv) return normalizeTimeZone(fromEnv);
+  const client = clientTz?.trim();
+  // Imported snapshots use Asia/Manila keys; UTC is the SSR/hydration default, not the data zone.
+  if (client && client !== "UTC") return normalizeTimeZone(client);
+  return "Asia/Manila";
+}
+
+/** Task metrics checklist rows: admins see all; personnel see their assignments plus org-wide (unassigned) KPIs. */
+export function kpiMaintenanceWhereForTaskMetrics(
+  assignedAgentId?: string,
+): Prisma.KpiMaintenanceWhereInput {
+  if (!assignedAgentId) return {};
+  if (assignedAgentId === "__none__") return { assignedAgentId: null };
+  return {
+    OR: [{ assignedAgentId }, { assignedAgentId: null }],
+  };
+}
+
 async function computeItProjectImplementationPillarMetric(args: {
-  kpiWhere: { assignedAgentId?: string };
+  kpiWhere: Prisma.KpiMaintenanceWhereInput;
   timeZone: string;
 }): Promise<TaskChecklistPillarMetric> {
   const rows = await prisma.kpiMaintenance.findMany({
@@ -274,9 +297,9 @@ export async function computeTaskChecklistPillarMetrics(args: {
   fromYmd: string;
   toYmd: string;
   timeZone: string;
-  kpiWhere: { assignedAgentId?: string };
+  kpiWhere?: Prisma.KpiMaintenanceWhereInput;
 }): Promise<TaskChecklistPillarMetrics> {
-  const { metricsCadence, fromYmd, toYmd, timeZone, kpiWhere } = args;
+  const { metricsCadence, fromYmd, toYmd, timeZone, kpiWhere = {} } = args;
   const zone = normalizeTimeZone(timeZone);
 
   const kpis = await prisma.kpiMaintenance.findMany({
@@ -297,12 +320,13 @@ export async function computeTaskChecklistPillarMetrics(args: {
     },
   });
 
-  const kpisByPillar = new Map<string, (typeof kpis)[number][]>();
+  const kpisByPillar = new Map<ItTaskPillarTitle, (typeof kpis)[number][]>();
   for (const kpi of kpis) {
-    const title = kpi.title.trim();
-    const list = kpisByPillar.get(title) ?? [];
+    const pillar = pillarFromKpiTitle(kpi.title);
+    if (!pillar || pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
+    const list = kpisByPillar.get(pillar) ?? [];
     list.push(kpi);
-    kpisByPillar.set(title, list);
+    kpisByPillar.set(pillar, list);
   }
 
   const selectedByPillar = new Map<string, (typeof kpis)[number][]>();

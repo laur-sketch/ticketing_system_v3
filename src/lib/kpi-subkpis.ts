@@ -15,6 +15,7 @@ export type SubKpiItem = {
   done?: boolean;
   assignedAgentId?: string | null;
   assignedAgentName?: string | null;
+  screenshotsEnabled?: boolean;
   beforeScreenshot?: TaskScreenshotMetaItem[];
   afterScreenshot?: TaskScreenshotMetaItem[];
   location?: string | null;
@@ -41,6 +42,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
+  const screenshotsEnabled = r?.screenshotsEnabled === true || beforeScreenshot.length > 0 || afterScreenshot.length > 0;
   const location = typeof r?.location === "string" ? r.location.trim() : "";
   const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
@@ -51,6 +53,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     done,
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
     ...(location ? { location } : {}),
@@ -458,6 +461,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   const assignedAgentName = typeof it.assignedAgentName === "string" ? it.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(it.afterScreenshot);
+  const screenshotsEnabled = it.screenshotsEnabled === true || beforeScreenshot.length > 0 || afterScreenshot.length > 0;
   const location = typeof it.location === "string" ? it.location.trim() : "";
   const startDate = normalizeOptionalSubKpiYmd(it.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(it.dueDate);
@@ -468,6 +472,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
     done: Boolean(it.done),
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
     ...(location ? { location } : {}),
@@ -512,6 +517,7 @@ type SubKpiCreateDraft = string | {
   startDate?: string | null;
   dueDate?: string | null;
   endDate?: string | null;
+  screenshotsEnabled?: boolean | null;
 };
 
 function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
@@ -520,10 +526,12 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   if (!title) return null;
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
   const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
+  const screenshotsEnabled = typeof input === "string" ? false : input.screenshotsEnabled === true;
   return {
     id: crypto.randomUUID(),
     title,
     done: false,
+    ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
   };

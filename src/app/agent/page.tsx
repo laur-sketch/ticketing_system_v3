@@ -30,7 +30,7 @@ import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
 export const dynamic = "force-dynamic";
 
 type AgentTicketWithTeam = Prisma.TicketGetPayload<{
-  include: { team: true; assignedAgent: true };
+  include: { team: true; assignedAgent: true; feedback: { select: { csat: true } } };
 }>;
 
 const STATUS_PIPELINE: TicketStatus[] = [
@@ -249,7 +249,7 @@ export default async function AgentHome({
       ? prisma.ticket.findMany({
           where: tableWhere,
           orderBy,
-          include: { team: true, assignedAgent: true },
+          include: { team: true, assignedAgent: true, feedback: { select: { csat: true } } },
           skip: (page - 1) * pageSize,
           take: pageSize,
         })
@@ -259,7 +259,7 @@ export default async function AgentHome({
           where: boardWhere,
           orderBy: { updatedAt: "desc" },
           take: 200,
-          include: { team: true, assignedAgent: true },
+          include: { team: true, assignedAgent: true, feedback: { select: { csat: true } } },
         })
       : Promise.resolve([] as AgentTicketWithTeam[]),
     fetchTicketPipeline ? prisma.ticket.count({ where: dataWhere }) : Promise.resolve(0),
@@ -373,6 +373,8 @@ export default async function AgentHome({
   const applySortClass = (column: string) =>
     `px-4 py-3 ${isSorted(column) ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400"} hover:text-zinc-950 dark:hover:text-zinc-200`;
   const tableRows = tickets;
+  const ratingLabel = (csat: number | null | undefined) =>
+    typeof csat === "number" ? `${"★".repeat(csat)}${"☆".repeat(5 - csat)} ${csat}/5` : "Not rated";
   const showPageLinks = totalPages > 1 && !isBoard;
   const pageLinks = Array.from(
     { length: Math.min(totalPages, 5) },
@@ -731,14 +733,15 @@ export default async function AgentHome({
             ) : (
               <>
                 <div className="w-full overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-                  <table className="w-full min-w-[900px] table-fixed border-collapse divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+                  <table className="w-full min-w-[980px] table-fixed border-collapse divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
                     <colgroup>
                       <col className="w-[9%]" />
-                      <col className="w-[32%]" />
-                      <col className="w-[19%]" />
+                      <col className="w-[28%]" />
+                      <col className="w-[16%]" />
                       <col className="w-[10%]" />
                       <col className="w-[12%]" />
-                      <col className="w-[18%]" />
+                      <col className="w-[11%]" />
+                      <col className="w-[14%]" />
                     </colgroup>
                     <thead className="bg-zinc-100 text-left text-xs font-semibold uppercase tracking-[0.16em] text-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
                       <tr>
@@ -751,6 +754,7 @@ export default async function AgentHome({
                         <th className={applySortClass("status")}>
                           <Link href={sortHref("status")}>Status{sortMarker("status")}</Link>
                         </th>
+                        <th className="px-4 py-3">Rating</th>
                         <th className={applySortClass("updatedAt")}>
                           <Link href={sortHref("updatedAt")}>Updated{sortMarker("updatedAt")}</Link>
                         </th>
@@ -759,7 +763,7 @@ export default async function AgentHome({
                     <tbody className="divide-y divide-zinc-200 bg-white dark:divide-zinc-800 dark:bg-[#0f172a]">
                       {ticketsEmpty ? (
                         <tr>
-                          <td colSpan={6} className="px-4 py-14 text-center">
+                          <td colSpan={7} className="px-4 py-14 text-center">
                             <div className="flex flex-col items-center gap-2">
                               <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">
                                 No tickets match this view
@@ -809,6 +813,17 @@ export default async function AgentHome({
                               <span className={`inline-flex items-center gap-1.5 text-sm font-medium ${statusTone(t.status)}`}>
                                 <span className="inline-block size-1.5 rounded-full bg-current" />
                                 {t.status.replaceAll("_", " ")}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`whitespace-nowrap text-sm font-medium ${
+                                  t.feedback?.csat
+                                    ? "text-amber-600 dark:text-amber-300"
+                                    : "text-zinc-500 dark:text-zinc-500"
+                                }`}
+                              >
+                                {ratingLabel(t.feedback?.csat)}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-zinc-700 dark:text-zinc-300">{relativeTime(t.updatedAt)}</td>

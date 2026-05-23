@@ -153,15 +153,33 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
+    /**
+     * Same rules as NextAuth default (`new URL(url).origin === baseUrl`), plus reject
+     * `//host` paths that start with "/" but are not same-site relative URLs.
+     */
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith("/") && !url.startsWith("//")) return `${baseUrl}${url}`;
+      try {
+        if (new URL(url).origin === baseUrl) return url;
+      } catch {
+        /* ignore */
+      }
+      return baseUrl;
+    },
     async signIn({ user, account }) {
       if (!account || account.provider === "credentials") return true;
       const email = (user.email ?? "").trim().toLowerCase();
       if (!email) return true;
-      await upsertPortalOAuthAccount({
-        email,
-        name: user.name ?? email.split("@")[0] ?? "User",
-        role: normalizeRole(String(user.role ?? "")) ?? "Customer",
-      });
+      try {
+        const portal = await findPortalByEmailOnly(email);
+        await upsertPortalOAuthAccount({
+          email,
+          name: user.name ?? portal?.name ?? email.split("@")[0] ?? "User",
+          role: portal?.role ?? normalizeRole(String(user.role ?? "")) ?? "Customer",
+        });
+      } catch (e) {
+        console.error("upsertPortalOAuthAccount failed", e);
+      }
       return true;
     },
     async jwt({ token, profile, user, account }) {

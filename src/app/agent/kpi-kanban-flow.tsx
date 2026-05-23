@@ -10,7 +10,7 @@ import {
   recurringDeadlineExclusive,
   taskKanbanDerivedStatus,
 } from "@/lib/kpi-cycle-state";
-import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import { DEFAULT_TIME_ZONE, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   isItProjectSubTaskComplete,
   isItProjectSubTaskDelayed,
@@ -47,6 +47,18 @@ function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): str
   if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
   if (hasValidActualDate(s)) return "On time";
   return "Pending";
+}
+
+function taskScreenshotsEnabled(s: SubKpiItem): boolean {
+  return (
+    s.screenshotsEnabled === true ||
+    (s.beforeScreenshot?.length ?? 0) > 0 ||
+    (s.afterScreenshot?.length ?? 0) > 0
+  );
+}
+
+function hasBeforeAndAfterScreenshots(s: SubKpiItem): boolean {
+  return (s.beforeScreenshot?.length ?? 0) > 0 && (s.afterScreenshot?.length ?? 0) > 0;
 }
 
 function ChecklistProgressBar({
@@ -116,20 +128,20 @@ export function AgentKpiKanbanFlow({
   const [agents, setAgents] = useState<AssignableAgent[]>([]);
   const [canAssignWork, setCanAssignWork] = useState(false);
   const [canUnassignWork, setCanUnassignWork] = useState(false);
+  const [canCompleteUnassignedWork, setCanCompleteUnassignedWork] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tz, setTz] = useState("UTC");
+  const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
   const [nowMs, setNowMs] = useState(0);
   const [assignmentLanePage, setAssignmentLanePage] = useState(1);
 
   useEffect(() => {
     queueMicrotask(() => {
       try {
-        const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (zone) setTz(zone);
+        setTz(DEFAULT_TIME_ZONE);
       } catch {
-        setTz("UTC");
+        setTz(DEFAULT_TIME_ZONE);
       }
     });
   }, []);
@@ -148,10 +160,16 @@ export function AgentKpiKanbanFlow({
   async function load() {
     const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}${companyQs}`, { cache: "no-store" });
     if (!res.ok) return;
-    const payload = (await res.json()) as { rows?: KpiRecord[]; canAssignWork?: boolean; canUnassignWork?: boolean };
+    const payload = (await res.json()) as {
+      rows?: KpiRecord[];
+      canAssignWork?: boolean;
+      canUnassignWork?: boolean;
+      canCompleteUnassignedWork?: boolean;
+    };
     if (Array.isArray(payload.rows)) setRows(payload.rows);
     setCanAssignWork(Boolean(payload.canAssignWork));
     setCanUnassignWork(Boolean(payload.canUnassignWork));
+    setCanCompleteUnassignedWork(Boolean(payload.canCompleteUnassignedWork));
   }
 
   async function loadContext() {
@@ -234,7 +252,16 @@ export function AgentKpiKanbanFlow({
 
   function canEditSubKpi(r: KpiRecord, s: SubKpiItem) {
     if (canEditChecklist(r)) return true;
-    return !!operatorAgentId && subKpiAssignedAgentId(s) === operatorAgentId;
+    const subAssigneeId = subKpiAssignedAgentId(s);
+    if (operatorAgentId && subAssigneeId === operatorAgentId) return true;
+    return canCompleteUnassignedWork && !r.assignedAgent?.id && !subAssigneeId;
+  }
+
+  function canCompleteSubKpi(r: KpiRecord, s: SubKpiItem) {
+    const screenshotsEnabled = taskScreenshotsEnabled(s);
+    if (screenshotsEnabled && !hasBeforeAndAfterScreenshots(s)) return false;
+    if (canEditSubKpi(r, s)) return true;
+    return canAssignWork && screenshotsEnabled && hasBeforeAndAfterScreenshots(s);
   }
 
   async function move(id: string, to: KpiBoardStatus) {
@@ -568,6 +595,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderTaskScreenshotFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
+    if (!taskScreenshotsEnabled(s)) return null;
     return (
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {renderScreenshotField(r, s, "before", editable)}
@@ -578,6 +606,8 @@ export function AgentKpiKanbanFlow({
 
   function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem) {
     const subEditable = canEditSubKpi(r, s);
+    const subCompletable = canCompleteSubKpi(r, s);
+    const needsScreenshots = taskScreenshotsEnabled(s) && !hasBeforeAndAfterScreenshots(s);
     const canEditWorkDetails = subEditable || canAssignWork;
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
@@ -595,7 +625,7 @@ export function AgentKpiKanbanFlow({
             <input
               type="checkbox"
               className="mt-1"
-              disabled={!subEditable || busyId === r.id}
+              disabled={!subCompletable || busyId === r.id}
               checked={finished}
               onChange={() => void toggleSubKpi(r.id, s.id, finished)}
               aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
@@ -613,6 +643,11 @@ export function AgentKpiKanbanFlow({
             {finished ? "Finished" : "Pending"}
           </span>
         </div>
+        {needsScreenshots ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Upload both before and after screenshots before marking this sub-task done.
+          </p>
+        ) : null}
         {renderSubKpiAssignmentControl(r, s)}
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {!dailyRecurring ? (
@@ -731,8 +766,8 @@ export function AgentKpiKanbanFlow({
           </p>
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
             Up to six personnel lanes per page; use pagination below the lanes when there are more. Sub-tasks can also
-            be assigned from each task card.
-            Before/after screenshots are available for non-IT Project tasks and accept JPEG or PNG only, up to 10MB each.
+            be assigned from each task card. Before/after screenshots appear only for tasks that enabled them during
+            creation and accept JPEG or PNG only, up to 10MB each.
           </p>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
             <div

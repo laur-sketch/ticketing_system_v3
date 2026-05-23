@@ -1,5 +1,6 @@
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
+  getDailyPeriodStartDt,
   getMonthlyPeriodStartDt,
   getPeriodEndExclusive,
   getQuarterlyPeriodStartDt,
@@ -19,7 +20,7 @@ export function getPeriodStartInclusive(
   const zone = normalizeTimeZone(timeZone);
   switch (frequency) {
     case "DAILY":
-      return DateTime.fromMillis(now.getTime(), { zone }).startOf("day").toJSDate();
+      return getDailyPeriodStartDt(now, zone).toJSDate();
     case "WEEKLY": {
       const wd = typeof recurrenceWeekday === "number" ? recurrenceWeekday : 1;
       return getWeeklyPeriodStartDt(now, wd, zone).toJSDate();

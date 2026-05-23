@@ -1,7 +1,9 @@
 import { basename } from "path";
+import type { KpiFrequency } from "@prisma/client";
 import { DateTime } from "luxon";
 import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
 import {
+  computePeriodKey,
   getDailyPeriodKey,
   getMonthlyPeriodKey,
   getQuarterlyPeriodKey,
@@ -11,15 +13,25 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import { parseCsvLine } from "@/lib/csv-parse";
+import { getPeriodStartInclusive } from "@/lib/kpi-period-window";
 import { prisma } from "@/lib/prisma";
 
 export { parseCsvLine };
+
+/** Pillars imported from the IT SALF KPI spreadsheet into Task metrics. */
+export const KPI_SHEET_IMPORT_PILLARS: ItTaskPillarTitle[] = [
+  "SYSTEM AVAILABILITY",
+  "CYBERSECURITY",
+  "DATA BACKUP",
+  "SYSTEM MAINTENANCE",
+  "NETWORK PERFORMANCE",
+];
 
 /** Map KPI sheet labels (any case/spacing) to canonical pillar titles. */
 const PILLAR_LOOKUP: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
   { match: /^\s*system\s+availability\s*$/i, pillar: "SYSTEM AVAILABILITY" },
   { match: /^\s*cybersecurity\s*$/i, pillar: "CYBERSECURITY" },
-  { match: /^\s*data\s+backup\s*$/i, pillar: "DATA BACKUP" },
+  { match: /^\s*(data|database)\s+backup\s*$/i, pillar: "DATA BACKUP" },
   { match: /^\s*system\s+maintenance\s*$/i, pillar: "SYSTEM MAINTENANCE" },
   { match: /^\s*monitoring\s*$/i, pillar: "MONITORING" },
   { match: /^\s*preventive\s+maintenance\s*$/i, pillar: "PREVENTIVE MAINTENANCE" },
@@ -37,6 +49,66 @@ export function matchPillarFromSheetLabel(raw: string): ItTaskPillarTitle | null
     return squish as ItTaskPillarTitle;
   }
   return null;
+}
+
+/** Map a `KpiMaintenance.title` (any casing / legacy wording) to a canonical pillar. */
+export function pillarFromKpiTitle(title: string): ItTaskPillarTitle | null {
+  return matchPillarFromSheetLabel(title);
+}
+
+const EMPTY_SUB_KPIS = { segmented: false as const, items: [] as { id: string; title: string; done: boolean }[] };
+
+/** Create missing pillar KPI rows and normalize legacy titles (e.g. Database Backup → DATA BACKUP). */
+export async function ensureKpisForSheetImport(
+  pillars: ItTaskPillarTitle[],
+  timeZone: string,
+): Promise<{ created: number; renamed: number }> {
+  const zone = normalizeTimeZone(timeZone);
+  const freq: KpiFrequency = "MONTHLY";
+  const recurrenceMonthDay = 1;
+  const at = new Date();
+  const periodKey = computePeriodKey(freq, null, recurrenceMonthDay, at, zone);
+  const periodCycleStartAt = getPeriodStartInclusive(freq, null, recurrenceMonthDay, at, zone);
+
+  const existing = await prisma.kpiMaintenance.findMany({
+    where: { isRecurring: true },
+    select: { id: true, title: true },
+  });
+
+  let created = 0;
+  let renamed = 0;
+
+  for (const pillar of pillars) {
+    const matches = existing.filter((k) => pillarFromKpiTitle(k.title) === pillar);
+    if (matches.length === 0) {
+      await prisma.kpiMaintenance.create({
+        data: {
+          title: pillar,
+          isRecurring: true,
+          frequency: freq,
+          recurrenceMonthDay,
+          subKpis: EMPTY_SUB_KPIS,
+          periodKey,
+          periodCycleStartAt,
+          createdBy: "kpi-sheet-import",
+          createdByRole: "SuperAdmin",
+        },
+      });
+      created += 1;
+      continue;
+    }
+    for (const row of matches) {
+      if (row.title !== pillar) {
+        await prisma.kpiMaintenance.update({
+          where: { id: row.id },
+          data: { title: pillar },
+        });
+        renamed += 1;
+      }
+    }
+  }
+
+  return { created, renamed };
 }
 
 /** Calendar month `YYYY-MM` → monthly period key for a KPI with given anchor day. */
@@ -394,6 +466,7 @@ export async function applyPillarPercentSnapshots(args: {
   timeZone: string;
   pillarMonths: Record<string, Record<string, number> | undefined>;
   assignedAgentId?: string;
+  ensureKpiRows?: boolean;
 }): Promise<ApplyKpiSheetSnapshotResult> {
   const zone = normalizeTimeZone(args.timeZone);
   const skipped: ApplyKpiSheetSnapshotResult["skipped"] = [];
@@ -412,27 +485,39 @@ export async function applyPillarPercentSnapshots(args: {
       continue;
     }
     if (!byMonth) continue;
+    if (!(KPI_SHEET_IMPORT_PILLARS as readonly string[]).includes(pillar)) continue;
     normalizedPillars[pillar] = { ...normalizedPillars[pillar], ...byMonth };
   }
+
+  const pillarsToEnsure = Object.keys(normalizedPillars) as ItTaskPillarTitle[];
+  if (args.ensureKpiRows !== false && pillarsToEnsure.length > 0) {
+    const ensured = await ensureKpisForSheetImport(pillarsToEnsure, zone);
+    if (ensured.created > 0 || ensured.renamed > 0) {
+      console.info(
+        `[kpi-sheet-import] ensured KPI rows: created=${ensured.created}, renamed=${ensured.renamed}`,
+      );
+    }
+  }
+
+  const allRecurringKpis = await prisma.kpiMaintenance.findMany({
+    where: {
+      isRecurring: true,
+      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] },
+      ...whereAgent,
+    },
+    select: {
+      id: true,
+      title: true,
+      frequency: true,
+      recurrenceWeekday: true,
+      recurrenceMonthDay: true,
+    },
+  });
 
   for (const [pillar, byMonth] of Object.entries(normalizedPillars)) {
     if (!byMonth || typeof byMonth !== "object") continue;
 
-    const kpis = await prisma.kpiMaintenance.findMany({
-      where: {
-        isRecurring: true,
-        title: pillar,
-        frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] },
-        ...whereAgent,
-      },
-      select: {
-        id: true,
-        title: true,
-        frequency: true,
-        recurrenceWeekday: true,
-        recurrenceMonthDay: true,
-      },
-    });
+    const kpis = allRecurringKpis.filter((k) => pillarFromKpiTitle(k.title) === pillar);
 
     if (kpis.length === 0) {
       skipped.push({

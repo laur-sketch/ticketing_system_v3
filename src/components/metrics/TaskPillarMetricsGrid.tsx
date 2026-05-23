@@ -84,12 +84,10 @@ function PillarDonutCard({
   pillar,
   segments,
   headline,
-  subline,
 }: {
   pillar: ItTaskPillarTitle;
   segments: DonutSegment[];
   headline: string;
-  subline: string;
 }) {
   const Icon = PILLAR_ICONS[pillar];
   const total = segments.reduce((a, s) => a + s.value, 0);
@@ -131,7 +129,6 @@ function PillarDonutCard({
           <p className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
             {headline}
           </p>
-          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{subline}</p>
         </div>
         <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
           <Icon className="size-[18px]" strokeWidth={1.75} aria-hidden />
@@ -267,64 +264,6 @@ function checklistProgressSegments(
   return segments;
 }
 
-function checklistPeriodNote(
-  metricsCadence: KpiFrequencyCode,
-  counted: number,
-  inRange: number,
-): string {
-  if (inRange <= 1 && counted <= 1) {
-    if (metricsCadence === "DAILY") return " · this day";
-    if (metricsCadence === "WEEKLY") return " · this week";
-    if (metricsCadence === "MONTHLY") return " · this month";
-    return " · this 4-month period";
-  }
-  if (metricsCadence === "DAILY") {
-    return inRange > 1 ? ` · ${counted}/${inRange} days` : " · recorded snapshot";
-  }
-  if (metricsCadence === "WEEKLY") {
-    if (inRange <= 1) return " · monthly snapshot in week";
-    return ` · avg of ${counted}/${inRange} working day${inRange === 1 ? "" : "s"} in week`;
-  }
-  if (inRange <= 1) return metricsCadence === "MONTHLY" ? " · monthly snapshot" : " · 4-month snapshot";
-  return ` · avg of ${counted}/${inRange} working day${inRange === 1 ? "" : "s"} in ${
-    metricsCadence === "MONTHLY" ? "month" : "4-month period"
-  }`;
-}
-
-function checklistEmptySubline(metricsCadence: KpiFrequencyCode, inRange: number): string {
-  if (metricsCadence === "DAILY") {
-    return inRange > 0 ? "No recorded checklist data for this day" : "No daily checklist KPI for this pillar";
-  }
-  if (metricsCadence === "WEEKLY") {
-    return inRange > 0 ? "No recorded checklist data for this week" : "No daily checklist KPI for this pillar";
-  }
-  if (metricsCadence === "MONTHLY") {
-    return inRange > 0 ? "No recorded checklist data for this month" : "No daily checklist KPI for this pillar";
-  }
-  return inRange > 0 ? "No recorded checklist data for this 4-month period" : "No daily checklist KPI for this pillar";
-}
-
-function checklistSubline(
-  metricsCadence: KpiFrequencyCode,
-  agg: KpiChecklistProgress & { periodsCounted?: number; periodsInRange?: number },
-  view: { positive: number; negative: number; percent: number; inverted: boolean },
-  cfg: { positiveLabel: string; negativeLabel: string },
-): string {
-  const counted = agg.periodsCounted ?? 0;
-  const inRange = agg.periodsInRange ?? 0;
-  const periodNote = checklistPeriodNote(metricsCadence, counted, inRange);
-  if (agg.total === 0) {
-    return checklistEmptySubline(metricsCadence, inRange);
-  }
-  if (view.inverted) {
-    return `${view.positive}/${agg.total} ${cfg.positiveLabel.toLowerCase()} · ${view.negative} ${cfg.negativeLabel.toLowerCase()} · ${view.percent}%${periodNote}`;
-  }
-  if (cfg.positiveLabel === "On time" && cfg.negativeLabel === "Delayed") {
-    return `${agg.done}/${agg.total} on time · ${agg.missing} delayed · ${view.percent}%${periodNote}`;
-  }
-  return `${agg.done}/${agg.total} checked · ${agg.missing} missing · ${view.percent}%${periodNote}`;
-}
-
 function userSupportSegments(us: TaskMetricsUserSupportTickets): DonutSegment[] {
   return [
     {
@@ -399,24 +338,15 @@ export function TaskPillarMetricsGrid({
           const ht = helpdeskTickets;
           const segments = ht ? helpdeskRatioSegments(ht) : [];
           const headline =
-            ht?.ratio != null ? `${Math.round(ht.ratio * 100)}%` : "—";
-          const rangeLabel =
-            metricsCadence === "DAILY"
-              ? "this day"
-              : metricsCadence === "WEEKLY"
-                ? "this week"
-                : metricsCadence === "MONTHLY"
-                  ? "this month"
-                  : "this 4-month period";
-          const subline =
-            !ht ? "" : `${ht.closedCount} closed ÷ ${ht.openTicketsInPeriod} open · ${rangeLabel}`;
+            ht?.percent != null
+              ? `${Number.isInteger(ht.percent) ? ht.percent : ht.percent.toFixed(1)}%`
+              : "—";
           return (
             <PillarDonutCard
               key={pillar}
               pillar={pillar}
               segments={segments}
               headline={headline}
-              subline={subline}
             />
           );
         }
@@ -426,25 +356,12 @@ export function TaskPillarMetricsGrid({
           const segments = us ? userSupportSegments(us) : [];
           const total = us?.total ?? 0;
           const headline = total === 0 ? "—" : `${total} ticket${total === 1 ? "" : "s"}`;
-          const rangeLabel =
-            metricsCadence === "DAILY"
-              ? "this day"
-              : metricsCadence === "WEEKLY"
-                ? "this week"
-                : metricsCadence === "MONTHLY"
-                  ? "this month"
-                  : "this 4-month period";
-          const subline =
-            total === 0
-              ? `No For Confirmation or Closed tickets updated in ${rangeLabel}`
-              : `For Confirmation · Closed · updated in ${rangeLabel}`;
           return (
             <PillarDonutCard
               key={pillar}
               pillar={pillar}
               segments={segments}
               headline={headline}
-              subline={subline}
             />
           );
         }
@@ -472,7 +389,6 @@ export function TaskPillarMetricsGrid({
               pillar={pillar}
               segments={segments}
               headline={headline}
-              subline={checklistSubline(metricsCadence, agg, view, cfg)}
             />
           );
         }

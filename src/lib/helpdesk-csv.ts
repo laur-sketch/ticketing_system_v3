@@ -137,20 +137,99 @@ function dateInWorkingIntervals(d: Date, intervals: WorkingDayInterval[]): boole
   return false;
 }
 
+export type HelpdeskTaskMetricCounts = {
+  userSupport: { forConfirmation: number; closed: number };
+  closedInRange: number;
+  openTicketsInPeriod: number;
+  requestsInRange: number;
+};
+
+/** IT SALF sheet months: historical import only (no live ticket double-count). */
+export const HELPDESK_CSV_ONLY_YEAR_MONTHS = new Set(["2026-03", "2026-04"]);
+
+/** From this month onward: sheet rows in range + live system tickets (Asia/Manila months). */
+export const HELPDESK_LIVE_BLEND_FROM_YM = "2026-05";
+
+export type HelpdeskMetricBlend = "csv-only" | "csv-and-live" | "live-only";
+
+export function reportingYearMonthFromYmd(ymd: string): string {
+  return ymd.trim().slice(0, 7);
+}
+
+/** List YYYY-MM from `fromYm` through `toYm` inclusive. */
+export function yearMonthsBetween(fromYm: string, toYm: string): string[] {
+  let from = fromYm;
+  let to = toYm;
+  if (from > to) {
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  const out: string[] = [];
+  let [y, m] = from.split("-").map(Number) as [number, number];
+  const [ty, tm] = to.split("-").map(Number) as [number, number];
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
 /**
- * When any helpdesk CSV rows are stored, Insights task metrics use them (global scope only).
- * Returns null to keep DB ticket-based metrics.
+ * March–April 2026 → sheet only. May 2026+ → sheet rows for that month + live tickets.
+ */
+export function resolveHelpdeskMetricBlend(fromYmd: string, toYmd: string): HelpdeskMetricBlend {
+  const months = yearMonthsBetween(
+    reportingYearMonthFromYmd(fromYmd),
+    reportingYearMonthFromYmd(toYmd),
+  );
+  if (months.length === 0) return "live-only";
+  if (months.every((ym) => HELPDESK_CSV_ONLY_YEAR_MONTHS.has(ym))) return "csv-only";
+  if (months.some((ym) => ym >= HELPDESK_LIVE_BLEND_FROM_YM)) return "csv-and-live";
+  return "live-only";
+}
+
+export function combineHelpdeskCountsByBlend(
+  csv: HelpdeskTaskMetricCounts | null,
+  live: HelpdeskTaskMetricCounts | null,
+  blend: HelpdeskMetricBlend,
+): HelpdeskTaskMetricCounts | null {
+  if (blend === "csv-only") return csv;
+  if (blend === "csv-and-live") return mergeHelpdeskTaskMetricCounts(csv, live);
+  return live;
+}
+
+/** Sum IT SALF sheet counts with live {@link Ticket} counts (global Insights scope). */
+export function mergeHelpdeskTaskMetricCounts(
+  csv: HelpdeskTaskMetricCounts | null,
+  live: HelpdeskTaskMetricCounts | null,
+): HelpdeskTaskMetricCounts | null {
+  if (!csv && !live) return null;
+  return {
+    userSupport: {
+      forConfirmation:
+        (csv?.userSupport.forConfirmation ?? 0) + (live?.userSupport.forConfirmation ?? 0),
+      closed: (csv?.userSupport.closed ?? 0) + (live?.userSupport.closed ?? 0),
+    },
+    closedInRange: (csv?.closedInRange ?? 0) + (live?.closedInRange ?? 0),
+    openTicketsInPeriod: (csv?.openTicketsInPeriod ?? 0) + (live?.openTicketsInPeriod ?? 0),
+    requestsInRange: (csv?.requestsInRange ?? 0) + (live?.requestsInRange ?? 0),
+  };
+}
+
+/**
+ * IT SALF helpdesk export rows (global scope). Returns null when the table is empty.
+ * Pair with live ticket counts via {@link mergeHelpdeskTaskMetricCounts}.
  */
 export async function loadHelpdeskCsvTaskMetricCounts(args: {
   workingDayIntervals: WorkingDayInterval[];
   /** Mon–Sat span containing all intervals */
   span: { from: Date; to: Date };
-}): Promise<{
-  userSupport: { forConfirmation: number; closed: number };
-  closedInRange: number;
-  openTicketsInPeriod: number;
-  requestsInRange: number;
-} | null> {
+}): Promise<HelpdeskTaskMetricCounts | null> {
   const total = await prisma.helpdeskCsvTicket.count();
   if (total === 0) return null;
 

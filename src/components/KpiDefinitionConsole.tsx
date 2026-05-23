@@ -9,7 +9,7 @@ import {
   isItProjectImplementationPillar,
   isSelectableItTaskPillarTitle,
 } from "@/lib/it-task-pillar-titles";
-import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import { DEFAULT_TIME_ZONE, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   MIN_SEGMENTED_SUBKPIS_FOR_CREATE,
   type SubKpiItem as SubKpi,
@@ -52,7 +52,7 @@ type Props = {
 };
 
 export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
-  const [recurrenceTz, setRecurrenceTz] = useState("UTC");
+  const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
   const [maintenanceTitle, setMaintenanceTitle] = useState("");
   const [maintenanceIsRecurring, setMaintenanceIsRecurring] = useState(true);
   const [nonRecurringStartDate, setNonRecurringStartDate] = useState("");
@@ -65,6 +65,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   const [subKpiTargetDate, setSubKpiTargetDate] = useState("");
   const [subKpisDraft, setSubKpisDraft] = useState<SubKpi[]>([]);
   const [draftUseSegments, setDraftUseSegments] = useState(false);
+  const [enableTaskScreenshots, setEnableTaskScreenshots] = useState(false);
   const [draftSegments, setDraftSegments] = useState<DraftSegmentRow[]>([]);
   const [segItemDraft, setSegItemDraft] = useState<Record<string, string>>({});
   const [segItemScheduleDate, setSegItemScheduleDate] = useState<Record<string, string>>({});
@@ -92,10 +93,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   useEffect(() => {
     queueMicrotask(() => {
       try {
-        const z = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (z) setRecurrenceTz(z);
+        setRecurrenceTz(DEFAULT_TIME_ZONE);
       } catch {
-        setRecurrenceTz("UTC");
+        setRecurrenceTz(DEFAULT_TIME_ZONE);
       }
     });
   }, []);
@@ -375,6 +375,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
           title: it.title.trim(),
           startDate: hideSubTaskScheduleDate ? "" : it.startDate ?? "",
           dueDate: maintenanceIsRecurring ? "" : it.dueDate ?? "",
+          screenshotsEnabled: enableTaskScreenshots,
         })),
       }));
     } else {
@@ -382,6 +383,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         title: s.title,
         startDate: hideSubTaskScheduleDate ? "" : s.startDate ?? "",
         dueDate: maintenanceIsRecurring ? "" : s.dueDate ?? "",
+        screenshotsEnabled: enableTaskScreenshots,
       }));
     }
 
@@ -454,6 +456,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
     setSubKpiScheduleDate("");
     setSubKpiTargetDate("");
     setDraftUseSegments(false);
+    setEnableTaskScreenshots(false);
     setDraftSegments([]);
     setSegItemDraft({});
     setSegItemScheduleDate({});
@@ -494,6 +497,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
               setLocalError(null);
               if (isItProjectImplementationPillar(v)) {
                 setMaintenanceIsRecurring(false);
+                setEnableTaskScreenshots(false);
                 setDraftUseSegments(false);
                 setDraftSegments([]);
                 setNonRecurringStartDate("");
@@ -677,9 +681,23 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
         <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
           {isItProject
             ? "IT Project tasks are not recurring. Add phases and set a due date on each sub-task. Assignees enter actual dates (MM/DD/YYYY) when work is done."
-            : "Add task rows with schedule and target dates. Assignees fill location and date finished on the Task Board."}
+            : "Add task rows with schedule and target dates. By default, assignees complete work with the checklist checkbox on the Task Board."}
         </div>
       </div>
+
+      {!isItProject ? (
+        <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-300">
+          <input
+            type="checkbox"
+            checked={enableTaskScreenshots}
+            onChange={(e) => setEnableTaskScreenshots(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Add before/after screenshot uploads for this task. Leave this off to use the default checkbox-only completion.
+          </span>
+        </label>
+      ) : null}
 
       {showSegmentedCreateOption && kpiMaintenanceAssignWork ? (
         <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">

@@ -6,6 +6,7 @@
 import { DateTime } from "luxon";
 
 export type KpiFrequencyCode = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY";
+export const DEFAULT_TIME_ZONE = "Asia/Manila";
 
 /** @returns true for keys from the pre-timezone format, e.g. `D:2026-04-29`. */
 export function isLegacyPeriodKey(key: string | null | undefined): boolean {
@@ -15,9 +16,9 @@ export function isLegacyPeriodKey(key: string | null | undefined): boolean {
 
 export function normalizeTimeZone(tz: string | null | undefined): string {
   const raw = (tz ?? "").trim();
-  if (!raw) return "UTC";
+  if (!raw) return DEFAULT_TIME_ZONE;
   const probe = DateTime.now().setZone(raw);
-  return probe.isValid ? raw : "UTC";
+  return probe.isValid ? raw : DEFAULT_TIME_ZONE;
 }
 
 function atZone(now: Date, timeZone: string): DateTime {
@@ -35,13 +36,26 @@ export function isKpiMetricsWorkingYmd(ymd: string, timeZone: string): boolean {
   return dt.isValid && isKpiMetricsWorkingDay(dt);
 }
 
+export function getDailyPeriodStartDt(now: Date, timeZone: string): DateTime {
+  const dt = atZone(now, timeZone).startOf("day");
+  return isKpiMetricsWorkingDay(dt) ? dt : dt.minus({ days: 1 });
+}
+
+export function getNextDailyPeriodStartDt(periodStart: DateTime): DateTime {
+  let next = periodStart.startOf("day").plus({ days: 1 });
+  while (!isKpiMetricsWorkingDay(next)) {
+    next = next.plus({ days: 1 });
+  }
+  return next;
+}
+
 /** Luxon weekday 1=Mon … 7=Sun; input is JS getDay() 0=Sun … 6=Sat. */
 function jsWeekdayToLuxon(js: number): number {
   return js === 0 ? 7 : js;
 }
 
 export function getDailyPeriodKey(now: Date, timeZone: string): string {
-  const dt = atZone(now, timeZone);
+  const dt = getDailyPeriodStartDt(now, timeZone);
   return `D:${timeZone}:${dt.toISODate()}`;
 }
 
@@ -155,7 +169,7 @@ export function getPeriodEndExclusive(
   const zone = normalizeTimeZone(timeZone);
   switch (frequency) {
     case "DAILY":
-      return atZone(now, zone).startOf("day").plus({ days: 1 }).toJSDate();
+      return getNextDailyPeriodStartDt(getDailyPeriodStartDt(now, zone)).toJSDate();
     case "WEEKLY": {
       const wd = typeof recurrenceWeekday === "number" ? recurrenceWeekday : 1;
       return getWeeklyPeriodStartDt(now, wd, zone).plus({ weeks: 1 }).toJSDate();
@@ -190,7 +204,7 @@ export function getPeriodEndExclusiveFromCycleStart(
   const start = DateTime.fromMillis(cycleStartUtc.getTime(), { zone }).startOf("day");
   switch (frequency) {
     case "DAILY":
-      return start.plus({ days: 1 }).toJSDate();
+      return getNextDailyPeriodStartDt(start).toJSDate();
     case "WEEKLY":
       void recurrenceWeekday;
       return start.plus({ weeks: 1 }).toJSDate();
@@ -210,5 +224,6 @@ export function getPeriodEndExclusiveFromCycleStart(
 /** First instant eligible for rollover: start of calendar day following completion (in `timeZone`). */
 export function getRolloverEligibleAfterCompletion(completedAtUtc: Date, timeZone: string): Date {
   const zone = normalizeTimeZone(timeZone);
-  return DateTime.fromMillis(completedAtUtc.getTime(), { zone }).startOf("day").plus({ days: 1 }).toJSDate();
+  const completedDay = DateTime.fromMillis(completedAtUtc.getTime(), { zone }).startOf("day");
+  return getNextDailyPeriodStartDt(completedDay).toJSDate();
 }

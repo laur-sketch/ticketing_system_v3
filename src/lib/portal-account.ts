@@ -236,6 +236,17 @@ export async function upsertPortalOAuthAccount(input: {
 }): Promise<PortalRow | null> {
   const email = input.email.trim().toLowerCase();
   if (!email) return null;
+  const name = input.name.trim() || email.split("@")[0] || "User";
+
+  const existing = await findPortalByEmailOnly(email);
+  if (existing) {
+    await prisma.portalAccount.update({
+      where: { id: existing.id },
+      data: { name: name || existing.name },
+    });
+    return findPortalByEmailOnly(email);
+  }
+
   const parsed = normalizePortalRole(input.role ?? "");
   const role =
     parsed === "Personnel" || parsed === "Customer"
@@ -243,20 +254,15 @@ export async function upsertPortalOAuthAccount(input: {
       : isSignupRole(String(input.role ?? ""))
         ? (String(input.role) as SignupRole)
         : "Customer";
-  const name = input.name.trim() || email.split("@")[0] || "User";
 
-  await prisma.portalAccount.upsert({
-    where: { email },
-    create: {
+  await prisma.portalAccount.create({
+    data: {
       id: randomUUID(),
       email,
       name,
       role,
       passwordHash: await bcrypt.hash(randomUUID(), SALT_ROUNDS),
       headPrivileges: false,
-    },
-    update: {
-      name,
     },
   });
 

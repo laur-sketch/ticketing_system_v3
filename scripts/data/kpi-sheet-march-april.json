@@ -1,5 +1,5 @@
 {
-  "_source": "Imported from IT SALF - KPI.csv (March/April 2026). Re-run: npx tsx scripts/apply-kpi-sheet-snapshots.ts \"path/to/IT SALF - KPI.csv\" --year=2026",
+  "_source": "IT SALF - KPI.csv — March & April 2026 headline %. Re-run: npm run db:apply-kpi-sheet -- \"path/to/IT SALF - KPI.csv\"",
   "timeZone": "Asia/Manila",
   "pillars": {
     "SYSTEM AVAILABILITY": { "2026-03": 100, "2026-04": 100 },

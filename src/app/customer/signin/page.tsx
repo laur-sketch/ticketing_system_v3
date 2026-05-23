@@ -11,6 +11,7 @@ export default async function CustomerSignInRedirectPage({ searchParams }: PageP
     if (typeof value === "string") dest.set(key, value);
     else if (Array.isArray(value) && value[0]) dest.set(key, value[0]);
   }
+  if (!dest.has("callbackUrl")) dest.set("callbackUrl", "/");
   const qs = dest.toString();
-  redirect(qs ? `/signin?${qs}` : "/signin");
+  redirect(qs ? `/signin?${qs}` : "/signin?callbackUrl=/");
 }
