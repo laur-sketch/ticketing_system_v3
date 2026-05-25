@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Bell, Search, SlidersHorizontal } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { BrandLockup } from "@/components/BrandLockup";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
@@ -58,35 +58,17 @@ export function Nav() {
     return s ? `/agent?${s}` : "/agent";
   }
 
-  async function refreshUnreadOpenCount(lastSeenMs: number) {
+  const refreshUnreadOpenCount = useCallback(async (lastSeenMs: number) => {
     try {
-      const res = await fetch("/api/tickets?status=OPEN");
+      const params = new URLSearchParams({ lastSeenMs: String(lastSeenMs) });
+      const res = await fetch(`/api/notifications/unread-count?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) return;
-      const rows = (await res.json()) as Array<{ createdAt?: string; updatedAt?: string }>;
-      const ticketCount = rows.filter((t) => {
-        const ts = new Date(t.createdAt ?? t.updatedAt ?? 0).getTime();
-        return Number.isFinite(ts) && ts > lastSeenMs;
-      }).length;
-      if (!isAdminRole) {
-        setUnreadOpenCount(ticketCount);
-        return;
-      }
-
-      const reqRes = await fetch("/api/admin/account-requests/notifications", { cache: "no-store" });
-      const reqPayload = reqRes.ok
-        ? ((await reqRes.json()) as {
-            rows?: Array<{ createdAt?: string }>;
-          })
-        : { rows: [] };
-      const requestCount = (reqPayload.rows ?? []).filter((r) => {
-        const ts = new Date(r.createdAt ?? 0).getTime();
-        return Number.isFinite(ts) && ts > lastSeenMs;
-      }).length;
-      setUnreadOpenCount(ticketCount + requestCount);
+      const payload = (await res.json()) as { total?: number };
+      setUnreadOpenCount(Math.max(0, Number(payload.total ?? 0) || 0));
     } catch {
       // Ignore polling/network failures for badge updates.
     }
-  }
+  }, []);
 
   useEffect(() => {
     if (!notifOpen || !showUtilities) return;
@@ -144,7 +126,7 @@ export function Nav() {
       void refreshUnreadOpenCount(latestSeen);
     }, 30000);
     return () => window.clearInterval(timer);
-  }, [showUtilities, data?.user]);
+  }, [showUtilities, data?.user, refreshUnreadOpenCount]);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {

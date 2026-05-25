@@ -17,6 +17,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:runcheck": "npx tsx scripts/db-runcheck.ts",
+    "api:runcheck": "node scripts/api-runcheck.cjs",
     "db:seed": "prisma db seed",
     "db:populate-tickets": "npx tsx scripts/populate-tickets-date-range.ts",
     "db:backfill-kpi-snapshots": "npx tsx scripts/backfill-kpi-period-snapshots.ts",
