@@ -73,6 +73,19 @@ export type SubKpisStoredEnvelope = {
   pillarScreenshotsEnabled?: boolean;
   pillarBeforeScreenshot?: TaskScreenshotMetaItem[];
   pillarAfterScreenshot?: TaskScreenshotMetaItem[];
+  archivedTaskScreenshots?: ArchivedTaskScreenshotSet[];
+};
+
+export type ArchivedTaskScreenshotSet = {
+  archivedAt: string;
+  subTasks: Array<{
+    id: string;
+    title: string;
+    beforeScreenshot?: TaskScreenshotMetaItem[];
+    afterScreenshot?: TaskScreenshotMetaItem[];
+  }>;
+  pillarBeforeScreenshot?: TaskScreenshotMetaItem[];
+  pillarAfterScreenshot?: TaskScreenshotMetaItem[];
 };
 
 export type NormalizedSubKpis =
@@ -218,6 +231,7 @@ function rawEnvelopeMeta(raw: unknown) {
       pillarScreenshotsEnabled: false,
       pillarBeforeScreenshot: [] as TaskScreenshotMetaItem[],
       pillarAfterScreenshot: [] as TaskScreenshotMetaItem[],
+      archivedTaskScreenshots: [] as ArchivedTaskScreenshotSet[],
     };
   }
   const pillarBeforeScreenshot = parseTaskScreenshotMetaList(raw.pillarBeforeScreenshot);
@@ -229,6 +243,7 @@ function rawEnvelopeMeta(raw: unknown) {
       pillarAfterScreenshot.length > 0,
     pillarBeforeScreenshot,
     pillarAfterScreenshot,
+    archivedTaskScreenshots: parseArchivedTaskScreenshotSets(raw.archivedTaskScreenshots),
   };
 }
 
@@ -239,6 +254,7 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.pillarScreenshotsEnabled ? { pillarScreenshotsEnabled: true } : {}),
     ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
     ...(meta.pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot: meta.pillarAfterScreenshot } : {}),
+    ...(meta.archivedTaskScreenshots.length > 0 ? { archivedTaskScreenshots: meta.archivedTaskScreenshots } : {}),
   } as Prisma.InputJsonValue;
 }
 
@@ -261,6 +277,10 @@ export function getPillarScreenshots(raw: unknown, slot: TaskScreenshotSlot): Ta
   return slot === "before" ? meta.pillarBeforeScreenshot : meta.pillarAfterScreenshot;
 }
 
+export function getArchivedTaskScreenshots(raw: unknown): ArchivedTaskScreenshotSet[] {
+  return rawEnvelopeMeta(raw).archivedTaskScreenshots;
+}
+
 export function setPillarScreenshots(
   raw: unknown,
   slot: TaskScreenshotSlot,
@@ -273,23 +293,116 @@ export function setPillarScreenshots(
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
+export function removePillarScreenshot(
+  raw: unknown,
+  slot: TaskScreenshotSlot,
+  storedFileName: string,
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  const next =
+    slot === "before"
+      ? meta.pillarBeforeScreenshot.filter((item) => item.storedFileName !== storedFileName)
+      : meta.pillarAfterScreenshot.filter((item) => item.storedFileName !== storedFileName);
+  if (slot === "before") meta.pillarBeforeScreenshot = next;
+  else meta.pillarAfterScreenshot = next;
+  meta.pillarScreenshotsEnabled = true;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
 /** Migrate legacy array to envelope (optional, for consistency). */
 export function ensureEnvelope(raw: unknown): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
   return wrapForPersistWithExistingMeta(n, raw);
 }
 
+function parseArchivedTaskScreenshotSets(raw: unknown): ArchivedTaskScreenshotSet[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry): ArchivedTaskScreenshotSet | null => {
+      if (!isPlainObject(entry)) return null;
+      const subTasks = Array.isArray(entry.subTasks)
+        ? entry.subTasks
+            .map((it): ArchivedTaskScreenshotSet["subTasks"][number] | null => {
+              if (!isPlainObject(it)) return null;
+              const id = typeof it.id === "string" ? it.id : "";
+              const title = typeof it.title === "string" ? it.title : "";
+              const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
+              const afterScreenshot = parseTaskScreenshotMetaList(it.afterScreenshot);
+              if (!id || (beforeScreenshot.length === 0 && afterScreenshot.length === 0)) return null;
+              return {
+                id,
+                title,
+                ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
+                ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+              };
+            })
+            .filter((it): it is ArchivedTaskScreenshotSet["subTasks"][number] => it != null)
+        : [];
+      const pillarBeforeScreenshot = parseTaskScreenshotMetaList(entry.pillarBeforeScreenshot);
+      const pillarAfterScreenshot = parseTaskScreenshotMetaList(entry.pillarAfterScreenshot);
+      if (subTasks.length === 0 && pillarBeforeScreenshot.length === 0 && pillarAfterScreenshot.length === 0) {
+        return null;
+      }
+      return {
+        archivedAt: typeof entry.archivedAt === "string" ? entry.archivedAt : new Date().toISOString(),
+        subTasks,
+        ...(pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot } : {}),
+        ...(pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot } : {}),
+      };
+    })
+    .filter((entry): entry is ArchivedTaskScreenshotSet => entry != null);
+}
+
+function archiveScreenshotsForReset(raw: unknown, norm: NormalizedSubKpis): ReturnType<typeof rawEnvelopeMeta> {
+  const meta = rawEnvelopeMeta(raw);
+  const subTasks = collectAllSubKpiItems(norm)
+    .map((it) => {
+      const beforeScreenshot = it.beforeScreenshot ?? [];
+      const afterScreenshot = it.afterScreenshot ?? [];
+      if (beforeScreenshot.length === 0 && afterScreenshot.length === 0) return null;
+      return {
+        id: it.id,
+        title: it.title,
+        ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
+        ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+      };
+    })
+    .filter((it): it is ArchivedTaskScreenshotSet["subTasks"][number] => it != null);
+  if (subTasks.length > 0 || meta.pillarBeforeScreenshot.length > 0 || meta.pillarAfterScreenshot.length > 0) {
+    meta.archivedTaskScreenshots = [
+      ...meta.archivedTaskScreenshots,
+      {
+        archivedAt: new Date().toISOString(),
+        subTasks,
+        ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
+        ...(meta.pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot: meta.pillarAfterScreenshot } : {}),
+      },
+    ];
+    meta.pillarBeforeScreenshot = [];
+    meta.pillarAfterScreenshot = [];
+  }
+  return meta;
+}
+
+function clearActiveScreenshots(it: SubKpiItem): SubKpiItem {
+  const next = { ...it, done: false };
+  delete next.beforeScreenshot;
+  delete next.afterScreenshot;
+  return next;
+}
+
 export function resetAllSubKpiDone(raw: unknown): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
+  const meta = archiveScreenshotsForReset(raw, n);
   if (n.segmented) {
     const segments = n.segments.map((seg) => ({
       ...seg,
-      items: seg.items.map((it) => ({ ...it, done: false })),
+      items: seg.items.map(clearActiveScreenshots),
     }));
-    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
+    return withEnvelopeMeta(wrapForPersist({ segmented: true, segments }), meta);
   }
-  const flat = n.flat.map((it) => ({ ...it, done: false }));
-  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
+  const flat = n.flat.map(clearActiveScreenshots);
+  return withEnvelopeMeta(wrapForPersist({ segmented: false, flat }), meta);
 }
 
 export function setSubKpiItemDone(raw: unknown, subKpiId: string, done: boolean): Prisma.InputJsonValue {
@@ -358,6 +471,28 @@ export function setSubKpiItemScreenshots(
   const key = slot === "before" ? "beforeScreenshot" : "afterScreenshot";
   const touch = (it: SubKpiItem): SubKpiItem =>
     it.id === subKpiId ? { ...it, [key]: screenshots } : it;
+  if (n.segmented) {
+    return wrapForPersistWithExistingMeta({
+      segmented: true,
+      segments: n.segments.map((seg) => ({ ...seg, items: seg.items.map(touch) })),
+    }, raw);
+  }
+  return wrapForPersistWithExistingMeta({ segmented: false, flat: n.flat.map(touch) }, raw);
+}
+
+export function removeSubKpiItemScreenshot(
+  raw: unknown,
+  subKpiId: string,
+  slot: TaskScreenshotSlot,
+  storedFileName: string,
+): Prisma.InputJsonValue {
+  const n = normalizeSubKpis(raw);
+  const key = slot === "before" ? "beforeScreenshot" : "afterScreenshot";
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    const nextScreenshots = (it[key] ?? []).filter((item) => item.storedFileName !== storedFileName);
+    return { ...it, [key]: nextScreenshots };
+  };
   if (n.segmented) {
     return wrapForPersistWithExistingMeta({
       segmented: true,

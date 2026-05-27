@@ -163,7 +163,7 @@ function GlobalSidebarInner() {
             onClick={() => setMobileOpen(false)}
             aria-label="Close navigation menu"
           />
-          <aside className="absolute left-0 top-0 h-full w-[82vw] max-w-[320px] border-r border-border bg-surface px-4 py-5 shadow-2xl dark:border-zinc-800 bg-surface">
+          <aside className="absolute left-0 top-0 flex h-dvh w-[min(88vw,320px)] max-w-[320px] flex-col overflow-y-auto border-r border-border bg-surface px-4 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] pt-[max(1.25rem,env(safe-area-inset-top,0px))] shadow-2xl dark:border-zinc-800">
             <div className="mb-5 flex items-center justify-between">
               <BrandLockup variant="staff-sidebar-expanded" />
               <button

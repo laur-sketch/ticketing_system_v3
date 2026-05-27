@@ -266,6 +266,11 @@ export function AgentKpiKanbanFlow({
     return canAssignWork && screenshotsEnabled && hasBeforeAndAfterScreenshots(s);
   }
 
+  function taskCardDone(r: KpiRecord) {
+    const p = progress(r);
+    return p.total > 0 && p.done === p.total;
+  }
+
   async function move(id: string, to: KpiBoardStatus) {
     setBusyId(id);
     setError(null);
@@ -420,6 +425,57 @@ export function AgentKpiKanbanFlow({
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "Could not upload pillar screenshot.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removePillarScreenshot(recordId: string, slot: TaskScreenshotSlot, storedFileName: string) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: recordId,
+          pillarScreenshotDelete: { slot, storedFileName },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not remove pillar screenshot.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeSubKpiScreenshot(
+    recordId: string,
+    subKpiId: string,
+    slot: TaskScreenshotSlot,
+    storedFileName: string,
+  ) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: recordId,
+          subKpiScreenshotDelete: { subKpiId, slot, storedFileName },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not remove task screenshot.");
         return;
       }
       await load();
@@ -589,6 +645,7 @@ export function AgentKpiKanbanFlow({
     const screenshots = getPillarScreenshots(r.subKpis, slot);
     const label = slot === "before" ? "Before screenshot" : "After screenshot";
     const canUpload = editable || canAssignWork;
+    const canRemove = canUpload && !taskCardDone(r);
     const remainingSlots = Math.max(0, MAX_TASK_SCREENSHOTS_PER_SLOT - screenshots.length);
     return (
       <div className="rounded-lg border border-orange-200 bg-orange-50/60 p-2 dark:border-orange-800/50 dark:bg-orange-950/20">
@@ -596,7 +653,7 @@ export function AgentKpiKanbanFlow({
         {screenshots.length > 0 ? (
           <div className="mt-1 space-y-1">
             {screenshots.map((meta, index) => (
-              <div key={meta.storedFileName} className="text-[11px]">
+              <div key={meta.storedFileName} className="flex items-center justify-between gap-2 text-[11px]">
                 <a
                   href={`/api/kpi-maintenance/${r.id}/screenshots/${encodeURIComponent(meta.storedFileName)}`}
                   target="_blank"
@@ -605,6 +662,21 @@ export function AgentKpiKanbanFlow({
                 >
                   View {index + 1}
                 </a>
+                {canRemove ? (
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void removePillarScreenshot(r.id, slot, meta.storedFileName);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="rounded-full border border-orange-300 px-2 py-0.5 font-semibold text-orange-800 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-800 dark:text-orange-200 dark:hover:bg-orange-950/50"
+                    aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}
+                  >
+                    Remove
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -646,7 +718,7 @@ export function AgentKpiKanbanFlow({
             Pillar screenshots
           </p>
           <p className="text-[10px] text-orange-700 dark:text-orange-300">
-            Attached to this pillar; checkbox completion is unchanged.
+            Cached for recurring cycles; remove before Done if the proof is wrong.
           </p>
         </div>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -661,6 +733,7 @@ export function AgentKpiKanbanFlow({
     const screenshots = slot === "before" ? s.beforeScreenshot ?? [] : s.afterScreenshot ?? [];
     const label = slot === "before" ? "Before screenshot" : "After screenshot";
     const canUpload = editable || canAssignWork;
+    const canRemove = canUpload && !s.done && !taskCardDone(r);
     const remainingSlots = Math.max(0, MAX_TASK_SCREENSHOTS_PER_SLOT - screenshots.length);
     return (
       <div className="rounded-lg border border-zinc-200 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
@@ -670,7 +743,7 @@ export function AgentKpiKanbanFlow({
         {screenshots.length > 0 ? (
           <div className="mt-1 space-y-1">
             {screenshots.map((meta, index) => (
-              <div key={meta.storedFileName} className="text-[11px]">
+              <div key={meta.storedFileName} className="flex items-center justify-between gap-2 text-[11px]">
                 <a
                   href={`/api/kpi-maintenance/${r.id}/screenshots/${encodeURIComponent(meta.storedFileName)}`}
                   target="_blank"
@@ -679,6 +752,21 @@ export function AgentKpiKanbanFlow({
                 >
                   View {index + 1}
                 </a>
+                {canRemove ? (
+                  <button
+                    type="button"
+                    disabled={busyId === r.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void removeSubKpiScreenshot(r.id, s.id, slot, meta.storedFileName);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="rounded-full border border-zinc-300 px-2 py-0.5 font-semibold text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    aria-label={`Remove ${label.toLowerCase()} ${index + 1} for ${s.title}`}
+                  >
+                    Remove
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -714,9 +802,14 @@ export function AgentKpiKanbanFlow({
   function renderTaskScreenshotFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
     if (!taskScreenshotsEnabled(s)) return null;
     return (
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+      <div className="mt-2">
+        <p className="mb-1 text-[10px] text-zinc-500 dark:text-zinc-500">
+          Screenshots are cached for recurring cycles. Remove them before marking this sub-task Done if needed.
+        </p>
+        <div className="grid gap-2 sm:grid-cols-2">
         {renderScreenshotField(r, s, "before", editable)}
         {renderScreenshotField(r, s, "after", editable)}
+        </div>
       </div>
     );
   }

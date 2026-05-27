@@ -19,6 +19,8 @@ import {
   type NormalizedSubKpis,
   markEverySubKpiDone,
   normalizeSubKpis,
+  removePillarScreenshot,
+  removeSubKpiItemScreenshot,
   resetAllSubKpiDone,
   setPillarScreenshots,
   setSubKpiItemAssignee,
@@ -550,8 +552,17 @@ export async function PATCH(req: Request) {
       subKpiId?: string;
       slot?: TaskScreenshotSlot;
     };
+    subKpiScreenshotDelete?: {
+      subKpiId?: string;
+      slot?: TaskScreenshotSlot;
+      storedFileName?: string;
+    };
     pillarScreenshot?: {
       slot?: TaskScreenshotSlot;
+    };
+    pillarScreenshotDelete?: {
+      slot?: TaskScreenshotSlot;
+      storedFileName?: string;
     };
   };
   const contentType = req.headers.get("content-type") ?? "";
@@ -865,6 +876,39 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.pillarScreenshotDelete != null && typeof body.pillarScreenshotDelete === "object") {
+    const slot = body.pillarScreenshotDelete.slot;
+    const storedFileName = String(body.pillarScreenshotDelete.storedFileName ?? "").trim();
+    if (slot !== "before" && slot !== "after") {
+      return NextResponse.json({ error: "Screenshot slot (before/after) is required." }, { status: 400 });
+    }
+    if (!storedFileName) {
+      return NextResponse.json({ error: "storedFileName is required." }, { status: 400 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { status: 400 },
+      );
+    }
+    if (!perms.canAssignWork && !isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (checklistFullyComplete(kpiRow.subKpis)) {
+      return NextResponse.json({ error: "Screenshots cannot be removed after the task card reaches Done." }, { status: 400 });
+    }
+    const existingScreenshots = getPillarScreenshots(kpiRow.subKpis, slot);
+    if (!existingScreenshots.some((item) => item.storedFileName === storedFileName)) {
+      return NextResponse.json({ error: "Screenshot not found." }, { status: 404 });
+    }
+    const updatedJson = removePillarScreenshot(kpiRow.subKpis, slot, storedFileName);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiScreenshot != null && typeof body.subKpiScreenshot === "object") {
     const subKpiIdShot = String(body.subKpiScreenshot.subKpiId ?? "").trim();
     const slot = body.subKpiScreenshot.slot;
@@ -911,6 +955,47 @@ export async function PATCH(req: Request) {
       ...existingScreenshots,
       ...uploaded,
     ]);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.subKpiScreenshotDelete != null && typeof body.subKpiScreenshotDelete === "object") {
+    const subKpiIdShot = String(body.subKpiScreenshotDelete.subKpiId ?? "").trim();
+    const slot = body.subKpiScreenshotDelete.slot;
+    const storedFileName = String(body.subKpiScreenshotDelete.storedFileName ?? "").trim();
+    if (!subKpiIdShot || (slot !== "before" && slot !== "after")) {
+      return NextResponse.json({ error: "subKpiId and screenshot slot (before/after) are required." }, { status: 400 });
+    }
+    if (!storedFileName) {
+      return NextResponse.json({ error: "storedFileName is required." }, { status: 400 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { status: 400 },
+      );
+    }
+    if (!perms.canAssignWork && !canEditSubKpi(subKpiIdShot)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (checklistFullyComplete(kpiRow.subKpis)) {
+      return NextResponse.json({ error: "Screenshots cannot be removed after the task card reaches Done." }, { status: 400 });
+    }
+    const target = subKpiItems.find((it) => it.id === subKpiIdShot);
+    if (!target) {
+      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
+    if (target.done) {
+      return NextResponse.json({ error: "Screenshots cannot be removed after the sub-task is done." }, { status: 400 });
+    }
+    const existingScreenshots = slot === "before" ? target.beforeScreenshot ?? [] : target.afterScreenshot ?? [];
+    if (!existingScreenshots.some((item) => item.storedFileName === storedFileName)) {
+      return NextResponse.json({ error: "Screenshot not found." }, { status: 404 });
+    }
+    const updatedJson = removeSubKpiItemScreenshot(kpiRow.subKpis, subKpiIdShot, slot, storedFileName);
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
       data: { subKpis: updatedJson },

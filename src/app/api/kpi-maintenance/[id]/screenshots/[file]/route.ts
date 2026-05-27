@@ -3,7 +3,13 @@ import path from "path";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { isItProjectEnvelope, itProjectAllItems, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
-import { collectAllSubKpiItems, getPillarScreenshots, hasSubKpiAssignedTo, normalizeSubKpis } from "@/lib/kpi-subkpis";
+import {
+  collectAllSubKpiItems,
+  getArchivedTaskScreenshots,
+  getPillarScreenshots,
+  hasSubKpiAssignedTo,
+  normalizeSubKpis,
+} from "@/lib/kpi-subkpis";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { taskScreenshotsUploadDir } from "@/lib/task-screenshots";
@@ -44,6 +50,13 @@ export async function GET(
   const meta = items
     .flatMap((it) => [...(it.beforeScreenshot ?? []), ...(it.afterScreenshot ?? [])])
     .concat(getPillarScreenshots(row.subKpis, "before"), getPillarScreenshots(row.subKpis, "after"))
+    .concat(
+      getArchivedTaskScreenshots(row.subKpis).flatMap((archive) => [
+        ...(archive.pillarBeforeScreenshot ?? []),
+        ...(archive.pillarAfterScreenshot ?? []),
+        ...archive.subTasks.flatMap((it) => [...(it.beforeScreenshot ?? []), ...(it.afterScreenshot ?? [])]),
+      ]),
+    )
     .find((m) => m?.storedFileName === storedFileName);
   if (!meta) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

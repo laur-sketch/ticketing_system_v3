@@ -51,7 +51,7 @@ export function OrchestrationQueueNav() {
 
   if (canAccessAssignmentBoard) {
     return (
-      <nav className="flex flex-wrap gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-500">
+      <nav className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 text-xs font-medium text-zinc-600 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 dark:text-zinc-500">
         {onAssignment ? (
           <span className={pillActive}>Assignment Board</span>
         ) : (
@@ -88,7 +88,7 @@ export function OrchestrationQueueNav() {
 
   /** Personnel see only Ticket Board + Task Board; Company Board is admin-only. */
   return (
-    <nav className="flex flex-wrap gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-500">
+    <nav className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 text-xs font-medium text-zinc-600 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 dark:text-zinc-500">
       {onTicketBoard ? (
         <span className={pillActive}>Ticket Board</span>
       ) : (

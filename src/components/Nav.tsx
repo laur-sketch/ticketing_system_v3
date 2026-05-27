@@ -151,11 +151,11 @@ export function Nav() {
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2.5 sm:gap-x-4 sm:px-4">
         {showUtilities ? (
           <>
-            <BrandLockup variant="staff-header-compact" href="/" className="inline-flex shrink-0" />
+            <BrandLockup variant="staff-header-compact" href="/" className="inline-flex min-w-0 shrink-0 max-sm:flex-1" />
             <form
               action="/agent"
               method="get"
-              className="flex min-w-0 flex-1 basis-[min(100%,18rem)] items-center rounded-[var(--radius-stoic)] border border-border bg-surface-muted px-3 py-2 text-sm text-muted shadow-sm sm:max-w-xl sm:basis-0"
+              className="order-last flex min-w-0 w-full flex-none items-center rounded-[var(--radius-stoic)] border border-border bg-surface-muted px-3 py-2 text-sm text-muted shadow-sm sm:order-none sm:w-auto sm:flex-1 sm:basis-0 sm:max-w-xl"
             >
               {inQueueContext && status ? <input type="hidden" name="status" value={status} /> : null}
               {inQueueContext && priority ? <input type="hidden" name="priority" value={priority} /> : null}
@@ -188,7 +188,7 @@ export function Nav() {
                     return next;
                   });
                 }}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted sm:h-9 sm:w-9"
                 aria-label="Open notifications panel"
                 title="Open notifications panel"
               >
@@ -200,7 +200,7 @@ export function Nav() {
                 ) : null}
               </button>
               {notifOpen ? (
-                <div className="absolute right-0 z-40 mt-2 w-[min(360px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] stoic-card-elevated p-2">
+                <div className="fixed inset-x-3 top-[calc(4.25rem_+_env(safe-area-inset-top,0px))] z-40 max-h-[calc(100dvh_-_5.5rem_-_env(safe-area-inset-bottom,0px))] overflow-hidden stoic-card-elevated p-2 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(360px,calc(100vw_-_2rem))] sm:max-w-[calc(100vw_-_2rem)]">
                   <div className="flex items-center justify-between px-2 py-1.5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                       Notifications
@@ -209,7 +209,7 @@ export function Nav() {
                       Open board
                     </Link>
                   </div>
-                  <div className="mt-1 max-h-[320px] space-y-1 overflow-y-auto">
+                  <div className="mt-1 max-h-[min(320px,calc(100dvh_-_9rem))] space-y-1 overflow-y-auto">
                     {notifLoading ? (
                       <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">Loading…</p>
                     ) : notifications.length === 0 && accountRequestNotifications.length === 0 ? (
@@ -270,7 +270,7 @@ export function Nav() {
             </div>
             <Link
               href="/process"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:h-9 sm:w-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
               aria-label="Open process controls"
               title="Open process controls"
             >
@@ -280,7 +280,7 @@ export function Nav() {
         ) : null}
 
         <div
-          className={`flex flex-wrap items-center gap-2 ${showUtilities ? "sm:ml-auto" : "ml-auto w-full justify-end sm:w-auto"}`}
+          className={`flex flex-wrap items-center gap-2 ${showUtilities ? "ml-auto justify-end" : "ml-auto w-full justify-end sm:w-auto"}`}
         >
           {data?.user ? (
             <>
@@ -289,14 +289,14 @@ export function Nav() {
                 {data.user.email}
               </span>
               <span
-                className="rounded-full border border-zinc-300 bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-300"
+                className="hidden rounded-full border border-zinc-300 bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-700 min-[420px]:inline-flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-300"
                 title={role ?? undefined}
               >
                 {roleLabel}
               </span>
               <Button
                 variant="outline"
-                className="h-8 rounded-full border-zinc-300 bg-white px-3 text-xs text-zinc-900 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                className="h-8 rounded-full border-zinc-300 bg-white px-2.5 text-xs text-zinc-900 hover:bg-zinc-100 sm:px-3 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                 onClick={() => void signOut({ callbackUrl: "/" })}
               >
                 Sign out

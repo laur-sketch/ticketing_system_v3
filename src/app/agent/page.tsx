@@ -525,20 +525,20 @@ export default async function AgentHome({
             </div>
           </div>
 
-          <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+          <section className="rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
             <AutoSubmitForm className="mb-4 flex flex-col gap-3" method="get">
               {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
               {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
               <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="flex w-full flex-wrap gap-2 xl:w-auto">
+                <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
                   {isCompanyBoard ? (
-                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Company:</span>
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
                       <select
                         name="company"
                         key={`cc-${selectedCompany}`}
                         defaultValue={selectedCompany}
-                        className="max-w-[260px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
                       >
                         <option value="ALL">All companies</option>
                         {rosterTeamsForFilter.map((t) => (
@@ -550,13 +550,13 @@ export default async function AgentHome({
                     </label>
                   ) : null}
                   {showKpiCompanyFilter ? (
-                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Company:</span>
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
                       <select
                         name="company"
                         key={`kpi-${selectedCompany}`}
                         defaultValue={selectedCompany}
-                        className="max-w-[260px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
                       >
                         <option value="ALL">All companies</option>
                         {rosterTeamsForKpiFilter.map((t) => (
@@ -568,12 +568,12 @@ export default async function AgentHome({
                     </label>
                   ) : null}
                   {isCompanyBoard ? null : (
-                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Assigned:</span>
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
                       <select
                         name="assigned"
                         defaultValue={selectedAssigned}
-                        className="max-w-[200px] bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[200px]"
                       >
                         {session.user.role === "Personnel" ? (
                           <option value="ALL">My assigned tickets</option>
@@ -592,12 +592,12 @@ export default async function AgentHome({
                     </label>
                   )}
                   {isBoard || isCompanyBoard ? null : (
-                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Status:</span>
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Status:</span>
                       <select
                         name="status"
                         defaultValue={selectedStatus}
-                        className="bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
                       >
                         {statusOptions.map((option) => (
                           <option key={option.value} value={option.value}>
@@ -608,12 +608,12 @@ export default async function AgentHome({
                     </label>
                   )}
                   {!(isCompanyBoard && hideCompanyPriorityFilter) ? (
-                    <label className="rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="mr-2 text-zinc-600 dark:text-zinc-400">Priority:</span>
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Priority:</span>
                       <select
                         name="priority"
                         defaultValue={selectedPriority}
-                        className="bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
                       >
                         {priorityOptions.map((option) => (
                           <option key={option.value} value={option.value}>
@@ -624,7 +624,7 @@ export default async function AgentHome({
                     </label>
                   ) : null}
                 </div>
-                <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
+                <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
                   <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
                     {isCompanyBoard ? (
                       <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
@@ -655,7 +655,7 @@ export default async function AgentHome({
                       </>
                     )}
                   </div>
-                  <label className="flex min-w-[200px] flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                  <label className="flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
                     <span className="mr-2">Q</span>
                     <input
                       name="q"

@@ -115,7 +115,7 @@ export function CustomerTopNav() {
             onClick={() => setNavOpen(false)}
             aria-label="Close menu"
           />
-          <aside className="absolute left-0 top-0 flex h-full w-[min(88vw,320px)] max-w-[320px] flex-col border-r border-zinc-200 bg-white px-4 py-5 shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220]">
+          <aside className="absolute left-0 top-0 flex h-dvh w-[min(88vw,320px)] max-w-[320px] flex-col overflow-y-auto border-r border-zinc-200 bg-white px-4 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] pt-[max(1.25rem,env(safe-area-inset-top,0px))] shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220]">
             <div className="mb-4 flex items-center justify-between">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">Menu</p>
               <button
@@ -239,7 +239,7 @@ export function CustomerTopNav() {
             <button
               type="button"
               onClick={() => setNotifOpen((v) => !v)}
-              className="inline-flex size-9 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="inline-flex size-10 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 sm:size-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
               aria-label="Notifications"
             >
               <Bell className="size-4" />
@@ -250,7 +250,7 @@ export function CustomerTopNav() {
               ) : null}
             </button>
             {notifOpen ? (
-              <div className="fixed inset-x-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-20 mt-0 w-auto rounded-xl border border-zinc-200 bg-white p-2 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(320px,calc(100vw-2rem))] dark:border-zinc-700 dark:bg-[#0b1220]">
+              <div className="fixed inset-x-3 top-[calc(3.5rem_+_env(safe-area-inset-top,0px))] z-20 mt-0 max-h-[calc(100dvh_-_4.5rem_-_env(safe-area-inset-bottom,0px))] w-auto overflow-hidden rounded-xl border border-zinc-200 bg-white p-2 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(320px,calc(100vw_-_2rem))] dark:border-zinc-700 dark:bg-[#0b1220]">
                 <div className="flex items-center justify-between gap-2 px-2 py-1">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
                     Notifications
@@ -263,7 +263,7 @@ export function CustomerTopNav() {
                     Mark all as read
                   </button>
                 </div>
-                <div className="mt-1 max-h-80 space-y-1 overflow-auto">
+                <div className="mt-1 max-h-[min(20rem,calc(100dvh_-_8rem))] space-y-1 overflow-auto">
                   {notifBusy && groupedNotifications.length === 0 ? (
                     <p className="px-2 py-3 text-xs text-zinc-500 dark:text-zinc-500">Loading…</p>
                   ) : null}
@@ -301,7 +301,7 @@ export function CustomerTopNav() {
           </div>
           <Link
             href="/process"
-            className="inline-flex size-9 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="inline-flex size-10 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 sm:size-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
             aria-label="Help"
           >
             <CircleHelp className="size-4" />
@@ -313,7 +313,7 @@ export function CustomerTopNav() {
             <button
               type="button"
               onClick={() => void signOut({ callbackUrl: "/signin" })}
-              className="text-xs font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+              className="hidden text-xs font-medium text-zinc-600 hover:text-zinc-900 min-[380px]:inline dark:text-zinc-400 dark:hover:text-zinc-100"
             >
               Sign out
             </button>
