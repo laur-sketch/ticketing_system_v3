@@ -139,6 +139,7 @@ export default async function AgentHome({
     (session.user.role === "SuperAdmin" ||
       session.user.role === "Admin" ||
       companyCoordinator);
+  const showTopTicketFilters = boardTab !== "kpi";
 
   const adminScopedCompanyId =
     (isCompanyBoard || showKpiCompanyFilter) &&
@@ -331,7 +332,7 @@ export default async function AgentHome({
     if (!isBoard) {
       if (selectedStatus !== "ALL") qs.set("status", selectedStatus);
     }
-    if (selectedPriority !== "ALL") qs.set("priority", selectedPriority);
+    if (boardTab !== "kpi" && selectedPriority !== "ALL") qs.set("priority", selectedPriority);
     if (query) qs.set("q", query);
     if (sort !== "updatedAt") qs.set("sort", sort);
     if (dir !== "desc") qs.set("dir", dir);
@@ -526,12 +527,13 @@ export default async function AgentHome({
           </div>
 
           <section className="rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-            <AutoSubmitForm className="mb-4 flex flex-col gap-3" method="get">
-              {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
-              {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
-                  {isCompanyBoard ? (
+            {showTopTicketFilters ? (
+              <AutoSubmitForm className="mb-4 flex flex-col gap-3" method="get">
+                {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
+                {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
+                    {isCompanyBoard ? (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
                       <select
@@ -548,26 +550,8 @@ export default async function AgentHome({
                         ))}
                       </select>
                     </label>
-                  ) : null}
-                  {showKpiCompanyFilter ? (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
-                      <select
-                        name="company"
-                        key={`kpi-${selectedCompany}`}
-                        defaultValue={selectedCompany}
-                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
-                      >
-                        <option value="ALL">All companies</option>
-                        {rosterTeamsForKpiFilter.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                  {isCompanyBoard ? null : (
+                    ) : null}
+                    {isCompanyBoard ? null : (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
                       <select
@@ -590,8 +574,8 @@ export default async function AgentHome({
                         )}
                       </select>
                     </label>
-                  )}
-                  {isBoard || isCompanyBoard ? null : (
+                    )}
+                    {isBoard || isCompanyBoard ? null : (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Status:</span>
                       <select
@@ -606,8 +590,8 @@ export default async function AgentHome({
                         ))}
                       </select>
                     </label>
-                  )}
-                  {!(isCompanyBoard && hideCompanyPriorityFilter) ? (
+                    )}
+                    {!(isCompanyBoard && hideCompanyPriorityFilter) ? (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Priority:</span>
                       <select
@@ -622,15 +606,15 @@ export default async function AgentHome({
                         ))}
                       </select>
                     </label>
-                  ) : null}
-                </div>
-                <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
-                  <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
-                    {isCompanyBoard ? (
+                    ) : null}
+                  </div>
+                  <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
+                    <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+                      {isCompanyBoard ? (
                       <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
-                    ) : session.user.role === "Personnel" ? (
+                      ) : session.user.role === "Personnel" ? (
                       <span className="rounded-md px-3 py-1.5 bg-orange-600 text-white">Board</span>
-                    ) : (
+                      ) : (
                       <>
                         <Link
                           href={buildHref({ view: null, page: "1" })}
@@ -653,36 +637,32 @@ export default async function AgentHome({
                           Table
                         </Link>
                       </>
-                    )}
+                      )}
+                    </div>
+                    <label className="flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                      <span className="mr-2">Q</span>
+                      <input
+                        name="q"
+                        defaultValue={searchFieldQuery}
+                        placeholder="Search events…"
+                        className="w-full bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+                      />
+                    </label>
                   </div>
-                  <label className="flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-                    <span className="mr-2">Q</span>
-                    <input
-                      name="q"
-                      defaultValue={searchFieldQuery}
-                      placeholder="Search events…"
-                      className="w-full bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
-                    />
-                  </label>
                 </div>
-              </div>
-              {isBoard && !isCompanyBoard ? (
-                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                  Board view uses lanes (Open, In progress, Feedback) for active pipeline work. Use Table for resolved
-                  items and full filters.
-                </p>
-              ) : isCompanyBoard ? (
-                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                  One column per company with a flat ticket list (number and status). Open a ticket for a read-only
-                  summary; use the ticket board for full details.
-                </p>
-              ) : showKpiCompanyFilter ? (
-                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                  Filter by company (personnel assigned company in Personnel). Choosing one company narrows tasks and
-                  shows only personnel designated to that company.
-                </p>
-              ) : null}
-            </AutoSubmitForm>
+                {isBoard && !isCompanyBoard ? (
+                  <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                    Board view uses lanes (Open, In progress, Feedback) for active pipeline work. Use Table for resolved
+                    items and full filters.
+                  </p>
+                ) : isCompanyBoard ? (
+                  <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                    One column per company with a flat ticket list (number and status). Open a ticket for a read-only
+                    summary; use the ticket board for full details.
+                  </p>
+                ) : null}
+              </AutoSubmitForm>
+            ) : null}
 
             {isCompanyBoard && companyBoardPayload ? (
               <>
@@ -726,6 +706,8 @@ export default async function AgentHome({
                 companyFilterTeamId={
                   showKpiCompanyFilter && selectedCompany !== "ALL" ? selectedCompany : null
                 }
+                companyFilterOptions={showKpiCompanyFilter ? rosterTeamsForKpiFilter : []}
+                currentCompanyFilter={selectedCompany}
                 showAdminTaskManagement={
                   session.user.role === "SuperAdmin" || session.user.role === "Admin"
                 }

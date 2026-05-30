@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { GripVertical } from "lucide-react";
+import { ChevronDown, GripVertical, Maximize2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import {
@@ -104,6 +104,11 @@ type AssignableAgent = {
   team?: { id?: string | null; name?: string | null } | null;
 };
 
+type CompanyFilterOption = {
+  id: string;
+  name: string;
+};
+
 function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
   const seen = new Set<string>();
   const out: AssignableAgent[] = [];
@@ -119,10 +124,16 @@ function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
 
 export function AgentKpiKanbanFlow({
   companyFilterTeamId = null,
+  companyFilterOptions = [],
+  currentCompanyFilter = "ALL",
   showAdminTaskManagement = false,
 }: {
   /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
   companyFilterTeamId?: string | null;
+  /** Company choices shown inside the Task Assignment Board. */
+  companyFilterOptions?: CompanyFilterOption[];
+  /** Current company query value. */
+  currentCompanyFilter?: string;
   /** SuperAdmin / Admin: KPI definition form (moved from Ticket Metrics and Reports). */
   showAdminTaskManagement?: boolean;
 } = {}) {
@@ -137,6 +148,8 @@ export function AgentKpiKanbanFlow({
   const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
   const [nowMs, setNowMs] = useState(0);
   const [assignmentLanePage, setAssignmentLanePage] = useState(1);
+  const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -269,6 +282,21 @@ export function AgentKpiKanbanFlow({
   function taskCardDone(r: KpiRecord) {
     const p = progress(r);
     return p.total > 0 && p.done === p.total;
+  }
+
+  function canOpenSubtaskDrawer(r: KpiRecord, items: SubKpiItem[]) {
+    if (canAssignWork || canEditChecklist(r)) return true;
+    if (!operatorAgentId) return canCompleteUnassignedWork && !r.assignedAgent?.id;
+    return items.some((item) => subKpiAssignedAgentId(item) === operatorAgentId);
+  }
+
+  function toggleSubtaskDrawer(recordId: string) {
+    setOpenSubtaskDrawers((prev) => {
+      const next = new Set(prev);
+      if (next.has(recordId)) next.delete(recordId);
+      else next.add(recordId);
+      return next;
+    });
   }
 
   async function move(id: string, to: KpiBoardStatus) {
@@ -934,6 +962,159 @@ export function AgentKpiKanbanFlow({
     );
   }
 
+  function renderItProjectSubKpiCard(r: KpiRecord, s: SubKpiItem, parentEditable: boolean) {
+    const subEditable = canEditSubKpi(r, s);
+    return (
+      <div
+        key={s.id}
+        className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
+      >
+        <label className="flex items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            disabled={!subEditable || busyId === r.id}
+            checked={isItProjectSubTaskComplete(s)}
+            onChange={() =>
+              void toggleSubKpi(
+                r.id,
+                s.id,
+                isItProjectSubTaskComplete(s),
+              )
+            }
+          />
+          <span
+            className={cn(
+              isItProjectSubTaskComplete(s) && "line-through opacity-70",
+            )}
+          >
+            {s.title}
+          </span>
+        </label>
+        {renderSubKpiAssignmentControl(r, s)}
+        {!hasValidActualDate(s) ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Pick an actual date to complete this sub-task (on time vs delayed is set automatically).
+          </p>
+        ) : null}
+        <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Sub-task
+        </p>
+        <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Due date
+            <DatePickerField
+              value={s.dueDate ?? ""}
+              disabled={!parentEditable || busyId === r.id}
+              onChange={(e) =>
+                void patchSubKpiSchedule(r.id, s.id, {
+                  dueDate: e.target.value || null,
+                })
+              }
+              wrapperClassName="mt-1"
+              aria-label={`Due date for ${s.title}`}
+            />
+          </label>
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Actual date
+            <DatePickerField
+              value={s.actualDate ?? ""}
+              disabled={!subEditable || busyId === r.id}
+              onChange={(e) =>
+                void patchSubKpiSchedule(r.id, s.id, {
+                  actualDate: e.target.value || null,
+                })
+              }
+              wrapperClassName="mt-1"
+              aria-label={`Actual date for ${s.title}`}
+            />
+          </label>
+        </div>
+        <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+          Status:{" "}
+          <span
+            className={cn(
+              "font-semibold",
+              isItProjectSubTaskDelayed(s, nowMs, tz)
+                ? "text-rose-700 dark:text-rose-400"
+                : hasValidActualDate(s)
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-amber-700 dark:text-amber-300",
+            )}
+          >
+            {subTaskStatusLabel(s, nowMs, tz)}
+          </span>
+        </p>
+      </div>
+    );
+  }
+
+  function renderTaskSubtaskContent(r: KpiRecord) {
+    const itProject = isItProjectImplementationPillar(r.title);
+    const normalized = normalizeSubKpis(r.subKpis);
+    const itProjectData = itProject ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase) : null;
+    const checklistItems = collectAllSubKpiItems(normalized);
+    const editable = canEditChecklist(r);
+
+    if (!itProject && normalized.segmented) {
+      return normalized.segments.map((seg) => (
+        <div
+          key={seg.id}
+          className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-900/50"
+        >
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">
+            {seg.label}
+          </p>
+          <div className="mt-1 space-y-2">
+            {seg.items.map((s) => renderNonItSubKpiCard(r, s))}
+          </div>
+        </div>
+      ));
+    }
+
+    if (itProject && itProjectData) {
+      return itProjectData.phases.map((phase) => {
+        const phaseProgress = itProjectPhaseProgressFromItems(phase);
+        return (
+          <div
+            key={phase.id}
+            className="rounded-lg border border-orange-400/45 bg-orange-500/[0.06] p-3 dark:border-orange-500/35 dark:bg-orange-500/10"
+          >
+            <div className="border-b border-orange-400/25 pb-2 dark:border-orange-500/25">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+                  {phase.name}
+                </p>
+                <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
+                  {phaseProgress.total > 0
+                    ? `${phaseProgress.done}/${phaseProgress.total} · ${phaseProgress.percent}%`
+                    : "No sub-tasks"}
+                </span>
+              </div>
+              {phaseProgress.total > 0 ? (
+                <ChecklistProgressBar
+                  percent={phaseProgress.percent}
+                  barClassName="bg-orange-500"
+                />
+              ) : null}
+            </div>
+            <div className="mt-2 space-y-2">
+              {phase.items.length === 0 ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  No sub-tasks in this phase.
+                </p>
+              ) : (
+                phase.items.map((s) => renderItProjectSubKpiCard(r, s, editable))
+              )}
+            </div>
+          </div>
+        );
+      });
+    }
+
+    return checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s));
+  }
+
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
     queueMicrotask(() => setAssignmentLanePage((p) => Math.min(Math.max(1, p), totalPages)));
@@ -958,6 +1139,134 @@ export function AgentKpiKanbanFlow({
     activationDistance: 12,
   });
 
+  const activeTask = activeTaskId ? rows.find((row) => row.id === activeTaskId) ?? null : null;
+
+  function renderActiveTaskModal() {
+    if (!activeTask) return null;
+    const editable = canEditChecklist(activeTask);
+    const p = progress(activeTask);
+    const end = periodEnd(activeTask);
+    const itProject = isItProjectImplementationPillar(activeTask.title);
+    const normalized = normalizeSubKpis(activeTask.subKpis);
+    const itProjectProgress = itProject
+      ? itProjectAggregatedProgressFromRaw(activeTask.subKpis, activeTask.itProjectPhase)
+      : null;
+    const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
+    const mainBarClass = itProject ? "bg-orange-500" : statusOf(activeTask) === "DONE" ? "bg-emerald-500" : "bg-blue-500";
+
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 py-6 backdrop-blur-sm"
+        onClick={() => setActiveTaskId(null)}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${activeTask.title} full task details`}
+      >
+        <div
+          className="max-h-[calc(100dvh-3rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220] sm:p-5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex flex-col gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
+                Full Task Details
+              </p>
+              <h3 className="mt-1 truncate text-xl font-bold text-zinc-950 dark:text-zinc-50">{activeTask.title}</h3>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"} · {itProject ? "Project" : activeTask.frequency}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTaskId(null)}
+              className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white p-2 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              aria-label="Close task details"
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[0.9fr_1.6fr]">
+            <aside className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                    {itProjectProgress ? "Project progress" : "Progress"}
+                  </p>
+                  <p className="text-xs font-bold text-zinc-950 dark:text-zinc-50">
+                    {itProjectProgress
+                      ? `${itProjectProgress.averagePercent}% avg · ${itProjectProgress.totalDone}/${itProjectProgress.totalItems}`
+                      : p.inverted
+                        ? `${p.positive}/${p.total} clear · ${p.negative} flagged`
+                        : `${p.done}/${p.total} finished`}
+                  </p>
+                </div>
+                <ChecklistProgressBar percent={mainBarPct} barClassName={mainBarClass} />
+              </div>
+              <dl className="space-y-2 text-xs">
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Status</dt>
+                  <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">{statusOf(activeTask)}</dd>
+                </div>
+                <div>
+                  <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Cycle</dt>
+                  <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">
+                    {activeTask.isRecurring === false || !end
+                      ? activeTask.nonRecurringStartAt && activeTask.nonRecurringEndAt
+                        ? `${new Date(activeTask.nonRecurringStartAt).toLocaleDateString()} - ${new Date(activeTask.nonRecurringEndAt).toLocaleDateString()}`
+                        : "Non-recurring"
+                      : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}`}
+                  </dd>
+                </div>
+                {!itProject && normalized.segmented ? (
+                  <div>
+                    <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Format</dt>
+                    <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">Segmented checklist</dd>
+                  </div>
+                ) : null}
+              </dl>
+              {itProject ? (
+                <div className="space-y-2 rounded-lg border border-orange-400/35 bg-orange-500/[0.07] p-3 dark:border-orange-500/30 dark:bg-orange-500/10">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+                    Project details
+                  </p>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    Project name
+                    <input
+                      key={`modal-ipn-${activeTask.id}-${activeTask.updatedAt}`}
+                      type="text"
+                      defaultValue={activeTask.itProjectName ?? ""}
+                      disabled={!editable || busyId === activeTask.id}
+                      placeholder="e.g. Intranet refresh"
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        const prev = (activeTask.itProjectName ?? "").trim();
+                        if (v !== prev) void patchItProjectMeta(activeTask.id, { itProjectName: v || null });
+                      }}
+                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </label>
+                </div>
+              ) : (
+                renderPillarScreenshotFields(activeTask, editable)
+              )}
+            </aside>
+
+            <section className="min-w-0">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Subtasks</h4>
+                <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                  {p.total} item{p.total === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="space-y-2">{renderTaskSubtaskContent(activeTask)}</div>
+            </section>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
       <PointerDragGhostLayer ghost={assignLaneDrag.ghost} />
@@ -967,18 +1276,47 @@ export function AgentKpiKanbanFlow({
       ) : null}
       {canAssignWork ? (
         <div className="mb-5 rounded-2xl border border-zinc-300 bg-zinc-50/70 p-4 dark:border-zinc-700 dark:bg-zinc-950/30">
-          <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
-            Task Assignment Board
-          </h4>
-          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            Hold and slide a task, then release over a personnel lane
-            {canUnassignWork ? " or the Unassigned lane" : ""} (works on touch and desktop).
-          </p>
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            Up to six personnel lanes per page; use pagination below the lanes when there are more. Sub-tasks can also
-            be assigned from each task card. Before/after screenshots appear only for tasks that enabled them during
-            creation and accept JPEG or PNG only, up to 10MB each.
-          </p>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
+                Task Assignment Board
+              </h4>
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                Hold and slide a task, then release over a personnel lane
+                {canUnassignWork ? " or the Unassigned lane" : ""} (works on touch and desktop).
+              </p>
+              <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                Up to six personnel lanes per page; use pagination below the lanes when there are more. Sub-tasks can also
+                be assigned from each task card. Before/after screenshots appear only for tasks that enabled them during
+                creation and accept JPEG or PNG only, up to 10MB each.
+              </p>
+            </div>
+            {companyFilterOptions.length > 0 ? (
+              <form method="get" action="/agent" className="w-full lg:w-auto">
+                <input type="hidden" name="board" value="kpi" />
+                <label className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                  <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
+                  <select
+                    name="company"
+                    value={currentCompanyFilter}
+                    onChange={(e) => e.currentTarget.form?.requestSubmit()}
+                    className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-100 lg:min-w-[220px]"
+                    aria-label="Filter task assignments by company"
+                  >
+                    <option value="ALL">All companies</option>
+                    {companyFilterOptions.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Narrows task cards and personnel lanes to this company.
+                </p>
+              </form>
+            ) : null}
+          </div>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
             <div
               ref={canUnassignWork ? assignLaneDrag.registerColumn("__UNASSIGNED__") : undefined}
@@ -1153,6 +1491,8 @@ export function AgentKpiKanbanFlow({
                             : itProject
                               ? "bg-orange-500"
                               : "bg-blue-500";
+                      const drawerAllowed = canOpenSubtaskDrawer(r, checklistItems);
+                      const drawerOpen = openSubtaskDrawers.has(r.id);
                       return (
                         <div
                           key={r.id}
@@ -1160,10 +1500,23 @@ export function AgentKpiKanbanFlow({
                             ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => r.title })
                             : {})}
                           className={cn(
-                            "rounded-xl border bg-white/60 p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-950/30",
+                            "rounded-xl border bg-white/60 p-4 shadow-sm transition hover:border-orange-300 hover:bg-white/85 dark:border-zinc-700 dark:bg-zinc-950/30 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60",
                             busyId === r.id && "opacity-50",
                             editable && kpiStatusDrag.draggingItemId === r.id && "ring-1 ring-orange-400/40",
                           )}
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            const target = e.target as HTMLElement;
+                            if (target.closest("a,button,input,select,textarea,label")) return;
+                            setActiveTaskId(r.id);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setActiveTaskId(r.id);
+                            }
+                          }}
                         >
                           <div className="flex items-start gap-2">
                             {editable ? (
@@ -1191,28 +1544,10 @@ export function AgentKpiKanbanFlow({
                               Reassign the card through lanes above, or assign individual sub-tasks below.
                             </p>
                           ) : null}
-                          {itProject ? (
-                            <div className="mt-3 space-y-2 rounded-lg border border-orange-400/35 bg-orange-500/[0.07] p-3 dark:border-orange-500/30 dark:bg-orange-500/10">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
-                                Project details
-                              </p>
-                              <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                Project name
-                                <input
-                                  key={`ipn-${r.id}-${r.updatedAt}`}
-                                  type="text"
-                                  defaultValue={r.itProjectName ?? ""}
-                                  disabled={!editable || busyId === r.id}
-                                  placeholder="e.g. Intranet refresh"
-                                  onBlur={(e) => {
-                                    const v = e.target.value.trim();
-                                    const prev = (r.itProjectName ?? "").trim();
-                                    if (v !== prev) void patchItProjectMeta(r.id, { itProjectName: v || null });
-                                  }}
-                                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-                                />
-                              </label>
-                            </div>
+                          {itProject && (r.itProjectName || r.itProjectPhase) ? (
+                            <p className="mt-2 truncate text-xs text-orange-800 dark:text-orange-200">
+                              {[r.itProjectName, r.itProjectPhase].filter(Boolean).join(" · ")}
+                            </p>
                           ) : null}
                           <div className="mt-3">
                             <div className="flex items-center justify-between">
@@ -1266,8 +1601,38 @@ export function AgentKpiKanbanFlow({
                                   </p>
                                 ) : null}
                           </div>
-                          {!itProject ? renderPillarScreenshotFields(r, editable) : null}
-                          <div className="mt-3 space-y-2">
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            {drawerAllowed ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleSubtaskDrawer(r.id);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                aria-expanded={drawerOpen}
+                              >
+                                <ChevronDown
+                                  className={cn("size-3.5 transition-transform", drawerOpen && "rotate-180")}
+                                  aria-hidden
+                                />
+                                {drawerOpen ? "Close subtasks" : "Open subtasks"}
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTaskId(r.id);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-full bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500"
+                            >
+                              <Maximize2 className="size-3.5" aria-hidden />
+                              Full details
+                            </button>
+                          </div>
+                          {drawerOpen && !itProject ? renderPillarScreenshotFields(r, editable) : null}
+                          {drawerOpen ? <div className="mt-3 space-y-2">
                             {!itProject && normalized.segmented
                               ? normalized.segments.map((seg) => (
                                   <div
@@ -1406,7 +1771,7 @@ export function AgentKpiKanbanFlow({
                                     );
                                   })
                                 : checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s))}
-                          </div>
+                          </div> : null}
                             </div>
                           </div>
                         </div>
@@ -1419,6 +1784,7 @@ export function AgentKpiKanbanFlow({
           })}
         </div>
       )}
+      {renderActiveTaskModal()}
     </section>
   );
 }
