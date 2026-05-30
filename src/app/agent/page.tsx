@@ -33,6 +33,14 @@ type AgentTicketWithTeam = Prisma.TicketGetPayload<{
   include: { team: true; assignedAgent: true; feedback: { select: { csat: true } } };
 }>;
 
+type EnrichedAssignedAgent = AgentTicketWithTeam["assignedAgent"] & {
+  staffAssignmentColor?: string | null;
+  profileImage?: string | null;
+  profileImageZoom?: number | null;
+  profileImagePosX?: number | null;
+  profileImagePosY?: number | null;
+};
+
 const STATUS_PIPELINE: TicketStatus[] = [
   "OPEN",
   "IN_PROGRESS",
@@ -307,13 +315,43 @@ export default async function AgentHome({
   const assigneeColorByEmail = assigneeColorIdentities.some((x) => (x.email ?? "").trim())
     ? await loadStaffAssignmentColorsForAgents(assigneeColorIdentities)
     : new Map<string, string | null>();
+  const assigneeEmails = Array.from(
+    new Set(
+      assigneeColorIdentities
+        .map((x) => x.email?.trim().toLowerCase())
+        .filter((email): email is string => Boolean(email)),
+    ),
+  );
+  const assigneeProfiles = assigneeEmails.length
+    ? await prisma.portalAccount.findMany({
+        where: { email: { in: assigneeEmails } },
+        select: {
+          email: true,
+          profileImage: true,
+          profileImageZoom: true,
+          profileImagePosX: true,
+          profileImagePosY: true,
+        },
+      })
+    : [];
+  const assigneeProfileByEmail = new Map(
+    assigneeProfiles.map((profile) => [profile.email.trim().toLowerCase(), profile]),
+  );
   const withAssigneeColor = (t: AgentTicketWithTeam): AgentTicketWithTeam => {
     const email = t.assignedAgent?.email?.trim().toLowerCase();
     const staffAssignmentColor = email ? (assigneeColorByEmail.get(email) ?? null) : null;
+    const profile = email ? assigneeProfileByEmail.get(email) : null;
     return {
       ...t,
       assignedAgent: t.assignedAgent
-        ? { ...t.assignedAgent, staffAssignmentColor }
+        ? {
+            ...t.assignedAgent,
+            staffAssignmentColor,
+            profileImage: profile?.profileImage ?? null,
+            profileImageZoom: profile?.profileImageZoom ?? 1,
+            profileImagePosX: profile?.profileImagePosX ?? 50,
+            profileImagePosY: profile?.profileImagePosY ?? 50,
+          }
         : null,
     } as AgentTicketWithTeam;
   };
@@ -393,7 +431,15 @@ export default async function AgentHome({
         updatedAt: t.updatedAt.toISOString(),
         agentName: t.assignedAgent?.name ?? null,
         assigneeColorKey:
-          (t.assignedAgent as { staffAssignmentColor?: string | null } | null)?.staffAssignmentColor ?? null,
+          (t.assignedAgent as EnrichedAssignedAgent | null)?.staffAssignmentColor ?? null,
+        assigneeProfileImage:
+          (t.assignedAgent as EnrichedAssignedAgent | null)?.profileImage ?? null,
+        assigneeProfileImageZoom:
+          (t.assignedAgent as EnrichedAssignedAgent | null)?.profileImageZoom ?? null,
+        assigneeProfileImagePosX:
+          (t.assignedAgent as EnrichedAssignedAgent | null)?.profileImagePosX ?? null,
+        assigneeProfileImagePosY:
+          (t.assignedAgent as EnrichedAssignedAgent | null)?.profileImagePosY ?? null,
       }))
     : [];
 

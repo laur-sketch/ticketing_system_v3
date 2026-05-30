@@ -22,6 +22,10 @@ export type KanbanTicket = {
   updatedAt: string;
   agentName: string | null;
   assigneeColorKey?: string | null;
+  assigneeProfileImage?: string | null;
+  assigneeProfileImageZoom?: number | null;
+  assigneeProfileImagePosX?: number | null;
+  assigneeProfileImagePosY?: number | null;
 };
 
 type ColumnId = "open" | "progress" | "feedback";
@@ -246,7 +250,14 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
                         </p>
                         <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
                           <ElapsedFromIso iso={t.updatedAt} className="inline" />
-                          <AssigneeInitialsBadge agentName={t.agentName} assigneeColorKey={t.assigneeColorKey} />
+                          <AssigneeInitialsBadge
+                            agentName={t.agentName}
+                            assigneeColorKey={t.assigneeColorKey}
+                            profileImage={t.assigneeProfileImage}
+                            profileImageZoom={t.assigneeProfileImageZoom}
+                            profileImagePosX={t.assigneeProfileImagePosX}
+                            profileImagePosY={t.assigneeProfileImagePosY}
+                          />
                         </div>
                       </AgentTicketDeepLink>
                     </div>

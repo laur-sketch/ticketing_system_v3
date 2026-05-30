@@ -14,6 +14,10 @@ function initialsFromAgentName(name: string | null): string {
 type Props = {
   agentName: string | null;
   assigneeColorKey?: string | null;
+  profileImage?: string | null;
+  profileImageZoom?: number | null;
+  profileImagePosX?: number | null;
+  profileImagePosY?: number | null;
   className?: string;
 };
 
@@ -21,9 +25,41 @@ type Props = {
  * Compact assignee chip for ticket cards — uses registry color on the circle when set.
  * Colors follow saturated assignment tokens via CSS variables in `globals.css`.
  */
-export function AssigneeInitialsBadge({ agentName, assigneeColorKey, className }: Props) {
+export function AssigneeInitialsBadge({
+  agentName,
+  assigneeColorKey,
+  profileImage,
+  profileImageZoom,
+  profileImagePosX,
+  profileImagePosY,
+  className,
+}: Props) {
   const vars = personnelAssignmentCssVars(assigneeColorKey);
   const text = initialsFromAgentName(agentName);
+  const title = agentName?.trim() || "Unassigned";
+  if (profileImage) {
+    return (
+      <div
+        className={cn(
+          "size-6 shrink-0 overflow-hidden rounded-full bg-zinc-200 ring-1 ring-inset ring-black/15 dark:bg-zinc-800 dark:ring-white/15",
+          className,
+        )}
+        title={title}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={profileImage}
+          alt={title}
+          className="h-full w-full object-cover"
+          style={{
+            objectPosition: `${profileImagePosX ?? 50}% ${profileImagePosY ?? 50}%`,
+            transform: `scale(${profileImageZoom ?? 1})`,
+            transformOrigin: "center",
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div
       className={cn(
@@ -39,7 +75,7 @@ export function AssigneeInitialsBadge({ agentName, assigneeColorKey, className }
             }
           : undefined
       }
-      title={agentName?.trim() || "Unassigned"}
+      title={title}
     >
       {text}
     </div>
