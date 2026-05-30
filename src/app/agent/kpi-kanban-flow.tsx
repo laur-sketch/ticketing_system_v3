@@ -1268,14 +1268,14 @@ export function AgentKpiKanbanFlow({
   }
 
   return (
-    <section className="mt-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+    <section className="mt-3 space-y-4">
       <PointerDragGhostLayer ghost={assignLaneDrag.ghost} />
       <PointerDragGhostLayer ghost={kpiStatusDrag.ghost} />
       {showAdminTaskManagement ? (
         <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => void load()} />
       ) : null}
       {canAssignWork ? (
-        <div className="mb-5 rounded-2xl border border-zinc-300 bg-zinc-50/70 p-4 dark:border-zinc-700 dark:bg-zinc-950/30">
+        <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-950/20">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
@@ -1317,11 +1317,11 @@ export function AgentKpiKanbanFlow({
               </form>
             ) : null}
           </div>
-          <div className="mt-3 grid gap-3 lg:grid-cols-[1.1fr_1.9fr]">
+          <div className="mt-3 grid gap-2 lg:grid-cols-[1fr_2fr]">
             <div
               ref={canUnassignWork ? assignLaneDrag.registerColumn("__UNASSIGNED__") : undefined}
               className={cn(
-                "rounded-xl border border-zinc-300 bg-white p-3 transition dark:border-zinc-700 dark:bg-zinc-900/40",
+                "rounded-lg border border-zinc-200 bg-white/80 p-2.5 transition dark:border-zinc-800 dark:bg-zinc-900/30",
                 canUnassignWork && assignLaneDrag.hoverColumn === "__UNASSIGNED__" &&
                   "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
               )}
@@ -1332,7 +1332,7 @@ export function AgentKpiKanbanFlow({
                   {unassignedRows.length}
                 </span>
               </div>
-              <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+              <div className="max-h-[300px] space-y-1.5 overflow-y-auto pr-1">
                 {unassignedRows.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-zinc-300 px-3 py-6 text-center text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
                     No unassigned tasks.
@@ -1363,7 +1363,7 @@ export function AgentKpiKanbanFlow({
                     key={`lane-${a.id}`}
                     ref={assignLaneDrag.registerColumn(a.id)}
                     className={cn(
-                      "w-[88%] shrink-0 snap-start rounded-xl border border-zinc-300 bg-white p-3 transition sm:w-auto dark:border-zinc-700 dark:bg-zinc-900/40",
+                      "w-[88%] shrink-0 snap-start rounded-lg border border-zinc-200 bg-white/80 p-2.5 transition sm:w-auto dark:border-zinc-800 dark:bg-zinc-900/30",
                       assignLaneDrag.hoverColumn === a.id && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
                     )}
                   >
@@ -1400,7 +1400,7 @@ export function AgentKpiKanbanFlow({
                 total={agents.length}
                 onPageChange={setAssignmentLanePage}
                 itemLabel="personnel"
-                className="rounded-lg border border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900/40"
+                className="rounded-lg border border-zinc-200 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/30"
               />
             </div>
           </div>
@@ -1431,7 +1431,7 @@ export function AgentKpiKanbanFlow({
           No task cards available.
         </div>
       ) : (
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
           {(["CURRENT", "DONE", "DELAYED"] as const).map((col) => {
             const list = rows
               .filter((r) => statusOf(r) === col)
@@ -1452,7 +1452,7 @@ export function AgentKpiKanbanFlow({
                 key={col}
                 ref={kpiStatusDrag.registerColumn(col)}
                 className={cn(
-                  "min-h-[320px] rounded-2xl border p-3 transition",
+                  "min-h-[300px] rounded-xl border p-2.5 transition",
                   colClass,
                   kpiStatusDrag.hoverColumn === col && "ring-2 ring-orange-500/60",
                 )}
@@ -1463,7 +1463,7 @@ export function AgentKpiKanbanFlow({
                     {list.length}
                   </span>
                 </div>
-                <div className="mt-3 space-y-3">
+                <div className="mt-2 space-y-2.5">
                   {list.length === 0 ? (
                     <p className="px-2 py-8 text-center text-sm text-zinc-600 dark:text-zinc-400">No tasks here.</p>
                   ) : (
@@ -1500,7 +1500,7 @@ export function AgentKpiKanbanFlow({
                             ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => r.title })
                             : {})}
                           className={cn(
-                            "rounded-xl border bg-white/60 p-4 shadow-sm transition hover:border-orange-300 hover:bg-white/85 dark:border-zinc-700 dark:bg-zinc-950/30 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60",
+                            "rounded-lg border bg-white/75 p-3 shadow-sm transition hover:border-orange-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-950/30 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60",
                             busyId === r.id && "opacity-50",
                             editable && kpiStatusDrag.draggingItemId === r.id && "ring-1 ring-orange-400/40",
                           )}
@@ -1632,146 +1632,11 @@ export function AgentKpiKanbanFlow({
                             </button>
                           </div>
                           {drawerOpen && !itProject ? renderPillarScreenshotFields(r, editable) : null}
-                          {drawerOpen ? <div className="mt-3 space-y-2">
-                            {!itProject && normalized.segmented
-                              ? normalized.segments.map((seg) => (
-                                  <div
-                                    key={seg.id}
-                                    className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-900/50"
-                                  >
-                                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">
-                                      {seg.label}
-                                    </p>
-                                    <div className="mt-1 space-y-2">
-                                      {seg.items.map((s) => renderNonItSubKpiCard(r, s))}
-                                    </div>
-                                  </div>
-                                ))
-                              : itProject && itProjectData
-                                ? itProjectData.phases.map((phase) => {
-                                    const phaseProgress = itProjectPhaseProgressFromItems(phase);
-                                    return (
-                                      <div
-                                        key={phase.id}
-                                        className="rounded-lg border border-orange-400/45 bg-orange-500/[0.06] p-3 dark:border-orange-500/35 dark:bg-orange-500/10"
-                                      >
-                                        <div className="border-b border-orange-400/25 pb-2 dark:border-orange-500/25">
-                                          <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
-                                              {phase.name}
-                                            </p>
-                                            <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
-                                              {phaseProgress.total > 0
-                                                ? `${phaseProgress.done}/${phaseProgress.total} · ${phaseProgress.percent}%`
-                                                : "No sub-tasks"}
-                                            </span>
-                                          </div>
-                                          {phaseProgress.total > 0 ? (
-                                            <ChecklistProgressBar
-                                              percent={phaseProgress.percent}
-                                              barClassName="bg-orange-500"
-                                            />
-                                          ) : null}
-                                        </div>
-                                        <div className="mt-2 space-y-2">
-                                          {phase.items.length === 0 ? (
-                                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                                              No sub-tasks in this phase.
-                                            </p>
-                                          ) : (
-                                            phase.items.map((s) => {
-                                              const subEditable = canEditSubKpi(r, s);
-                                              return (
-                                              <div
-                                                key={s.id}
-                                                className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
-                                              >
-                                      <label className="flex items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200">
-                                        <input
-                                          type="checkbox"
-                                          className="mt-0.5"
-                                          disabled={!subEditable || busyId === r.id}
-                                          checked={isItProjectSubTaskComplete(s)}
-                                          onChange={() =>
-                                            void toggleSubKpi(
-                                              r.id,
-                                              s.id,
-                                              isItProjectSubTaskComplete(s),
-                                            )
-                                          }
-                                        />
-                                        <span
-                                          className={cn(
-                                            isItProjectSubTaskComplete(s) && "line-through opacity-70",
-                                          )}
-                                        >
-                                          {s.title}
-                                        </span>
-                                      </label>
-                                      {renderSubKpiAssignmentControl(r, s)}
-                                      {!hasValidActualDate(s) ? (
-                                        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                                          Pick an actual date to complete this sub-task (on time vs delayed is set automatically).
-                                        </p>
-                                      ) : null}
-                                      <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                                        Sub-task
-                                      </p>
-                                      <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
-                                        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                          Due date
-                                          <DatePickerField
-                                            value={s.dueDate ?? ""}
-                                            disabled={!editable || busyId === r.id}
-                                            onChange={(e) =>
-                                              void patchSubKpiSchedule(r.id, s.id, {
-                                                dueDate: e.target.value || null,
-                                              })
-                                            }
-                                            wrapperClassName="mt-1"
-                                            aria-label={`Due date for ${s.title}`}
-                                          />
-                                        </label>
-                                        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                          Actual date
-                                          <DatePickerField
-                                            value={s.actualDate ?? ""}
-                                            disabled={!subEditable || busyId === r.id}
-                                            onChange={(e) =>
-                                              void patchSubKpiSchedule(r.id, s.id, {
-                                                actualDate: e.target.value || null,
-                                              })
-                                            }
-                                            wrapperClassName="mt-1"
-                                            aria-label={`Actual date for ${s.title}`}
-                                          />
-                                        </label>
-                                      </div>
-                                      <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-                                        Status:{" "}
-                                        <span
-                                          className={cn(
-                                            "font-semibold",
-                                            isItProjectSubTaskDelayed(s, nowMs, tz)
-                                              ? "text-rose-700 dark:text-rose-400"
-                                              : hasValidActualDate(s)
-                                                ? "text-emerald-600 dark:text-emerald-400"
-                                                : "text-amber-700 dark:text-amber-300",
-                                          )}
-                                        >
-                                          {subTaskStatusLabel(s, nowMs, tz)}
-                                        </span>
-                                      </p>
-                                              </div>
-                                              );
-                                            })
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
-                                  })
-                                : checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s))}
-                          </div> : null}
+                          {drawerOpen ? (
+                            <div className="mt-3 space-y-2">
+                              {renderTaskSubtaskContent(r)}
+                            </div>
+                          ) : null}
                             </div>
                           </div>
                         </div>

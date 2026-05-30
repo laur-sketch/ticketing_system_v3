@@ -526,7 +526,13 @@ export default async function AgentHome({
             </div>
           </div>
 
-          <section className="rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+          <section
+            className={
+              boardTab === "kpi"
+                ? "min-w-0"
+                : "rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+            }
+          >
             {showTopTicketFilters ? (
               <AutoSubmitForm className="mb-4 flex flex-col gap-3" method="get">
                 {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
