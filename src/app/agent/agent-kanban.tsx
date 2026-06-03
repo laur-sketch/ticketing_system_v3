@@ -148,9 +148,14 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
       if (t) void moveTicket(t, column);
     },
     isColumnDropDisabled: (c) => c === "open",
-    activationDistance: 12,
+    activationDistance: 7,
     disabled: busyId != null,
   });
+
+  function quickMoveTargets(ticket: KanbanTicket) {
+    const currentColumn = statusToColumn(ticket.status);
+    return columns.filter((target) => target.id !== currentColumn && target.id !== "open");
+  }
 
   return (
     <div className="space-y-3">
@@ -161,11 +166,11 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
         </p>
       ) : null}
 
-      <p className="text-[11px] text-zinc-600 md:hidden dark:text-zinc-400">
-        Tap a card to open it. Drag using the grip icon on the left to move tickets between lanes.
+      <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600 md:hidden dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-400">
+        Swipe lanes sideways. Use the large grip to drag, or tap a quick move button on each card.
       </p>
 
-      <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 [touch-action:pan-x] md:mx-0 md:grid md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:snap-none md:grid-cols-3 md:[touch-action:auto]">
+      <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 [touch-action:pan-x] md:mx-0 md:grid md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:snap-none md:grid-cols-3 md:[touch-action:auto]">
         {columns.map((col) => {
           const colTickets = tickets.filter((t) => statusToColumn(t.status) === col.id);
           const dropEnabled = col.id !== "open";
@@ -176,11 +181,11 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
               key={col.id}
               ref={registerColumn(col.id)}
               className={cn(
-                "flex min-h-[280px] w-[86vw] min-w-[260px] snap-start flex-col rounded-xl border border-zinc-200 bg-zinc-50 sm:w-[360px] md:w-auto md:min-w-0 dark:border-zinc-800 dark:bg-zinc-950/40",
+                "flex min-h-[280px] w-[88vw] min-w-[280px] snap-start flex-col rounded-xl border border-zinc-200 bg-zinc-50 sm:w-[360px] md:w-auto md:min-w-0 dark:border-zinc-800 dark:bg-zinc-950/40",
                 highlightDrop && "ring-2 ring-orange-500/70 ring-offset-2 ring-offset-zinc-50 dark:ring-offset-zinc-950",
               )}
             >
-              <div className="border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
+              <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
                 <div className="flex items-baseline justify-between gap-2">
                   <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-900 dark:text-zinc-200">
                     {col.label}
@@ -204,68 +209,87 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
                       t.status === "ESCALATED" && "ring-1 ring-rose-500/40",
                     )}
                   >
-                    <div className="flex gap-1.5 p-3 pt-2">
+                    <div className="flex gap-1.5 p-2.5 sm:p-3 sm:pt-2">
                       <span
                         {...getCardPointerProps(t.id, {
                           getLabel: () => `#${t.ticketNumber} · ${(t.description || t.title).slice(0, 80)}`,
                         })}
                         className={cn(
-                          "mt-0.5 shrink-0 touch-none select-none text-zinc-400 md:cursor-grab md:active:cursor-grabbing dark:text-zinc-500",
+                          "mt-0.5 flex min-h-11 w-9 shrink-0 touch-none select-none flex-col items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-500 active:bg-orange-50 active:text-orange-600 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:cursor-grab md:active:cursor-grabbing dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-400 dark:active:bg-orange-950/30",
                           busyId === t.id && "pointer-events-none",
                         )}
                         title="Hold and drag to another lane (touch or mouse)"
-                        aria-hidden
+                        aria-label={`Drag ticket ${t.ticketNumber}`}
+                        role="button"
                       >
-                        <GripVertical className="size-4" />
+                        <GripVertical className="size-5 md:size-4" />
+                        <span className="mt-0.5 text-[9px] font-bold uppercase leading-none md:hidden">Drag</span>
                       </span>
-                      <AgentTicketDeepLink
-                        ticketId={t.id}
-                        className="min-w-0 flex-1 cursor-pointer rounded-md text-left hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="font-mono text-[11px] text-zinc-600 hover:text-orange-700 dark:text-zinc-500 dark:hover:text-zinc-300">
-                            #{t.ticketNumber}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            <span
-                              className={cn(
-                                "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                priorityClass(t.priority),
-                              )}
-                            >
-                              {priorityBadgeLabel(t.priority)}
+                      <div className="min-w-0 flex-1">
+                        <AgentTicketDeepLink
+                          ticketId={t.id}
+                          className="block min-w-0 cursor-pointer rounded-md text-left hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40"
+                        >
+                          <div className="flex flex-col gap-1.5 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
+                            <span className="min-w-0 font-mono text-[11px] text-zinc-600 hover:text-orange-700 dark:text-zinc-500 dark:hover:text-zinc-300">
+                              #{t.ticketNumber}
                             </span>
-                            <span
-                              className={cn(
-                                "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
-                                statusBadgeClass(t.status),
-                              )}
-                            >
-                              {statusBadgeLabel(t.status)}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1 min-[420px]:justify-end">
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                                  priorityClass(t.priority),
+                                )}
+                              >
+                                {priorityBadgeLabel(t.priority)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                                  statusBadgeClass(t.status),
+                                )}
+                              >
+                                {statusBadgeLabel(t.status)}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-100">
-                          {t.description || t.title}
-                        </p>
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
-                          <ElapsedFromIso iso={t.updatedAt} className="inline" />
-                          <AssigneeInitialsBadge
-                            agentName={t.agentName}
-                            assigneeColorKey={t.assigneeColorKey}
-                            profileImage={t.assigneeProfileImage}
-                            profileImageZoom={t.assigneeProfileImageZoom}
-                            profileImagePosX={t.assigneeProfileImagePosX}
-                            profileImagePosY={t.assigneeProfileImagePosY}
-                          />
-                        </div>
-                      </AgentTicketDeepLink>
+                          <p className="mt-1 line-clamp-3 break-words text-sm font-semibold leading-snug text-zinc-900 hover:underline sm:line-clamp-2 dark:text-zinc-100">
+                            {t.description || t.title}
+                          </p>
+                          <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
+                            <ElapsedFromIso iso={t.updatedAt} className="inline" />
+                            <AssigneeInitialsBadge
+                              agentName={t.agentName}
+                              assigneeColorKey={t.assigneeColorKey}
+                              profileImage={t.assigneeProfileImage}
+                              profileImageZoom={t.assigneeProfileImageZoom}
+                              profileImagePosX={t.assigneeProfileImagePosX}
+                              profileImagePosY={t.assigneeProfileImagePosY}
+                            />
+                          </div>
+                        </AgentTicketDeepLink>
+                        {quickMoveTargets(t).length > 0 ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5 md:hidden">
+                            {quickMoveTargets(t).map((target) => (
+                              <button
+                                key={target.id}
+                                type="button"
+                                disabled={busyId === t.id}
+                                onClick={() => void moveTicket(t, target.id)}
+                                className="rounded-full border border-orange-300 bg-orange-50 px-2.5 py-1 text-[10px] font-bold text-orange-800 active:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-800 dark:bg-orange-950/30 dark:text-orange-200"
+                              >
+                                Move to {target.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   </AssigneeColorHighlight>
                 ))}
 
                 {colTickets.length === 0 && (
-                  <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-zinc-800 py-6 text-center">
+                  <div className="flex min-h-[92px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 py-5 text-center dark:border-zinc-800">
                     <p className="text-xs font-medium text-zinc-600 dark:text-zinc-500">+ Drop here</p>
                     <p className="mt-0.5 text-[11px] text-zinc-600">Drag a card from another lane</p>
                   </div>

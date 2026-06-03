@@ -576,15 +576,15 @@ export default async function AgentHome({
             className={
               boardTab === "kpi"
                 ? "min-w-0"
-                : "rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+                : "rounded-xl border border-zinc-200 bg-white p-2.5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
             }
           >
             {showTopTicketFilters ? (
-              <AutoSubmitForm className="mb-4 flex flex-col gap-3" method="get">
+              <AutoSubmitForm className="mb-3 flex flex-col gap-2.5 sm:mb-4 sm:gap-3" method="get">
                 {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
                 {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
+                <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
+                  <div className="grid w-full grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
                     {isCompanyBoard ? (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
@@ -661,7 +661,7 @@ export default async function AgentHome({
                     ) : null}
                   </div>
                   <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
-                    <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900">
+                    <div className="inline-flex w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
                       {isCompanyBoard ? (
                       <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
                       ) : session.user.role === "Personnel" ? (
@@ -670,7 +670,7 @@ export default async function AgentHome({
                       <>
                         <Link
                           href={buildHref({ view: null, page: "1" })}
-                          className={`rounded-md px-3 py-1.5 ${
+                          className={`flex-1 rounded-md px-3 py-1.5 text-center sm:flex-none ${
                             isBoard
                               ? "bg-orange-600 text-white"
                               : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
@@ -680,7 +680,7 @@ export default async function AgentHome({
                         </Link>
                         <Link
                           href={buildHref({ view: "table", page: "1" })}
-                          className={`rounded-md px-3 py-1.5 ${
+                          className={`flex-1 rounded-md px-3 py-1.5 text-center sm:flex-none ${
                             !isBoard
                               ? "bg-orange-600 text-white"
                               : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
@@ -703,7 +703,7 @@ export default async function AgentHome({
                   </div>
                 </div>
                 {isBoard && !isCompanyBoard ? (
-                  <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                  <p className="hidden text-[11px] text-zinc-600 sm:block dark:text-zinc-500">
                     Board view uses lanes (Open, In progress, Feedback) for active pipeline work. Use Table for resolved
                     items and full filters.
                   </p>
