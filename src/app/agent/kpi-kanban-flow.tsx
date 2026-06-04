@@ -46,6 +46,7 @@ const ASSIGNMENT_COMPANY_ALL = "ALL";
 const ASSIGNMENT_NO_COMPANY = "__NO_COMPANY__";
 const ASSIGNMENT_COMPANY_DROP_PREFIX = "__COMPANY__:";
 const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
+const HIDDEN_ASSIGNMENT_COMPANY_NAMES = new Set(["hr", "gen services", "gen. services", "general services"]);
 
 function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): string {
   if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
@@ -121,6 +122,10 @@ function assignmentCompanyKey(agent: AssignableAgent): string {
 
 function assignmentCompanyName(agent: AssignableAgent): string {
   return agent.team?.name?.trim() || "No assigned company";
+}
+
+function isHiddenAssignmentCompanyName(name: string): boolean {
+  return HIDDEN_ASSIGNMENT_COMPANY_NAMES.has(name.trim().toLowerCase());
 }
 
 function assignmentCompanyDropTarget(companyId: string): string {
@@ -1185,13 +1190,17 @@ export function AgentKpiKanbanFlow({
   const assignmentCompanyOptions = useMemo<AssignmentCompanyOption[]>(() => {
     const agentCountByCompany = new Map<string, number>();
     const nameByCompany = new Map<string, string>();
+    const rosterCompanyIds = new Set(companyFilterOptions.map((team) => team.id));
 
     for (const team of companyFilterOptions) {
+      if (isHiddenAssignmentCompanyName(team.name)) continue;
       nameByCompany.set(team.id, team.name);
     }
 
     for (const agent of agents) {
       const key = assignmentCompanyKey(agent);
+      if (rosterCompanyIds.size > 0 && !rosterCompanyIds.has(key)) continue;
+      if (isHiddenAssignmentCompanyName(assignmentCompanyName(agent))) continue;
       agentCountByCompany.set(key, (agentCountByCompany.get(key) ?? 0) + 1);
       if (!nameByCompany.has(key)) nameByCompany.set(key, assignmentCompanyName(agent));
     }
