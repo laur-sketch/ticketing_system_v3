@@ -39,11 +39,13 @@ import {
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 import { DatePickerField } from "@/components/ui/DatePickerField";
-import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
 
-const TASK_ASSIGNMENT_LANES_PAGE_SIZE = 6;
+const ASSIGNMENT_COMPANY_ALL = "ALL";
+const ASSIGNMENT_NO_COMPANY = "__NO_COMPANY__";
+const ASSIGNMENT_COMPANY_DROP_PREFIX = "__COMPANY__:";
+const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
 
 function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): string {
   if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
@@ -109,6 +111,36 @@ type CompanyFilterOption = {
   name: string;
 };
 
+type AssignmentCompanyOption = CompanyFilterOption & {
+  agentCount: number;
+};
+
+function assignmentCompanyKey(agent: AssignableAgent): string {
+  return agent.team?.id ?? (agent.team?.name ? `name:${agent.team.name.trim().toLowerCase()}` : ASSIGNMENT_NO_COMPANY);
+}
+
+function assignmentCompanyName(agent: AssignableAgent): string {
+  return agent.team?.name?.trim() || "No assigned company";
+}
+
+function assignmentCompanyDropTarget(companyId: string): string {
+  return `${ASSIGNMENT_COMPANY_DROP_PREFIX}${companyId}`;
+}
+
+function assignmentCompanyIdFromTarget(target: string | null): string | null {
+  if (!target?.startsWith(ASSIGNMENT_COMPANY_DROP_PREFIX)) return null;
+  return target.slice(ASSIGNMENT_COMPANY_DROP_PREFIX.length);
+}
+
+function assignmentUserDropTarget(agentId: string): string {
+  return `${ASSIGNMENT_USER_DROP_PREFIX}${agentId}`;
+}
+
+function assignmentUserIdFromTarget(target: string | null): string | null {
+  if (!target?.startsWith(ASSIGNMENT_USER_DROP_PREFIX)) return null;
+  return target.slice(ASSIGNMENT_USER_DROP_PREFIX.length);
+}
+
 function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
   const seen = new Set<string>();
   const out: AssignableAgent[] = [];
@@ -147,7 +179,10 @@ export function AgentKpiKanbanFlow({
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
   const [nowMs, setNowMs] = useState(0);
-  const [assignmentLanePage, setAssignmentLanePage] = useState(1);
+  const [assignmentCompanyId, setAssignmentCompanyId] = useState(
+    currentCompanyFilter !== ASSIGNMENT_COMPANY_ALL ? currentCompanyFilter : ASSIGNMENT_COMPANY_ALL,
+  );
+  const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
@@ -1115,23 +1150,85 @@ export function AgentKpiKanbanFlow({
     return checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s));
   }
 
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
-    queueMicrotask(() => setAssignmentLanePage((p) => Math.min(Math.max(1, p), totalPages)));
-  }, [agents.length]);
-
-  const assignmentLanePageCount = Math.max(1, Math.ceil(agents.length / TASK_ASSIGNMENT_LANES_PAGE_SIZE));
-  const assignmentLanePageClamped = Math.min(Math.max(1, assignmentLanePage), assignmentLanePageCount);
-  const visibleAssignmentAgents = useMemo(() => {
-    const start = (assignmentLanePageClamped - 1) * TASK_ASSIGNMENT_LANES_PAGE_SIZE;
-    return agents.slice(start, start + TASK_ASSIGNMENT_LANES_PAGE_SIZE);
-  }, [agents, assignmentLanePageClamped]);
-
   const assignLaneDrag = usePointerColumnDrag<string>({
-    onDrop: (id, agentId) => void assignKpi(id, agentId),
+    onDrop: (id, targetId) => {
+      setDragRevealCompanyId(null);
+      const companyId = assignmentCompanyIdFromTarget(targetId);
+      if (companyId) {
+        setAssignmentCompanyId(companyId);
+        return;
+      }
+      void assignKpi(id, assignmentUserIdFromTarget(targetId) ?? targetId);
+    },
+    onHover: (targetId) => {
+      const companyId = assignmentCompanyIdFromTarget(targetId);
+      if (companyId) {
+        setDragRevealCompanyId((prev) => (prev === companyId ? prev : companyId));
+        return;
+      }
+      const userId = assignmentUserIdFromTarget(targetId);
+      if (userId) {
+        const userAgent = agents.find((agent) => agent.id === userId);
+        if (userAgent) {
+          const userCompanyId = assignmentCompanyKey(userAgent);
+          setDragRevealCompanyId((prev) => (prev === userCompanyId ? prev : userCompanyId));
+          return;
+        }
+      }
+      setDragRevealCompanyId(null);
+    },
+    onDragEnd: () => setDragRevealCompanyId(null),
     disabled: busyId != null || !canAssignWork,
     activationDistance: 12,
   });
+
+  const assignmentCompanyOptions = useMemo<AssignmentCompanyOption[]>(() => {
+    const agentCountByCompany = new Map<string, number>();
+    const nameByCompany = new Map<string, string>();
+
+    for (const team of companyFilterOptions) {
+      nameByCompany.set(team.id, team.name);
+    }
+
+    for (const agent of agents) {
+      const key = assignmentCompanyKey(agent);
+      agentCountByCompany.set(key, (agentCountByCompany.get(key) ?? 0) + 1);
+      if (!nameByCompany.has(key)) nameByCompany.set(key, assignmentCompanyName(agent));
+    }
+
+    const options: AssignmentCompanyOption[] = [];
+    for (const [id, name] of nameByCompany) {
+      const agentCount = agentCountByCompany.get(id) ?? 0;
+      if (agentCount > 0 || companyFilterOptions.some((team) => team.id === id)) {
+        options.push({ id, name, agentCount });
+      }
+    }
+
+    return options.sort((a, b) => {
+      const rosterA = companyFilterOptions.findIndex((team) => team.id === a.id);
+      const rosterB = companyFilterOptions.findIndex((team) => team.id === b.id);
+      if (rosterA !== -1 || rosterB !== -1) {
+        const orderA = rosterA === -1 ? Number.MAX_SAFE_INTEGER : rosterA;
+        const orderB = rosterB === -1 ? Number.MAX_SAFE_INTEGER : rosterB;
+        return orderA - orderB;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [agents, companyFilterOptions]);
+
+  const activeAssignmentCompanyId =
+    dragRevealCompanyId ??
+    (!assignLaneDrag.draggingItemId && assignmentCompanyId !== ASSIGNMENT_COMPANY_ALL ? assignmentCompanyId : null);
+  const agentsByAssignmentCompany = useMemo(() => {
+    const grouped = new Map<string, AssignableAgent[]>();
+    for (const agent of agents) {
+      const key = assignmentCompanyKey(agent);
+      const list = grouped.get(key);
+      if (list) list.push(agent);
+      else grouped.set(key, [agent]);
+    }
+    return grouped;
+  }, [agents]);
 
   const kpiStatusDrag = usePointerColumnDrag<KpiBoardStatus>({
     onDrop: (id, col) => void move(id, col),
@@ -1282,40 +1379,15 @@ export function AgentKpiKanbanFlow({
                 Task Assignment Board
               </h4>
               <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                Hold and slide a task, then release over a personnel lane
+                Hold and slide a task over a company, then release over a user in its dropdown
                 {canUnassignWork ? " or the Unassigned lane" : ""} (works on touch and desktop).
               </p>
               <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                Up to six personnel lanes per page; use pagination below the lanes when there are more. Sub-tasks can also
-                be assigned from each task card. Before/after screenshots appear only for tasks that enabled them during
-                creation and accept JPEG or PNG only, up to 10MB each.
+                Drag over a company to open its user dropdown, then release over a user. Sub-tasks can also be assigned
+                from each task card. Before/after screenshots appear only for tasks that enabled them during creation and
+                accept JPEG or PNG only, up to 10MB each.
               </p>
             </div>
-            {companyFilterOptions.length > 0 ? (
-              <form method="get" action="/agent" className="w-full lg:w-auto">
-                <input type="hidden" name="board" value="kpi" />
-                <label className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                  <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
-                  <select
-                    name="company"
-                    value={currentCompanyFilter}
-                    onChange={(e) => e.currentTarget.form?.requestSubmit()}
-                    className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-100 lg:min-w-[220px]"
-                    aria-label="Filter task assignments by company"
-                  >
-                    <option value="ALL">All companies</option>
-                    {companyFilterOptions.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Narrows task cards and personnel lanes to this company.
-                </p>
-              </form>
-            ) : null}
           </div>
           <div className="mt-3 grid gap-2 lg:grid-cols-[1fr_2fr]">
             <div
@@ -1357,51 +1429,106 @@ export function AgentKpiKanbanFlow({
               </div>
             </div>
             <div className="min-w-0 space-y-3">
-              <div className="-mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 [touch-action:pan-x] sm:mx-0 sm:grid sm:gap-3 sm:overflow-visible sm:px-0 sm:pb-0 sm:[touch-action:auto] lg:grid-cols-2">
-                {visibleAssignmentAgents.map((a) => (
-                  <div
-                    key={`lane-${a.id}`}
-                    ref={assignLaneDrag.registerColumn(a.id)}
-                    className={cn(
-                      "w-[88%] shrink-0 snap-start rounded-lg border border-zinc-200 bg-white/80 p-2.5 transition sm:w-auto dark:border-zinc-800 dark:bg-zinc-900/30",
-                      assignLaneDrag.hoverColumn === a.id && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
-                    )}
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{a.name}</p>
-                      <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                        {assignedCountByAgent.get(a.id) ?? 0}
-                      </span>
-                    </div>
-                    <div className="max-h-[140px] space-y-1.5 overflow-y-auto pr-1">
-                      {rows
-                        .filter((r) => r.assignedAgent?.id === a.id)
-                        .slice(0, 5)
-                        .map((r) => (
-                          <div
-                            key={`lane-item-${r.id}`}
-                            {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => r.title })}
-                            className={cn(
-                              "touch-pan-y select-none truncate rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700",
-                              assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
-                              busyId === r.id && "pointer-events-none opacity-50",
-                            )}
-                          >
-                            {r.title}
-                          </div>
-                        ))}
-                    </div>
+              <div className="rounded-lg border border-zinc-200 bg-white/80 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/30">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                      Personnel group
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Drag over a company to reveal its users, then drop on a person.
+                    </p>
                   </div>
-                ))}
+                </div>
+                {assignmentCompanyOptions.length > 0 ? (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {assignmentCompanyOptions.map((company) => {
+                      const targetId = assignmentCompanyDropTarget(company.id);
+                      const isSelected = assignmentCompanyId === company.id;
+                      const isRevealed = activeAssignmentCompanyId === company.id;
+                      const companyAgents = agentsByAssignmentCompany.get(company.id) ?? [];
+                      return (
+                        <div
+                          key={`company-drop-${company.id}`}
+                          ref={assignLaneDrag.registerColumn(targetId)}
+                          className={cn(
+                            "rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-2 transition dark:border-zinc-700 dark:bg-zinc-950/40",
+                            isSelected && "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
+                            isRevealed && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAssignmentCompanyId((current) =>
+                                current === company.id ? ASSIGNMENT_COMPANY_ALL : company.id,
+                              );
+                            }}
+                            aria-pressed={isSelected}
+                            className="flex w-full items-center justify-between gap-2 text-left"
+                          >
+                            <span className="min-w-0 truncate text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                              {company.name}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-1">
+                              <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                {company.agentCount}
+                              </span>
+                              <ChevronDown
+                                className={cn(
+                                  "size-3.5 text-zinc-500 transition-transform dark:text-zinc-400",
+                                  isRevealed && "rotate-180",
+                                )}
+                                aria-hidden
+                              />
+                            </span>
+                          </button>
+                          {isRevealed ? (
+                            <div className="mt-2 rounded-lg border border-orange-200 bg-white p-1.5 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
+                              <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                                Drop on a user
+                              </p>
+                              <div className="max-h-44 space-y-1 overflow-y-auto pr-1">
+                                {companyAgents.length === 0 ? (
+                                  <p className="rounded-md border border-dashed border-zinc-300 px-2 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                                    No users in this company.
+                                  </p>
+                                ) : null}
+                                {companyAgents.map((agent) => {
+                                  const userTargetId = assignmentUserDropTarget(agent.id);
+                                  const isUserHovered = assignLaneDrag.hoverColumn === userTargetId;
+                                  return (
+                                    <div
+                                      key={`company-user-${company.id}-${agent.id}`}
+                                      ref={assignLaneDrag.registerColumn(userTargetId)}
+                                      role="option"
+                                      aria-selected={isUserHovered}
+                                      className={cn(
+                                        "rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-left transition dark:border-zinc-800 dark:bg-zinc-900/50",
+                                        isUserHovered &&
+                                          "border-orange-400 bg-orange-50 ring-2 ring-orange-500/50 dark:border-orange-700 dark:bg-orange-950/30",
+                                      )}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="min-w-0 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                          {agent.name}
+                                        </p>
+                                        <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                          {assignedCountByAgent.get(agent.id) ?? 0}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
-              <SimplePaginationBar
-                page={assignmentLanePage}
-                pageSize={TASK_ASSIGNMENT_LANES_PAGE_SIZE}
-                total={agents.length}
-                onPageChange={setAssignmentLanePage}
-                itemLabel="personnel"
-                className="rounded-lg border border-zinc-200 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/30"
-              />
             </div>
           </div>
         </div>

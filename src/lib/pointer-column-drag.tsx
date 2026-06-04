@@ -30,13 +30,15 @@ type Session = {
  */
 export function usePointerColumnDrag<T extends string>(options: {
   onDrop: (itemId: string, column: T) => void;
+  onHover?: (column: T | null) => void;
+  onDragEnd?: () => void;
   /** When true, column is not a valid drop target (still receives hover for UX if needed). */
   isColumnDropDisabled?: (column: T) => boolean;
   /** Minimum movement (px) before a drag activates; avoids fighting taps and light scrolls. */
   activationDistance?: number;
   disabled?: boolean;
 }) {
-  const { onDrop, isColumnDropDisabled, activationDistance = 14, disabled = false } = options;
+  const { onDrop, onHover, onDragEnd, isColumnDropDisabled, activationDistance = 14, disabled = false } = options;
   const colRef = useRef(new Map<string, HTMLElement>());
   const sessionRef = useRef<Session | null>(null);
   const [ghost, setGhost] = useState<PointerDragGhost | null>(null);
@@ -50,13 +52,15 @@ export function usePointerColumnDrag<T extends string>(options: {
   }, []);
 
   const hitTest = useCallback((clientX: number, clientY: number): T | null => {
+    let best: { key: string; area: number } | null = null;
     for (const [key, el] of colRef.current) {
       const r = el.getBoundingClientRect();
       if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-        return key as T;
+        const area = r.width * r.height;
+        if (!best || area < best.area) best = { key, area };
       }
     }
-    return null;
+    return best?.key as T | null;
   }, []);
 
   const getCardPointerProps = useCallback(
@@ -109,7 +113,9 @@ export function usePointerColumnDrag<T extends string>(options: {
           });
           const col = hitTest(ev.clientX, ev.clientY);
           const allowed = col != null && !isColumnDropDisabled?.(col);
-          setHoverColumn(allowed ? col : null);
+          const nextHoverColumn = allowed ? col : null;
+          setHoverColumn(nextHoverColumn);
+          onHover?.(nextHoverColumn);
           if (s.activated) ev.preventDefault();
         };
 
@@ -139,7 +145,9 @@ export function usePointerColumnDrag<T extends string>(options: {
           sessionRef.current = null;
           setGhost(null);
           setHoverColumn(null);
+          onHover?.(null);
           setDraggingItemId(null);
+          onDragEnd?.();
         };
 
         window.addEventListener("pointermove", onMove, { passive: false });
@@ -147,7 +155,7 @@ export function usePointerColumnDrag<T extends string>(options: {
         window.addEventListener("pointercancel", onUp);
       },
     }),
-    [activationDistance, disabled, hitTest, isColumnDropDisabled, onDrop],
+    [activationDistance, disabled, hitTest, isColumnDropDisabled, onDragEnd, onDrop, onHover],
   );
 
   return { registerColumn, getCardPointerProps, ghost, hoverColumn, draggingItemId };
