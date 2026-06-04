@@ -46,7 +46,6 @@ const ASSIGNMENT_COMPANY_ALL = "ALL";
 const ASSIGNMENT_NO_COMPANY = "__NO_COMPANY__";
 const ASSIGNMENT_COMPANY_DROP_PREFIX = "__COMPANY__:";
 const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
-const HIDDEN_ASSIGNMENT_COMPANY_NAMES = new Set(["hr", "gen services", "gen. services", "general services"]);
 
 function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): string {
   if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
@@ -105,6 +104,7 @@ type AssignableAgent = {
   name: string;
   email?: string | null;
   team?: { id?: string | null; name?: string | null } | null;
+  assignmentCompany?: { id?: string | null; name?: string | null } | null;
 };
 
 type CompanyFilterOption = {
@@ -117,15 +117,14 @@ type AssignmentCompanyOption = CompanyFilterOption & {
 };
 
 function assignmentCompanyKey(agent: AssignableAgent): string {
-  return agent.team?.id ?? (agent.team?.name ? `name:${agent.team.name.trim().toLowerCase()}` : ASSIGNMENT_NO_COMPANY);
+  return (
+    agent.assignmentCompany?.id ??
+    (agent.assignmentCompany?.name ? `name:${agent.assignmentCompany.name.trim().toLowerCase()}` : ASSIGNMENT_NO_COMPANY)
+  );
 }
 
 function assignmentCompanyName(agent: AssignableAgent): string {
-  return agent.team?.name?.trim() || "No assigned company";
-}
-
-function isHiddenAssignmentCompanyName(name: string): boolean {
-  return HIDDEN_ASSIGNMENT_COMPANY_NAMES.has(name.trim().toLowerCase());
+  return agent.assignmentCompany?.name?.trim() || "No assigned company";
 }
 
 function assignmentCompanyDropTarget(companyId: string): string {
@@ -673,13 +672,11 @@ export function AgentKpiKanbanFlow({
     if (!canAssignWork) {
       return <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{subKpiAssigneeLabel(s)}</p>;
     }
-    const mainTeamId = r.assignedAgent?.team?.id ?? null;
-    const mainTeamName = r.assignedAgent?.team?.name?.trim().toLowerCase() ?? "";
-    const companyScopedAgents = agents.filter((a) => {
-      if (mainTeamId) return a.team?.id === mainTeamId;
-      if (mainTeamName) return a.team?.name?.trim().toLowerCase() === mainTeamName;
-      return false;
-    });
+    const mainAssignee = r.assignedAgent?.id ? agents.find((a) => a.id === r.assignedAgent?.id) ?? null : null;
+    const mainCompanyId = mainAssignee ? assignmentCompanyKey(mainAssignee) : null;
+    const companyScopedAgents = mainCompanyId
+      ? agents.filter((a) => assignmentCompanyKey(a) === mainCompanyId)
+      : [];
     const assignedStillVisible = assignedId && !companyScopedAgents.some((a) => a.id === assignedId);
     return (
       <label className="mt-2 flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
@@ -1193,14 +1190,12 @@ export function AgentKpiKanbanFlow({
     const rosterCompanyIds = new Set(companyFilterOptions.map((team) => team.id));
 
     for (const team of companyFilterOptions) {
-      if (isHiddenAssignmentCompanyName(team.name)) continue;
       nameByCompany.set(team.id, team.name);
     }
 
     for (const agent of agents) {
       const key = assignmentCompanyKey(agent);
       if (rosterCompanyIds.size > 0 && !rosterCompanyIds.has(key)) continue;
-      if (isHiddenAssignmentCompanyName(assignmentCompanyName(agent))) continue;
       agentCountByCompany.set(key, (agentCountByCompany.get(key) ?? 0) + 1);
       if (!nameByCompany.has(key)) nameByCompany.set(key, assignmentCompanyName(agent));
     }

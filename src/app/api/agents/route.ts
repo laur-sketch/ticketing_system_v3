@@ -28,12 +28,20 @@ export async function GET(req: Request) {
   });
   const portals = await prisma.portalAccount.findMany({
     where: { email: { in: agents.map((a) => a.email) } },
-    select: { email: true, headPrivileges: true },
+    select: {
+      email: true,
+      headPrivileges: true,
+      staffDesignatedCompany: { select: { id: true, name: true } },
+    },
   });
   const headByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.headPrivileges]));
+  const assignmentCompanyByEmail = new Map(
+    portals.map((p) => [p.email.toLowerCase(), p.staffDesignatedCompany ?? null] as const),
+  );
   const payload = agents.map((a) => ({
     ...a,
     headPrivileges: headByEmail.get(a.email.toLowerCase()) ?? false,
+    assignmentCompany: assignmentCompanyByEmail.get(a.email.toLowerCase()) ?? null,
   }));
   return NextResponse.json(payload);
 }

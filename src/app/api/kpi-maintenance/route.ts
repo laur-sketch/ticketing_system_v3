@@ -597,7 +597,7 @@ export async function PATCH(req: Request) {
       id: true,
       title: true,
       assignedAgentId: true,
-      assignedAgent: { select: { id: true, teamId: true } },
+      assignedAgent: { select: { id: true, email: true } },
       subKpis: true,
       isRecurring: true,
       frequency: true,
@@ -797,21 +797,37 @@ export async function PATCH(req: Request) {
     const assignee = assignedAgentId
       ? await prisma.agent.findUnique({
           where: { id: assignedAgentId },
-          select: { id: true, name: true, teamId: true },
+          select: { id: true, name: true, email: true },
         })
       : null;
     if (assignedAgentId && !assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
     if (assignee) {
-      const mainAssigneeTeamId = kpiRow.assignedAgent?.teamId ?? null;
-      if (!mainAssigneeTeamId) {
+      const mainAssigneeEmail = kpiRow.assignedAgent?.email?.trim().toLowerCase() ?? "";
+      const subAssigneeEmail = assignee.email.trim().toLowerCase();
+      if (!mainAssigneeEmail) {
         return NextResponse.json(
           { error: "Assign the main task before assigning sub-tasks to personnel." },
           { status: 400 },
         );
       }
-      if (assignee.teamId !== mainAssigneeTeamId) {
+      const portalCompanies = await prisma.portalAccount.findMany({
+        where: { email: { in: [mainAssigneeEmail, subAssigneeEmail] } },
+        select: { email: true, staffDesignatedCompanyId: true },
+      });
+      const companyByEmail = new Map(
+        portalCompanies.map((p) => [p.email.trim().toLowerCase(), p.staffDesignatedCompanyId] as const),
+      );
+      const mainAssigneeCompanyId = companyByEmail.get(mainAssigneeEmail) ?? null;
+      const subAssigneeCompanyId = companyByEmail.get(subAssigneeEmail) ?? null;
+      if (!mainAssigneeCompanyId || !subAssigneeCompanyId) {
+        return NextResponse.json(
+          { error: "Both main task and sub-task assignees must have a designated company." },
+          { status: 400 },
+        );
+      }
+      if (subAssigneeCompanyId !== mainAssigneeCompanyId) {
         return NextResponse.json(
           { error: "Sub-task assignee must belong to the same company as the main task assignee." },
           { status: 400 },
