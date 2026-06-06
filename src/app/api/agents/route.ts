@@ -11,35 +11,39 @@ export async function GET(req: Request) {
   const perms = await resolveOpsPermissions(session);
   const companyTeamId = new URL(req.url).searchParams.get("company")?.trim();
 
-  let agentWhere: Prisma.AgentWhereInput | undefined;
+  const portalWhere: Prisma.PortalAccountWhereInput = {
+    role: { in: ["Admin", "Personnel"] },
+    accountStatus: "ACTIVE",
+    staffDesignatedCompanyId: { not: null },
+  };
   if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
-    const portals = await prisma.portalAccount.findMany({
-      where: { staffDesignatedCompanyId: companyTeamId },
-      select: { email: true },
-    });
-    const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
-    agentWhere = emails.length > 0 ? { email: { in: emails } } : { id: "__none__" };
+    portalWhere.staffDesignatedCompanyId = companyTeamId;
   }
 
-  const agents = await prisma.agent.findMany({
-    where: agentWhere,
-    orderBy: { name: "asc" },
-    include: { team: true },
-  });
   const portals = await prisma.portalAccount.findMany({
-    where: { email: { in: agents.map((a) => a.email) } },
+    where: portalWhere,
     select: {
       email: true,
+      role: true,
       headPrivileges: true,
       staffDesignatedCompany: { select: { id: true, name: true } },
     },
   });
+  const staffEmails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
+
+  const agents = await prisma.agent.findMany({
+    where: staffEmails.length > 0 ? { email: { in: staffEmails } } : { id: "__none__" },
+    orderBy: { name: "asc" },
+    include: { team: true },
+  });
   const headByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.headPrivileges]));
+  const roleByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.role] as const));
   const assignmentCompanyByEmail = new Map(
     portals.map((p) => [p.email.toLowerCase(), p.staffDesignatedCompany ?? null] as const),
   );
   const payload = agents.map((a) => ({
     ...a,
+    portalRole: roleByEmail.get(a.email.toLowerCase()) ?? null,
     headPrivileges: headByEmail.get(a.email.toLowerCase()) ?? false,
     assignmentCompany: assignmentCompanyByEmail.get(a.email.toLowerCase()) ?? null,
   }));

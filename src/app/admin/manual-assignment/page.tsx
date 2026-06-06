@@ -12,17 +12,10 @@ export const dynamic = "force-dynamic";
 
 const ACTIVE_STATUSES: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"];
 
-export default async function ManualAssignmentPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ company?: string | string[] }>;
-}) {
+export default async function ManualAssignmentPage() {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
   if (!["SuperAdmin", "Admin", "Personnel"].includes(session.user.role)) redirect("/");
-
-  const params = await searchParams;
-  const requestedCompanyFilter = (Array.isArray(params.company) ? params.company[0] : params.company)?.trim() ?? "";
 
   const meEmail = (session.user.email ?? "").trim().toLowerCase();
   /**
@@ -113,15 +106,9 @@ export default async function ManualAssignmentPage({
     }),
   ]);
   const orderedCompanyTeams = sortByRosterOrder(companyTeams);
-  const validRequestedFilterId = requestedCompanyFilter
-    ? orderedCompanyTeams.find((t) => t.id === requestedCompanyFilter)?.id ?? null
-    : null;
-  const effectiveCompanyFilterId = isPersonnelCompanyLock
-    ? scopedCompanyFilterTeamId
-    : validRequestedFilterId;
-  const effectiveCompanyFilterLabel = isPersonnelCompanyLock
-    ? scopedCompanyFilterLabel
-    : orderedCompanyTeams.find((t) => t.id === effectiveCompanyFilterId)?.name ?? null;
+  /** Personnel stay locked to their designated SBU; SuperAdmin/Admin see all companies in the board UI. */
+  const personnelScopeCompanyId = isPersonnelCompanyLock ? scopedCompanyFilterTeamId : null;
+  const effectiveCompanyFilterLabel = isPersonnelCompanyLock ? scopedCompanyFilterLabel : null;
   /**
    * Company/SBU filter narrows **personnel lanes** only. The unassigned pool stays
    * all active unassigned tickets (for SuperAdmin/Admin) so coordinators still see
@@ -141,8 +128,8 @@ export default async function ManualAssignmentPage({
   const staffPortal = portalStaff.filter((p) => {
     if (!isStaffPortalRole(p.role)) return false;
     if (scopeUnavailable) return false;
-    if (!effectiveCompanyFilterId) return true;
-    return p.staffDesignatedCompanyId === effectiveCompanyFilterId;
+    if (!personnelScopeCompanyId) return true;
+    return p.staffDesignatedCompanyId === personnelScopeCompanyId;
   });
   const staffEmails = Array.from(
     new Set(staffPortal.map((p) => p.email.trim().toLowerCase()).filter(Boolean)),
@@ -190,19 +177,13 @@ export default async function ManualAssignmentPage({
     personnelAgents.map((a) => ({ email: a.email, name: a.name })),
   );
 
-  let agentsForBoard = personnelAgents;
-  if (effectiveCompanyFilterId) {
-    agentsForBoard = personnelAgents.filter((a) => {
-      const row = portalByEmail.get(a.email.trim().toLowerCase());
-      return row?.staffDesignatedCompanyId === effectiveCompanyFilterId;
-    });
-  }
+  const agentsForBoard = personnelAgents;
 
   const assignedByAgent = await prisma.ticket.findMany({
     where: {
       status: { in: ACTIVE_STATUSES },
       assignedAgentId: { in: agentsForBoard.map((a) => a.id) },
-      ...(effectiveCompanyFilterId ? { teamId: effectiveCompanyFilterId } : {}),
+      ...(personnelScopeCompanyId ? { teamId: personnelScopeCompanyId } : {}),
     },
     orderBy: { updatedAt: "desc" },
     select: {
@@ -237,6 +218,7 @@ export default async function ManualAssignmentPage({
       name: a.name,
       role: roleLabel,
       teamLabel,
+      companyId: portalRow?.staffDesignatedCompanyId ?? null,
       assigneeColorKey: assigneeColorByEmail.get(a.email.trim().toLowerCase()) ?? null,
       cards: tickets.map((t) => ({
         id: t.id,
@@ -252,13 +234,7 @@ export default async function ManualAssignmentPage({
   return (
     <ManualAssignmentBoard
       companyFilterLabel={effectiveCompanyFilterLabel}
-      companyFilterTeamId={effectiveCompanyFilterId}
-      showFullRosterFilter={session.user.role === "SuperAdmin" || session.user.role === "Admin"}
-      companyFilterOptions={
-        session.user.role === "SuperAdmin" || session.user.role === "Admin"
-          ? orderedCompanyTeams.map((t) => ({ id: t.id, name: t.name }))
-          : []
-      }
+      rosterCompanies={orderedCompanyTeams.map((t) => ({ id: t.id, name: t.name }))}
       notice={
         scopeUnavailable
           ? "Your portal account doesn't have a designated company yet. A SuperAdmin can set one in Personnel → Portal Accounts so you can see your team's lanes."
