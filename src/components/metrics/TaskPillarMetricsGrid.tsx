@@ -26,6 +26,11 @@ import type {
   TaskMetricsHelpdeskTickets,
   TaskMetricsUserSupportTickets,
 } from "@/lib/kpis";
+import {
+  KPI_DONUT_COLORS,
+  KINETIC_PALETTE,
+  USER_SUPPORT_STAR_COLORS,
+} from "@/lib/kinetic-palette";
 
 const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
   "SYSTEM AVAILABILITY": Server,
@@ -42,23 +47,17 @@ const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
 
 /** Helpdesk pillar: closed vs remainder of denominator (cadence-specific). */
 const SEG_COLORS_HELPDESK = {
-  closed: "#166534",
-  remainder: "#71717a",
+  closed: KPI_DONUT_COLORS.closed,
+  remainder: KPI_DONUT_COLORS.remainder,
 } as const;
 
 /** User support pillar: ticket status mix */
-const SEG_COLORS_USER_SUPPORT = {
-  1: "#dc2626",
-  2: "#f97316",
-  3: "#d97706",
-  4: "#65a30d",
-  5: "#166534",
-} as const;
+const SEG_COLORS_USER_SUPPORT = USER_SUPPORT_STAR_COLORS;
 
 /** Two-bucket pillars: on-track + on-time vs overdue (same underlying kanban logic). */
 const SEG_COLORS_BINARY_KPI = {
-  positive: "#166534",
-  negative: "#e11d48",
+  positive: KPI_DONUT_COLORS.positive,
+  negative: KPI_DONUT_COLORS.negative,
 } as const;
 
 /** Donut wedge in viewBox centered at (50,50). */
@@ -85,6 +84,7 @@ function donutSlicePath(
 type DonutSegment = { key: string; label: string; value: number; color: string };
 const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
 const MONITORING_CSV_COLUMNS = ["DONE", "ON GOING", "NOT STARTED", "EFF %"];
+const DAILY_PROGRESS_CSV_COLUMNS = ["DATE", "DONE", "ON GOING", "NOT STARTED", "EFF %"];
 
 function PillarDonutCard({
   pillar,
@@ -167,7 +167,7 @@ function PillarDonutCard({
                 cy={cy}
                 r={rOut}
                 fill="none"
-                stroke="#e4e4e7"
+                stroke={KINETIC_PALETTE.donutTrack}
                 strokeWidth={6}
                 className="dark:stroke-zinc-700"
               />
@@ -189,7 +189,7 @@ function PillarDonutCard({
                       cy={cy}
                       r={rOut}
                       fill={p.color}
-                      stroke="#f4f4f5"
+                      stroke={KINETIC_PALETTE.donutStroke}
                       strokeWidth="0.35"
                       className="dark:stroke-zinc-950"
                     />
@@ -200,7 +200,7 @@ function PillarDonutCard({
                     key={`${p.label}-${i}`}
                     d={p.d}
                     fill={p.color}
-                    stroke="#f4f4f5"
+                    stroke={KINETIC_PALETTE.donutStroke}
                     strokeWidth="0.35"
                     className="dark:stroke-zinc-950"
                   />
@@ -376,6 +376,16 @@ function csvDateLabelForCadence(cadence: KpiFrequencyCode, label: string): strin
   return label;
 }
 
+function formatDailyProgressDate(ymd: string): string {
+  const parsed = new Date(`${ymd}T00:00:00`);
+  if (!Number.isFinite(parsed.getTime())) return ymd;
+  return parsed.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function csvLayoutRowsForPillar(args: {
   pillar: ItTaskPillarTitle;
   metricsCadence: KpiFrequencyCode;
@@ -459,6 +469,7 @@ function sourceDetailsForPillar(args: {
 }): {
   title: string;
   rows: Array<{ label: string; value: string }>;
+  assigneeProgress: Array<{ id: string; name: string; role: string; total: number; done: number; percent: number }>;
   tableColumns: string[];
   tableRows: string[][];
   csvColumns: string[];
@@ -478,6 +489,7 @@ function sourceDetailsForPillar(args: {
         { label: "Closed", value: String(helpdeskTickets?.closedCount ?? 0) },
         { label: "Open", value: String(helpdeskTickets?.openTicketsInPeriod ?? 0) },
       ],
+      assigneeProgress: [],
       tableColumns: ["Metric", "Value", "How it is used"],
       tableRows: [
         ["Closed tickets", String(helpdeskTickets?.closedCount ?? 0), "Numerator for helpdesk support percent"],
@@ -506,6 +518,7 @@ function sourceDetailsForPillar(args: {
         { label: "Rated tickets", value: String(rated) },
         { label: "Total tickets", value: String(total) },
       ],
+      assigneeProgress: [],
       tableColumns: ["Rating", "Count", "Recorded meaning"],
       tableRows: [
         ...(userSupportTickets?.starCounts ?? []).map((row) => [
@@ -525,9 +538,27 @@ function sourceDetailsForPillar(args: {
   const agg = checklistPillars?.[pillar];
   const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
   const cadenceLabel = metricsCadence.toLowerCase();
-  const sourceCsvRows = agg?.csvRows && agg.csvRows.length > 0 ? agg.csvRows : csvLayoutRowsForPillar(args);
-  const csvColumns = pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
   const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const dailyCsvRows = (agg?.dailyProgressRows ?? []).map((row) => {
+    const dailyView = kpiChecklistMetricView(row, invert);
+    const donePercent = dailyView.percent;
+    const notStartedPercent = Math.max(0, 100 - donePercent);
+    return [
+      formatDailyProgressDate(row.date),
+      String(donePercent),
+      "0",
+      String(notStartedPercent),
+      `${dailyView.percent}%`,
+    ];
+  });
+  const sourceCsvRows =
+    dailyCsvRows.length > 0
+      ? dailyCsvRows
+      : agg?.csvRows && agg.csvRows.length > 0
+        ? agg.csvRows
+        : csvLayoutRowsForPillar(args);
+  const csvColumns =
+    dailyCsvRows.length > 0 ? DAILY_PROGRESS_CSV_COLUMNS : pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
   const view = kpiChecklistMetricView(
     {
       total: agg?.total ?? 0,
@@ -542,7 +573,9 @@ function sourceDetailsForPillar(args: {
     rows: [
       {
         label: "Collected from",
-        value: agg?.csvRows?.length
+        value: dailyCsvRows.length
+          ? "Daily KPI maintenance period snapshots for this reporting range"
+          : agg?.csvRows?.length
           ? "Imported IT SALF CSV rows for the selected reporting range"
           : "Task Board KPI checklist rows under this pillar",
       },
@@ -553,6 +586,7 @@ function sourceDetailsForPillar(args: {
       { label: cfg?.positiveLabel ?? "Done", value: String(agg?.done ?? 0) },
       { label: cfg?.negativeLabel ?? "Missing", value: String(agg?.missing ?? 0) },
     ],
+    assigneeProgress: agg?.assigneeProgress ?? [],
     tableColumns: ["Gathered field", "Value", "Recorded source"],
     tableRows: [
       ["Task rows counted", String(agg?.total ?? 0), `KPI checklist items for ${pillar}`],
@@ -570,7 +604,9 @@ function sourceDetailsForPillar(args: {
     csvRows: sourceCsvRows,
     showCsvPreview: true,
     notes: [
-      agg?.csvRows?.length
+      dailyCsvRows.length
+        ? "CSV preview lists daily progress rows from the same snapshots used by this metric."
+        : agg?.csvRows?.length
         ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
         : "Checkboxes on the Task Board are the source of completion data.",
       "Past periods come from immutable snapshots; only the current period uses live task card data.",
@@ -631,6 +667,10 @@ export function TaskPillarMetricsGrid({
         )}
       >
       {IT_TASK_PILLAR_TITLES.map((pillar) => {
+        if (pillar === "IT PROJECT IMPLEMENTATION") {
+          return null;
+        }
+
         if (pillar === "HELPDESK SUPPORT") {
           const ht = helpdeskTickets;
           const segments = ht ? helpdeskRatioSegments(ht) : [];
@@ -722,11 +762,12 @@ export function TaskPillarMetricsGrid({
         >
           <div
             className={cn(
-              "w-full rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-700 dark:bg-zinc-950",
+              "flex max-h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950",
               extendedView ? "max-w-4xl" : "max-w-lg",
             )}
             onClick={(e) => e.stopPropagation()}
           >
+            <div className="shrink-0 border-b border-zinc-200 p-5 pb-4 dark:border-zinc-800">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
@@ -756,6 +797,8 @@ export function TaskPillarMetricsGrid({
                 </button>
               </div>
             </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
             <dl className="mt-4 divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
               {inspected.rows.map((row) => (
                 <div key={row.label} className="grid gap-1 py-2 sm:grid-cols-[10rem_1fr]">
@@ -770,7 +813,43 @@ export function TaskPillarMetricsGrid({
               ))}
             </ul>
             {extendedView ? (
-              <div className="mt-4 overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
+              <div className="mt-4 space-y-3">
+                {inspected.assigneeProgress.length > 0 ? (
+                  <section className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
+                    <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                      <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        Assignee/Sub Assignee Progress
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+                        Average contribution scaled to the same progress shown in this metric donut.
+                      </p>
+                    </div>
+                    <div className="max-h-44 space-y-2 overflow-y-auto bg-white p-3 dark:bg-zinc-950">
+                      {inspected.assigneeProgress.map((row) => (
+                        <div key={row.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">{row.name}</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                                {row.role}
+                              </p>
+                            </div>
+                            <div className="text-right font-mono text-xs font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {row.percent}%
+                            </div>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                            <div
+                              className="h-full rounded-full bg-[var(--accent-teal)]"
+                              style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+                <div className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
                   <div>
                     <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
@@ -795,9 +874,9 @@ export function TaskPillarMetricsGrid({
                         {inspected.csvColumns.join(",")}
                       </p>
                     </div>
-                    <div className="max-h-[45vh] overflow-auto bg-white dark:bg-zinc-950">
+                    <div className="max-h-[30vh] overflow-auto bg-white dark:bg-zinc-950">
                       <table className="w-full min-w-[760px] border-collapse text-left font-mono text-xs">
-                        <thead className="sticky top-0 z-10 bg-zinc-200 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                        <thead className="bg-zinc-200 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                           <tr>
                             <th className="w-12 border-b border-r border-zinc-300 px-2 py-1.5 text-center dark:border-zinc-700">
                               #
@@ -876,7 +955,7 @@ export function TaskPillarMetricsGrid({
                   <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
                     {inspected.showCsvPreview ? "Extra source details" : "Source details"}
                   </p>
-                  <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                  <div className="max-h-40 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                     <table className="w-full min-w-[640px] border-collapse font-mono text-[11px]">
                       <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
                         <tr>
@@ -910,8 +989,10 @@ export function TaskPillarMetricsGrid({
                     <span>Generated from current Task Metrics payload</span>
                   </div>
                 ) : null}
+                </div>
               </div>
             ) : null}
+            </div>
           </div>
         </div>
       ) : null}

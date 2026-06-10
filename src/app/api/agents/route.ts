@@ -3,20 +3,27 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
+import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
   if (unauthorized || !session) return unauthorized;
 
   const perms = await resolveOpsPermissions(session);
-  const companyTeamId = new URL(req.url).searchParams.get("company")?.trim();
+  const searchParams = new URL(req.url).searchParams;
+  const companyTeamId = searchParams.get("company")?.trim();
+  const forMainAgentId = searchParams.get("forMainAgentId")?.trim();
 
   const portalWhere: Prisma.PortalAccountWhereInput = {
     role: { in: ["Admin", "Personnel"] },
     accountStatus: "ACTIVE",
     staffDesignatedCompanyId: { not: null },
   };
-  if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
+  if (forMainAgentId) {
+    const mainCompanyId = await resolveAgentDesignatedCompanyId(forMainAgentId);
+    if (!mainCompanyId) return NextResponse.json([]);
+    portalWhere.staffDesignatedCompanyId = mainCompanyId;
+  } else if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
     portalWhere.staffDesignatedCompanyId = companyTeamId;
   }
 

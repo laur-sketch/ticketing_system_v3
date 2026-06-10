@@ -24,6 +24,7 @@ const MAX_BIO = 250;
 type TabId = "profile" | "security" | "billing";
 
 type AccountDetails = {
+  displayName: string | null;
   username: string | null;
   accountCreatedAt: string | null;
   profileImage: string | null;
@@ -62,7 +63,7 @@ const tabs: { id: TabId; label: string; icon: typeof User }[] = [
 ];
 
 export function AccountSettingsShell() {
-  const { data, status } = useSession();
+  const { data, status, update: updateSession } = useSession();
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [tab, setTab] = useState<TabId>("profile");
   const [details, setDetails] = useState<AccountDetails | null>(null);
@@ -81,6 +82,10 @@ export function AccountSettingsShell() {
   const [emailPassword, setEmailPassword] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailMessage, setEmailMessage] = useState<string | null>(null);
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [displayNamePassword, setDisplayNamePassword] = useState("");
+  const [displayNameBusy, setDisplayNameBusy] = useState(false);
+  const [displayNameMessage, setDisplayNameMessage] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState("");
   const [usernamePassword, setUsernamePassword] = useState("");
   const [usernameBusy, setUsernameBusy] = useState(false);
@@ -103,6 +108,7 @@ export function AccountSettingsShell() {
   const name = user?.name ?? "";
   const email = user?.email ?? "";
   const role = user?.role ?? "";
+  const displayName = details?.displayName ?? name;
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -122,6 +128,7 @@ export function AccountSettingsShell() {
     if (!res.ok) return;
     const json = (await res.json()) as AccountDetails;
     setDetails(json);
+    setNewDisplayName(json.displayName ?? "");
     setImageZoom(json.profileImageZoom ?? 1);
     setImagePosX(json.profileImagePosX ?? 50);
     setImagePosY(json.profileImagePosY ?? 50);
@@ -318,6 +325,33 @@ export function AccountSettingsShell() {
     await signOut({ callbackUrl: "/signin" });
   }
 
+  async function submitDisplayNameChange() {
+    const nextDisplayName = newDisplayName.trim().replace(/\s+/g, " ");
+    if (!nextDisplayName || !displayNamePassword) {
+      setDisplayNameMessage("Display name and current password are required.");
+      return;
+    }
+    setDisplayNameBusy(true);
+    setDisplayNameMessage(null);
+    const res = await fetch("/api/me/security/display-name", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ displayName: nextDisplayName, password: displayNamePassword }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as { error?: string; displayName?: string };
+    setDisplayNameBusy(false);
+    if (!res.ok) {
+      setDisplayNameMessage(payload.error ?? "Could not change display name.");
+      return;
+    }
+    const savedDisplayName = payload.displayName ?? nextDisplayName;
+    setDetails((prev) => (prev ? { ...prev, displayName: savedDisplayName } : prev));
+    setNewDisplayName(savedDisplayName);
+    setDisplayNamePassword("");
+    setDisplayNameMessage("Display name updated.");
+    await updateSession();
+  }
+
   async function submitUsernameChange() {
     if (!newUsername.trim() || !usernamePassword) return;
     setUsernameBusy(true);
@@ -455,8 +489,7 @@ export function AccountSettingsShell() {
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
                 Update how you appear across {BRAND_TITLE}. Display name, email, and username come from your portal
-                account (change email or username under Security). Personnel roster changes are handled in Personnel
-                registry.
+                account (change them under Security).
               </p>
             </header>
 
@@ -503,7 +536,9 @@ export function AccountSettingsShell() {
                         onWheel={handleImageWheel}
                       />
                     ) : (
-                      <span className="text-4xl font-bold tracking-tight text-orange-400/95">{initials(name, email)}</span>
+                      <span className="text-4xl font-bold tracking-tight text-orange-400/95">
+                        {initials(displayName, email)}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -586,7 +621,7 @@ export function AccountSettingsShell() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                     Full name
-                    <Input readOnly value={name || "—"} className="mt-1 cursor-not-allowed opacity-90" />
+                    <Input readOnly value={displayName || "—"} className="mt-1 cursor-not-allowed opacity-90" />
                   </label>
                   <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                     Email address
@@ -735,6 +770,47 @@ export function AccountSettingsShell() {
                 Sensitive actions require your current password for verification.
               </p>
             </header>
+
+            <article className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0c]">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
+                Change display name
+              </h2>
+              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                Update the name shown on your account, tickets, and staff views. This requires your current password.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
+                  New display name
+                  <Input
+                    type="text"
+                    value={newDisplayName}
+                    onChange={(e) => setNewDisplayName(e.target.value)}
+                    placeholder={displayName || "Your name"}
+                    className="mt-1"
+                    maxLength={80}
+                  />
+                  <span className="mt-1 block text-[11px] text-zinc-500">2-80 characters.</span>
+                </label>
+                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
+                  Current password
+                  <Input
+                    type="password"
+                    value={displayNamePassword}
+                    onChange={(e) => setDisplayNamePassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="mt-1"
+                  />
+                </label>
+              </div>
+              <div className="mt-4">
+                <Button type="button" onClick={() => void submitDisplayNameChange()} disabled={displayNameBusy}>
+                  {displayNameBusy ? "Updating…" : "Update display name"}
+                </Button>
+                {displayNameMessage ? (
+                  <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">{displayNameMessage}</p>
+                ) : null}
+              </div>
+            </article>
 
             <article className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0c]">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">

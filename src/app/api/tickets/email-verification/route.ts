@@ -85,7 +85,7 @@ function htmlRatingForm(ticketNumber: string, token: string, message?: string) {
           <textarea id="comment" name="comment" rows="5" placeholder="Tell us what went well or what we can improve..."
             style="background:#0a0a0a;border:1px solid #3f3f46;color:#f5f5f5;border-radius:10px;padding:10px 12px;resize:vertical;"></textarea>
         </label>
-        <button type="submit" style="background:#f97316;color:#fff;border:0;border-radius:999px;padding:11px 14px;font-weight:700;cursor:pointer;">Submit review</button>
+        <button type="submit" style="background:#ff5c00;color:#fff;border:0;border-radius:999px;padding:11px 14px;font-weight:700;cursor:pointer;">Submit review</button>
       </form>
     </section>
   </main>

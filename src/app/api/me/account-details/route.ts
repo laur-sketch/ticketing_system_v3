@@ -19,6 +19,7 @@ export async function GET() {
     prisma.portalAccount.findUnique({
       where: { email },
       select: {
+        name: true,
         username: true,
         createdAt: true,
         profileImage: true,
@@ -44,6 +45,7 @@ export async function GET() {
   }
 
   return NextResponse.json({
+    displayName: portal?.name ?? session.user.name ?? null,
     username: portal?.username ?? null,
     accountCreatedAt: portal?.createdAt?.toISOString() ?? null,
     profileImage: portal?.profileImage ?? null,

@@ -15,6 +15,8 @@ export type SubKpiItem = {
   done?: boolean;
   assignedAgentId?: string | null;
   assignedAgentName?: string | null;
+  projectPriority?: "High" | "Medium" | "Low" | null;
+  projectStatus?: "Pending" | "On Going" | "Finalizing" | "Done" | null;
   screenshotsEnabled?: boolean;
   beforeScreenshot?: TaskScreenshotMetaItem[];
   afterScreenshot?: TaskScreenshotMetaItem[];
@@ -24,6 +26,12 @@ export type SubKpiItem = {
   dueDate?: string | null;
   actualDate?: string | null;
 };
+
+const SUB_KPI_PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
+
+function normalizeSubKpiPriority(value: unknown): SubKpiItem["projectPriority"] {
+  return SUB_KPI_PRIORITY_OPTIONS.find((option) => option === value) ?? null;
+}
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -40,6 +48,14 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const done = Boolean(r?.done);
   const assignedAgentId = typeof r?.assignedAgentId === "string" ? r.assignedAgentId.trim() : "";
   const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
+  const projectPriority = normalizeSubKpiPriority(r?.projectPriority);
+  const projectStatus =
+    r?.projectStatus === "Pending" ||
+    r?.projectStatus === "On Going" ||
+    r?.projectStatus === "Finalizing" ||
+    r?.projectStatus === "Done"
+      ? r.projectStatus
+      : null;
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
   const screenshotsEnabled = r?.screenshotsEnabled === true || beforeScreenshot.length > 0 || afterScreenshot.length > 0;
@@ -53,6 +69,8 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     done,
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(projectPriority ? { projectPriority } : {}),
+    ...(projectStatus ? { projectStatus } : {}),
     ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
@@ -70,6 +88,7 @@ export type SubKpisStoredEnvelope = {
   segmented: boolean;
   items?: SubKpiItem[];
   segments?: SubKpiSegment[];
+  taskPriority?: SubKpiItem["projectPriority"];
   pillarScreenshotsEnabled?: boolean;
   pillarBeforeScreenshot?: TaskScreenshotMetaItem[];
   pillarAfterScreenshot?: TaskScreenshotMetaItem[];
@@ -228,6 +247,7 @@ export function wrapForPersist(norm: NormalizedSubKpis): Prisma.InputJsonValue {
 function rawEnvelopeMeta(raw: unknown) {
   if (!isPlainObject(raw)) {
     return {
+      taskPriority: null as SubKpiItem["projectPriority"],
       pillarScreenshotsEnabled: false,
       pillarBeforeScreenshot: [] as TaskScreenshotMetaItem[],
       pillarAfterScreenshot: [] as TaskScreenshotMetaItem[],
@@ -237,6 +257,7 @@ function rawEnvelopeMeta(raw: unknown) {
   const pillarBeforeScreenshot = parseTaskScreenshotMetaList(raw.pillarBeforeScreenshot);
   const pillarAfterScreenshot = parseTaskScreenshotMetaList(raw.pillarAfterScreenshot);
   return {
+    taskPriority: normalizeSubKpiPriority(raw.taskPriority),
     pillarScreenshotsEnabled:
       raw.pillarScreenshotsEnabled === true ||
       pillarBeforeScreenshot.length > 0 ||
@@ -251,6 +272,7 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
   if (!isPlainObject(base)) return base;
   return {
     ...base,
+    ...(meta.taskPriority ? { taskPriority: meta.taskPriority } : {}),
     ...(meta.pillarScreenshotsEnabled ? { pillarScreenshotsEnabled: true } : {}),
     ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
     ...(meta.pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot: meta.pillarAfterScreenshot } : {}),
@@ -260,6 +282,16 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
 
 export function wrapForPersistWithExistingMeta(norm: NormalizedSubKpis, raw: unknown): Prisma.InputJsonValue {
   return withEnvelopeMeta(wrapForPersist(norm), rawEnvelopeMeta(raw));
+}
+
+export function getTaskPriority(raw: unknown): SubKpiItem["projectPriority"] {
+  return rawEnvelopeMeta(raw).taskPriority;
+}
+
+export function setTaskPriority(raw: unknown, priority: unknown): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.taskPriority = normalizeSubKpiPriority(priority);
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
 export function enablePillarScreenshots(raw: unknown): Prisma.InputJsonValue {
@@ -592,6 +624,7 @@ export function setSubKpiItemWorkMeta(
     dueDate?: string | null;
     actualDate?: string | null;
     location?: string | null;
+    projectPriority?: string | null;
   },
 ): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
@@ -607,6 +640,8 @@ export function setSubKpiItemWorkMeta(
       : typeof meta.location === "string" && meta.location.trim()
         ? meta.location.trim().slice(0, 160)
         : null;
+  const projectPriority =
+    meta.projectPriority === undefined ? undefined : normalizeSubKpiPriority(meta.projectPriority);
   const touch = (it: SubKpiItem): SubKpiItem => {
     if (it.id !== subKpiId) return it;
     let next = { ...it };
@@ -625,6 +660,10 @@ export function setSubKpiItemWorkMeta(
     if (location !== undefined) {
       if (location) next = { ...next, location };
       else delete (next as { location?: string }).location;
+    }
+    if (projectPriority !== undefined) {
+      if (projectPriority) next = { ...next, projectPriority };
+      else delete (next as { projectPriority?: SubKpiItem["projectPriority"] }).projectPriority;
     }
     return next;
   };

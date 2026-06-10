@@ -2,6 +2,8 @@
 
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ClipboardList } from "lucide-react";
+import { KINETIC_PALETTE, pieChartColor } from "@/lib/kinetic-palette";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -68,6 +70,27 @@ type KpiPayload = {
   };
 };
 
+type TaskProjectTrackerOptions = {
+  projects: Array<{ name: string }>;
+  companies: Array<{ id: string; name: string }>;
+  tasks: Array<{
+    id: string;
+    rowType: "task" | "project";
+    taskId: string;
+    projectName: string;
+    companyId: string | null;
+    companyName: string;
+    taskDescription: string;
+    assigneeName: string | null;
+    priority: "High" | "Medium" | "Low";
+    status: "Pending" | "On Going" | "Finalizing" | "Done";
+    startDate: string | null;
+    dueDate: string | null;
+    completion: number;
+    hours: number | null;
+  }>;
+};
+
 function formatDuration(ms: number | null) {
   if (ms === null) return "—";
   const hours = ms / 3_600_000;
@@ -80,10 +103,33 @@ function pct(n: number | null) {
   return `${Math.round(n * 1000) / 10}%`;
 }
 
+function formatTrackerHours(hours: number | null | undefined) {
+  if (typeof hours !== "number" || !Number.isFinite(hours)) return "—";
+  return `${hours.toFixed(1)}h`;
+}
+
+function formatMonthNameDate(value: string | Date | null | undefined) {
+  if (!value) return "—";
+  const timeZone = value instanceof Date ? DEFAULT_TIME_ZONE : "UTC";
+  const date =
+    value instanceof Date
+      ? value
+      : /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? new Date(`${value}T12:00:00Z`)
+        : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone,
+  });
+}
+
 export default function InsightsPage() {
   const { data: session } = useSession();
   const isPersonnel = session?.user?.role === "Personnel";
-  const [activeTab, setActiveTab] = useState<"ticket-metrics" | "task-metrics" | "kpi-mgmt">(
+  const [activeTab, setActiveTab] = useState<"ticket-metrics" | "task-metrics" | "task-project-tracker" | "kpi-mgmt">(
     "ticket-metrics",
   );
   const [data, setData] = useState<KpiPayload | null>(null);
@@ -115,8 +161,8 @@ export default function InsightsPage() {
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
 
-  const taskMetricsDefaults = useMemo(() => defaultTaskMetricsRangeForCadence("DAILY"), []);
-  const [taskMetricsCadence, setTaskMetricsCadence] = useState<KpiFrequencyCode>("DAILY");
+  const taskMetricsDefaults = useMemo(() => defaultTaskMetricsRangeForCadence("MONTHLY"), []);
+  const [taskMetricsCadence, setTaskMetricsCadence] = useState<KpiFrequencyCode>("MONTHLY");
   const [taskMetricsDailyDate, setTaskMetricsDailyDate] = useState(taskMetricsDefaults.dailyDate);
   const [taskMetricsFrom, setTaskMetricsFrom] = useState(taskMetricsDefaults.from);
   const [taskMetricsTo, setTaskMetricsTo] = useState(taskMetricsDefaults.to);
@@ -205,13 +251,18 @@ export default function InsightsPage() {
   }, [activeTab, loadKpis]);
 
   useEffect(() => {
-    if (activeTab !== "task-metrics") return;
+    if (activeTab !== "task-metrics" && activeTab !== "task-project-tracker") {
+      return;
+    }
     queueMicrotask(() => void loadTaskMetrics());
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
     function onVisibility() {
-      if (document.visibilityState === "visible" && activeTab === "task-metrics") {
+      if (
+        document.visibilityState === "visible" &&
+        (activeTab === "task-metrics" || activeTab === "task-project-tracker")
+      ) {
         void loadTaskMetrics();
       }
     }
@@ -220,7 +271,9 @@ export default function InsightsPage() {
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
-    if (activeTab !== "task-metrics") return;
+    if (activeTab !== "task-metrics" && activeTab !== "task-project-tracker") {
+      return;
+    }
     const id = setInterval(() => void loadTaskMetrics(), 15_000);
     return () => clearInterval(id);
   }, [activeTab, loadTaskMetrics]);
@@ -313,7 +366,7 @@ export default function InsightsPage() {
   }, [data]);
 
   return (
-    <main className="mx-auto max-w-6xl space-y-8 px-4 py-6 text-zinc-900 sm:space-y-10 sm:py-8 md:py-10 dark:text-zinc-100">
+    <main className="mx-auto max-w-[112rem] space-y-8 px-3 py-6 text-zinc-900 sm:space-y-10 sm:px-5 sm:py-8 lg:px-6 md:py-10 dark:text-zinc-100">
       <header className="rounded-2xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-6 shadow-[0_12px_40px_rgba(0,0,0,0.06)] md:p-8 dark:border-zinc-800/90 dark:from-[#101010] dark:to-[#080808] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
         <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
@@ -340,6 +393,18 @@ export default function InsightsPage() {
             )}
           >
             {isPersonnel ? "My Ticket Metrics and Reports" : "Ticket Metrics and Reports"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("task-project-tracker")}
+            className={cn(
+              "rounded-full px-4 py-1.5 transition",
+              activeTab === "task-project-tracker"
+                ? "bg-orange-600 text-white shadow-sm"
+                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+            )}
+          >
+            Task &amp; Project Tracker
           </button>
           <button
             type="button"
@@ -399,39 +464,16 @@ export default function InsightsPage() {
             reportingTimeZone={recurrenceTz}
           />
         </div>
+      ) : activeTab === "task-project-tracker" ? (
+        <TaskProjectTrackerPanel
+          loading={taskMetricsLoading}
+          taskMetricsCadence={taskMetricsCadence}
+          dailyDate={taskMetricsDailyDate}
+          rangeFrom={taskMetricsFrom}
+          rangeTo={taskMetricsTo}
+        />
       ) : (
         <div className="space-y-8">
-          <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-                  Reporting window
-                </h2>
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                  Ticket metrics and charts below use this date range.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3 text-sm">
-                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                  From
-                  <DatePickerField
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
-                  />
-                </label>
-                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                  To
-                  <DatePickerField
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
-                  />
-                </label>
-              </div>
-            </div>
-          </section>
-
           {!data ? (
             <p className="text-sm text-zinc-600 dark:text-zinc-500">Loading metrics…</p>
           ) : (
@@ -494,7 +536,25 @@ export default function InsightsPage() {
                   Created vs closed (daily, real-time)
                 </p>
               </div>
-              <div className="flex flex-wrap gap-4 text-right text-xs text-zinc-600 dark:text-zinc-500">
+              <div className="flex flex-wrap items-end justify-end gap-3 text-xs text-zinc-600 dark:text-zinc-500">
+                <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                  From
+                  <DatePickerField
+                    value={from}
+                    max={to || undefined}
+                    onChange={(e) => setFrom(e.target.value)}
+                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
+                  />
+                </label>
+                <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                  To
+                  <DatePickerField
+                    value={to}
+                    min={from || undefined}
+                    onChange={(e) => setTo(e.target.value)}
+                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
+                  />
+                </label>
                 <div>
                   <span className="block text-[10px] uppercase tracking-wider">Created in range</span>
                   <span className="text-lg font-bold tabular-nums text-orange-700 dark:text-orange-400">
@@ -731,6 +791,413 @@ export default function InsightsPage() {
   );
 }
 
+function TaskProjectTrackerPanel({
+  loading,
+  taskMetricsCadence,
+  dailyDate,
+  rangeFrom,
+  rangeTo,
+}: {
+  loading: boolean;
+  taskMetricsCadence: KpiFrequencyCode;
+  dailyDate: string;
+  rangeFrom: string;
+  rangeTo: string;
+}) {
+  const reportingPeriodLabel = formatTaskMetricsPeriodLabel(taskMetricsCadence, {
+    dailyDate,
+    rangeFrom,
+    rangeTo,
+  });
+  const [trackerOptions, setTrackerOptions] = useState<TaskProjectTrackerOptions>({
+    projects: [{ name: "IT PROJECT IMPLEMENTATION" }],
+    companies: [],
+    tasks: [],
+  });
+  const allProjectsValue = "ALL";
+  const [selectedProject, setSelectedProject] = useState(allProjectsValue);
+  const [selectedCompany, setSelectedCompany] = useState("ALL");
+  const [detailsView, setDetailsView] = useState<"task" | "project">("task");
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOptions() {
+      const res = await fetch("/api/kpis/task-project-tracker-options", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json()) as TaskProjectTrackerOptions;
+      if (cancelled) return;
+      setTrackerOptions(json);
+      setSelectedProject((current) => {
+        if (current === allProjectsValue) return current;
+        if (json.projects.some((project) => project.name === current)) return current;
+        return allProjectsValue;
+      });
+      setSelectedCompany((current) => {
+        if (current === "ALL" || json.companies.some((company) => company.id === current)) return current;
+        return "ALL";
+      });
+    }
+    void loadOptions();
+    const id = window.setInterval(() => void loadOptions(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setCurrentDate(new Date()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const projectTableRows = trackerOptions.tasks.filter((task) => {
+    if (selectedProject !== allProjectsValue && task.projectName !== selectedProject) return false;
+    if (selectedCompany !== "ALL" && task.companyId !== selectedCompany) return false;
+    return true;
+  });
+  const detailTableRows = projectTableRows.filter((task) => task.rowType === detailsView);
+  const detailTotal = detailTableRows.length;
+  const detailDone = detailTableRows.filter((task) => task.completion === 100).length;
+  const detailMissing = Math.max(0, detailTotal - detailDone);
+  const detailPercent =
+    detailTotal > 0 ? Math.round(detailTableRows.reduce((sum, task) => sum + task.completion, 0) / detailTotal) : 0;
+  const titleColumnLabel = detailsView === "project" ? "Project Title" : "Task Title";
+  const selectedProjectLabel = selectedProject === allProjectsValue ? "All Tasks/Projects" : selectedProject;
+  const projectTotal = projectTableRows.length;
+  const projectDone = projectTableRows.filter((task) => task.completion === 100).length;
+  const projectInProgress = projectTableRows.filter((task) => task.completion === 50 || task.completion === 75).length;
+  const projectNotStarted = projectTableRows.filter((task) => task.completion < 50).length;
+  const projectMissing = Math.max(0, projectTotal - projectDone);
+  const projectPercent =
+    projectTotal > 0
+      ? Math.round(projectTableRows.reduce((sum, task) => sum + task.completion, 0) / projectTotal)
+      : 0;
+  const projectSegments = [
+    { label: "Project completed", value: projectDone, color: KINETIC_PALETTE.accentTealBright },
+    { label: "In progress", value: projectInProgress, color: KINETIC_PALETTE.brand },
+    { label: "Pending", value: projectNotStarted, color: KINETIC_PALETTE.brandSoft },
+  ].filter((segment) => segment.value > 0);
+  const employeeCompletionSegments = Array.from(
+    projectTableRows.reduce((map, task) => {
+      const key = task.assigneeName?.trim() || "Unassigned";
+      const current = map.get(key) ?? { totalCompletion: 0, count: 0 };
+      map.set(key, {
+        totalCompletion: current.totalCompletion + task.completion,
+        count: current.count + 1,
+      });
+      return map;
+    }, new Map<string, { totalCompletion: number; count: number }>()),
+  )
+    .map(([label, value], index) => ({
+      label,
+      value: value.count > 0 ? Math.max(1, Math.round(value.totalCompletion / value.count)) : 0,
+      color: pieChartColor(index),
+    }))
+    .filter((segment) => segment.value > 0);
+  const companyTaskSegments = Array.from(
+    projectTableRows.reduce((map, task) => {
+      const key = task.companyName || "Unassigned company";
+      map.set(key, (map.get(key) ?? 0) + 1);
+      return map;
+    }, new Map<string, number>()),
+  ).map(([label, value], index) => ({
+    label,
+    value,
+    color: pieChartColor(index),
+  }));
+
+  return (
+    <section className="space-y-5 rounded-[1.75rem] border border-zinc-200 bg-zinc-50 p-3 shadow-[0_18px_60px_rgba(15,23,42,0.10)] dark:border-zinc-800 dark:bg-[#070707] sm:p-4 xl:p-5">
+      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#090909]">
+        <div className="border-b border-zinc-200 bg-white px-4 py-3 text-zinc-900 dark:border-zinc-800 dark:bg-[#0d0d0d] dark:text-zinc-100 sm:px-5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-300">
+                <ClipboardList className="size-5" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xl font-black uppercase tracking-tight sm:text-2xl">Task &amp; Project Tracker</p>
+                <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">Track tasks, monitor progress, achieve results</p>
+                <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
+                  {loading ? "Refreshing" : reportingPeriodLabel}
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-2 text-xs sm:grid-cols-3 xl:min-w-[34rem]">
+              <label className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
+                Select Task/Project
+                <select
+                  value={selectedProject}
+                  onChange={(e) => setSelectedProject(e.target.value)}
+                  className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
+                >
+                  <option value={allProjectsValue}>All Tasks/Projects</option>
+                  {trackerOptions.projects.map((project) => (
+                    <option key={project.name} value={project.name}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
+                Select Company
+                <select
+                  value={selectedCompany}
+                  onChange={(e) => setSelectedCompany(e.target.value)}
+                  className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
+                >
+                  <option value="ALL">All companies</option>
+                  {trackerOptions.companies.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
+                Today&apos;s date
+                <span className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50">
+                  {formatMonthNameDate(currentDate)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 bg-zinc-50 p-4 sm:grid-cols-2 xl:grid-cols-4 xl:p-5 dark:bg-[#0d0d0d]">
+          <EfficiencyStatCard
+            label="Total tasks"
+            value={String(projectTotal)}
+            hint={selectedProjectLabel}
+            tone="neutral"
+          />
+          <EfficiencyStatCard
+            label="Completed tasks"
+            value={String(projectDone)}
+            hint="Checklist items completed"
+            tone="green"
+          />
+          <EfficiencyStatCard
+            label="In progress"
+            value={String(projectInProgress)}
+            hint="Started work still open"
+            tone="orange"
+          />
+          <EfficiencyStatCard
+            label="Pending tasks"
+            value={String(projectMissing)}
+            hint="Work not completed yet"
+            tone="amber"
+          />
+        </div>
+      </div>
+
+      <div className={cn("grid gap-4 xl:grid-cols-3", loading && "opacity-60")}>
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
+          <MetricsPieChart
+            title="Task status breakdown"
+            subtitle={projectTotal > 0 ? `${projectDone}/${projectTotal} checklist items complete` : "No task items in this period."}
+            itemsLabel={(n) => `${n} task item${n === 1 ? "" : "s"}`}
+            emptyDescription="No task work found for this period."
+            showPercentages
+            pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
+            segments={projectSegments}
+          />
+        </section>
+
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
+          <MetricsPieChart
+            title="Completion % by employee"
+            subtitle="Average completion progress per assigned employee."
+            itemsLabel={() => `${projectPercent}% overall`}
+            emptyDescription="Assign IT project tasks to personnel to show employee completion."
+            valueFormatter={(value) => `${value}%`}
+            centerLabel={`${projectPercent}%`}
+            pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
+            segments={employeeCompletionSegments}
+          />
+        </section>
+
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
+          <MetricsPieChart
+            title="Task by company"
+            subtitle="Task distribution by designated company."
+            itemsLabel={(n) => `${n} task${n === 1 ? "" : "s"}`}
+            emptyDescription="No company-scoped IT project tasks in this filter."
+            showPercentages
+            pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
+            segments={companyTaskSegments}
+          />
+        </section>
+      </div>
+
+      <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.08)] dark:border-zinc-800 dark:bg-[#080808]">
+        <div className="flex flex-col gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-4 sm:flex-row sm:items-end sm:justify-between dark:border-zinc-800 dark:bg-zinc-950/70">
+          <div>
+            <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
+              Task/project details
+            </h3>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+              Switch between regular KPI task records and IT Project Implementation project rows.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+            <div className="mr-1 flex rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-950">
+              <button
+                type="button"
+                onClick={() => setDetailsView("task")}
+                className={cn(
+                  "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] transition",
+                  detailsView === "task"
+                    ? "bg-orange-600 text-white"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900",
+                )}
+              >
+                Tasks
+              </button>
+              <button
+                type="button"
+                onClick={() => setDetailsView("project")}
+                className={cn(
+                  "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] transition",
+                  detailsView === "project"
+                    ? "bg-orange-600 text-white"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900",
+                )}
+              >
+                Project Tasks
+              </button>
+            </div>
+            <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">
+              {detailPercent}% complete
+            </span>
+            <span className="rounded-full bg-orange-100 px-3 py-1 text-orange-800 dark:bg-orange-500/15 dark:text-orange-200">
+              {detailMissing} pending
+            </span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800 xl:text-xs">
+            <colgroup>
+              <col className="w-[5.5%]" />
+              <col className="w-[10%]" />
+              <col className="w-[7%]" />
+              <col className="w-[10%]" />
+              <col className="w-[22%]" />
+              <col className="w-[7%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[7%]" />
+              <col className="w-[12.5%]" />
+              <col className="w-[4%]" />
+            </colgroup>
+            <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-[0.1em] text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-500">
+              <tr>
+                <th className="px-2.5 py-3">Task ID</th>
+                <th className="px-2.5 py-3">{titleColumnLabel}</th>
+                <th className="px-2.5 py-3">Company</th>
+                <th className="px-2.5 py-3">Assignee</th>
+                <th className="px-2.5 py-3">Task description</th>
+                <th className="px-2.5 py-3">Priority</th>
+                <th className="px-2.5 py-3">Status</th>
+                <th className="px-2.5 py-3">Start date</th>
+                <th className="px-2.5 py-3">Due date</th>
+                <th className="px-2.5 py-3">Completion</th>
+                <th className="px-2.5 py-3 text-center">Hours</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
+              {detailTotal > 0 ? (
+                detailTableRows.map((row) => (
+                  <tr key={row.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                    <td className="break-words px-2.5 py-3 font-mono font-bold text-zinc-700 dark:text-zinc-300">{row.taskId}</td>
+                    <td className="break-words px-2.5 py-3 font-semibold text-zinc-900 dark:text-zinc-100">{row.projectName}</td>
+                    <td className="break-words px-2.5 py-3 text-zinc-600 dark:text-zinc-400">{row.companyName}</td>
+                    <td className="break-words px-2.5 py-3 font-semibold text-zinc-700 dark:text-zinc-300">{row.assigneeName ?? "Unassigned"}</td>
+                    <td className="break-words px-2.5 py-3 text-zinc-700 dark:text-zinc-300">{row.taskDescription}</td>
+                    <td className="px-2.5 py-3">
+                      <span
+                        className={cn(
+                          "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase",
+                          row.priority === "High"
+                            ? "bg-blue-500/10 text-blue-500 dark:bg-blue-500/20 dark:text-blue-300"
+                            : row.priority === "Low"
+                              ? "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+                              : "bg-orange-500/10 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
+                        )}
+                      >
+                        {row.priority}
+                      </span>
+                    </td>
+                    <td className="break-words px-2.5 py-3 text-zinc-600 dark:text-zinc-400">{row.status}</td>
+                    <td className="break-words px-2.5 py-3 font-mono text-zinc-600 dark:text-zinc-400">{formatMonthNameDate(row.startDate)}</td>
+                    <td className="break-words px-2.5 py-3 font-mono text-zinc-600 dark:text-zinc-400">{formatMonthNameDate(row.dueDate)}</td>
+                    <td className="px-2.5 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                          <div className="h-full rounded-full bg-orange-500" style={{ width: `${row.completion}%` }} />
+                        </div>
+                        <span className="font-mono text-xs font-bold text-orange-700 dark:text-orange-300">{row.completion}%</span>
+                      </div>
+                    </td>
+                    <td className="px-2.5 py-3 text-center font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{formatTrackerHours(row.hours)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="px-4 py-14 text-center text-sm text-zinc-600 dark:text-zinc-500 sm:px-6" colSpan={11}>
+                    {detailsView === "project"
+                      ? "No IT Project Implementation rows available for this filter yet."
+                      : "No task rows available for this filter yet."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function EfficiencyStatCard({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: "neutral" | "green" | "amber" | "orange";
+}) {
+  const accentClass =
+    tone === "green"
+      ? "from-emerald-500 to-emerald-400"
+      : tone === "amber"
+        ? "from-amber-500 to-orange-400"
+        : tone === "orange"
+          ? "from-orange-500 to-orange-300"
+          : "from-zinc-500 to-zinc-300";
+  const valueClass =
+    tone === "green"
+      ? "text-emerald-700 dark:text-emerald-300"
+      : tone === "amber"
+        ? "text-amber-700 dark:text-amber-300"
+        : tone === "orange"
+          ? "text-orange-700 dark:text-orange-300"
+          : "text-zinc-900 dark:text-zinc-50";
+  return (
+    <article className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#111111]">
+      <span className={cn("absolute inset-x-0 top-0 h-1 bg-gradient-to-r", accentClass)} aria-hidden />
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">{label}</p>
+      <p className={cn("mt-2 text-3xl font-black tabular-nums", valueClass)}>{value}</p>
+      <p className="mt-2 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">{hint}</p>
+    </article>
+  );
+}
+
 function TaskMetricsPanel({
   checklistPillars,
   helpdeskTickets,
@@ -781,15 +1248,20 @@ function TaskMetricsPanel({
           <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
             Task metrics
           </h3>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Daily checklist pillars update in near real time when items are checked on the task board (snapshots refresh
-            about every 15 seconds on this tab). <strong className="font-semibold">Sundays are excluded</strong> from
-            daily KPI metrics and averages. Weekly, monthly, and quarterly views average working days in the range;
-            quarterly covers 4-month cycles.{" "}
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">Helpdesk</span> and{" "}
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">User support</span> ticket counts also exclude
-            Sundays in the reporting window.
-          </p>
+          <div className="mt-3 max-w-3xl rounded-2xl border border-orange-500/25 bg-gradient-to-br from-orange-500/10 via-zinc-100/70 to-white p-4 shadow-inner dark:from-orange-500/12 dark:via-zinc-900/80 dark:to-zinc-950">
+            <p className="text-lg font-bold tracking-tight text-zinc-950 dark:text-zinc-50">Task progress overview</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+                Live checklist data
+              </span>
+              <span className="rounded-full border border-zinc-300 bg-white/80 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300">
+                Working days only
+              </span>
+              <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-cyan-700 dark:text-cyan-300">
+                Snapshot based
+              </span>
+            </div>
+          </div>
         </div>
         <div className="flex w-full shrink-0 flex-col gap-4 sm:min-w-[17rem] lg:w-auto lg:items-end">
           <div className="flex flex-col gap-1.5">
@@ -797,7 +1269,7 @@ function TaskMetricsPanel({
               Cadence
             </span>
             <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
-              {(["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] as const).map((f) => (
+              {(["WEEKLY", "MONTHLY", "QUARTERLY"] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -809,7 +1281,7 @@ function TaskMetricsPanel({
                       : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
                   )}
                 >
-                  {f === "DAILY" ? "Daily" : f === "WEEKLY" ? "Weekly" : f === "MONTHLY" ? "Monthly" : "Quarterly"}
+                  {f === "WEEKLY" ? "Weekly" : f === "MONTHLY" ? "Monthly" : "Quarterly"}
                 </button>
               ))}
             </div>

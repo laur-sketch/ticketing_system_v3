@@ -1,0 +1,329 @@
+import { NextResponse } from "next/server";
+import { DateTime } from "luxon";
+import { requireRole } from "@/lib/access";
+import { sortByRosterOrder } from "@/lib/company-roster";
+import {
+  itProjectStatusProgress,
+  normalizeItProjectPriority,
+  normalizeItProjectStatus,
+  parseItProjectSubKpis,
+} from "@/lib/it-project-subkpis";
+import { collectAllSubKpiItems, getTaskPriority, normalizeSubKpis, type SubKpiItem } from "@/lib/kpi-subkpis";
+import { getPeriodStartInclusive } from "@/lib/kpi-period-window";
+import {
+  DEFAULT_TIME_ZONE,
+  getPeriodEndExclusiveFromCycleStart,
+  type KpiFrequencyCode,
+} from "@/lib/kpi-recurrence";
+import { IT_PROJECT_IMPLEMENTATION_TITLE } from "@/lib/it-task-pillar-titles";
+import { prisma } from "@/lib/prisma";
+import { isStaffPortalRole } from "@/lib/staff-role";
+
+function taskPrefixForTitle(title: string) {
+  if (title === IT_PROJECT_IMPLEMENTATION_TITLE) return "ITP";
+  const words = title
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const prefix = words.length > 1 ? words.map((word) => word[0]).join("") : words[0]?.slice(0, 3);
+  return (prefix || "TSK").toUpperCase().slice(0, 4);
+}
+
+function nonItTaskCompletion(item: SubKpiItem) {
+  if (item.done) return 100;
+  if (item.assignedAgentId) return 25;
+  return 0;
+}
+
+type TrackerPriority = "High" | "Medium" | "Low";
+
+function highestPriority(items: SubKpiItem[]): TrackerPriority {
+  if (items.some((item) => item.projectPriority === "High")) return "High";
+  if (items.some((item) => item.projectPriority === "Medium")) return "Medium";
+  if (items.some((item) => item.projectPriority === "Low")) return "Low";
+  return "Medium";
+}
+
+function assigneeNamesForItems(
+  mainAssignee: { id: string; name: string } | null | undefined,
+  items: SubKpiItem[],
+  agentById: Map<string, { id: string; name: string }>,
+) {
+  const names = new Map<string, string>();
+  if (mainAssignee?.id && mainAssignee.name.trim()) {
+    names.set(mainAssignee.id, mainAssignee.name.trim());
+  }
+  for (const item of items) {
+    const subAssigneeId = item.assignedAgentId?.trim();
+    const subAssigneeName = item.assignedAgentName?.trim() || (subAssigneeId ? agentById.get(subAssigneeId)?.name.trim() : "");
+    if (subAssigneeId && subAssigneeName) {
+      names.set(subAssigneeId, subAssigneeName);
+    } else if (subAssigneeName) {
+      names.set(subAssigneeName.toLowerCase(), subAssigneeName);
+    }
+  }
+  return names.size > 0 ? [...names.values()].join(", ") : null;
+}
+
+type TrackerTaskRow = {
+  frequency: KpiFrequencyCode;
+  isRecurring: boolean;
+  nonRecurringStartAt: Date | null;
+  nonRecurringEndAt: Date | null;
+  recurrenceWeekday: number | null;
+  recurrenceMonthDay: number | null;
+  periodCycleStartAt: Date | null;
+};
+
+function ymdInZone(date: Date | null | undefined, timeZone = DEFAULT_TIME_ZONE) {
+  if (!date) return null;
+  const dt = DateTime.fromJSDate(date, { zone: timeZone });
+  return dt.isValid ? dt.toISODate() : null;
+}
+
+function lastWorkingDayOfMonth(date: Date, timeZone = DEFAULT_TIME_ZONE) {
+  let day = DateTime.fromJSDate(date, { zone: timeZone }).endOf("month").startOf("day");
+  while (day.weekday === 7) {
+    day = day.minus({ days: 1 });
+  }
+  return day.isValid ? day.toISODate() : null;
+}
+
+function cadenceWindow(row: TrackerTaskRow, now: Date, timeZone = DEFAULT_TIME_ZONE) {
+  if (row.isRecurring === false) {
+    return {
+      startDate: ymdInZone(row.nonRecurringStartAt, timeZone),
+      dueDate: ymdInZone(row.nonRecurringEndAt, timeZone),
+    };
+  }
+
+  const start =
+    row.periodCycleStartAt ??
+    getPeriodStartInclusive(row.frequency, row.recurrenceWeekday, row.recurrenceMonthDay, now, timeZone);
+  const endExclusive = getPeriodEndExclusiveFromCycleStart(
+    start,
+    row.frequency,
+    row.recurrenceWeekday,
+    row.recurrenceMonthDay,
+    timeZone,
+  );
+  const due = DateTime.fromJSDate(endExclusive, { zone: timeZone }).minus({ days: 1 });
+
+  if (row.frequency === "MONTHLY") {
+    const lastWorkingDay = lastWorkingDayOfMonth(start, timeZone);
+    return {
+      startDate: lastWorkingDay,
+      dueDate: lastWorkingDay,
+    };
+  }
+
+  return {
+    startDate: ymdInZone(start, timeZone),
+    dueDate: due.isValid ? due.toISODate() : null,
+  };
+}
+
+function workdayStartAt8(startDate: string | null | undefined, now: Date, timeZone = DEFAULT_TIME_ZONE) {
+  const day = startDate ?? DateTime.fromJSDate(now, { zone: timeZone }).toISODate();
+  const dt = day ? DateTime.fromISO(day, { zone: timeZone }).set({ hour: 8, minute: 0, second: 0, millisecond: 0 }) : null;
+  return dt?.isValid ? dt : DateTime.fromJSDate(now, { zone: timeZone }).set({ hour: 8, minute: 0, second: 0, millisecond: 0 });
+}
+
+function completionHours(args: {
+  startDate: string | null | undefined;
+  completion: number;
+  completedAt?: Date | null;
+  fallbackUpdatedAt: Date;
+  now: Date;
+  timeZone?: string;
+}) {
+  if (args.completion < 100) return null;
+  const timeZone = args.timeZone ?? DEFAULT_TIME_ZONE;
+  const start = workdayStartAt8(args.startDate, args.now, timeZone);
+  const endSource = args.completedAt ?? args.fallbackUpdatedAt;
+  const end = DateTime.fromJSDate(endSource, { zone: timeZone });
+  if (!end.isValid || end.toMillis() <= start.toMillis()) return 0;
+  return Math.round(((end.toMillis() - start.toMillis()) / 3_600_000) * 10) / 10;
+}
+
+export async function GET() {
+  const { unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
+  if (unauthorized) return unauthorized;
+
+  const [taskRows, staffCompanyRows, agents] = await Promise.all([
+    prisma.kpiMaintenance.findMany({
+      select: {
+        id: true,
+        title: true,
+        frequency: true,
+        isRecurring: true,
+        nonRecurringStartAt: true,
+        nonRecurringEndAt: true,
+        recurrenceWeekday: true,
+        recurrenceMonthDay: true,
+        periodCycleStartAt: true,
+        lastFullCompletionAt: true,
+        updatedAt: true,
+        itProjectName: true,
+        subKpis: true,
+        assignedAgent: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.portalAccount.findMany({
+      where: { staffDesignatedCompanyId: { not: null } },
+      select: {
+        role: true,
+        staffDesignatedCompany: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.agent.findMany({
+      select: { id: true, name: true, email: true },
+    }),
+  ]);
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const companiesById = new Map<string, { id: string; name: string }>();
+  for (const row of staffCompanyRows) {
+    if (!isStaffPortalRole(row.role) || !row.staffDesignatedCompany) continue;
+    companiesById.set(row.staffDesignatedCompany.id, row.staffDesignatedCompany);
+  }
+  const companies = sortByRosterOrder(Array.from(companiesById.values()));
+
+  const seenProjects = new Set<string>();
+  const projects = taskRows.flatMap((row) => {
+    const name =
+      row.title === IT_PROJECT_IMPLEMENTATION_TITLE
+        ? row.itProjectName?.trim() || "IT Project Implementation"
+        : row.title.trim();
+    const key = name.toLowerCase();
+    if (seenProjects.has(key)) return [];
+    seenProjects.add(key);
+    return [{ name }];
+  });
+
+  const assigneeEmails = [
+    ...taskRows.map((row) => row.assignedAgent?.email?.trim().toLowerCase()),
+    ...agents.map((agent) => agent.email.trim().toLowerCase()),
+  ]
+    .filter((email): email is string => Boolean(email));
+  const portalCompanies = assigneeEmails.length
+    ? await prisma.portalAccount.findMany({
+        where: { email: { in: assigneeEmails } },
+        select: {
+          email: true,
+          staffDesignatedCompanyId: true,
+          staffDesignatedCompany: { select: { name: true } },
+        },
+      })
+    : [];
+  const companyByEmail = new Map(
+    portalCompanies.map((row) => [
+      row.email.trim().toLowerCase(),
+      {
+        id: row.staffDesignatedCompanyId,
+        name: row.staffDesignatedCompany?.name ?? null,
+      },
+    ]),
+  );
+
+  const prefixCounts = new Map<string, number>();
+  const now = new Date();
+  const tasks = taskRows.flatMap((row) => {
+    const isItProject = row.title === IT_PROJECT_IMPLEMENTATION_TITLE;
+    const projectName = isItProject ? row.itProjectName?.trim() || "IT Project Implementation" : row.title.trim();
+    const prefix = taskPrefixForTitle(row.title);
+    const rowWindow = cadenceWindow(row, now);
+    const data = isItProject
+      ? parseItProjectSubKpis(row.subKpis).phases.map((phase) => ({ name: phase.name, items: phase.items }))
+      : [];
+
+    if (!isItProject) {
+      const items = collectAllSubKpiItems(normalizeSubKpis(row.subKpis)).filter((item) => item.title.trim());
+      if (items.length === 0) return [];
+
+      const firstSubAssigneeId = items.find((item) => item.assignedAgentId)?.assignedAgentId ?? null;
+      const assignee = row.assignedAgent ?? (firstSubAssigneeId ? agentById.get(firstSubAssigneeId) : null);
+      const assigneeEmail = assignee?.email?.trim().toLowerCase();
+      const company = assigneeEmail ? companyByEmail.get(assigneeEmail) : null;
+      const doneCount = items.filter((item) => item.done).length;
+      const completion = Math.round((doneCount / items.length) * 100);
+      const nextIndex = (prefixCounts.get(prefix) ?? 0) + 1;
+      prefixCounts.set(prefix, nextIndex);
+      const startDate = rowWindow.startDate;
+      const priority = items.length > 1 ? getTaskPriority(row.subKpis) ?? highestPriority(items) : highestPriority(items);
+
+      return [
+        {
+          id: row.id,
+          rowType: "task",
+          recordId: row.id,
+          subTaskId: null,
+          taskId: `${prefix}-${String(nextIndex).padStart(3, "0")}`,
+          projectName,
+          companyId: company?.id ?? null,
+          companyName: company?.name ?? "Unassigned company",
+          taskDescription: items.map((item) => item.title.trim()).join(", "),
+          assigneeName: assigneeNamesForItems(row.assignedAgent, items, agentById),
+          priority,
+          status: completion === 100 ? "Done" : completion > 0 ? "On Going" : "Pending",
+          startDate,
+          dueDate: rowWindow.dueDate,
+          completion,
+          hours: completionHours({
+            startDate,
+            completion,
+            completedAt: row.lastFullCompletionAt,
+            fallbackUpdatedAt: row.updatedAt,
+            now,
+          }),
+          phaseName: row.title,
+        },
+      ];
+    }
+
+    return data.flatMap((phase) =>
+      phase.items.map((item) => {
+        const assignee = item.assignedAgentId ? agentById.get(item.assignedAgentId) : row.assignedAgent;
+        const assigneeEmail = assignee?.email?.trim().toLowerCase();
+        const company = assigneeEmail ? companyByEmail.get(assigneeEmail) : null;
+        const status = normalizeItProjectStatus(item.projectStatus) ?? (item.assignedAgentId ? "Pending" : "Pending");
+        const completion = isItProject ? itProjectStatusProgress(item) : nonItTaskCompletion(item);
+        const nextIndex = (prefixCounts.get(prefix) ?? 0) + 1;
+        prefixCounts.set(prefix, nextIndex);
+        const startDate = item.startDate ?? rowWindow.startDate;
+        return {
+          id: `${row.id}:${item.id}`,
+          rowType: "project",
+          recordId: row.id,
+          subTaskId: item.id,
+          taskId: `${prefix}-${String(nextIndex).padStart(3, "0")}`,
+          projectName,
+          companyId: company?.id ?? null,
+          companyName: company?.name ?? "Unassigned company",
+          taskDescription: item.title,
+          assigneeName: assigneeNamesForItems(row.assignedAgent, [item], agentById),
+          priority: normalizeItProjectPriority(item.projectPriority) ?? "Medium",
+          status: isItProject ? status : item.done ? "Done" : item.assignedAgentId ? "Pending" : "Pending",
+          startDate,
+          dueDate: item.dueDate ?? rowWindow.dueDate,
+          completion,
+          hours: completionHours({
+            startDate,
+            completion,
+            completedAt: completion >= 100 ? row.lastFullCompletionAt : null,
+            fallbackUpdatedAt: row.updatedAt,
+            now,
+          }),
+          phaseName: phase.name,
+        };
+      }),
+    );
+  });
+
+  return NextResponse.json({
+    projects: projects.length > 0 ? projects : [{ name: "IT Project Implementation" }],
+    companies,
+    tasks,
+  });
+}

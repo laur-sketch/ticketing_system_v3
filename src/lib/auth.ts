@@ -225,6 +225,7 @@ export const authOptions: NextAuthOptions = {
       if (typeof token.email === "string" && token.email.length > 0) {
         const portal = await findPortalByEmailOnly(token.email);
         if (portal) {
+          token.name = portal.name;
           token.companyId = portal.companyId;
           token.companyName = portal.companyName;
           token.customerOrgRole = portal.customerOrgRole;
@@ -246,6 +247,9 @@ export const authOptions: NextAuthOptions = {
       session.user.role = roleFromJwt(token);
       if (!session.user.email && typeof token.email === "string") {
         session.user.email = token.email;
+      }
+      if (typeof token.name === "string") {
+        session.user.name = token.name;
       }
       if (typeof token.authProvider === "string") {
         session.user.authProvider = token.authProvider;

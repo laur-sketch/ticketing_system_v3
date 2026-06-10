@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Hanken_Grotesk } from "next/font/google";
 import Script from "next/script";
 import { AuthProvider } from "@/components/AuthProvider";
 import { AppChrome } from "@/components/layout/AppChrome";
@@ -8,13 +8,8 @@ import { BRAND_TITLE } from "@/lib/brand";
 import { safeGetServerSession } from "@/lib/server-session";
 import "./globals.css";
 
-const geistSans = Geist({
+const hankenGrotesk = Hanken_Grotesk({
   variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
   subsets: ["latin"],
 });
 
@@ -29,8 +24,8 @@ export const viewport: Viewport = {
   maximumScale: 5,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8f8f8" },
-    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+    { media: "(prefers-color-scheme: light)", color: "#fbfbfb" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
   ],
 };
 
@@ -43,7 +38,7 @@ export default async function RootLayout({
   const session = await safeGetServerSession();
 
   return (
-    <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} min-h-dvh antialiased dark`}>
+    <html lang="en" suppressHydrationWarning className={`${hankenGrotesk.variable} min-h-dvh antialiased dark`}>
       <body className="flex min-h-dvh flex-col touch-manipulation">
         <Script id="theme-init" strategy="beforeInteractive">
           {themeInit}

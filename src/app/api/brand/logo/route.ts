@@ -46,20 +46,20 @@ function makeFallbackSvg(title: string) {
 <svg xmlns="http://www.w3.org/2000/svg" width="320" height="96" viewBox="0 0 320 96" role="img" aria-label="${safeTitle}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0b1220"/>
-      <stop offset="100%" stop-color="#121c31"/>
+      <stop offset="0%" stop-color="#131313"/>
+      <stop offset="100%" stop-color="#1f1f1f"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#f97316"/>
-      <stop offset="100%" stop-color="#fb923c"/>
+      <stop offset="0%" stop-color="#ff5c00"/>
+      <stop offset="100%" stop-color="#ff7a2f"/>
     </linearGradient>
   </defs>
   <rect width="320" height="96" rx="18" fill="url(#bg)"/>
-  <circle cx="52" cy="48" r="24" fill="#0f172a" stroke="url(#accent)" stroke-width="3"/>
+  <circle cx="52" cy="48" r="24" fill="#1b1b1b" stroke="url(#accent)" stroke-width="3"/>
   <path d="M40 48l8 8 16-16" fill="none" stroke="url(#accent)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
   <text x="90" y="48" text-anchor="start" dominant-baseline="middle"
     font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
-    font-size="18" font-weight="800" fill="#F8FAFC" letter-spacing="0.2">
+    font-size="18" font-weight="800" fill="#e2e2e2" letter-spacing="0.2">
     ${safeTitle}
   </text>
 </svg>

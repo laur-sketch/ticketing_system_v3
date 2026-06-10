@@ -43,6 +43,36 @@ export async function DELETE(
   if (unauthorized) return unauthorized;
   const { id } = await ctx.params;
 
-  await prisma.agent.delete({ where: { id } });
+  const agent = await prisma.agent.findUnique({
+    where: { id },
+    select: { id: true, email: true },
+  });
+  if (!agent) {
+    return NextResponse.json({ error: "Personnel roster entry not found." }, { status: 404 });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.portalAccount.updateMany({
+      where: { email: { equals: agent.email, mode: "insensitive" } },
+      data: {
+        staffDesignatedCompanyId: null,
+        staffAssignmentColor: null,
+      },
+    });
+    await tx.ticket.updateMany({
+      where: { assignedAgentId: agent.id },
+      data: { assignedAgentId: null },
+    });
+    await tx.kpiMaintenance.updateMany({
+      where: { assignedAgentId: agent.id },
+      data: { assignedAgentId: null, assignedRole: null },
+    });
+    await tx.taskItem.updateMany({
+      where: { assignedAgentId: agent.id },
+      data: { assignedAgentId: null },
+    });
+    await tx.agent.delete({ where: { id: agent.id } });
+  });
+
   return NextResponse.json({ ok: true });
 }

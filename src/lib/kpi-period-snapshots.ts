@@ -12,12 +12,15 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import {
+  collectAllSubKpiItems,
   isInvertedChecklistPillar,
   kpiChecklistMetricView,
   kpiChecklistProgress,
+  normalizeSubKpis,
   type KpiChecklistProgress,
+  type SubKpiItem,
 } from "@/lib/kpi-subkpis";
-import { countItProjectSubKpiStatus } from "@/lib/it-project-subkpis";
+import { countItProjectSubKpiStatus, itProjectChecklistItems, itProjectStatusProgress } from "@/lib/it-project-subkpis";
 import {
   IT_PROJECT_IMPLEMENTATION_TITLE,
   IT_TASK_PILLAR_TITLES,
@@ -117,10 +120,6 @@ export async function upsertKpiPeriodSnapshot(
       capturedAt: new Date(),
     },
   });
-}
-
-function ymdToDate(ymd: string, timeZone: string): Date {
-  return DateTime.fromISO(ymd, { zone: normalizeTimeZone(timeZone) }).startOf("day").toJSDate();
 }
 
 /** All recurrence period keys for one KPI overlapping an inclusive local date range. */
@@ -231,10 +230,35 @@ function snapshotToProgress(s: {
   };
 }
 
+function averageDailyProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress {
+  const withData = rows.filter((r) => r.total > 0);
+  if (withData.length === 0) return { total: 0, done: 0, missing: 0, percent: 0 };
+  const percent = Math.round(withData.reduce((sum, row) => sum + row.percent, 0) / withData.length);
+  const total = Math.round(withData.reduce((sum, row) => sum + row.total, 0) / withData.length);
+  const done = Math.round(withData.reduce((sum, row) => sum + row.done, 0) / withData.length);
+  const missing = Math.max(0, total - done);
+  return { total, done, missing, percent };
+}
+
 export type TaskChecklistPillarMetric = KpiChecklistProgress & {
   periodsCounted: number;
   periodsInRange: number;
   csvRows?: string[][];
+  dailyProgressRows?: TaskChecklistDailyProgress[];
+  assigneeProgress?: TaskAssigneeProgress[];
+};
+
+export type TaskChecklistDailyProgress = KpiChecklistProgress & {
+  date: string;
+};
+
+export type TaskAssigneeProgress = {
+  id: string;
+  name: string;
+  role: string;
+  total: number;
+  done: number;
+  percent: number;
 };
 
 export type TaskChecklistPillarMetrics = Partial<Record<ItTaskPillarTitle, TaskChecklistPillarMetric>>;
@@ -270,7 +294,10 @@ async function computeItProjectImplementationPillarMetric(args: {
       isRecurring: false,
       ...args.kpiWhere,
     },
-    select: { subKpis: true },
+    select: {
+      subKpis: true,
+      assignedAgent: { select: { id: true, name: true } },
+    },
   });
   const nowMs = Date.now();
   let total = 0;
@@ -283,6 +310,14 @@ async function computeItProjectImplementationPillarMetric(args: {
     delayed += counts.delayed;
   }
   const percent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
+  const assigneeProgress = assigneeProgressForRows(
+    rows.map((row) => ({
+      subKpis: row.subKpis,
+      assignedAgent: row.assignedAgent,
+      items: itProjectChecklistItems(row.subKpis),
+    })),
+    (item) => itProjectStatusProgress(item) === 100,
+  );
   return {
     total,
     done: completedOnTime,
@@ -290,7 +325,125 @@ async function computeItProjectImplementationPillarMetric(args: {
     percent,
     periodsCounted: rows.length,
     periodsInRange: rows.length,
+    assigneeProgress: averageAssigneeProgressToDonut(assigneeProgress, percent),
   };
+}
+
+function assigneeProgressForRows(
+  rows: ReadonlyArray<{
+    subKpis: unknown;
+    assignedAgent?: { id: string; name: string } | null;
+    items?: SubKpiItem[];
+  }>,
+  isDone: (item: SubKpiItem) => boolean,
+): TaskAssigneeProgress[] {
+  const byAssignee = new Map<
+    string,
+    { id: string; name: string; roles: Set<string>; total: number; done: number }
+  >();
+
+  for (const row of rows) {
+    const items = row.items ?? collectAllSubKpiItems(normalizeSubKpis(row.subKpis));
+    for (const item of items) {
+      if (!item.title.trim()) continue;
+      const subAssigneeId = item.assignedAgentId?.trim() || "";
+      const parentAssigneeId = row.assignedAgent?.id?.trim() || "";
+      const candidates = new Map<string, { id: string; name: string; roles: string[] }>();
+      if (parentAssigneeId) {
+        candidates.set(parentAssigneeId, {
+          id: parentAssigneeId,
+          name: row.assignedAgent?.name?.trim() || "Assigned user",
+          roles: ["Assignee"],
+        });
+      }
+      if (subAssigneeId && subAssigneeId !== parentAssigneeId) {
+        candidates.set(subAssigneeId, {
+          id: subAssigneeId,
+          name: item.assignedAgentName?.trim() || row.assignedAgent?.name?.trim() || "Assigned user",
+          roles: ["Sub-assignee"],
+        });
+      }
+      if (candidates.size === 0) {
+        candidates.set("__unassigned__", { id: "__unassigned__", name: "Unassigned", roles: ["Unassigned"] });
+      }
+
+      for (const candidate of candidates.values()) {
+        const current = byAssignee.get(candidate.id) ?? {
+          id: candidate.id,
+          name: candidate.name,
+          roles: new Set<string>(),
+          total: 0,
+          done: 0,
+        };
+        for (const role of candidate.roles) current.roles.add(role);
+        current.total += 1;
+        if (isDone(item)) current.done += 1;
+        byAssignee.set(candidate.id, current);
+      }
+    }
+  }
+
+  const mergedByPerson = new Map<
+    string,
+    { id: string; name: string; roles: Set<string>; total: number; done: number }
+  >();
+  for (const row of byAssignee.values()) {
+    const nameKey = row.name.trim().toLowerCase();
+    const existing = mergedByPerson.get(nameKey);
+    if (existing) {
+      for (const role of row.roles) existing.roles.add(role);
+      existing.total += row.total;
+      existing.done += row.done;
+      if (row.id !== "__unassigned__") existing.id = row.id;
+      continue;
+    }
+    mergedByPerson.set(nameKey, {
+      id: row.id,
+      name: row.name,
+      roles: new Set(row.roles),
+      total: row.total,
+      done: row.done,
+    });
+  }
+
+  return [...mergedByPerson.values()]
+    .map((row) => {
+      const roles = [...row.roles].sort();
+      const displayRoles =
+        roles.includes("Assignee") && roles.includes("Sub-assignee") ? ["Assignee"] : roles;
+      return {
+        id: row.id,
+        name: row.name,
+        role: displayRoles.join(" / "),
+        total: row.total,
+        done: row.done,
+        percent: row.total > 0 ? Math.round((row.done / row.total) * 100) : 0,
+      };
+    })
+    .sort((a, b) => b.percent - a.percent || b.done - a.done || a.name.localeCompare(b.name));
+}
+
+function averageAssigneeProgressToDonut(
+  rows: TaskAssigneeProgress[],
+  targetPercent: number,
+): TaskAssigneeProgress[] {
+  const safeTarget = Math.min(100, Math.max(0, Math.round(targetPercent)));
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const done = rows.reduce((sum, row) => sum + row.done, 0);
+  const currentPercent = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  return rows
+    .map((row) => {
+      const scaledPercent =
+        currentPercent > 0 ? Math.round((row.percent * safeTarget) / currentPercent) : safeTarget;
+      const percent = Math.min(100, Math.max(0, scaledPercent));
+      return {
+        ...row,
+        done: Math.round((row.total * percent) / 100),
+        percent,
+      };
+    })
+    .sort((a, b) => b.percent - a.percent || b.done - a.done || a.name.localeCompare(b.name));
 }
 
 export async function computeTaskChecklistPillarMetrics(args: {
@@ -313,6 +466,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
       title: true,
       frequency: true,
       subKpis: true,
+      assignedAgent: { select: { id: true, name: true } },
       periodKey: true,
       recurrenceWeekday: true,
       recurrenceMonthDay: true,
@@ -380,11 +534,24 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
     const pillarKpis = selectedByPillar.get(pillar) ?? [];
     if (pillarKpis.length === 0) {
-      result[pillar] = { total: 0, done: 0, missing: 0, percent: 0, periodsCounted: 0, periodsInRange: 0 };
+      result[pillar] = {
+        total: 0,
+        done: 0,
+        missing: 0,
+        percent: 0,
+        periodsCounted: 0,
+        periodsInRange: 0,
+        dailyProgressRows: [],
+        assigneeProgress: [],
+      };
       continue;
     }
 
     const progressRows: KpiChecklistProgress[] = [];
+    const invert = isInvertedChecklistPillar(pillar);
+    const rawAssigneeProgress = assigneeProgressForRows(pillarKpis, (item) =>
+      invert ? !item.done : Boolean(item.done),
+    );
     let periodsInRange = 0;
 
     for (const kpi of pillarKpis) {
@@ -396,26 +563,69 @@ export async function computeTaskChecklistPillarMetrics(args: {
         const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
         if (snap) {
           progressRows.push(snapshotToProgress(snap));
-        } else if (key === nowPeriodKey) {
-          /** Live checklist only for the current recurrence period (not past reporting days). */
+        } else if (metricsCadence === "DAILY" && key === nowPeriodKey) {
+          /** Daily view may show today's live checklist before a snapshot exists. Wider cadences use stored snapshots only. */
           progressRows.push(kpiChecklistProgress(kpi.subKpis));
         }
       }
     }
 
+    const dailyProgressRows: TaskChecklistDailyProgress[] = [];
+    const hasDailyKpis = pillarKpis.some((kpi) => (kpi.frequency as KpiFrequencyCode) === "DAILY");
+    for (const ymd of enumerateYmdDaysInRange(fromYmd, toYmd, zone)) {
+      const dayRows: KpiChecklistProgress[] = [];
+      for (const kpi of pillarKpis) {
+        if ((kpi.frequency as KpiFrequencyCode) !== "DAILY") continue;
+        const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, ymd, ymd, zone);
+        const nowPeriodKey = currentPeriodKeyFor(kpi);
+        for (const key of periodKeys) {
+          const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
+          if (snap) {
+            dayRows.push(snapshotToProgress(snap));
+          } else if (metricsCadence === "DAILY" && key === nowPeriodKey) {
+            dayRows.push(kpiChecklistProgress(kpi.subKpis));
+          }
+        }
+      }
+      if (hasDailyKpis) {
+        dailyProgressRows.push({ date: ymd, ...averageDailyProgress(dayRows) });
+      }
+    }
+
     if (progressRows.length === 0) {
-      result[pillar] = { total: 0, done: 0, missing: 0, percent: 0, periodsCounted: 0, periodsInRange };
+      result[pillar] = {
+        total: 0,
+        done: 0,
+        missing: 0,
+        percent: 0,
+        periodsCounted: 0,
+        periodsInRange,
+        dailyProgressRows,
+        assigneeProgress: averageAssigneeProgressToDonut(rawAssigneeProgress, 0),
+      };
       continue;
     }
 
     if (progressRows.length === 1) {
-      result[pillar] = { ...progressRows[0]!, periodsCounted: 1, periodsInRange: Math.max(1, periodsInRange) };
+      const targetPercent = kpiChecklistMetricView(progressRows[0]!, invert).percent;
+      result[pillar] = {
+        ...progressRows[0]!,
+        periodsCounted: 1,
+        periodsInRange: Math.max(1, periodsInRange),
+        dailyProgressRows,
+        assigneeProgress: averageAssigneeProgressToDonut(rawAssigneeProgress, targetPercent),
+      };
       continue;
     }
 
     const averaged = averageProgress(progressRows);
     averaged.periodsInRange = periodsInRange;
-    result[pillar] = averaged;
+    const targetPercent = kpiChecklistMetricView(averaged, invert).percent;
+    result[pillar] = {
+      ...averaged,
+      dailyProgressRows,
+      assigneeProgress: averageAssigneeProgressToDonut(rawAssigneeProgress, targetPercent),
+    };
   }
 
   return result;

@@ -11,14 +11,21 @@ html {
 
 /* StoicOps — light (default). Dark tokens when `html` has `.dark`. */
 :root {
-  --background: #f8f8f8;
+  --background: #fbfbfb;
   --foreground: #111827;
   --muted: #4b5563;
   --muted-subtle: #6b7280;
-  --brand: #ff8300;
-  --brand-hover: #e67500;
-  --brand-ink: #111827;
-  --brand-muted: rgb(255 131 0 / 0.12);
+  --brand: #ff5c00;
+  --brand-hover: #e65300;
+  --brand-ink: #ffffff;
+  --brand-muted: rgb(255 92 0 / 0.12);
+  --accent-blue: #4b8eff;
+  --accent-blue-soft: rgb(75 142 255 / 0.12);
+  --accent-teal: #00a49c;
+  --accent-teal-bright: #39dcd2;
+  --accent-teal-soft: rgb(0 164 156 / 0.12);
+  --danger: #93000a;
+  --danger-soft: rgb(147 0 10 / 0.1);
   --surface: #ffffff;
   --surface-elevated: #ffffff;
   --surface-muted: #f3f4f6;
@@ -38,7 +45,7 @@ html {
   --personnel-assign-yellow-fg: #292002;
   --personnel-assign-green: #43a047;
   --personnel-assign-green-fg: #f0fdf4;
-  --personnel-assign-blue: #1e88e5;
+  --personnel-assign-blue: #4b8eff;
   --personnel-assign-blue-fg: #eff6ff;
   --personnel-assign-indigo: #3949ab;
   --personnel-assign-indigo-fg: #eef2ff;
@@ -47,21 +54,28 @@ html {
 }
 
 html.dark {
-  --background: #000000;
-  --foreground: #ffffff;
-  --muted: #a1a1aa;
-  --muted-subtle: #71717a;
-  --brand: #ff8300;
-  --brand-hover: #ff9a33;
-  --brand-ink: #000000;
-  --brand-muted: rgb(255 131 0 / 0.14);
-  --surface: #121212;
-  --surface-elevated: #1a1a1a;
-  --surface-muted: #0a0a0a;
-  --border: #27272a;
-  --border-subtle: #1a1a1a;
-  --shadow-card: 0 10px 30px rgb(0 0 0 / 0.45);
-  --shadow-elevated: 0 20px 50px rgb(0 0 0 / 0.55);
+  --background: #0a0a0a;
+  --foreground: #e2e2e2;
+  --muted: #e4beb1;
+  --muted-subtle: #ab897d;
+  --brand: #ff5c00;
+  --brand-hover: #ff7a2f;
+  --brand-ink: #ffffff;
+  --brand-muted: rgb(255 92 0 / 0.16);
+  --accent-blue: #4b8eff;
+  --accent-blue-soft: rgb(75 142 255 / 0.16);
+  --accent-teal: #00a49c;
+  --accent-teal-bright: #39dcd2;
+  --accent-teal-soft: rgb(57 220 210 / 0.14);
+  --danger: #ffb4ab;
+  --danger-soft: rgb(255 180 171 / 0.13);
+  --surface: #131313;
+  --surface-elevated: #1f1f1f;
+  --surface-muted: #1b1b1b;
+  --border: #353535;
+  --border-subtle: #2a2a2a;
+  --shadow-card: none;
+  --shadow-elevated: 0 0 0 1px rgb(255 255 255 / 0.04), 0 16px 40px rgb(0 0 0 / 0.42);
 
   /* Staff assignment tags (same palette as :root) */
   --personnel-assign-red: #e53935;
@@ -72,7 +86,7 @@ html.dark {
   --personnel-assign-yellow-fg: #292002;
   --personnel-assign-green: #43a047;
   --personnel-assign-green-fg: #f0fdf4;
-  --personnel-assign-blue: #1e88e5;
+  --personnel-assign-blue: #4b8eff;
   --personnel-assign-blue-fg: #eff6ff;
   --personnel-assign-indigo: #3949ab;
   --personnel-assign-indigo-fg: #eef2ff;
@@ -88,12 +102,14 @@ html.dark {
   --color-brand: var(--brand);
   --color-brand-hover: var(--brand-hover);
   --color-brand-ink: var(--brand-ink);
+  --color-accent-blue: var(--accent-blue);
+  --color-accent-teal: var(--accent-teal);
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-surface-muted: var(--surface-muted);
   --color-border: var(--border);
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-geist-sans);
   --radius-card: var(--radius-stoic-lg);
   --radius-stoic: var(--radius-stoic);
   --radius-stoic-lg: var(--radius-stoic-lg);
@@ -132,8 +148,8 @@ select optgroup {
 
 .dark select option,
 .dark select optgroup {
-  background-color: #09090b;
-  color: #f4f4f5;
+  background-color: var(--surface-muted);
+  color: var(--foreground);
 }
 
 .dark body {
@@ -262,16 +278,16 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-stoic);
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 42%, var(--border));
   background: var(--surface);
-  color: var(--foreground);
+  color: var(--accent-blue);
   font-weight: 600;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .stoic-btn-outline:hover {
-  background: var(--surface-muted);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground) 30%);
+  background: var(--accent-blue-soft);
+  border-color: var(--accent-blue);
 }
 
 .stoic-nav-active {
@@ -285,6 +301,18 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   border: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-card);
+}
+
+.kinetic-card {
+  border-radius: var(--radius-stoic-lg);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent-teal-bright);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.kinetic-card-blue {
+  border-top-color: var(--accent-blue);
 }
 
 @layer utilities {
@@ -323,37 +351,75 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   }
 
   /* Legacy accent classes → StoicOps orange */
-  .bg-blue-600,
-  .bg-blue-700,
   .bg-orange-600 {
     background-color: var(--brand) !important;
     color: var(--brand-ink) !important;
   }
 
-  .dark .bg-blue-600,
-  .dark .bg-blue-700,
   .dark .bg-orange-600 {
     background-color: var(--brand) !important;
     color: var(--brand-ink) !important;
   }
 
-  .hover\:bg-blue-500:hover,
-  .hover\:bg-blue-800:hover,
   .hover\:bg-orange-500:hover {
     background-color: var(--brand-hover) !important;
   }
 
-  .dark .hover\:bg-blue-500:hover,
-  .dark .hover\:bg-blue-800:hover,
   .dark .hover\:bg-orange-500:hover {
     background-color: var(--brand-hover) !important;
   }
 
-  .bg-blue-500\/10,
-  .bg-blue-500\/20,
+  .bg-orange-500\/10,
   .bg-orange-500\/15,
   .bg-orange-500\/20 {
     background-color: var(--brand-muted) !important;
+  }
+
+  .bg-blue-600,
+  .bg-blue-700,
+  .bg-sky-600,
+  .bg-sky-700 {
+    background-color: var(--accent-blue) !important;
+    color: #ffffff !important;
+  }
+
+  .hover\:bg-blue-500:hover,
+  .hover\:bg-blue-800:hover,
+  .hover\:bg-sky-500:hover {
+    background-color: color-mix(in srgb, var(--accent-blue) 82%, #ffffff) !important;
+  }
+
+  .bg-blue-500\/10,
+  .bg-blue-500\/20,
+  .bg-sky-500\/10,
+  .bg-sky-500\/20 {
+    background-color: var(--accent-blue-soft) !important;
+  }
+
+  .bg-cyan-600,
+  .bg-cyan-700,
+  .bg-teal-600,
+  .bg-teal-700,
+  .bg-emerald-500,
+  .bg-emerald-600 {
+    background-color: var(--accent-teal) !important;
+    color: #001f1d !important;
+  }
+
+  .hover\:bg-cyan-500:hover,
+  .hover\:bg-teal-500:hover,
+  .hover\:bg-emerald-500:hover {
+    background-color: var(--accent-teal-bright) !important;
+  }
+
+  .bg-cyan-500\/10,
+  .bg-cyan-500\/20,
+  .bg-teal-500\/10,
+  .bg-teal-500\/20,
+  .bg-emerald-500\/10,
+  .bg-emerald-500\/15,
+  .bg-emerald-500\/20 {
+    background-color: var(--accent-teal-soft) !important;
   }
 
   .text-blue-300,
@@ -362,8 +428,34 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   .text-blue-500,
   .text-sky-300,
   .text-sky-400,
-  .text-sky-500,
+  .text-sky-500 {
+    color: var(--accent-blue) !important;
+  }
+
+  .text-cyan-300,
   .text-cyan-400,
+  .text-teal-300,
+  .text-teal-400,
+  .text-emerald-300,
+  .text-emerald-400,
+  .text-emerald-600,
+  .text-emerald-700 {
+    color: var(--accent-teal-bright) !important;
+  }
+
+  .text-rose-300,
+  .text-rose-400,
+  .text-rose-500,
+  .text-rose-600,
+  .text-rose-700 {
+    color: var(--danger) !important;
+  }
+
+  .text-amber-300,
+  .text-amber-400,
+  .text-amber-500,
+  .text-amber-600,
+  .text-amber-700,
   .text-orange-700,
   .text-orange-800,
   .dark .text-orange-300,
@@ -374,8 +466,27 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   .border-blue-500,
   .border-blue-400,
   .border-blue-300,
-  .border-sky-400,
+  .border-sky-400 {
+    border-color: color-mix(in srgb, var(--accent-blue) 65%, var(--border)) !important;
+  }
+
   .border-cyan-400,
+  .border-teal-400,
+  .border-emerald-300,
+  .border-emerald-500\/40,
+  .border-emerald-800\/50 {
+    border-color: color-mix(in srgb, var(--accent-teal-bright) 62%, var(--border)) !important;
+  }
+
+  .border-rose-300,
+  .border-rose-500\/40,
+  .border-rose-800\/50 {
+    border-color: color-mix(in srgb, var(--danger) 62%, var(--border)) !important;
+  }
+
+  .border-amber-300,
+  .border-amber-500\/40,
+  .border-amber-800\/50,
   .border-orange-400\/50,
   .border-orange-500\/30,
   .border-orange-500\/45 {
@@ -383,13 +494,29 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   }
 
   .from-orange-600,
-  .from-blue-600,
-  .to-blue-800,
-  .from-blue-700,
-  .to-blue-900,
   .to-orange-800 {
     --tw-gradient-from: var(--brand) var(--tw-gradient-from-position) !important;
     --tw-gradient-to: color-mix(in srgb, var(--brand) 65%, #000) var(--tw-gradient-to-position) !important;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  .from-blue-600,
+  .to-blue-800,
+  .from-blue-700,
+  .to-blue-900 {
+    --tw-gradient-from: var(--accent-blue) var(--tw-gradient-from-position) !important;
+    --tw-gradient-to: color-mix(in srgb, var(--accent-blue) 48%, #000) var(--tw-gradient-to-position) !important;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  .from-cyan-500,
+  .from-teal-500,
+  .from-emerald-500,
+  .to-cyan-400,
+  .to-teal-400,
+  .to-emerald-400 {
+    --tw-gradient-from: var(--accent-teal) var(--tw-gradient-from-position) !important;
+    --tw-gradient-to: var(--accent-teal-bright) var(--tw-gradient-to-position) !important;
     --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
   }
 
@@ -434,26 +561,175 @@ input[type="date"].date-input-with-icon::-ms-reveal {
     --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
   }
 
-  .bg-sky-600,
-  .bg-sky-700,
-  .bg-cyan-600,
-  .bg-cyan-700 {
-    background-color: var(--brand) !important;
-  }
-
-  .hover\:bg-sky-500:hover,
-  .hover\:bg-cyan-500:hover {
-    background-color: var(--brand-hover) !important;
-  }
-
   .ring-blue-500\/40,
   .ring-blue-500\/30,
   .focus\:ring-blue-500:focus,
+  .focus\:ring-cyan-500:focus,
+  .focus\:ring-teal-500:focus {
+    --tw-ring-color: color-mix(in srgb, var(--accent-blue) 48%, transparent) !important;
+  }
+
   .ring-orange-500\/40,
   .ring-orange-400\/40,
   .focus\:ring-orange-500:focus,
-  .focus\:ring-\[\#f97316\]\/25:focus {
+  .focus\:ring-\[\#f97316\]\/25:focus,
+  .focus-visible\:ring-\[\#f97316\]\/40:focus-visible {
     --tw-ring-color: color-mix(in srgb, var(--brand) 40%, transparent) !important;
+  }
+
+  /* Additional kinetic hex surfaces (staff + customer shells) */
+  .dark .dark\:bg-\[\#050505\],
+  .dark .dark\:bg-\[\#070707\],
+  .dark .dark\:bg-\[\#090909\],
+  .dark .dark\:bg-\[\#0d0d0d\],
+  .dark .dark\:bg-\[\#111111\],
+  .dark .dark\:bg-\[\#0f1218\],
+  .dark .bg-\[\#070707\],
+  .dark .bg-\[\#090909\],
+  .dark .bg-\[\#0d0d0d\],
+  .dark .bg-\[\#111111\],
+  .bg-\[\#0b1220\],
+  .bg-\[\#0a101d\],
+  .bg-\[\#0e1629\],
+  .bg-\[\#0f172a\],
+  .bg-\[\#101a2f\],
+  .dark .dark\:bg-\[\#101a2f\],
+  .dark .bg-\[\#101a2f\],
+  .dark .dark\:bg-\[\#0c1220\],
+  .dark .dark\:bg-\[\#080d18\],
+  .dark .dark\:hover\:bg-\[\#0f172a\]:hover,
+  .dark .dark\:hover\:bg-\[\#111c33\]:hover,
+  .dark .hover\:bg-\[\#111c33\]:hover {
+    background-color: var(--surface) !important;
+  }
+
+  .dark .dark\:from-\[\#101010\],
+  .dark .dark\:to-\[\#080808\],
+  .dark .dark\:via-\[\#080808\],
+  .dark .dark\:from-\[\#080808\],
+  .dark .dark\:to-zinc-950 {
+    --tw-gradient-from: var(--surface) var(--tw-gradient-from-position) !important;
+    --tw-gradient-via: var(--surface-muted) var(--tw-gradient-via-position) !important;
+    --tw-gradient-to: var(--background) var(--tw-gradient-to-position) !important;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-via), var(--tw-gradient-to) !important;
+  }
+
+  /* Zinc surfaces → kinetic tokens */
+  html:not(.dark) .bg-zinc-100,
+  html:not(.dark) .bg-zinc-50\/90 {
+    background-color: var(--surface-muted) !important;
+  }
+
+  .dark .bg-zinc-800,
+  .dark .bg-zinc-800\/70,
+  .dark .bg-zinc-800\/60,
+  .dark .bg-zinc-900\/40,
+  .dark .bg-zinc-900\/50,
+  .dark .bg-zinc-950\/40,
+  .dark .bg-zinc-950\/60,
+  .dark .bg-zinc-950\/70,
+  .dark .dark\:bg-zinc-800,
+  .dark .dark\:bg-zinc-900,
+  .dark .dark\:bg-zinc-900\/40,
+  .dark .dark\:bg-zinc-900\/50,
+  .dark .dark\:bg-zinc-950\/40,
+  .dark .dark\:bg-zinc-950\/60,
+  .dark .dark\:bg-zinc-950\/70 {
+    background-color: var(--surface-elevated) !important;
+  }
+
+  .dark .bg-zinc-950,
+  .dark .dark\:bg-zinc-950 {
+    background-color: var(--surface-muted) !important;
+  }
+
+  /* Zinc text → kinetic tokens (dark mode) */
+  .dark .text-zinc-50,
+  .dark .text-zinc-100,
+  .dark .text-zinc-200,
+  .dark .text-zinc-300,
+  .dark .text-zinc-900,
+  .dark .dark\:text-zinc-50,
+  .dark .dark\:text-zinc-100,
+  .dark .dark\:text-zinc-200,
+  .dark .dark\:text-zinc-300 {
+    color: var(--foreground) !important;
+  }
+
+  .dark .text-zinc-400,
+  .dark .text-zinc-500,
+  .dark .text-zinc-600,
+  .dark .dark\:text-zinc-400,
+  .dark .dark\:text-zinc-500,
+  .dark .dark\:text-zinc-600 {
+    color: var(--muted) !important;
+  }
+
+  .dark .text-zinc-700,
+  .dark .dark\:text-zinc-700 {
+    color: var(--muted-subtle) !important;
+  }
+
+  html:not(.dark) .text-zinc-600,
+  html:not(.dark) .text-zinc-700 {
+    color: var(--muted) !important;
+  }
+
+  html:not(.dark) .text-zinc-900 {
+    color: var(--foreground) !important;
+  }
+
+  /* Dividers */
+  html:not(.dark) .divide-zinc-200 > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--border) !important;
+  }
+
+  .dark .divide-zinc-200 > :not([hidden]) ~ :not([hidden]),
+  .dark .divide-zinc-700 > :not([hidden]) ~ :not([hidden]),
+  .dark .divide-zinc-800 > :not([hidden]) ~ :not([hidden]),
+  .dark .dark\:divide-zinc-800 > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--border) !important;
+  }
+
+  /* Interactive hovers */
+  .dark .hover\:bg-zinc-50:hover,
+  .dark .hover\:bg-zinc-100:hover,
+  .dark .hover\:bg-zinc-800:hover,
+  .dark .hover\:bg-zinc-800\/70:hover,
+  .dark .hover\:bg-zinc-900\/50:hover,
+  .dark .dark\:hover\:bg-zinc-800:hover,
+  .dark .dark\:hover\:bg-zinc-800\/70:hover,
+  .dark .dark\:hover\:bg-zinc-900\/50:hover {
+    background-color: var(--surface-muted) !important;
+  }
+
+  html:not(.dark) .hover\:bg-zinc-50:hover,
+  html:not(.dark) .hover\:bg-zinc-100:hover {
+    background-color: var(--surface-muted) !important;
+  }
+
+  /* Legacy inline brand hex (sign-in links, etc.) */
+  .text-\[\#f97316\],
+  .hover\:text-\[\#fb923c\]:hover {
+    color: var(--brand) !important;
+  }
+
+  .bg-\[\#f97316\] {
+    background-color: var(--brand) !important;
+    color: var(--brand-ink) !important;
+  }
+
+  .hover\:bg-\[\#fb923c\]:hover {
+    background-color: var(--brand-hover) !important;
+  }
+
+  /* Progress / completion bars */
+  .bg-orange-500 {
+    background-color: var(--brand) !important;
+  }
+
+  .bg-blue-500 {
+    background-color: var(--accent-blue) !important;
   }
 
 }

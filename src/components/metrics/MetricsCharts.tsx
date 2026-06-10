@@ -1,27 +1,20 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { KINETIC_PALETTE, ticketStatusChartColor, TICKET_STATUS_CHART_COLORS } from "@/lib/kinetic-palette";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 
-const ORANGE = "#f97316";
-const ZINC_LINE = "#a1a1aa";
-const GRID_LIGHT = "#e4e4e7";
-const GRID_DARK = "#27272a";
+const ORANGE = KINETIC_PALETTE.brand;
+const ZINC_LINE = KINETIC_PALETTE.mutedSubtle;
+const GRID_LIGHT = KINETIC_PALETTE.gridLight;
+const GRID_DARK = KINETIC_PALETTE.gridDark;
 
 function formatStatus(status: string) {
   return formatTicketStatusLabel(status);
 }
 
 /** Stable colors per ticket status — shared by pie, strip, and legends. */
-export const TICKET_STATUS_CHART_COLORS: Record<string, string> = {
-  IN_PROGRESS: "#f97316",
-  OPEN: "#f43f5e",
-  PENDING_INFO: "#10b981",
-  ESCALATED: "#eab308",
-  FOR_CONFIRMATION: "#a1a1aa",
-  RESOLVED: "#3b82f6",
-  CLOSED: "#71717a",
-};
+export { TICKET_STATUS_CHART_COLORS };
 
 const TICKET_STATUS_SORT_ORDER = [
   "IN_PROGRESS",
@@ -34,7 +27,7 @@ const TICKET_STATUS_SORT_ORDER = [
 ] as const;
 
 export function colorForTicketStatus(status: string) {
-  return TICKET_STATUS_CHART_COLORS[status] ?? "#71717a";
+  return ticketStatusChartColor(status);
 }
 
 export function queueSegmentsForCharts(raw: { status: string; count: number }[]) {
@@ -305,7 +298,7 @@ export function MetricsGauge({
             y1={cy - (r - 5) * Math.sin(Math.PI * (1 - targetPct))}
             x2={cx + (r + 5) * Math.cos(Math.PI * (1 - targetPct))}
             y2={cy - (r + 5) * Math.sin(Math.PI * (1 - targetPct))}
-            stroke="#facc15"
+            stroke={KINETIC_PALETTE.brandSoft}
             strokeWidth="2"
             strokeLinecap="round"
           />
@@ -337,6 +330,8 @@ export function MetricsPieChart({
   emptyDescription,
   pieClassName,
   showPercentages = false,
+  valueFormatter,
+  centerLabel,
 }: {
   title: string;
   subtitle?: string;
@@ -346,6 +341,8 @@ export function MetricsPieChart({
   emptyDescription?: string;
   pieClassName?: string;
   showPercentages?: boolean;
+  valueFormatter?: (value: number) => string;
+  centerLabel?: string;
 }) {
   const total = segments.reduce((s, x) => s + x.value, 0);
   const cx = 50;
@@ -378,9 +375,9 @@ export function MetricsPieChart({
   }
 
   return (
-    <div>
+    <div className="min-w-0">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-500">{title}</p>
           {subtitle ? (
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{subtitle}</p>
@@ -397,7 +394,7 @@ export function MetricsPieChart({
           {emptyDescription ?? "No recurring KPIs for this frequency in scope."}
         </p>
       ) : (
-        <div className="mt-5 flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-8">
+        <div className="mt-5 flex min-w-0 flex-col items-center gap-4 xl:flex-row xl:items-start xl:gap-6">
           <svg
             viewBox="0 0 100 100"
             className={cn("mx-auto shrink-0 sm:mx-0", pieClassName ?? "h-48 w-48")}
@@ -411,11 +408,11 @@ export function MetricsPieChart({
                   cy={cy}
                   r={r}
                   fill={s.color}
-                  stroke="#18181b"
+                  stroke={KINETIC_PALETTE.surface}
                   strokeWidth="0.35"
                 />
               ) : (
-                <path key={`${s.label}-${i}`} d={s.d} fill={s.color} stroke="#18181b" strokeWidth="0.35" />
+                <path key={`${s.label}-${i}`} d={s.d} fill={s.color} stroke={KINETIC_PALETTE.surface} strokeWidth="0.35" />
               ),
             )}
             <circle cx={cx} cy={cy} r={10} className="fill-surface" />
@@ -425,18 +422,18 @@ export function MetricsPieChart({
               textAnchor="middle"
               className="fill-foreground text-[7px] font-bold"
             >
-              {total}
+              {centerLabel ?? total}
             </text>
           </svg>
-          <ul className="grid w-full gap-2 text-sm sm:max-w-xs">
+          <ul className="grid w-full min-w-0 gap-2 text-sm">
             {segments.map((seg, index) => (
-              <li key={`${seg.label}-${index}`} className="flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2 text-muted">
-                  <span className="size-3 rounded-sm" style={{ backgroundColor: seg.color }} />
-                  {seg.label}
+              <li key={`${seg.label}-${index}`} className="flex items-start justify-between gap-3">
+                <span className="flex min-w-0 items-start gap-2 text-muted">
+                  <span className="mt-1 size-3 shrink-0 rounded-sm" style={{ backgroundColor: seg.color }} />
+                  <span className="min-w-0 break-words leading-snug">{seg.label}</span>
                 </span>
-                <span className="tabular-nums font-semibold text-foreground">
-                  {seg.value}
+                <span className="shrink-0 text-right tabular-nums font-semibold text-foreground">
+                  {valueFormatter ? valueFormatter(seg.value) : seg.value}
                   {showPercentages && total > 0
                     ? ` (${Math.round((seg.value / total) * 1000) / 10}%)`
                     : ""}

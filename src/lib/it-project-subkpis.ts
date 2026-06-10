@@ -23,6 +23,28 @@ export type ItProjectData = {
 };
 
 export const IT_PROJECT_ENVELOPE_KIND = "it_project" as const;
+export const IT_PROJECT_PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
+export const IT_PROJECT_STATUS_OPTIONS = ["Pending", "On Going", "Finalizing", "Done"] as const;
+
+export type ItProjectPriority = (typeof IT_PROJECT_PRIORITY_OPTIONS)[number];
+export type ItProjectStatus = (typeof IT_PROJECT_STATUS_OPTIONS)[number];
+
+export function normalizeItProjectPriority(value: unknown): ItProjectPriority | null {
+  return IT_PROJECT_PRIORITY_OPTIONS.find((option) => option === value) ?? null;
+}
+
+export function normalizeItProjectStatus(value: unknown): ItProjectStatus | null {
+  return IT_PROJECT_STATUS_OPTIONS.find((option) => option === value) ?? null;
+}
+
+export function itProjectStatusProgress(item: SubKpiItem): number {
+  const status = normalizeItProjectStatus(item.projectStatus);
+  if (status === "Done") return 100;
+  if (status === "Finalizing") return 75;
+  if (status === "On Going") return 50;
+  if (item.assignedAgentId) return 25;
+  return 0;
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -33,9 +55,12 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const title = String(r?.title ?? "").trim();
   const assignedAgentId = typeof r?.assignedAgentId === "string" ? r.assignedAgentId.trim() : "";
   const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
+  const projectPriority = normalizeItProjectPriority(r?.projectPriority);
+  const projectStatus = normalizeItProjectStatus(r?.projectStatus);
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
-  const dueDate = normalizeOptionalUsDate(r?.dueDate ?? r?.startDate);
+  const startDate = normalizeOptionalUsDate(r?.startDate);
+  const dueDate = normalizeOptionalUsDate(r?.dueDate ?? r?.endDate);
   const actualDate = normalizeOptionalUsDate(r?.actualDate);
   const done = hasValidActualDate({ actualDate });
   return {
@@ -44,8 +69,11 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     done,
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(projectPriority ? { projectPriority } : {}),
+    ...(projectStatus ? { projectStatus } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+    ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
   };
@@ -108,8 +136,11 @@ export function wrapItProjectSubKpis(data: ItProjectData): Prisma.InputJsonValue
         done: hasValidActualDate(it),
         ...(it.assignedAgentId ? { assignedAgentId: it.assignedAgentId } : {}),
         ...(it.assignedAgentName ? { assignedAgentName: it.assignedAgentName } : {}),
+        ...(it.projectPriority ? { projectPriority: it.projectPriority } : {}),
+        ...(it.projectStatus ? { projectStatus: it.projectStatus } : {}),
         ...(it.beforeScreenshot ? { beforeScreenshot: it.beforeScreenshot } : {}),
         ...(it.afterScreenshot ? { afterScreenshot: it.afterScreenshot } : {}),
+        ...(it.startDate ? { startDate: it.startDate } : {}),
         ...(it.dueDate ? { dueDate: it.dueDate } : {}),
         ...(it.actualDate ? { actualDate: it.actualDate } : {}),
       })),
@@ -370,9 +401,11 @@ export function setItProjectSubKpiAssignee(
     if (assignee) {
       next.assignedAgentId = assignee.id;
       next.assignedAgentName = assignee.name;
+      next.projectStatus = normalizeItProjectStatus(next.projectStatus) ?? "Pending";
     } else {
       delete next.assignedAgentId;
       delete next.assignedAgentName;
+      if (next.projectStatus === "Pending") delete next.projectStatus;
     }
     return next;
   };
@@ -421,5 +454,48 @@ export function setItProjectSubKpiDone(
     };
   }
 
+  return { ok: true, json: updateItProjectPhases(raw, next) };
+}
+
+export function setItProjectSubKpiProjectMeta(
+  raw: unknown,
+  subKpiId: string,
+  meta: { projectPriority?: unknown; projectStatus?: unknown },
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const data = parseItProjectSubKpis(raw);
+  const priority = meta.projectPriority === undefined ? undefined : normalizeItProjectPriority(meta.projectPriority);
+  const status = meta.projectStatus === undefined ? undefined : normalizeItProjectStatus(meta.projectStatus);
+
+  if (meta.projectPriority !== undefined && !priority) {
+    return { ok: false, error: "Priority must be High, Medium, or Low." };
+  }
+  if (meta.projectStatus !== undefined && !status) {
+    return { ok: false, error: "Completion status must be Pending, On Going, Finalizing, or Done." };
+  }
+
+  let found = false;
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    found = true;
+    let next = { ...it };
+    if (priority !== undefined) next = { ...next, projectPriority: priority };
+    if (status !== undefined) {
+      next = { ...next, projectStatus: status, done: status === "Done" };
+      if (status === "Done" && !hasValidActualDate(next)) {
+        next.actualDate = DateTime.now().toFormat("yyyy-MM-dd");
+      }
+      if (status !== "Done" && next.actualDate && next.done) {
+        delete (next as { actualDate?: string }).actualDate;
+      }
+    }
+    return next;
+  };
+
+  const next = mapPhases(data, (phase) => ({
+    ...phase,
+    items: phase.items.map(touch),
+  }));
+
+  if (!found) return { ok: false, error: "Sub-task not found." };
   return { ok: true, json: updateItProjectPhases(raw, next) };
 }

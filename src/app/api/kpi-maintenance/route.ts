@@ -27,6 +27,7 @@ import {
   setSubKpiItemDone,
   setSubKpiItemScreenshots,
   setSubKpiItemWorkMeta,
+  setTaskPriority,
   subKpiAssignedAgentId,
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
@@ -42,6 +43,7 @@ import {
   setItProjectActivePhase,
   setItProjectSubKpiAssignee,
   setItProjectSubKpiDone,
+  setItProjectSubKpiProjectMeta,
   setItProjectSubKpiSchedule,
   updateItProjectPhases,
   wrapItProjectSubKpis,
@@ -52,6 +54,7 @@ import { prisma } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
+import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import { persistTaskScreenshot, validateTaskScreenshotFile } from "@/lib/task-screenshots";
 import { MAX_TASK_SCREENSHOTS_PER_SLOT } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
@@ -531,6 +534,7 @@ export async function PATCH(req: Request) {
     assignedAgentId?: string;
     itProjectName?: string | null;
     itProjectPhase?: string | null;
+    taskPriority?: string | null;
     itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
     subKpiSchedule?: {
       subKpiId?: string;
@@ -543,6 +547,12 @@ export async function PATCH(req: Request) {
       dueDate?: string | null;
       actualDate?: string | null;
       location?: string | null;
+      projectPriority?: string | null;
+    };
+    subKpiProjectMeta?: {
+      subKpiId?: string;
+      projectPriority?: string;
+      projectStatus?: string;
     };
     subKpiAssignee?: {
       subKpiId?: string;
@@ -702,6 +712,21 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.taskPriority !== undefined) {
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json({ error: "Task priority applies only to regular tasks." }, { status: 400 });
+    }
+    if (!perms.canAssignWork && !isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const updatedJson = setTaskPriority(kpiRow.subKpis, body.taskPriority);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiWorkMeta != null && typeof body.subKpiWorkMeta === "object") {
     if (isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
@@ -727,6 +752,7 @@ export async function PATCH(req: Request) {
       dueDate: recurring ? undefined : meta.dueDate,
       actualDate: recurring ? undefined : meta.actualDate,
       location: meta.location,
+      projectPriority: meta.projectPriority,
     });
     const prevComplete = checklistFullyComplete(kpiRow.subKpis);
     const nextComplete = checklistFullyComplete(updatedJson);
@@ -779,6 +805,40 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.subKpiProjectMeta != null && typeof body.subKpiProjectMeta === "object") {
+    if (!isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json({ error: "Project metadata applies only to IT Project Implementation." }, { status: 400 });
+    }
+    const subKpiIdMeta = String(body.subKpiProjectMeta.subKpiId ?? "").trim();
+    if (!subKpiIdMeta) {
+      return NextResponse.json({ error: "subKpiProjectMeta.subKpiId is required." }, { status: 400 });
+    }
+    if (!canEditSubKpi(subKpiIdMeta)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const result = setItProjectSubKpiProjectMeta(kpiRow.subKpis, subKpiIdMeta, {
+      projectPriority: body.subKpiProjectMeta.projectPriority,
+      projectStatus: body.subKpiProjectMeta.projectStatus,
+    });
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(result.json);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: result.json,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiAssignee != null && typeof body.subKpiAssignee === "object") {
     if (!perms.canAssignWork) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -803,24 +863,21 @@ export async function PATCH(req: Request) {
     if (assignedAgentId && !assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
+    if (assignedAgentId && assignedAgentId === kpiRow.assignedAgentId) {
+      return NextResponse.json(
+        { error: "Main assignee cannot also be assigned as a sub-task assignee." },
+        { status: 400 },
+      );
+    }
     if (assignee) {
-      const mainAssigneeEmail = kpiRow.assignedAgent?.email?.trim().toLowerCase() ?? "";
-      const subAssigneeEmail = assignee.email.trim().toLowerCase();
-      if (!mainAssigneeEmail) {
+      if (!kpiRow.assignedAgentId) {
         return NextResponse.json(
           { error: "Assign the main task before assigning sub-tasks to personnel." },
           { status: 400 },
         );
       }
-      const portalCompanies = await prisma.portalAccount.findMany({
-        where: { email: { in: [mainAssigneeEmail, subAssigneeEmail] } },
-        select: { email: true, staffDesignatedCompanyId: true },
-      });
-      const companyByEmail = new Map(
-        portalCompanies.map((p) => [p.email.trim().toLowerCase(), p.staffDesignatedCompanyId] as const),
-      );
-      const mainAssigneeCompanyId = companyByEmail.get(mainAssigneeEmail) ?? null;
-      const subAssigneeCompanyId = companyByEmail.get(subAssigneeEmail) ?? null;
+      const mainAssigneeCompanyId = await resolveAgentDesignatedCompanyId(kpiRow.assignedAgentId);
+      const subAssigneeCompanyId = await resolveAgentDesignatedCompanyId(assignee.id);
       if (!mainAssigneeCompanyId || !subAssigneeCompanyId) {
         return NextResponse.json(
           { error: "Both main task and sub-task assignees must have a designated company." },
@@ -1043,6 +1100,12 @@ export async function PATCH(req: Request) {
     });
     if (!assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
+    }
+    if (hasSubKpiAssignedTo(kpiRow.subKpis, assignee.id)) {
+      return NextResponse.json(
+        { error: "This person is already assigned as a sub-task assignee. Choose a different main assignee first." },
+        { status: 400 },
+      );
     }
     const assignedRole = (await portalCompanyAdminPrivilegesForEmail(assignee.email))
       ? "Admin Role"

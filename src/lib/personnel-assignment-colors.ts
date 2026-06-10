@@ -47,7 +47,7 @@ const HEX_SATURATED: Record<PersonnelAssignmentColorKey, string> = {
   ORANGE: "#fb8c00",
   YELLOW: "#fdd835",
   GREEN: "#43a047",
-  BLUE: "#1e88e5",
+  BLUE: "#4b8eff",
   INDIGO: "#3949ab",
   VIOLET: "#8e24aa",
 };

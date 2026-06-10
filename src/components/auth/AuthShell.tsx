@@ -7,8 +7,8 @@ import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 /** StoicOps brand accent */
-export const AUTH_ACCENT = "#ff8300";
-export const AUTH_ACCENT_HOVER = "#e67500";
+export const AUTH_ACCENT = "#ff5c00";
+export const AUTH_ACCENT_HOVER = "#ff7a2f";
 export const authLabelClass = "stoic-label";
 
 export const authInputClass =
