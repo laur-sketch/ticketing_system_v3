@@ -87,7 +87,13 @@ function statusBadgeLabel(status: TicketStatus) {
   return formatTicketStatusLabel(status).toUpperCase();
 }
 
-export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket[] }) {
+export function AgentKanban({
+  tickets: initialTickets,
+  columnTotals,
+}: {
+  tickets: KanbanTicket[];
+  columnTotals?: Partial<Record<ColumnId, number>>;
+}) {
   const router = useRouter();
   const [tickets, setTickets] = useState(initialTickets);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -191,7 +197,9 @@ export function AgentKanban({ tickets: initialTickets }: { tickets: KanbanTicket
                     {col.label}
                   </h3>
                   <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300">
-                    {colTickets.length}
+                    {columnTotals?.[col.id] != null && columnTotals[col.id]! > colTickets.length
+                      ? `${colTickets.length} / ${columnTotals[col.id]}`
+                      : colTickets.length}
                   </span>
                 </div>
                 <p className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">{col.sublabel}</p>

@@ -133,7 +133,8 @@ export default async function AgentHome({
   const page = Math.max(1, Number.parseInt(firstQuery(params.page) ?? "1", 10) || 1);
   const companyLogPage = Math.max(1, Number.parseInt(firstQuery(params.logsPage) ?? "1", 10) || 1);
   const notificationsOpen = firstQuery(params.notifications) === "1";
-  const pageSize = 20;
+  const boardTicketsPerStatus = 5;
+  const pageSize = isBoard && boardTab === "ticket" ? boardTicketsPerStatus : 20;
   const companyLogPageSize = 10;
   const hideCompanyPriorityFilter =
     !companyCoordinator && session.user.role === "Personnel";
@@ -248,6 +249,7 @@ export default async function AgentHome({
   const [
     ticketsTable,
     ticketsBoard,
+    boardStatusCounts,
     totalCount,
     critical,
     open,
@@ -264,13 +266,26 @@ export default async function AgentHome({
         })
       : Promise.resolve([] as AgentTicketWithTeam[]),
     fetchTicketPipeline && isBoard
-      ? prisma.ticket.findMany({
-          where: boardWhere,
-          orderBy: { updatedAt: "desc" },
-          take: 200,
-          include: { team: true, assignedAgent: true, feedback: { select: { csat: true } } },
-        })
+      ? Promise.all(
+          STATUS_PIPELINE.map((status) =>
+            prisma.ticket.findMany({
+              where: { ...whereBase, status },
+              orderBy: { updatedAt: "desc" },
+              skip: (page - 1) * boardTicketsPerStatus,
+              take: boardTicketsPerStatus,
+              include: { team: true, assignedAgent: true, feedback: { select: { csat: true } } },
+            }),
+          ),
+        ).then((groups) => groups.flat())
       : Promise.resolve([] as AgentTicketWithTeam[]),
+    fetchTicketPipeline && isBoard
+      ? Promise.all(
+          STATUS_PIPELINE.map(async (status) => {
+            const count = await prisma.ticket.count({ where: { ...whereBase, status } });
+            return [status, count] as const;
+          }),
+        ).then((entries) => Object.fromEntries(entries) as Partial<Record<TicketStatus, number>>)
+      : Promise.resolve({} as Partial<Record<TicketStatus, number>>),
     fetchTicketPipeline ? prisma.ticket.count({ where: dataWhere }) : Promise.resolve(0),
     fetchTicketPipeline
       ? prisma.ticket.count({
@@ -359,7 +374,13 @@ export default async function AgentHome({
   const ticketsBoardEnriched = ticketsBoard.map(withAssigneeColor);
 
   const tickets = isBoard ? ticketsBoardEnriched : ticketsTableEnriched;
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const totalPages =
+    isBoard && boardTab === "ticket"
+      ? Math.max(
+          1,
+          ...STATUS_PIPELINE.map((status) => Math.ceil((boardStatusCounts[status] ?? 0) / boardTicketsPerStatus)),
+        )
+      : Math.max(1, Math.ceil(totalCount / pageSize));
   const start = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);
 
@@ -395,7 +416,12 @@ export default async function AgentHome({
     return buildHref({ sort: column, dir: nextDir, page: "1" });
   }
 
-  const ticketsResultLabel = totalCount === 0 ? "No results" : `Showing ${start}-${end} of ${totalCount} results`;
+  const ticketsResultLabel =
+    totalCount === 0
+      ? "No results"
+      : isBoard && boardTab === "ticket"
+        ? `Page ${page} of ${totalPages} · ${boardTicketsPerStatus} tickets per status · ${totalCount} total`
+        : `Showing ${start}-${end} of ${totalCount} results`;
 
   const ticketsEmpty = tickets.length === 0;
   const isSorted = (column: string) => sort === column;
@@ -414,11 +440,22 @@ export default async function AgentHome({
   const tableRows = tickets;
   const ratingLabel = (csat: number | null | undefined) =>
     typeof csat === "number" ? `${"★".repeat(csat)}${"☆".repeat(5 - csat)} ${csat}/5` : "Not rated";
-  const showPageLinks = totalPages > 1 && !isBoard;
+  const showPageLinks = totalPages > 1 && boardTab === "ticket";
   const pageLinks = Array.from(
     { length: Math.min(totalPages, 5) },
     (_, i) => Math.max(1, Math.min(totalPages - 4, currentPage - 2)) + i,
   ).filter((n, i, arr) => n >= 1 && n <= totalPages && arr.indexOf(n) === i);
+
+  const boardColumnTotals = isBoard
+    ? {
+        open: boardStatusCounts.OPEN ?? 0,
+        progress: (boardStatusCounts.IN_PROGRESS ?? 0) + (boardStatusCounts.ESCALATED ?? 0),
+        feedback:
+          (boardStatusCounts.PENDING_INFO ?? 0) +
+          (boardStatusCounts.FOR_CONFIRMATION ?? 0) +
+          (boardStatusCounts.RESOLVED ?? 0),
+      }
+    : undefined;
 
   const boardCards: KanbanTicket[] = isBoard
     ? ticketsBoardEnriched.map((t) => ({
@@ -442,6 +479,51 @@ export default async function AgentHome({
           (t.assignedAgent as EnrichedAssignedAgent | null)?.profileImagePosY ?? null,
       }))
     : [];
+
+  const ticketPagination = (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-800 dark:text-zinc-300">
+      <p>{ticketsResultLabel}</p>
+      {showPageLinks ? (
+        <div className="flex items-center gap-1">
+          <Link
+            href={canPrev ? prevHref : "#"}
+            className={`rounded-md px-2.5 py-1.5 ${
+              canPrev
+                ? "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                : "cursor-not-allowed text-zinc-400 dark:text-zinc-500"
+            }`}
+            aria-disabled={!canPrev}
+          >
+            Prev
+          </Link>
+          {pageLinks.map((p) => (
+            <Link
+              key={p}
+              href={buildHref({ page: String(p) })}
+              className={`rounded-md px-2.5 py-1.5 ${
+                p === currentPage
+                  ? "bg-orange-600 text-white"
+                  : "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              }`}
+            >
+              {p}
+            </Link>
+          ))}
+          <Link
+            href={canNext ? nextHref : "#"}
+            className={`rounded-md px-2.5 py-1.5 ${
+              canNext
+                ? "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                : "cursor-not-allowed text-zinc-400 dark:text-zinc-500"
+            }`}
+            aria-disabled={!canNext}
+          >
+            Next
+          </Link>
+        </div>
+      ) : null}
+    </div>
+  );
 
   const activeEvents = isCompanyBoard ? (companyAggregates?.total ?? 0) : totalCount;
   const statCritical = isCompanyBoard ? (companyAggregates?.critical ?? 0) : critical;
@@ -750,7 +832,10 @@ export default async function AgentHome({
                     </p>
                   </div>
                 ) : (
-                  <AgentKanban tickets={boardCards} />
+                  <>
+                    <AgentKanban tickets={boardCards} columnTotals={boardColumnTotals} />
+                    {ticketPagination}
+                  </>
                 )}
               </>
             ) : isBoard && boardTab === "kpi" ? (
@@ -868,48 +953,7 @@ export default async function AgentHome({
                     </tbody>
                   </table>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-zinc-800 dark:text-zinc-300">
-                  <p>{ticketsResultLabel}</p>
-                  {showPageLinks ? (
-                    <div className="flex items-center gap-1">
-                      <Link
-                        href={canPrev ? prevHref : "#"}
-                        className={`rounded-md px-2.5 py-1.5 ${
-                          canPrev
-                            ? "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                            : "cursor-not-allowed text-zinc-400 dark:text-zinc-500"
-                        }`}
-                        aria-disabled={!canPrev}
-                      >
-                        Prev
-                      </Link>
-                      {pageLinks.map((p) => (
-                        <Link
-                          key={p}
-                          href={buildHref({ page: String(p) })}
-                          className={`rounded-md px-2.5 py-1.5 ${
-                            p === currentPage
-                              ? "bg-orange-600 text-white"
-                              : "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                          }`}
-                        >
-                          {p}
-                        </Link>
-                      ))}
-                      <Link
-                        href={canNext ? nextHref : "#"}
-                        className={`rounded-md px-2.5 py-1.5 ${
-                          canNext
-                            ? "border border-zinc-300 bg-white hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                            : "cursor-not-allowed text-zinc-400 dark:text-zinc-500"
-                        }`}
-                        aria-disabled={!canNext}
-                      >
-                        Next
-                      </Link>
-                    </div>
-                  ) : null}
-                </div>
+                {ticketPagination}
               </>
             )}
           </section>

@@ -1078,19 +1078,19 @@ function TaskProjectTrackerPanel({
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800 xl:text-xs">
+          <table className="w-full min-w-[1280px] table-fixed divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800 xl:text-xs">
             <colgroup>
-              <col className="w-[5.5%]" />
-              <col className="w-[10%]" />
-              <col className="w-[7%]" />
-              <col className="w-[10%]" />
-              <col className="w-[22%]" />
+              <col className="w-[6%]" />
+              <col className="w-[16%]" />
+              <col className="w-[8%]" />
+              <col className="w-[11%]" />
+              <col className="w-[18%]" />
               <col className="w-[7%]" />
               <col className="w-[8%]" />
               <col className="w-[7%]" />
               <col className="w-[7%]" />
-              <col className="w-[12.5%]" />
-              <col className="w-[4%]" />
+              <col className="w-[7%]" />
+              <col className="w-[5%]" />
             </colgroup>
             <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-[0.1em] text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-500">
               <tr>
@@ -1112,7 +1112,7 @@ function TaskProjectTrackerPanel({
                 detailTableRows.map((row) => (
                   <tr key={row.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                     <td className="break-words px-2.5 py-3 font-mono font-bold text-zinc-700 dark:text-zinc-300">{row.taskId}</td>
-                    <td className="break-words px-2.5 py-3 font-semibold text-zinc-900 dark:text-zinc-100">{row.projectName}</td>
+                    <td className="whitespace-normal break-normal px-2.5 py-3 font-semibold text-zinc-900 dark:text-zinc-100">{row.projectName}</td>
                     <td className="break-words px-2.5 py-3 text-zinc-600 dark:text-zinc-400">{row.companyName}</td>
                     <td className="break-words px-2.5 py-3 font-semibold text-zinc-700 dark:text-zinc-300">{row.assigneeName ?? "Unassigned"}</td>
                     <td className="break-words px-2.5 py-3 text-zinc-700 dark:text-zinc-300">{row.taskDescription}</td>
