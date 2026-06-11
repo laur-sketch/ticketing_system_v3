@@ -366,6 +366,15 @@ export function AgentKpiKanbanFlow({
     return p.total > 0 && p.done === p.total;
   }
 
+  function taskWillFinishAfterToggle(r: KpiRecord, subKpiId: string, currentlyDone: boolean) {
+    if (currentlyDone) return false;
+    const items = isItProjectImplementationPillar(r.title)
+      ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase).phases.flatMap((phase) => phase.items)
+      : collectAllSubKpiItems(normalizeSubKpis(r.subKpis));
+    if (items.length === 0) return false;
+    return items.every((item) => (item.id === subKpiId ? true : item.done));
+  }
+
   function canOpenSubtaskDrawer(r: KpiRecord, items: SubKpiItem[]) {
     if (canAssignWork || canEditChecklist(r)) return true;
     if (!operatorAgentId) return canCompleteUnassignedWork && !r.assignedAgent?.id;
@@ -717,6 +726,9 @@ export function AgentKpiKanbanFlow({
   }
 
   async function toggleSubKpi(recordId: string, subKpiId: string, done: boolean) {
+    const shouldCloseWhenSaved =
+      activeTaskId === recordId &&
+      rows.some((row) => row.id === recordId && taskWillFinishAfterToggle(row, subKpiId, done));
     setBusyId(recordId);
     setError(null);
     try {
@@ -731,6 +743,9 @@ export function AgentKpiKanbanFlow({
         return;
       }
       await load();
+      if (shouldCloseWhenSaved) {
+        setActiveTaskId(null);
+      }
     } finally {
       setBusyId(null);
     }
