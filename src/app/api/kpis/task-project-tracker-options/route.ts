@@ -38,6 +38,26 @@ function nonItTaskCompletion(item: SubKpiItem) {
 
 type TrackerPriority = "High" | "Medium" | "Low";
 
+type TaskProjectTrackerRow = {
+  id: string;
+  rowType: "task" | "project";
+  recordId: string;
+  subTaskId: string | null;
+  taskId: string;
+  projectName: string;
+  companyId: string | null;
+  companyName: string;
+  taskDescription: string;
+  assigneeName: string | null;
+  priority: TrackerPriority;
+  status: string;
+  startDate: string | null;
+  dueDate: string | null;
+  completion: number;
+  hours: number | null;
+  phaseName: string;
+};
+
 function highestPriority(items: SubKpiItem[]): TrackerPriority {
   if (items.some((item) => item.projectPriority === "High")) return "High";
   if (items.some((item) => item.projectPriority === "Medium")) return "Medium";
@@ -229,7 +249,7 @@ export async function GET() {
 
   const prefixCounts = new Map<string, number>();
   const now = new Date();
-  const tasks = taskRows.flatMap((row) => {
+  const tasks = taskRows.flatMap<TaskProjectTrackerRow>((row) => {
     const isItProject = row.title === IT_PROJECT_IMPLEMENTATION_TITLE;
     const projectName = isItProject ? row.itProjectName?.trim() || "IT Project Implementation" : row.title.trim();
     const prefix = taskPrefixForTitle(row.title);

@@ -35,6 +35,7 @@ function applyProjectEnvFiles() {
 applyProjectEnvFiles();
 
 const http = require("http");
+const crypto = require("crypto");
 const next = require("next");
 const { Server } = require("socket.io");
 const { PrismaClient } = require("@prisma/client");
@@ -50,6 +51,8 @@ const app = next({
 
 const handle = app.getRequestHandler();
 const prisma = new PrismaClient();
+const internalJobKey = process.env.INTERNAL_JOB_KEY || crypto.randomBytes(32).toString("hex");
+process.env.INTERNAL_JOB_KEY = internalJobKey;
 
 let signature = "";
 async function emitRealtimeSnapshot(io) {
@@ -73,6 +76,26 @@ async function emitRealtimeSnapshot(io) {
   });
 }
 
+let confirmationReminderJobRunning = false;
+async function runConfirmationReminderJob() {
+  if (confirmationReminderJobRunning) return;
+  confirmationReminderJobRunning = true;
+  try {
+    const jobHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    const res = await fetch(`http://${jobHost}:${port}/api/jobs/confirmation-reminders`, {
+      method: "POST",
+      headers: { "x-internal-job-key": internalJobKey },
+    });
+    if (!res.ok) {
+      console.warn(`Confirmation reminder job failed with HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.warn("Confirmation reminder job failed", err);
+  } finally {
+    confirmationReminderJobRunning = false;
+  }
+}
+
 app
   .prepare()
   .then(() => {
@@ -89,12 +112,17 @@ app
     const timer = setInterval(() => {
       void emitRealtimeSnapshot(io);
     }, 3000);
+    const confirmationReminderTimer = setInterval(() => {
+      void runConfirmationReminderJob();
+    }, 15 * 60 * 1000);
     server.listen(port, host, () => {
       // Keep this log minimal: cPanel surfaces startup logs in app logs.
       console.log(`Ticket System listening on http://${host}:${port}`);
+      setTimeout(() => void runConfirmationReminderJob(), 60 * 1000);
     });
     const shutdown = async () => {
       clearInterval(timer);
+      clearInterval(confirmationReminderTimer);
       await prisma.$disconnect();
       io.close();
       server.close(() => process.exit(0));

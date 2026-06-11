@@ -24,6 +24,7 @@ import type { IntakeScreenshotMetaItem } from "@/lib/ticket-intake-screenshots-m
 import { persistTicketScreenshots, validateScreenshotFiles } from "@/lib/ticket-intake-screenshots";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+import { runForConfirmationReminderSweep } from "@/lib/confirmation-reminders";
 
 const categories = new Set(Object.values(TicketCategory));
 const priorities = new Set(Object.values(TicketPriority));
@@ -34,6 +35,10 @@ export async function GET(req: Request) {
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  void runForConfirmationReminderSweep().catch((error) => {
+    console.error("Confirmation reminder sweep failed", error);
+  });
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
