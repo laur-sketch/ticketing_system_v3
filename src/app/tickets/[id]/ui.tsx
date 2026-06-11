@@ -38,7 +38,7 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
 
   return (
     <div className="space-y-4">
-      <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm">
+      <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-4 shadow-sm sm:p-5">
         <h2 className="text-sm font-semibold text-white">Add information</h2>
         <p className="mt-1 text-xs text-zinc-500">
           Mirrors the “Need more info?” branch: your reply returns the ticket to active work.
@@ -61,7 +61,7 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
       </article>
 
       {ticket.status === "FOR_CONFIRMATION" || ticket.status === "RESOLVED" ? (
-        <article className="rounded-2xl border border-orange-900/80 bg-orange-950/30 p-5 shadow-sm">
+        <article className="rounded-2xl border border-orange-900/80 bg-orange-950/30 p-4 shadow-sm sm:p-5">
           <h2 className="text-sm font-semibold text-orange-100">Verification required</h2>
           <p className="mt-2 text-sm text-orange-100/80">
             A confirmation email was sent to your requestor email. Verify first, then submit your star rating.
@@ -76,11 +76,11 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
       ) : null}
 
       {ticket.feedback ? (
-        <article className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5 shadow-sm">
+        <article className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4 shadow-sm sm:p-5">
           <h2 className="text-sm font-semibold text-zinc-100">Recorded feedback</h2>
           <p className="mt-2 text-sm text-zinc-300">CSAT: {ticket.feedback.csat}/5</p>
           {ticket.feedback.comment ? (
-            <p className="mt-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-200">
+            <p className="mt-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm break-words text-zinc-200">
               {ticket.feedback.comment}
             </p>
           ) : (
