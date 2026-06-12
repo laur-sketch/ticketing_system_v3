@@ -59,7 +59,7 @@ async function migrateLegacyMchisiTeam(): Promise<void> {
   });
   if (!legacy) return;
 
-  let canonical = await prisma.team.findFirst({
+  const canonical = await prisma.team.findFirst({
     where: { name: "MCONPINCO" },
     select: { id: true },
   });

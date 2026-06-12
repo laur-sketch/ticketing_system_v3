@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardList } from "lucide-react";
 import { KINETIC_PALETTE, pieChartColor } from "@/lib/kinetic-palette";
 import { DatePickerField } from "@/components/ui/DatePickerField";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
 import {
@@ -91,6 +92,8 @@ type TaskProjectTrackerOptions = {
   }>;
 };
 
+type InsightsTab = "ticket-metrics" | "task-metrics" | "task-project-tracker" | "kpi-mgmt";
+
 function formatDuration(ms: number | null) {
   if (ms === null) return "—";
   const hours = ms / 3_600_000;
@@ -130,9 +133,7 @@ export default function InsightsPage() {
   const { data: session } = useSession();
   const isPersonnel = session?.user?.role === "Personnel";
   const isAdminRole = session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
-  const [activeTab, setActiveTab] = useState<"ticket-metrics" | "task-metrics" | "task-project-tracker" | "kpi-mgmt">(
-    "ticket-metrics",
-  );
+  const [activeTab, setActiveTab] = useState<InsightsTab>("ticket-metrics");
   const [data, setData] = useState<KpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [throughputView, setThroughputView] = useState<"cards" | "table">("table");
@@ -400,62 +401,28 @@ export default function InsightsPage() {
               {isPersonnel ? "Personal performance intelligence" : "Operations intelligence"}
             </h1>
         </div>
-        <div className="mt-6 flex flex-wrap gap-1 rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
-          <button
-            type="button"
-            onClick={() => setActiveTab("ticket-metrics")}
-            className={cn(
-              "rounded-full px-4 py-1.5 transition",
-              activeTab === "ticket-metrics"
-                ? "bg-orange-600 text-white shadow-sm"
-                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-            )}
-          >
-            {isPersonnel ? "My Ticket Metrics and Reports" : "Ticket Metrics and Reports"}
-          </button>
-          {showTaskReportingTabs ? (
-            <>
-              <button
-                type="button"
-                onClick={() => setActiveTab("task-project-tracker")}
-                className={cn(
-                  "rounded-full px-4 py-1.5 transition",
-                  activeTab === "task-project-tracker"
-                    ? "bg-orange-600 text-white shadow-sm"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                )}
-              >
-                Task &amp; Project Tracker
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("task-metrics")}
-                className={cn(
-                  "rounded-full px-4 py-1.5 transition",
-                  activeTab === "task-metrics"
-                    ? "bg-orange-600 text-white shadow-sm"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                )}
-              >
-                Task Metrics
-              </button>
-            </>
-          ) : null}
-          {showKpiTasksTab ? (
-            <button
-              type="button"
-              onClick={() => setActiveTab("kpi-mgmt")}
-              className={cn(
-                "rounded-full px-4 py-1.5 transition",
-                activeTab === "kpi-mgmt"
-                  ? "bg-orange-600 text-white shadow-sm"
-                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-              )}
-            >
-              {isPersonnel ? "My Task Management" : "Task Management"}
-            </button>
-          ) : null}
-        </div>
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as InsightsTab)} className="mt-6">
+          <TabsList className="flex flex-wrap rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
+            <TabsTrigger value="ticket-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+              {isPersonnel ? "My Ticket Metrics and Reports" : "Ticket Metrics and Reports"}
+            </TabsTrigger>
+            {showTaskReportingTabs ? (
+              <>
+                <TabsTrigger value="task-project-tracker" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                  Task &amp; Project Tracker
+                </TabsTrigger>
+                <TabsTrigger value="task-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                  Task Metrics
+                </TabsTrigger>
+              </>
+            ) : null}
+            {showKpiTasksTab ? (
+              <TabsTrigger value="kpi-mgmt" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                {isPersonnel ? "My Task Management" : "Task Management"}
+              </TabsTrigger>
+            ) : null}
+          </TabsList>
+        </Tabs>
       </header>
 
       {error ? (
@@ -557,32 +524,16 @@ export default function InsightsPage() {
                   <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                     Created vs closed (daily, real-time)
                   </p>
-                  <div className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 p-1 text-[10px] font-bold uppercase tracking-[0.12em] dark:border-zinc-700 dark:bg-zinc-900/90">
-                    <button
-                      type="button"
-                      onClick={() => setVolumeChartView("density")}
-                      className={cn(
-                        "rounded-full px-3 py-1 transition",
-                        volumeChartView === "density"
-                          ? "bg-orange-600 text-white shadow-sm"
-                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                      )}
-                    >
-                      Density
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setVolumeChartView("line")}
-                      className={cn(
-                        "rounded-full px-3 py-1 transition",
-                        volumeChartView === "line"
-                          ? "bg-orange-600 text-white shadow-sm"
-                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                      )}
-                    >
-                      Line chart
-                    </button>
-                  </div>
+                  <Tabs value={volumeChartView} onValueChange={(value) => setVolumeChartView(value as typeof volumeChartView)}>
+                    <TabsList className="rounded-full border border-zinc-300 bg-zinc-100 p-1 text-[10px] font-bold uppercase tracking-[0.12em] dark:border-zinc-700 dark:bg-zinc-900/90">
+                      <TabsTrigger value="density" className="rounded-full px-3 py-1 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                        Density
+                      </TabsTrigger>
+                      <TabsTrigger value="line" className="rounded-full px-3 py-1 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                        Line chart
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
               </div>
               <div className="flex flex-wrap items-end justify-end gap-3 text-xs text-zinc-600 dark:text-zinc-500">
@@ -738,32 +689,16 @@ export default function InsightsPage() {
                   Agent throughput
                 </h2>
               </div>
-              <div className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
-                <button
-                  type="button"
-                  onClick={() => setThroughputView("cards")}
-                  className={cn(
-                    "rounded-full px-4 py-1.5 transition",
-                    throughputView === "cards"
-                      ? "bg-orange-600 text-white shadow-sm"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                  )}
-                >
-                  Cards
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setThroughputView("table")}
-                  className={cn(
-                    "rounded-full px-4 py-1.5 transition",
-                    throughputView === "table"
-                      ? "bg-orange-600 text-white shadow-sm"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                  )}
-                >
-                  Table
-                </button>
-              </div>
+              <Tabs value={throughputView} onValueChange={(value) => setThroughputView(value as typeof throughputView)}>
+                <TabsList className="rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
+                  <TabsTrigger value="cards" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                    Cards
+                  </TabsTrigger>
+                  <TabsTrigger value="table" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                    Table
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
 
             {throughputView === "cards" ? (
@@ -1068,32 +1003,16 @@ function TaskProjectTrackerPanel({
             </h3>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
-            <div className="mr-1 flex rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-950">
-              <button
-                type="button"
-                onClick={() => setDetailsView("task")}
-                className={cn(
-                  "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] transition",
-                  detailsView === "task"
-                    ? "bg-orange-600 text-white"
-                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900",
-                )}
-              >
-                Tasks
-              </button>
-              <button
-                type="button"
-                onClick={() => setDetailsView("project")}
-                className={cn(
-                  "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] transition",
-                  detailsView === "project"
-                    ? "bg-orange-600 text-white"
-                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900",
-                )}
-              >
-                Project Tasks
-              </button>
-            </div>
+            <Tabs value={detailsView} onValueChange={(value) => setDetailsView(value as typeof detailsView)}>
+              <TabsList className="mr-1 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-950">
+                <TabsTrigger value="task" className="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                  Tasks
+                </TabsTrigger>
+                <TabsTrigger value="project" className="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                  Project Tasks
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
             <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">
               {detailPercent}% complete
             </span>

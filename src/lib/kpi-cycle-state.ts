@@ -1,4 +1,3 @@
-import { DateTime } from "luxon";
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { itProjectHasAnyDelay, itProjectMaxDelayMs } from "@/lib/it-project-subkpis";
@@ -42,12 +41,6 @@ export function recurringDeadlineExclusive(record: KpiMaintenanceLike, timeZone:
 
 export function nonRecurringDeadline(record: Pick<KpiMaintenanceLike, "nonRecurringEndAt">): Date | null {
   return toJsDateMaybe(record.nonRecurringEndAt);
-}
-
-function endOfYmdMs(ymd: string, timeZone: string): number | null {
-  const dt = DateTime.fromISO(ymd, { zone: normalizeTimeZone(timeZone) }).endOf("day");
-  if (!dt.isValid) return null;
-  return dt.toMillis();
 }
 
 /** Max overdue ms for IT Project (incomplete past due or actual date after due). */

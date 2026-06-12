@@ -52,10 +52,7 @@ const HEX_SATURATED: Record<PersonnelAssignmentColorKey, string> = {
   VIOLET: "#8e24aa",
 };
 
-export function personnelAssignmentHex(
-  key: string | null | undefined,
-  _theme: "light" | "dark",
-): string | null {
+export function personnelAssignmentHex(key: string | null | undefined): string | null {
   if (!isPersonnelAssignmentColorKey(key)) return null;
   return HEX_SATURATED[key];
 }

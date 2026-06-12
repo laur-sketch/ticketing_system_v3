@@ -8,6 +8,7 @@ import {
   Activity,
   BarChart3,
   CheckSquare,
+  ChevronDown,
   Gauge,
   GitBranch,
   Home,
@@ -31,32 +32,62 @@ type NavItem =
 function linksForRole(role: string | undefined): NavItem[] {
   if (role === "SuperAdmin") {
     return [
-      { kind: "link", href: "/", label: "Ticket Dashboard" },
-      { kind: "link", href: "/admin/ticket-requests", label: "Create requests" },
-      { kind: "link", href: "/admin/personnel", label: "Personnel" },
-      { kind: "link", href: "/agent", label: "Board" },
-      { kind: "link", href: "/insights", label: "Metrics & Reports" },
-      { kind: "link", href: "/admin/escalation-triggers", label: "Priority alerts" },
-      { kind: "link", href: "/admin/account", label: "My Account" },
+      {
+        kind: "group",
+        label: "Tickets",
+        children: [
+          { href: "/", label: "Ticket Dashboard" },
+          { href: "/admin/ticket-requests", label: "Create requests" },
+        ],
+      },
+      { kind: "group", label: "Operations", children: [{ href: "/agent", label: "Board" }] },
+      {
+        kind: "group",
+        label: "Management",
+        children: [
+          { href: "/admin/personnel", label: "Personnel" },
+          { href: "/admin/escalation-triggers", label: "Priority alerts" },
+        ],
+      },
+      { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
+      { kind: "group", label: "Account", children: [{ href: "/admin/account", label: "My Account" }] },
     ];
   }
   if (role === "Admin") {
     return [
-      { kind: "link", href: "/", label: "Ticket Dashboard" },
-      { kind: "link", href: "/admin/ticket-requests", label: "Create requests" },
-      { kind: "link", href: "/admin/personnel", label: "Personnel" },
-      { kind: "link", href: "/agent", label: "Board" },
-      { kind: "link", href: "/insights", label: "Metrics & Reports" },
-      { kind: "link", href: "/admin/escalation-triggers", label: "Priority alerts" },
-      { kind: "link", href: "/admin/account", label: "My Account" },
+      {
+        kind: "group",
+        label: "Tickets",
+        children: [
+          { href: "/", label: "Ticket Dashboard" },
+          { href: "/admin/ticket-requests", label: "Create requests" },
+        ],
+      },
+      { kind: "group", label: "Operations", children: [{ href: "/agent", label: "Board" }] },
+      {
+        kind: "group",
+        label: "Management",
+        children: [
+          { href: "/admin/personnel", label: "Personnel" },
+          { href: "/admin/escalation-triggers", label: "Priority alerts" },
+        ],
+      },
+      { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
+      { kind: "group", label: "Account", children: [{ href: "/admin/account", label: "My Account" }] },
     ];
   }
   if (role === "Personnel") {
     return [
-      { kind: "link", href: "/my-requests", label: "Ticket Dashboard" },
-      { kind: "link", href: "/agent", label: "Board" },
-      { kind: "link", href: "/insights", label: "Metrics & Reports" },
-      { kind: "link", href: "/admin/account", label: "My Account" },
+      {
+        kind: "group",
+        label: "Tickets",
+        children: [
+          { href: "/my-requests", label: "Ticket Dashboard" },
+          { href: "/agent", label: "Board" },
+        ],
+      },
+      { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
+      { kind: "group", label: "Account", children: [{ href: "/admin/account", label: "My Account" }] },
     ];
   }
   return [
@@ -97,6 +128,14 @@ function agentBoardActive(
   const board = searchParams?.get("board") ?? "";
   if (match === "kpi") return board === "kpi";
   return board === "" || board === "ticket" || board === "company";
+}
+
+function navChildActive(pathname: string, searchParams: URLSearchParams | null, child: NavChild): boolean {
+  return child.matchBoard ? agentBoardActive(pathname, searchParams, child.matchBoard) : navLinkActive(pathname, child.href);
+}
+
+function navGroupActive(pathname: string, searchParams: URLSearchParams | null, item: Extract<NavItem, { kind: "group" }>) {
+  return item.children.some((child) => navChildActive(pathname, searchParams, child));
 }
 
 export function GlobalSidebar() {
@@ -172,18 +211,26 @@ function GlobalSidebarInner() {
               {links.map((item) => {
                 if (item.kind === "group") {
                   const GroupIcon = iconForLink(item.label);
+                  const groupActive = navGroupActive(pathname, searchParams, item);
                   return (
-                    <div key={`m-group-${item.label}`} className="space-y-1">
-                      <div className="flex items-center gap-2 px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                        <GroupIcon size={14} strokeWidth={2.1} />
-                        {item.label}
-                      </div>
-                      <div className="space-y-1 pl-3">
+                    <details key={`m-group-${item.label}`} className="group space-y-1" open={groupActive}>
+                      <summary
+                        className={`flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-2 text-sm font-semibold transition marker:hidden [&::-webkit-details-marker]:hidden ${
+                          groupActive
+                            ? "text-orange-700 dark:text-orange-300"
+                            : "text-muted hover:bg-surface-muted hover:text-foreground"
+                        }`}
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <GroupIcon size={16} strokeWidth={2.1} />
+                          {item.label}
+                        </span>
+                        <ChevronDown className="size-4 transition group-open:rotate-180" aria-hidden />
+                      </summary>
+                      <div className="space-y-1 border-l border-border/80 pl-3">
                         {item.children.map((child) => {
                           const ChildIcon = iconForLink(child.label);
-                          const active = child.matchBoard
-                            ? agentBoardActive(pathname, searchParams, child.matchBoard)
-                            : navLinkActive(pathname, child.href);
+                          const active = navChildActive(pathname, searchParams, child);
                           return (
                             <Link
                               key={`m-${child.href}-${child.label}`}
@@ -203,7 +250,7 @@ function GlobalSidebarInner() {
                           );
                         })}
                       </div>
-                    </div>
+                    </details>
                   );
                 }
                 const active = navLinkActive(pathname, item.href);
@@ -256,46 +303,71 @@ function GlobalSidebarInner() {
           {links.map((item) => {
             if (item.kind === "group") {
               const GroupIcon = iconForLink(item.label);
+              const groupActive = navGroupActive(pathname, searchParams, item);
+              if (!collapsed) {
+                return (
+                  <details key={`group-${item.label}`} className="group space-y-1" open={groupActive}>
+                    <summary
+                      className={`flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-2 text-sm font-semibold transition marker:hidden [&::-webkit-details-marker]:hidden ${
+                        groupActive
+                          ? "text-orange-700 dark:text-orange-300"
+                          : "text-muted hover:bg-surface-muted hover:text-foreground"
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        <GroupIcon size={16} strokeWidth={2.1} />
+                        {item.label}
+                      </span>
+                      <ChevronDown className="size-4 transition group-open:rotate-180" aria-hidden />
+                    </summary>
+                    <div className="space-y-1 border-l border-border/80 pl-3">
+                      {item.children.map((child) => {
+                        const ChildIcon = iconForLink(child.label);
+                        const active = navChildActive(pathname, searchParams, child);
+                        return (
+                          <Link
+                            key={`${child.href}-${child.label}`}
+                            href={child.href}
+                            className={`block rounded-md px-3 py-2 ${
+                              active
+                                ? "stoic-nav-active"
+                                : "text-muted hover:bg-surface-muted hover:text-foreground"
+                            }`}
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <ChildIcon size={16} strokeWidth={2.1} />
+                              {child.label}
+                            </span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </details>
+                );
+              }
               return (
                 <div
                   key={`group-${item.label}`}
-                  className={collapsed ? "flex w-full flex-col items-center gap-1" : "space-y-1"}
+                  className="flex w-full flex-col items-center gap-1"
                 >
-                  {!collapsed ? (
-                    <div className="flex items-center gap-2 px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                      <GroupIcon size={14} strokeWidth={2.1} />
-                      {item.label}
-                    </div>
-                  ) : null}
-                  <div className={collapsed ? "flex flex-col items-center gap-1" : "space-y-1 pl-3"}>
+                  <div className="flex flex-col items-center gap-1">
                     {item.children.map((child) => {
                       const ChildIcon = iconForLink(child.label);
-                      const active = child.matchBoard
-                        ? agentBoardActive(pathname, searchParams, child.matchBoard)
-                        : navLinkActive(pathname, child.href);
+                      const active = navChildActive(pathname, searchParams, child);
                       return (
                         <Link
                           key={`${child.href}-${child.label}`}
                           href={child.href}
                           title={collapsed ? child.label : undefined}
-                          className={`block rounded-md ${
-                            collapsed ? "w-10 px-0 py-2 text-center" : "px-3 py-2"
-                          } ${
+                          className={`block rounded-md w-10 px-0 py-2 text-center ${
                             active
                               ? "stoic-nav-active"
                               : "text-muted hover:bg-surface-muted hover:text-foreground"
                           }`}
                         >
-                          {collapsed ? (
-                            <span className="inline-flex w-full items-center justify-center">
-                              <ChildIcon size={16} strokeWidth={2.2} />
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-2">
-                              <ChildIcon size={16} strokeWidth={2.1} />
-                              {child.label}
-                            </span>
-                          )}
+                          <span className="inline-flex w-full items-center justify-center">
+                            <ChildIcon size={16} strokeWidth={2.2} />
+                          </span>
                         </Link>
                       );
                     })}

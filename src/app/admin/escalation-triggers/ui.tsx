@@ -3,6 +3,7 @@
 import type { EscalationTrigger, TicketPriority } from "@prisma/client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRAND_TITLE } from "@/lib/brand";
 
 type Trigger = Pick<
@@ -64,22 +65,16 @@ export function EscalationTriggersClient({
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-white">Priority alerts</h1>
           </div>
           <div className="hidden items-center justify-end sm:flex">
-            <div className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs dark:border-zinc-700 dark:bg-zinc-900">
-              <button
-                type="button"
-                onClick={() => setView("cards")}
-                className={`rounded-full px-3 py-1.5 transition ${view === "cards" ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : "text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"}`}
-              >
-                Cards
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("table")}
-                className={`rounded-full px-3 py-1.5 transition ${view === "table" ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900" : "text-zinc-700 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"}`}
-              >
-                Table
-              </button>
-            </div>
+            <Tabs value={view} onValueChange={(value) => setView(value as typeof view)}>
+              <TabsList className="rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs dark:border-zinc-700 dark:bg-zinc-900">
+                <TabsTrigger value="cards" className="rounded-full px-3 py-1.5 text-xs data-[state=active]:bg-zinc-900 data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900">
+                  Cards
+                </TabsTrigger>
+                <TabsTrigger value="table" className="rounded-full px-3 py-1.5 text-xs data-[state=active]:bg-zinc-900 data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900">
+                  Table
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
         </div>
       </header>

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/field";
-import { BRAND_TITLE } from "@/lib/brand";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DEFAULT_PASSWORD_RESET } from "@/lib/default-reset-password";
 import { cn } from "@/lib/cn";
 import { MAX_PROFILE_IMAGE_FILE_BYTES } from "@/lib/profile-image-limits";
@@ -431,6 +431,7 @@ export function AccountSettingsShell() {
   }
 
   const roleLabel = useMemo(() => role || "—", [role]);
+  const isAdminRole = role === "SuperAdmin" || role === "Admin";
 
   if (status === "loading") {
     return <p className="text-sm text-zinc-500">Loading session…</p>;
@@ -441,40 +442,40 @@ export function AccountSettingsShell() {
   }
 
   return (
-    <div className="flex flex-col gap-10 text-zinc-900 dark:text-zinc-100 lg:flex-row lg:gap-12">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => setTab(value as TabId)}
+      className="flex flex-col gap-10 text-zinc-900 dark:text-zinc-100 lg:flex-row lg:gap-12"
+    >
       {/* Side nav */}
       <aside className="shrink-0 lg:w-56">
         <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
           Account settings
         </p>
 
-        <nav className="mt-6 space-y-0.5" aria-label="Account sections">
+        <TabsList
+          className="mt-6 flex h-auto flex-col items-stretch justify-start gap-0.5 rounded-none bg-transparent p-0 text-muted"
+          aria-label="Account sections"
+        >
           {tabs.map(({ id, label, icon: Icon }) => {
-            const active = tab === id;
             return (
-              <button
+              <TabsTrigger
                 key={id}
-                type="button"
-                onClick={() => setTab(id)}
-                className={cn(
-                  "flex w-full items-center gap-2.5 rounded-lg border-l-4 py-2.5 pl-3 pr-3 text-left text-sm font-medium transition",
-                  active
-                    ? "border-orange-500 bg-orange-500/10 text-orange-900 dark:text-orange-100"
-                    : "border-transparent text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900/80 dark:hover:text-zinc-200",
-                )}
+                value={id}
+                className="flex w-full justify-start gap-2.5 rounded-lg border-l-4 border-transparent bg-transparent py-2.5 pl-3 pr-3 text-left text-sm font-medium text-zinc-600 shadow-none hover:bg-zinc-100 hover:text-zinc-900 data-[state=active]:border-orange-500 data-[state=active]:bg-orange-500/10 data-[state=active]:text-orange-900 data-[state=active]:shadow-none dark:text-zinc-400 dark:hover:bg-zinc-900/80 dark:hover:text-zinc-200 dark:data-[state=active]:text-orange-100"
               >
                 <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
                 {label}
-              </button>
+              </TabsTrigger>
             );
           })}
-        </nav>
+        </TabsList>
 
         <Link
-          href="/tickets/new"
+          href={isAdminRole ? "/admin/ticket-requests" : "/tickets/new"}
           className="mt-8 flex w-full items-center justify-center rounded-xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-center text-sm font-semibold text-orange-900 transition hover:border-orange-500/60 hover:bg-orange-500/15 dark:text-orange-100 dark:hover:border-orange-400/60"
         >
-          Support ticket
+          {isAdminRole ? "Create requests" : "Support ticket"}
         </Link>
       </aside>
 
@@ -990,7 +991,7 @@ export function AccountSettingsShell() {
           </div>
         )}
       </div>
-    </div>
+    </Tabs>
   );
 }
 

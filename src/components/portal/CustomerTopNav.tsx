@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMER_PORTAL_NAV_ITEMS, customerPortalNavItemActive } from "@/components/portal/customer-portal-nav";
 import { useHash } from "@/components/portal/useHash";
 
@@ -44,6 +45,9 @@ export function CustomerTopNav() {
   const roleLabel = data?.user?.role ?? "Customer";
   const userKey = (data?.user?.email ?? "customer").toLowerCase();
   const seenStorageKey = `customer-notif-seen:${userKey}`;
+  const activeTopTab = tabs.find((t) => {
+    return t.href === "/" ? pathname === "/" : pathname === t.href || pathname.startsWith(t.href + "/");
+  })?.href;
 
   useEffect(() => {
     let cancelled = false;
@@ -175,31 +179,23 @@ export function CustomerTopNav() {
               <BrandLockup variant="customer-topnav" href="/" />
             </div>
           </div>
-          <nav
-            className="-mx-1 mt-2 flex items-center gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] lg:hidden [&::-webkit-scrollbar]:hidden"
-            aria-label="Primary"
-          >
-            {tabs.map((t) => {
-              const active = t.href === "/" ? pathname === "/" : pathname === t.href || pathname.startsWith(t.href + "/");
-              return (
-                <Link
+          <Tabs value={activeTopTab ?? ""} className="-mx-1 mt-2 lg:hidden">
+            <TabsList
+              className="flex justify-start gap-1 overflow-x-auto bg-transparent px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+              aria-label="Primary"
+            >
+              {tabs.map((t) => (
+                <TabsTrigger
                   key={t.href}
-                  href={t.href}
-                  className={cn(
-                    "relative shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition",
-                    active
-                      ? "text-orange-700 dark:text-orange-200"
-                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.04] dark:hover:text-zinc-100",
-                  )}
+                  value={t.href}
+                  asChild
+                  className="relative shrink-0 rounded-md bg-transparent px-3 py-1.5 text-sm font-medium text-zinc-600 shadow-none hover:bg-zinc-100 hover:text-zinc-950 data-[state=active]:bg-transparent data-[state=active]:text-orange-700 data-[state=active]:shadow-none dark:text-zinc-400 dark:hover:bg-white/[0.04] dark:hover:text-zinc-100 dark:data-[state=active]:text-orange-200"
                 >
-                  {t.label}
-                  {active ? (
-                    <span className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-orange-500" />
-                  ) : null}
-                </Link>
-              );
-            })}
-          </nav>
+                  <Link href={t.href}>{t.label}</Link>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2 lg:min-w-0 lg:flex-1">
           <form
