@@ -54,14 +54,7 @@ function linksForRole(role: string | undefined): NavItem[] {
   if (role === "Personnel") {
     return [
       { kind: "link", href: "/my-requests", label: "Ticket Dashboard" },
-      {
-        kind: "group",
-        label: "Board",
-        children: [
-          { href: "/agent", label: "Ticket Board", matchBoard: "ticket" },
-          { href: "/agent?board=kpi", label: "Task Board", matchBoard: "kpi" },
-        ],
-      },
+      { kind: "link", href: "/agent", label: "Board" },
       { kind: "link", href: "/insights", label: "Metrics & Reports" },
       { kind: "link", href: "/admin/account", label: "My Account" },
     ];

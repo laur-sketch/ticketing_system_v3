@@ -129,6 +129,7 @@ function formatMonthNameDate(value: string | Date | null | undefined) {
 export default function InsightsPage() {
   const { data: session } = useSession();
   const isPersonnel = session?.user?.role === "Personnel";
+  const isAdminRole = session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
   const [activeTab, setActiveTab] = useState<"ticket-metrics" | "task-metrics" | "task-project-tracker" | "kpi-mgmt">(
     "ticket-metrics",
   );
@@ -136,7 +137,6 @@ export default function InsightsPage() {
   const [error, setError] = useState<string | null>(null);
   const [throughputView, setThroughputView] = useState<"cards" | "table">("table");
   const [volumeChartView, setVolumeChartView] = useState<"density" | "line">("density");
-  const [canAssignKpi, setCanAssignKpi] = useState(false);
   /** IANA zone for KPI period boundaries. */
   const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
 
@@ -150,8 +150,9 @@ export default function InsightsPage() {
     });
   }, []);
 
-  /** Personnel with coordinator access: keep KPI definition tab on Insights. SuperAdmin/Admin use Task Board. */
-  const showKpiTasksTab = isPersonnel && canAssignKpi;
+  /** Personnel only see personal ticket metrics. SuperAdmin/Admin see task reporting tabs. */
+  const showTaskReportingTabs = isAdminRole;
+  const showKpiTasksTab = false;
 
   const defaultRange = useMemo(() => {
     const to = new Date();
@@ -171,13 +172,23 @@ export default function InsightsPage() {
   const [taskMetricsUserSupport, setTaskMetricsUserSupport] = useState<TaskMetricsUserSupportTickets | null>(
     null,
   );
+  const [taskMetricCompanies, setTaskMetricCompanies] = useState<TaskProjectTrackerOptions["companies"]>([]);
+  const [selectedTaskMetricCompany, setSelectedTaskMetricCompany] = useState("");
+  const [selectedTicketMetricCompany, setSelectedTicketMetricCompany] = useState("");
   const [taskChecklistPillars, setTaskChecklistPillars] = useState<TaskChecklistPillarMetrics | null>(null);
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
 
   const loadKpis = useCallback(async () => {
     setError(null);
+    if (isAdminRole && !selectedTicketMetricCompany) {
+      setData(null);
+      return;
+    }
     const qs = new URLSearchParams({ from, to });
+    if (isAdminRole) {
+      qs.set("companyId", selectedTicketMetricCompany);
+    }
     const res = await fetch(`/api/kpis?${qs.toString()}`, { cache: "no-store" });
     if (!res.ok) {
       setError("Could not load KPIs. Is the database running and migrated?");
@@ -186,7 +197,7 @@ export default function InsightsPage() {
     }
     const json = (await res.json()) as KpiPayload;
     setData(json);
-  }, [from, to]);
+  }, [from, to, isAdminRole, selectedTicketMetricCompany]);
 
   const loadTaskMetrics = useCallback(async () => {
     setTaskMetricsError(null);
@@ -203,6 +214,9 @@ export default function InsightsPage() {
       helpdeskCadence: taskMetricsCadence,
       tz: recurrenceTz,
     });
+    if (selectedTaskMetricCompany) {
+      qs.set("companyId", selectedTaskMetricCompany);
+    }
     try {
       const res = await fetch(`/api/kpis/task-metrics?${qs.toString()}`, { cache: "no-store" });
       if (!res.ok) {
@@ -223,7 +237,14 @@ export default function InsightsPage() {
     } finally {
       setTaskMetricsLoading(false);
     }
-  }, [taskMetricsCadence, taskMetricsDailyDate, taskMetricsFrom, taskMetricsTo, recurrenceTz]);
+  }, [
+    taskMetricsCadence,
+    taskMetricsDailyDate,
+    taskMetricsFrom,
+    taskMetricsTo,
+    recurrenceTz,
+    selectedTaskMetricCompany,
+  ]);
 
   function handleTaskMetricsCadenceChange(next: KpiFrequencyCode) {
     setTaskMetricsCadence(next);
@@ -259,6 +280,32 @@ export default function InsightsPage() {
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
+    if (!showTaskReportingTabs) return;
+    let cancelled = false;
+    async function loadTaskMetricCompanies() {
+      const res = await fetch("/api/kpis/task-project-tracker-options", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json()) as TaskProjectTrackerOptions;
+      if (cancelled) return;
+      setTaskMetricCompanies(json.companies ?? []);
+      setSelectedTaskMetricCompany((current) => {
+        if (json.companies.some((company) => company.id === current)) return current;
+        return json.companies[0]?.id ?? "";
+      });
+      setSelectedTicketMetricCompany((current) => {
+        if (json.companies.some((company) => company.id === current)) return current;
+        return json.companies[0]?.id ?? "";
+      });
+    }
+    void loadTaskMetricCompanies();
+    const id = window.setInterval(() => void loadTaskMetricCompanies(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [showTaskReportingTabs]);
+
+  useEffect(() => {
     function onVisibility() {
       if (
         document.visibilityState === "visible" &&
@@ -280,33 +327,13 @@ export default function InsightsPage() {
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadMaintenanceForMetrics() {
-      const role = session?.user?.role;
-      if (!role) return;
-      const permissionRes = await fetch("/api/me/permissions", { cache: "no-store" });
-      const permission = permissionRes.ok
-        ? ((await permissionRes.json()) as {
-            canAccessAssignmentBoard?: boolean;
-          })
-        : { canAccessAssignmentBoard: false };
-      if (role === "SuperAdmin" || role === "Admin") {
-        if (!cancelled) setCanAssignKpi(false);
-      } else {
-        if (!cancelled) setCanAssignKpi(!!permission.canAccessAssignmentBoard);
-      }
-    }
-    void loadMaintenanceForMetrics();
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.user?.role]);
-
-  useEffect(() => {
     if (!showKpiTasksTab && activeTab === "kpi-mgmt") {
       queueMicrotask(() => setActiveTab("ticket-metrics"));
     }
-  }, [showKpiTasksTab, activeTab]);
+    if (!showTaskReportingTabs && (activeTab === "task-metrics" || activeTab === "task-project-tracker")) {
+      queueMicrotask(() => setActiveTab("ticket-metrics"));
+    }
+  }, [showKpiTasksTab, showTaskReportingTabs, activeTab]);
 
   const charts = data?.charts ?? {
     days: [],
@@ -386,30 +413,34 @@ export default function InsightsPage() {
           >
             {isPersonnel ? "My Ticket Metrics and Reports" : "Ticket Metrics and Reports"}
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("task-project-tracker")}
-            className={cn(
-              "rounded-full px-4 py-1.5 transition",
-              activeTab === "task-project-tracker"
-                ? "bg-orange-600 text-white shadow-sm"
-                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-            )}
-          >
-            Task &amp; Project Tracker
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("task-metrics")}
-            className={cn(
-              "rounded-full px-4 py-1.5 transition",
-              activeTab === "task-metrics"
-                ? "bg-orange-600 text-white shadow-sm"
-                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-            )}
-          >
-            {isPersonnel ? "My task metrics" : "Task metrics"}
-          </button>
+          {showTaskReportingTabs ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setActiveTab("task-project-tracker")}
+                className={cn(
+                  "rounded-full px-4 py-1.5 transition",
+                  activeTab === "task-project-tracker"
+                    ? "bg-orange-600 text-white shadow-sm"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                Task &amp; Project Tracker
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("task-metrics")}
+                className={cn(
+                  "rounded-full px-4 py-1.5 transition",
+                  activeTab === "task-metrics"
+                    ? "bg-orange-600 text-white shadow-sm"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                Task Metrics
+              </button>
+            </>
+          ) : null}
           {showKpiTasksTab ? (
             <button
               type="button"
@@ -437,7 +468,7 @@ export default function InsightsPage() {
         <div className="space-y-6">
           <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => {}} />
         </div>
-      ) : activeTab === "task-metrics" ? (
+      ) : activeTab === "task-metrics" && showTaskReportingTabs ? (
         <div className="space-y-6">
           <TaskMetricsPanel
             checklistPillars={taskChecklistPillars}
@@ -454,9 +485,12 @@ export default function InsightsPage() {
             onRangeFromChange={setTaskMetricsFrom}
             onRangeToChange={setTaskMetricsTo}
             reportingTimeZone={recurrenceTz}
+            companies={taskMetricCompanies}
+            selectedCompany={selectedTaskMetricCompany}
+            onSelectedCompanyChange={setSelectedTaskMetricCompany}
           />
         </div>
-      ) : activeTab === "task-project-tracker" ? (
+      ) : activeTab === "task-project-tracker" && showTaskReportingTabs ? (
         <TaskProjectTrackerPanel
           loading={taskMetricsLoading}
           taskMetricsCadence={taskMetricsCadence}
@@ -552,6 +586,22 @@ export default function InsightsPage() {
                 </div>
               </div>
               <div className="flex flex-wrap items-end justify-end gap-3 text-xs text-zinc-600 dark:text-zinc-500">
+                {isAdminRole ? (
+                  <label className="flex min-w-[12rem] flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                    Company
+                    <select
+                      value={selectedTicketMetricCompany}
+                      onChange={(e) => setSelectedTicketMetricCompany(e.target.value)}
+                      className="mt-1.5 min-h-10 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
+                    >
+                      {taskMetricCompanies.map((company) => (
+                        <option key={company.id} value={company.id}>
+                          {company.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
                   From
                   <DatePickerField
@@ -810,7 +860,7 @@ function TaskProjectTrackerPanel({
   });
   const allProjectsValue = "ALL";
   const [selectedProject, setSelectedProject] = useState(allProjectsValue);
-  const [selectedCompany, setSelectedCompany] = useState("ALL");
+  const [selectedCompany, setSelectedCompany] = useState("");
   const [detailsView, setDetailsView] = useState<"task" | "project">("task");
   const [currentDate, setCurrentDate] = useState(() => new Date());
 
@@ -828,8 +878,8 @@ function TaskProjectTrackerPanel({
         return allProjectsValue;
       });
       setSelectedCompany((current) => {
-        if (current === "ALL" || json.companies.some((company) => company.id === current)) return current;
-        return "ALL";
+        if (json.companies.some((company) => company.id === current)) return current;
+        return json.companies[0]?.id ?? "";
       });
     }
     void loadOptions();
@@ -847,7 +897,7 @@ function TaskProjectTrackerPanel({
 
   const projectTableRows = trackerOptions.tasks.filter((task) => {
     if (selectedProject !== allProjectsValue && task.projectName !== selectedProject) return false;
-    if (selectedCompany !== "ALL" && task.companyId !== selectedCompany) return false;
+    if (selectedCompany && task.companyId !== selectedCompany) return false;
     return true;
   });
   const detailTableRows = projectTableRows.filter((task) => task.rowType === detailsView);
@@ -862,10 +912,6 @@ function TaskProjectTrackerPanel({
   const projectInProgress = projectTableRows.filter((task) => task.completion === 50 || task.completion === 75).length;
   const projectNotStarted = projectTableRows.filter((task) => task.completion < 50).length;
   const projectMissing = Math.max(0, projectTotal - projectDone);
-  const projectPercent =
-    projectTotal > 0
-      ? Math.round(projectTableRows.reduce((sum, task) => sum + task.completion, 0) / projectTotal)
-      : 0;
   const projectSegments = [
     { label: "Project completed", value: projectDone, color: KINETIC_PALETTE.accentTealBright },
     { label: "In progress", value: projectInProgress, color: KINETIC_PALETTE.brand },
@@ -939,7 +985,6 @@ function TaskProjectTrackerPanel({
                   onChange={(e) => setSelectedCompany(e.target.value)}
                   className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
                 >
-                  <option value="ALL">All companies</option>
                   {trackerOptions.companies.map((company) => (
                     <option key={company.id} value={company.id}>
                       {company.name}
@@ -1253,6 +1298,9 @@ function TaskMetricsPanel({
   onRangeFromChange,
   onRangeToChange,
   reportingTimeZone,
+  companies,
+  selectedCompany,
+  onSelectedCompanyChange,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
@@ -1268,6 +1316,9 @@ function TaskMetricsPanel({
   onRangeFromChange: (v: string) => void;
   onRangeToChange: (v: string) => void;
   reportingTimeZone: string;
+  companies: TaskProjectTrackerOptions["companies"];
+  selectedCompany: string;
+  onSelectedCompanyChange: (v: string) => void;
 }) {
   const freq = taskMetricsCadence;
   const isDaily = freq === "DAILY";
@@ -1280,6 +1331,7 @@ function TaskMetricsPanel({
     rangeFrom,
     rangeTo,
   });
+  const showCompanyTaskMetrics = selectedCompany !== "";
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
@@ -1289,33 +1341,51 @@ function TaskMetricsPanel({
             Task metrics
           </h3>
         </div>
-        <div className="flex w-full shrink-0 flex-col gap-4 sm:min-w-[17rem] lg:w-auto lg:items-end">
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-              Cadence
-            </span>
-            <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
-              {(["WEEKLY", "MONTHLY", "QUARTERLY"] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => onTaskMetricsCadenceChange(f)}
-                  className={cn(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                    freq === f
-                      ? "bg-orange-600 text-white shadow-sm"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                  )}
-                >
-                  {f === "WEEKLY" ? "Weekly" : f === "MONTHLY" ? "Monthly" : "Quarterly"}
-                </button>
-              ))}
+        <div className="flex w-full shrink-0 flex-col gap-4 lg:w-auto lg:items-end">
+          <div className="grid w-full gap-3 sm:grid-cols-[minmax(12rem,18rem)_auto] sm:items-end">
+            <label className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+                Company
+              </span>
+              <select
+                value={selectedCompany}
+                onChange={(e) => onSelectedCompanyChange(e.target.value)}
+                className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
+              >
+                {companies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+                Cadence
+              </span>
+              <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
+                {(["WEEKLY", "MONTHLY", "QUARTERLY"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => onTaskMetricsCadenceChange(f)}
+                    className={cn(
+                      "rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
+                      freq === f
+                        ? "bg-orange-600 text-white shadow-sm"
+                        : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                    )}
+                  >
+                    {f === "WEEKLY" ? "Weekly" : f === "MONTHLY" ? "Monthly" : "Quarterly"}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           <div
             className={cn(
-              "w-full rounded-xl border border-zinc-200 bg-zinc-50/90 p-3 dark:border-zinc-700/80 dark:bg-zinc-900/50",
-              isDaily || isMonthly ? "sm:max-w-[14rem]" : "sm:max-w-[22rem]",
+              "w-full rounded-xl border border-zinc-200 bg-zinc-50/90 p-2.5 dark:border-zinc-700/80 dark:bg-zinc-900/50",
+              isDaily || isMonthly ? "sm:max-w-[12rem]" : "sm:max-w-[20rem]",
             )}
           >
             <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
@@ -1394,6 +1464,7 @@ function TaskMetricsPanel({
           reportingPeriodLabel={reportingPeriodLabel}
           helpdeskTickets={helpdeskTickets}
           userSupportTickets={userSupportTickets}
+          includeChecklistPillars={showCompanyTaskMetrics}
         />
       </div>
     </section>

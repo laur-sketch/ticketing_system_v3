@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "@radix-ui/react-avatar": "^1.1.12",
     "bcryptjs": "^3.0.3",
     "lucide-react": "^1.8.0",
     "luxon": "^3.7.2",

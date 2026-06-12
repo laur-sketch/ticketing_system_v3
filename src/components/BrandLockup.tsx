@@ -75,11 +75,8 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "customer-topnav":
       return (
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <BrandLogo className="h-9 w-auto max-w-[min(160px,55vw)] shrink-0 object-contain object-left sm:h-10" />
-          <span className="min-w-0 truncate text-xs font-bold tracking-[0.04em] text-zinc-900 sm:text-sm dark:text-zinc-100">
-            {BRAND_TITLE}
-          </span>
+        <div className="flex min-w-0 items-center">
+          <BrandLogo className="h-9 w-auto max-w-[min(150px,48vw)] shrink-0 object-contain object-left sm:h-10" />
         </div>
       );
     case "landing-header":
@@ -107,11 +104,8 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "staff-header-compact":
       return (
-        <div className="flex items-center gap-2.5">
-          <BrandLogo className="h-11 w-auto max-w-[200px] shrink-0 object-contain object-left" />
-          <span className="hidden max-w-[14rem] truncate text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-700 dark:text-zinc-400 lg:inline">
-            {BRAND_TITLE}
-          </span>
+        <div className="flex items-center">
+          <BrandLogo className="h-10 w-auto max-w-[180px] shrink-0 object-contain object-left sm:h-11" />
         </div>
       );
   }

@@ -160,7 +160,7 @@ function CompanyColumnList({ col, density }: { col: CompanyBoardColumn; density:
   const visibleTickets = tickets.slice(start === 0 ? 0 : start - 1, end);
 
   return (
-    <article className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+    <article className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
       <div className={cn("border-b border-zinc-200 dark:border-zinc-800", density.headerPad)}>
         <p
           className={cn("font-bold break-words text-zinc-900 dark:text-zinc-100", density.header)}

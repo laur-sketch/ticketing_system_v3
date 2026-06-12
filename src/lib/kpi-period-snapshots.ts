@@ -276,7 +276,11 @@ export function snapshotTimeZoneForTaskMetrics(clientTz?: string | null): string
 /** Task metrics checklist rows: admins see all; personnel see their assignments plus org-wide (unassigned) KPIs. */
 export function kpiMaintenanceWhereForTaskMetrics(
   assignedAgentId?: string,
+  assignedAgentIds?: string[],
 ): Prisma.KpiMaintenanceWhereInput {
+  if (assignedAgentIds) {
+    return { assignedAgentId: { in: assignedAgentIds.length > 0 ? assignedAgentIds : ["__none__"] } };
+  }
   if (!assignedAgentId) return {};
   if (assignedAgentId === "__none__") return { assignedAgentId: null };
   return {

@@ -538,13 +538,13 @@ export default async function AgentHome({
   );
 
   return (
-    <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100 sm:px-4">
+    <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-background dark:text-zinc-100 sm:px-4">
       <div
         className={`mx-auto flex w-full flex-1 flex-col space-y-4 ${isCompanyBoard ? "max-w-none" : "max-w-7xl"}`}
       >
         <section className="space-y-4">
           {notificationsOpen ? (
-            <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+            <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
                   Notifications
@@ -621,7 +621,7 @@ export default async function AgentHome({
                   ) : (
                     <Link
                       href="/tickets/new"
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-[#070d19]"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-background"
                     >
                       <Plus className="size-4" aria-hidden />
                       Create ticket
@@ -645,7 +645,7 @@ export default async function AgentHome({
             className={
               boardTab === "kpi"
                 ? "min-w-0"
-                : "rounded-xl border border-zinc-200 bg-white p-2.5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+                : "rounded-xl border border-zinc-200 bg-white p-2.5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
             }
           >
             {showTopTicketFilters ? (
@@ -866,7 +866,7 @@ export default async function AgentHome({
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-200 bg-white dark:divide-zinc-800 dark:bg-[#0f172a]">
+                    <tbody className="divide-y divide-zinc-200 bg-white dark:divide-zinc-800 dark:bg-surface">
                       {ticketsEmpty ? (
                         <tr>
                           <td colSpan={7} className="px-4 py-14 text-center">
@@ -973,7 +973,7 @@ function StatCard({
   valueClass: string;
 }) {
   return (
-    <article className="min-w-[96px] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-[0_6px_20px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+    <article className="min-w-[96px] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-[0_6px_20px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
       <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-600 dark:text-zinc-500">{label}</p>
       <p className={`mt-0.5 text-2xl font-bold ${valueClass}`}>{String(value).padStart(2, "0")}</p>
     </article>

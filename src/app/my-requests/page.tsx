@@ -191,7 +191,7 @@ export default async function MyRequestsPage({
   const intakeBlock = await customerHasPendingResolvedTicket(me, session.user.authProvider);
 
   return (
-    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-5 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100 sm:px-5 md:py-8">
+    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-5 text-zinc-900 dark:bg-background dark:text-zinc-100 sm:px-5 md:py-8">
       <div className="mx-auto flex max-w-[min(100%,1480px)] flex-col gap-5">
         {submitted ? (
           <div className="rounded-xl border border-orange-400/50 bg-orange-500/15 px-4 py-3 text-sm text-orange-950 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200">
@@ -199,7 +199,7 @@ export default async function MyRequestsPage({
           </div>
         ) : null}
         {/* Hero */}
-        <header className="rounded-2xl border border-zinc-200 bg-gradient-to-br from-white via-white to-orange-50/40 p-5 shadow-[0_12px_36px_rgba(0,0,0,0.05)] dark:border-zinc-800/90 dark:from-[#0d1629] dark:via-[#0b1322] dark:to-[#0b1322] dark:shadow-[0_18px_48px_rgba(0,0,0,0.35)] md:p-7">
+        <header className="rounded-2xl border border-zinc-200 bg-gradient-to-br from-white via-white to-orange-50/40 p-5 shadow-[0_12px_36px_rgba(0,0,0,0.05)] dark:border-zinc-800/90 dark:from-[#171614] dark:via-[#131313] dark:to-[#10100f] dark:shadow-[0_18px_48px_rgba(0,0,0,0.35)] md:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-orange-700 dark:text-orange-400/95">
@@ -285,7 +285,7 @@ export default async function MyRequestsPage({
               <div
                 key={col.id}
                 className={cn(
-                  "flex min-h-[280px] flex-col rounded-2xl border border-zinc-200 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.04)] dark:border-zinc-800/90 dark:bg-[#0c1525] dark:shadow-[0_14px_36px_rgba(0,0,0,0.32)]",
+                  "flex min-h-[280px] flex-col rounded-2xl border border-zinc-200 bg-white shadow-[0_8px_24px_rgba(0,0,0,0.04)] dark:border-zinc-800/90 dark:bg-surface dark:shadow-[0_14px_36px_rgba(0,0,0,0.32)]",
                 )}
               >
                 <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800/80">
@@ -324,7 +324,7 @@ export default async function MyRequestsPage({
                       <AssigneeColorHighlight
                         key={t.id}
                         assigneeColorKey={assigneeKey}
-                        className="group block rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#0f172a] dark:hover:border-orange-500/40 dark:hover:bg-[#111c33]"
+                        className="group block rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#181716] dark:hover:border-orange-500/40 dark:hover:bg-[#201f1d]"
                       >
                       <Link
                         href={`/tickets/${t.id}`}
@@ -429,7 +429,7 @@ function StatTile({
           ? "text-emerald-700 dark:text-emerald-300"
           : "text-zinc-900 dark:text-zinc-100";
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800/90 dark:bg-[#0c1525]">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800/90 dark:bg-surface">
       <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-500">
         {label}
       </p>

@@ -637,6 +637,7 @@ export function TaskPillarMetricsGrid({
   reportingPeriodLabel,
   helpdeskTickets,
   userSupportTickets,
+  includeChecklistPillars = true,
 }: {
   /** Checklist pillar metrics from snapshots (range-aware averages). */
   checklistPillars: TaskChecklistPillarMetrics | null;
@@ -644,6 +645,7 @@ export function TaskPillarMetricsGrid({
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
+  includeChecklistPillars?: boolean;
 }) {
   const [inspectedPillar, setInspectedPillar] = useState<ItTaskPillarTitle | null>(null);
   const [extendedView, setExtendedView] = useState(false);
@@ -712,6 +714,10 @@ export function TaskPillarMetricsGrid({
           );
         }
 
+        if (!includeChecklistPillars) {
+          return null;
+        }
+
         const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
         if (cfg) {
           const agg = checklistPillars?.[pillar] ?? {
@@ -722,6 +728,9 @@ export function TaskPillarMetricsGrid({
             periodsCounted: 0,
             periodsInRange: 0,
           };
+          if (agg.total <= 0) {
+            return null;
+          }
           const invert =
             cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
           const view = kpiChecklistMetricView(agg, invert);

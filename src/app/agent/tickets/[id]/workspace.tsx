@@ -242,14 +242,14 @@ export function AgentWorkspace({
       </AssigneeColorHighlight>
 
       <aside className="min-w-0 space-y-4">
-        <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
+        <article className="rounded-2xl border border-zinc-800 bg-surface p-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
           <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Assignment</h2>
           <p className="mt-2 text-sm text-zinc-300">
             Ticket assignment is managed on the Assignment Board Kanban flow.
           </p>
         </article>
 
-        <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
+        <article className="rounded-2xl border border-zinc-800 bg-surface p-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
           <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Ticket controls</h2>
           <div className="mt-3 flex flex-col gap-2">
             {canUpdatePriority ? (
@@ -444,7 +444,7 @@ export function AgentWorkspace({
           </div>
         </article>
 
-        <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-4 text-xs text-zinc-300 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
+        <article className="rounded-2xl border border-zinc-800 bg-surface p-4 text-xs text-zinc-300 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Audit log</h2>
             <button
@@ -476,7 +476,7 @@ export function AgentWorkspace({
             className="absolute inset-0 bg-black/70"
             aria-label="Close ticket logs"
           />
-          <section className="absolute inset-x-2 bottom-2 top-2 flex flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-[#0b1220] shadow-[0_25px_90px_rgba(0,0,0,0.65)] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-[80vh] sm:w-[min(920px,94vw)] sm:-translate-x-1/2 sm:-translate-y-1/2">
+          <section className="absolute inset-x-2 bottom-2 top-2 flex flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-surface shadow-[0_25px_90px_rgba(0,0,0,0.65)] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-[80vh] sm:w-[min(920px,94vw)] sm:-translate-x-1/2 sm:-translate-y-1/2">
             <header className="flex items-center justify-between gap-3 border-b border-zinc-800 px-3 py-3 sm:px-5 sm:py-4">
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500">Ticket logs</p>
