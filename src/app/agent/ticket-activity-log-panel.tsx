@@ -32,9 +32,6 @@ export function TicketActivityLogPanel({
           <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
             Ticket activity log
           </h2>
-          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
-            Recent events across tickets in your visible companies (newest first).
-          </p>
         </div>
       </div>
 

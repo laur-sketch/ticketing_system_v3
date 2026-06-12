@@ -1,7 +1,6 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
 import { cn } from "@/lib/cn";
@@ -477,42 +476,7 @@ export function PersonnelClient({
             {BRAND_TITLE} · Admin console
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Personnel registry</h1>
-          <p className="mt-2 max-w-3xl text-xs leading-snug text-zinc-600 dark:text-zinc-400">
-            {isAdminCompanyView ? (
-              <>
-                View staff on your company queue{scopedCompanyName ? ` (${scopedCompanyName})` : ""}. You can set
-                assignment colors for Admin and Personnel here; other roster changes are done by a SuperAdmin. Your
-                login:{" "}
-                <Link href="/admin/account" className="text-orange-400 underline-offset-2 hover:underline">
-                  My account
-                </Link>
-                .
-              </>
-            ) : (
-              <>
-                Manage portal roles and the designated company for staff. The company set on signup or by SuperAdmin
-                immediately puts the user on that company queue. Your own login:{" "}
-                <Link href="/admin/account" className="text-orange-400 underline-offset-2 hover:underline">
-                  My account
-                </Link>
-                .
-              </>
-            )}
-          </p>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-            <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
-              {isAdminCompanyView ? (
-                <>
-                  One row per Admin or Personnel on your company queue. Assignment colors are editable below; contact
-                  a SuperAdmin to add staff or change roles.
-                </>
-              ) : (
-                <>
-                  One row per portal user (linked Agent when on roster). Duplicates? Merge extra{" "}
-                  <code className="rounded bg-zinc-200 px-1 text-[10px] dark:bg-zinc-800">Agent</code> rows.
-                </>
-              )}
-            </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
             {!isAdminCompanyView ? (
               <button
                 type="button"
@@ -531,12 +495,6 @@ export function PersonnelClient({
             <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-700 dark:text-zinc-400">
               Add staff portal account
             </h2>
-            <p className="mt-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
-              Creates an <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Admin</strong> or{" "}
-              <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Personnel</strong> login (not a
-              customer company signup). The user is placed on the agent roster for the queue you pick so they appear on
-              the assignment board immediately.
-            </p>
             {createOk ? (
               <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100/90">
                 {createOk}

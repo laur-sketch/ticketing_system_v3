@@ -447,7 +447,6 @@ export function AccountSettingsShell() {
         <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
           Account settings
         </p>
-        <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Manage your preferences</p>
 
         <nav className="mt-6 space-y-0.5" aria-label="Account sections">
           {tabs.map(({ id, label, icon: Icon }) => {
@@ -487,10 +486,6 @@ export function AccountSettingsShell() {
               <h1 className="text-2xl font-bold tracking-tight text-zinc-900 md:text-3xl dark:text-white">
                 Profile information
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                Update how you appear across {BRAND_TITLE}. Display name, email, and username come from your portal
-                account (change them under Security).
-              </p>
             </header>
 
             <div className="grid gap-8 lg:grid-cols-[minmax(0,280px)_1fr] lg:items-start">
@@ -655,11 +650,7 @@ export function AccountSettingsShell() {
                   </span>
                 </label>
 
-                <div className="flex flex-col gap-4 border-t border-zinc-200 pt-6 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="max-w-md text-xs leading-relaxed text-zinc-600 dark:text-zinc-500">
-                    Data privacy: profile details stay within the {BRAND_TITLE} ecosystem and are not used for external
-                    marketing.
-                  </p>
+                <div className="flex flex-col gap-4 border-t border-zinc-200 pt-6 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-end">
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button
                       type="button"
@@ -694,10 +685,6 @@ export function AccountSettingsShell() {
                       <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-900 dark:text-zinc-200">
                         Security protocol active
                       </h3>
-                      <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                        Your session is authenticated with portal credentials. Sign out from unfamiliar devices using
-                        Revoke below.
-                      </p>
                       <p className="mt-3 text-[11px] font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-500">
                         {new Date().toLocaleString(undefined, {
                           month: "short",
@@ -722,11 +709,6 @@ export function AccountSettingsShell() {
                   </p>
                   <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
                     Tickets resolved
-                  </p>
-                  <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-500">
-                    {details?.hasAgentProfile
-                      ? "Closed tickets assigned to you."
-                      : "No personnel queue profile — metric applies when your login matches an agent record."}
                   </p>
                   <div className="mt-4 h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                     <div
@@ -766,18 +748,12 @@ export function AccountSettingsShell() {
           <section className="space-y-8">
             <header>
               <h1 className="text-2xl font-bold tracking-tight text-zinc-900 md:text-3xl dark:text-white">Security settings</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                Sensitive actions require your current password for verification.
-              </p>
             </header>
 
             <article className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0c]">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Change display name
               </h2>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                Update the name shown on your account, tickets, and staff views. This requires your current password.
-              </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   New display name
@@ -816,9 +792,6 @@ export function AccountSettingsShell() {
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Change username
               </h2>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                Update your sign-in username. This always requires your current password.
-              </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   New username
@@ -856,9 +829,6 @@ export function AccountSettingsShell() {
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Change email
               </h2>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                Update your sign-in email. This always requires your current password.
-              </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   New email
@@ -893,9 +863,6 @@ export function AccountSettingsShell() {
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Change password
               </h2>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                Update your portal password using your current password for verification.
-              </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   Current password
@@ -940,9 +907,6 @@ export function AccountSettingsShell() {
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Account requests
               </h2>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                Submit a formal request for Admin/SuperAdmin review (suspension, deletion, or password reset).
-              </p>
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
                 If a <strong className="font-medium text-zinc-700 dark:text-zinc-300">password reset</strong> is approved,
                 your portal password is set to: <code className="rounded bg-zinc-200 px-1 text-[11px] dark:bg-zinc-800">{DEFAULT_PASSWORD_RESET}</code>

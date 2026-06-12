@@ -184,6 +184,7 @@ export const authOptions: NextAuthOptions = {
           email,
           name: user.name ?? portal?.name ?? email.split("@")[0] ?? "User",
           role: portal?.role ?? normalizeRole(String(user.role ?? "")) ?? "Customer",
+          profileImage: typeof user.image === "string" ? user.image : null,
         });
       } catch (e) {
         console.error("upsertPortalOAuthAccount failed", e);
@@ -226,6 +227,7 @@ export const authOptions: NextAuthOptions = {
         const portal = await findPortalByEmailOnly(token.email);
         if (portal) {
           token.name = portal.name;
+          token.picture = portal.profileImage ?? token.picture;
           token.companyId = portal.companyId;
           token.companyName = portal.companyName;
           token.customerOrgRole = portal.customerOrgRole;
@@ -250,6 +252,9 @@ export const authOptions: NextAuthOptions = {
       }
       if (typeof token.name === "string") {
         session.user.name = token.name;
+      }
+      if (typeof token.picture === "string") {
+        session.user.image = token.picture;
       }
       if (typeof token.authProvider === "string") {
         session.user.authProvider = token.authProvider;

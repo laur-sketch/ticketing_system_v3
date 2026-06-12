@@ -103,7 +103,8 @@ function PillarDonutCard({
   const cx = 50;
   const cy = 50;
   const rOut = 36;
-  const rIn = 22;
+  const rIn = 24;
+  const centerLabel = headline.split(" ")[0] ?? headline;
   let angle = -Math.PI / 2;
   const paths: { d: string; color: string; label: string; value: number }[] = [];
 
@@ -178,6 +179,14 @@ function PillarDonutCard({
                 fill="white"
                 className="dark:fill-zinc-900/80"
               />
+              <text
+                x={cx}
+                y={cy + 3}
+                textAnchor="middle"
+                className="fill-zinc-900 text-[9px] font-black dark:fill-zinc-100"
+              >
+                {centerLabel}
+              </text>
             </>
           ) : (
             <>
@@ -206,6 +215,15 @@ function PillarDonutCard({
                   />
                 ),
               )}
+              <circle cx={cx} cy={cy} r={rIn} fill="white" className="dark:fill-zinc-900/80" />
+              <text
+                x={cx}
+                y={cy + 3}
+                textAnchor="middle"
+                className="fill-zinc-900 text-[9px] font-black dark:fill-zinc-100"
+              >
+                {centerLabel}
+              </text>
             </>
           )}
         </svg>
@@ -221,7 +239,6 @@ function PillarDonutCard({
           ))}
         </ul>
       </div>
-      <p className="mt-3 text-[10px] text-zinc-500 dark:text-zinc-500">Double-click/tap to inspect source</p>
     </article>
   );
 }
@@ -630,15 +647,6 @@ export function TaskPillarMetricsGrid({
 }) {
   const [inspectedPillar, setInspectedPillar] = useState<ItTaskPillarTitle | null>(null);
   const [extendedView, setExtendedView] = useState(false);
-  const cadenceHeadline =
-    metricsCadence === "DAILY"
-      ? "Daily"
-      : metricsCadence === "WEEKLY"
-        ? "Weekly"
-        : metricsCadence === "MONTHLY"
-          ? "Monthly"
-          : "Quarterly";
-
   const inspected = inspectedPillar
     ? sourceDetailsForPillar({
         pillar: inspectedPillar,
@@ -652,13 +660,6 @@ export function TaskPillarMetricsGrid({
 
   return (
     <div className="space-y-3">
-      {reportingPeriodLabel ? (
-        <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          <span className="font-semibold text-zinc-800 dark:text-zinc-200">{cadenceHeadline} view</span>
-          {" · "}
-          {reportingPeriodLabel}
-        </p>
-      ) : null}
       <div
         className={cn(
           "grid gap-4",

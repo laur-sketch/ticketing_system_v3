@@ -213,21 +213,16 @@ export default async function Home() {
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Open Tickets</p>
               <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{openTickets}</p>
-              <p className="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-600">Active queue requiring action</p>
             </article>
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Avg. Response</p>
               <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{avgMins}m</p>
-              <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-600">
-                Based on latest first responses
-              </p>
             </article>
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Resolution Rate</p>
               <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {resolutionRate.toFixed(1)}%
               </p>
-              <p className="mt-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Target: 92.0%</p>
             </article>
           </section>
 
@@ -341,11 +336,6 @@ export default async function Home() {
             <h1 className="mt-3 max-w-3xl text-3xl font-bold leading-tight tracking-tight text-zinc-900 md:text-4xl dark:text-white">
               Capture requests, honor SLAs, and close the loop with customers.
             </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-relaxed text-zinc-600 md:text-base dark:text-zinc-400">
-              This workspace models the full lifecycle: intake from any channel, structured categorization and
-              priority, queue routing, agent diagnosis, optional escalation, customer validation, and closure with
-              feedback for CSAT, optional NPS, and effort scoring.
-            </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
                 href="/tickets/new"
@@ -431,10 +421,6 @@ export default async function Home() {
               <br />
               We place you in the correct experience.
             </h1>
-            <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted">
-              Staff, admins, and company users all authenticate at the same place. After you sign in, AGCTek routes you to
-              the workspace that matches your account, with company-based routing and confirmation-driven closure.
-            </p>
             <div className="mt-8 space-y-4">
               <div className="flex flex-wrap items-center gap-3">
                 <Link
@@ -481,10 +467,6 @@ export default async function Home() {
             <h2 className="mt-2 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
               Sign in once. We place you in the correct experience.
             </h2>
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-              Registration uses one screen: you choose staff or company, then we collect the right fields. Authentication
-              stays unified—everyone uses <span className="font-semibold text-zinc-800 dark:text-zinc-200">/signin</span>.
-            </p>
           </div>
           <LandingAccessVisual />
           <div className="mx-auto mt-8 grid max-w-4xl gap-4 sm:grid-cols-3">
@@ -507,7 +489,7 @@ export default async function Home() {
                 body: "Tickets, SLAs, escalations, and verification flows stay consistent across every account type.",
                 Icon: Shield,
               },
-            ].map(({ step, title, body, Icon }) => (
+            ].map(({ step, title, Icon }) => (
               <article
                 key={step}
                 className="stoic-card relative bg-surface-elevated p-5"
@@ -517,7 +499,6 @@ export default async function Home() {
                   <Icon className="size-5" aria-hidden />
                 </div>
                 <h3 className="mt-3 text-sm font-bold text-zinc-900 dark:text-white">{title}</h3>
-                <p className="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">{body}</p>
               </article>
             ))}
           </div>
@@ -533,13 +514,12 @@ export default async function Home() {
               ["Radical Focus", "Prioritize ticket signal over noise. SATS flow and triage windows protect calm operations."],
               ["Manual Precision", "Operator-assigned controls with disciplined workflows built for systemic challenge."],
               ["Systemic Health", "Built for longevity and support readiness with deeply auditable ticket trails."],
-            ].map(([title, body]) => (
+            ].map(([title]) => (
               <article
                 key={title}
                 className="stoic-card p-5"
               >
                 <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-                <p className="mt-2 text-xs leading-relaxed text-muted">{body}</p>
               </article>
             ))}
           </div>
@@ -553,21 +533,12 @@ export default async function Home() {
             <ol className="mt-5 space-y-3 text-sm">
               <li className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">1. The Kanban Sanctuary</p>
-                <p className="mt-1 text-zinc-600 dark:text-zinc-400">
-                  A single source of queue truth across open, in progress, pending info, and escalations.
-                </p>
               </li>
               <li className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">2. Focused Incident Resolution</p>
-                <p className="mt-1 text-zinc-600 dark:text-zinc-400">
-                  Tickets route by category and assignee ownership with clear visibility.
-                </p>
               </li>
               <li className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">3. Asymmetric Insight</p>
-                <p className="mt-1 text-zinc-600 dark:text-zinc-400">
-                  Built-in audit + feedback verification flow that keeps closure accountable.
-                </p>
               </li>
             </ol>
           </article>
@@ -587,11 +558,6 @@ export default async function Home() {
             <h2 className="mt-4 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
               Ready when you are.
             </h2>
-            <p className="mt-3 text-sm leading-relaxed text-muted">
-              Use <span className="font-semibold text-foreground">/signin</span> for every account. Company users can
-              register at <span className="font-semibold text-foreground">/signup</span>. Staff
-              accounts are created by an administrator.
-            </p>
           </div>
           <div className="mx-auto mt-8 flex max-w-md flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-center sm:gap-3">
             <Link

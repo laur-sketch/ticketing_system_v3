@@ -72,9 +72,6 @@ export function AuthShell({
               <h1 className="text-[2rem] font-bold leading-[1.12] tracking-tight text-foreground xl:text-[2.35rem] xl:leading-[1.1]">
                 The command center for modern support.
               </h1>
-              <p className="mt-4 text-sm leading-relaxed text-muted xl:text-[15px]">
-                Elevate your operational orchestration. Simple. Systematic. Stoic.
-              </p>
             </div>
             <ul className="mt-10 max-w-md space-y-6">
               <li className="flex gap-4">
@@ -83,9 +80,6 @@ export function AuthShell({
                 </span>
                 <div className="pt-0.5">
                   <p className="text-[15px] font-semibold text-foreground">Centralize your support</p>
-                  <p className="mt-1.5 text-sm leading-relaxed text-muted">
-                    One intake surface for tickets, SLAs, and escalations across departments.
-                  </p>
                 </div>
               </li>
               <li className="flex gap-4">
@@ -94,9 +88,6 @@ export function AuthShell({
                 </span>
                 <div className="pt-0.5">
                   <p className="text-[15px] font-semibold text-foreground">Automated reporting</p>
-                  <p className="mt-1.5 text-sm leading-relaxed text-muted">
-                    KPIs and throughput visibility without spreadsheet gymnastics.
-                  </p>
                 </div>
               </li>
             </ul>
@@ -109,7 +100,6 @@ export function AuthShell({
             <h2 className="mt-2 text-xl font-bold leading-snug tracking-tight text-foreground">
               The command center for modern support.
             </h2>
-            <p className="mt-1.5 text-xs text-muted">Simple. Systematic. Stoic.</p>
           </div>
 
           <div className={`relative mx-auto w-full ${signupWide ? "max-w-[420px]" : "max-w-[360px]"}`}>

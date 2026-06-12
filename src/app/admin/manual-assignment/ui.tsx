@@ -97,8 +97,6 @@ export function ManualAssignmentBoard({
   const [openCompanyId, setOpenCompanyId] = useState<string | null>(null);
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
 
-  const allCount = useMemo(() => cards.length + columns.reduce((sum, c) => sum + c.cards.length, 0), [cards, columns]);
-
   useEffect(() => {
     queueMicrotask(() => {
       setCards(unassigned);
@@ -269,14 +267,6 @@ export function ManualAssignmentBoard({
           <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
             Assignment Board
           </h1>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-            Move tickets from the unassigned pool onto staff (hold and slide on touch, or drag with a mouse). Active
-            pipeline cards:{" "}
-            <span className="font-semibold text-orange-700 dark:text-orange-300">{allCount}</span>.
-          </p>
-          <p className="mt-1 hidden text-xs text-zinc-500 sm:block dark:text-zinc-400">
-            Drag over a company to open its roster, then release over an admin or personnel member.
-          </p>
           {companyFilterLabel ? (
             <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-300">
               Locked to your company/SBU: {companyFilterLabel}

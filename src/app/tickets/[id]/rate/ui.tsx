@@ -51,8 +51,8 @@ export function TicketRatingForm({
   }
 
   return (
-    <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm">
-      <h2 className="text-lg font-semibold text-zinc-100">Mandatory ticket rating</h2>
+    <article className="rounded-md border border-zinc-200 bg-white p-5 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+      <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-100">Mandatory ticket rating</h2>
       <p className="mt-1 text-sm text-zinc-400">
         Please rate your resolved ticket. This is required to complete closure.
       </p>
@@ -64,7 +64,7 @@ export function TicketRatingForm({
             type="button"
             onClick={() => setStars(value)}
             className={`rounded-md px-3 py-2 text-lg ${
-              value <= stars ? "bg-amber-500/20 text-amber-200" : "bg-zinc-900 text-zinc-500"
+              value <= stars ? "bg-amber-500/20 text-amber-700 dark:text-amber-200" : "bg-zinc-100 text-zinc-500 dark:bg-[#181716]"
             }`}
           >
             ★
@@ -79,7 +79,7 @@ export function TicketRatingForm({
           onChange={(e) => setComment(e.target.value)}
           rows={3}
           required={feedbackRequired}
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+          className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-100"
           placeholder={
             feedbackRequired
               ? "Please share what went wrong or what we should improve."

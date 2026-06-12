@@ -599,25 +599,12 @@ export default async function AgentHome({
                   {isCompanyBoard ? "Company overview" : "Orchestration Board"}
                 </h1>
                 <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                  {isCompanyBoard
-                    ? "General view of customer tickets by company. Counts follow your role and filters below."
-                    : "Manage active systemic resolutions. Visualizing"}{" "}
-                  {!isCompanyBoard ? (
-                    <>
-                      <span className="font-semibold text-orange-700 dark:text-orange-400">
-                        {activeEvents.toLocaleString()}
-                      </span>{" "}
-                      active {boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event{activeEvents !== 1 ? "s" : ""}{" "}
-                      across the grid.
-                    </>
-                  ) : (
-                    <>
-                      <span className="font-semibold text-orange-700 dark:text-orange-400">
-                        {activeEvents.toLocaleString()}
-                      </span>{" "}
-                      ticket{activeEvents !== 1 ? "s" : ""} in this view.
-                    </>
-                  )}
+                  <span className="font-semibold text-orange-700 dark:text-orange-400">
+                    {activeEvents.toLocaleString()}
+                  </span>{" "}
+                  {!isCompanyBoard
+                    ? `active ${boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event${activeEvents !== 1 ? "s" : ""}`
+                    : `ticket${activeEvents !== 1 ? "s" : ""}`}
                 </p>
               </div>
               <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">

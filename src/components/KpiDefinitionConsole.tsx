@@ -553,10 +553,6 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
       <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
         Task management
       </h2>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        Choose an IT pillar as the task title, add task rows, then save. Use the Task Assignment Board below to
-        assign personnel to KPI cards.
-      </p>
       {localError ? (
         <p className="mt-2 rounded-lg border border-red-500/35 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-200">
           {localError}
@@ -620,11 +616,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
                   Save
                 </Button>
               </div>
-            ) : (
-              <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
-                Admins can add a new task title here, then select it from the dropdown.
-              </p>
-            )}
+            ) : null}
           </div>
         ) : null}
         {isItProject ? (

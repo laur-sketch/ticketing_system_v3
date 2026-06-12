@@ -335,9 +335,6 @@ export function RecentActivityPanel({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Recent Activity</h2>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Latest {PREVIEW_COUNT} audit events. Open the full log for complete history.
-          </p>
         </div>
         <button
           type="button"
@@ -379,10 +376,6 @@ export function RecentActivityPanel({
                   Ticket audit log
                 </p>
                 <h3 className="mt-1 text-lg font-bold text-zinc-900 dark:text-zinc-50">All activity</h3>
-                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                  {activities.length} event{activities.length === 1 ? "" : "s"} · newest first · click a row for ticket
-                  details
-                </p>
               </div>
               <button
                 type="button"

@@ -30,7 +30,7 @@ export default async function TicketVerificationPage({
   }
 
   return (
-    <main className="mx-auto max-w-2xl space-y-4 px-4 py-10 text-zinc-100">
+    <main className="mx-auto max-w-3xl space-y-4 bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100 sm:px-4">
       <h1 className="text-2xl font-semibold text-zinc-50">
         Verify ticket {ticket.ticketNumber}
       </h1>

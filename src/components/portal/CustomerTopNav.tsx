@@ -13,7 +13,7 @@ import { useHash } from "@/components/portal/useHash";
 
 const tabs: { href: string; label: string }[] = [
   { href: "/", label: "Dashboard" },
-  { href: "/my-tickets", label: "Tickets" },
+  { href: "/my-tickets", label: "Active Tickets" },
   { href: "/tickets/knowledge", label: "Knowledge Base" },
 ];
 
@@ -106,7 +106,7 @@ export function CustomerTopNav() {
   }
 
   return (
-    <header className="shrink-0 border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#0b1220]">
+    <header className="shrink-0 border-b border-zinc-200 bg-white/95 text-zinc-900 shadow-[0_8px_32px_rgba(0,0,0,0.06)] backdrop-blur dark:border-zinc-800/90 dark:bg-[#11100f]/95 dark:text-zinc-100 dark:shadow-[0_8px_32px_rgba(0,0,0,0.18)]">
       {navOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button
@@ -158,23 +158,23 @@ export function CustomerTopNav() {
           </aside>
         </div>
       ) : null}
-      <div className="mx-auto flex max-w-7xl flex-col gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex min-h-[3.5rem] flex-col gap-2 px-3 py-2 sm:px-4 lg:flex-row lg:items-center lg:gap-4 lg:px-4">
         <div className="min-w-0">
-          <div className="flex items-start gap-2">
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setNavOpen(true)}
-              className="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-zinc-50 text-zinc-800 lg:hidden dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-[#181716] dark:text-zinc-200 lg:hidden"
               aria-label="Open menu"
             >
               <Menu className="size-5" />
             </button>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0">
               <BrandLockup variant="customer-topnav" href="/" />
             </div>
           </div>
           <nav
-            className="-mx-1 mt-2 flex items-center gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            className="-mx-1 mt-2 flex items-center gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] lg:hidden [&::-webkit-scrollbar]:hidden"
             aria-label="Primary"
           >
             {tabs.map((t) => {
@@ -187,20 +187,32 @@ export function CustomerTopNav() {
                     "relative shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition",
                     active
                       ? "text-orange-700 dark:text-orange-200"
-                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[0.04] dark:hover:text-zinc-100",
                   )}
                 >
                   {t.label}
                   {active ? (
-                    <span className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-orange-600 dark:bg-orange-500" />
+                    <span className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full bg-orange-500" />
                   ) : null}
                 </Link>
               );
             })}
           </nav>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-          <ThemeToggle />
+        <div className="flex flex-wrap items-center justify-end gap-2 lg:min-w-0 lg:flex-1">
+          <form
+            action="/my-tickets"
+            method="get"
+            className="order-last flex w-full items-center gap-2 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 shadow-inner md:order-none md:w-[min(34rem,45vw)] md:min-w-[20rem] dark:border-zinc-800 dark:bg-[#181716]"
+          >
+            <Search className="size-4 shrink-0 text-zinc-500" aria-hidden />
+            <input
+              name="q"
+              placeholder="Search tickets, IDs, or keywords…"
+              className="w-full bg-transparent text-sm text-zinc-900 placeholder:text-zinc-500 focus:outline-none dark:text-zinc-100 dark:placeholder:text-zinc-600"
+              aria-label="Search"
+            />
+          </form>
           <Link
             href={
               intake.canCreateTickets
@@ -222,24 +234,11 @@ export function CustomerTopNav() {
             <Plus className="size-4" />
             New
           </Link>
-          <form
-            action="/my-tickets"
-            method="get"
-            className="order-last flex w-full items-center gap-2 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 md:order-none md:w-auto md:min-w-[220px] dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            <Search className="size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
-            <input
-              name="q"
-              placeholder="Search resources…"
-              className="w-full bg-transparent text-sm text-zinc-900 placeholder:text-zinc-500 focus:outline-none dark:text-zinc-200"
-              aria-label="Search"
-            />
-          </form>
           <div className="relative">
             <button
               type="button"
               onClick={() => setNotifOpen((v) => !v)}
-              className="inline-flex size-10 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 sm:size-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="inline-flex size-9 items-center justify-center rounded-lg border border-zinc-300 bg-zinc-50 text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950 dark:border-zinc-800 dark:bg-[#181716] dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100"
               aria-label="Notifications"
             >
               <Bell className="size-4" />
@@ -299,21 +298,27 @@ export function CustomerTopNav() {
               </div>
             ) : null}
           </div>
+          <ThemeToggle className="rounded-lg border-zinc-300 bg-zinc-50 text-zinc-600 hover:border-zinc-400 hover:bg-zinc-100 hover:text-zinc-950 dark:border-zinc-800 dark:bg-[#181716] dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-[#181716] dark:hover:text-zinc-100" />
           <Link
             href="/process"
-            className="inline-flex size-10 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 sm:size-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="inline-flex size-9 items-center justify-center rounded-lg border border-zinc-300 bg-zinc-50 text-zinc-600 transition hover:border-zinc-400 hover:text-zinc-950 dark:border-zinc-800 dark:bg-[#181716] dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100"
             aria-label="Help"
           >
             <CircleHelp className="size-4" />
           </Link>
           <div className="flex items-center gap-2 pl-1">
-            <div className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-orange-600 to-orange-800 text-xs font-bold text-white shadow-sm">
-              {initial}
+            <div className="flex size-9 items-center justify-center overflow-hidden rounded-lg border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-xs font-bold text-white shadow-sm">
+              {data?.user?.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={data.user.image} alt={data.user.name ?? "Profile"} className="h-full w-full object-cover" />
+              ) : (
+                initial
+              )}
             </div>
             <button
               type="button"
               onClick={() => void signOut({ callbackUrl: "/signin" })}
-              className="hidden text-xs font-medium text-zinc-600 hover:text-zinc-900 min-[380px]:inline dark:text-zinc-400 dark:hover:text-zinc-100"
+              className="hidden text-xs font-semibold text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100 min-[380px]:inline"
             >
               Sign out
             </button>

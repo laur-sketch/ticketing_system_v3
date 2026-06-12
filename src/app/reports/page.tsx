@@ -71,9 +71,6 @@ export default async function ReportsPage() {
             {BRAND_TITLE} · Executive reporting
           </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-white md:text-4xl">Metrics & reports</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-400">
-            Admin reporting workspace for transfer posture, open queue mix, and recent resolution throughput.
-          </p>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">

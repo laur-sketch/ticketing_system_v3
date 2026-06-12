@@ -44,8 +44,8 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
   }
 
   return (
-    <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-5 shadow-sm">
-      <h2 className="text-lg font-semibold text-zinc-100">Resolution verification</h2>
+    <article className="rounded-md border border-zinc-200 bg-white p-5 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+      <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-100">Resolution verification</h2>
       <p className="mt-1 text-sm text-zinc-400">
         Choose whether the resolution is valid. Rating is enabled only after verification.
       </p>
@@ -57,7 +57,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
           className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
             choice === "verify"
               ? "border-orange-400 bg-orange-500/20 text-orange-100"
-              : "border-zinc-700 bg-zinc-900 text-zinc-200"
+              : "border-zinc-300 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-200"
           }`}
         >
           Verify
@@ -68,7 +68,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
           className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
             choice === "reject"
               ? "border-rose-400 bg-rose-500/20 text-rose-100"
-              : "border-zinc-700 bg-zinc-900 text-zinc-200"
+              : "border-zinc-300 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-200"
           }`}
         >
           Do not verify
@@ -82,7 +82,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             rows={4}
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-100"
             placeholder="Tell us why the issue is not yet resolved."
           />
         </label>

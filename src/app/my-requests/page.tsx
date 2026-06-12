@@ -21,7 +21,6 @@ type ColumnId = "open" | "inProgress" | "forConfirmation";
 type ColumnDef = {
   id: ColumnId;
   title: string;
-  description: string;
   match: (s: TicketStatus) => boolean;
   /** Tailwind tone token for the column header chip. */
   tone:
@@ -32,7 +31,6 @@ const COLUMNS: ColumnDef[] = [
   {
     id: "open",
     title: "Open",
-    description: "New requests waiting to be picked up.",
     match: (s) => s === "OPEN",
     tone: {
       dot: "bg-orange-500",
@@ -43,7 +41,6 @@ const COLUMNS: ColumnDef[] = [
   {
     id: "inProgress",
     title: "In progress",
-    description: "Being worked on or waiting on more info.",
     match: (s) => s === "IN_PROGRESS" || s === "PENDING_INFO" || s === "ESCALATED",
     tone: {
       dot: "bg-amber-500",
@@ -54,7 +51,6 @@ const COLUMNS: ColumnDef[] = [
   {
     id: "forConfirmation",
     title: "For confirmation",
-    description: "Resolved by support · awaiting your sign-off.",
     match: (s) => s === "FOR_CONFIRMATION" || s === "RESOLVED",
     tone: {
       dot: "bg-emerald-500",
@@ -212,10 +208,6 @@ export default async function MyRequestsPage({
               <h1 className="mt-1.5 text-[1.7rem] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-[2rem]">
                 Ticket dashboard
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-                Track every request you&apos;ve submitted &mdash; from the moment it&apos;s opened, through the team&apos;s
-                progress, to the final confirmation step. Click any card to open the conversation.
-              </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <form
@@ -279,10 +271,10 @@ export default async function MyRequestsPage({
 
         {/* Stat tiles */}
         <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatTile label="Total" value={counts.total} sub={query ? "matching results" : "all my tickets"} accent={false} />
-          <StatTile label="Open" value={counts.open} sub="Awaiting pickup" accent="orange" />
-          <StatTile label="In progress" value={counts.inProgress} sub="Being worked on" accent="amber" />
-          <StatTile label="For confirmation" value={counts.forConfirmation} sub="Awaiting your sign-off" accent="emerald" />
+          <StatTile label="Total" value={counts.total} accent={false} />
+          <StatTile label="Open" value={counts.open} accent="orange" />
+          <StatTile label="In progress" value={counts.inProgress} accent="amber" />
+          <StatTile label="For confirmation" value={counts.forConfirmation} accent="emerald" />
         </section>
 
         {/* Kanban */}
@@ -308,9 +300,6 @@ export default async function MyRequestsPage({
                       >
                         {col.title}
                       </h2>
-                      <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-500">
-                        {col.description}
-                      </p>
                     </div>
                   </div>
                   <span className="shrink-0 rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/70 dark:text-zinc-300">
@@ -425,12 +414,10 @@ export default async function MyRequestsPage({
 function StatTile({
   label,
   value,
-  sub,
   accent,
 }: {
   label: string;
   value: number;
-  sub: string;
   accent: false | "orange" | "amber" | "emerald";
 }) {
   const valueClass =
@@ -447,7 +434,6 @@ function StatTile({
         {label}
       </p>
       <p className={cn("mt-1 text-3xl font-semibold tabular-nums", valueClass)}>{value}</p>
-      <p className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">{sub}</p>
     </div>
   );
 }
