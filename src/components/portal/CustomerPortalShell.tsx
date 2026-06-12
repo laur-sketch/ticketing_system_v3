@@ -1,12 +1,14 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { useState } from "react";
 import { CustomerSidebar } from "./CustomerSidebar";
 import { CustomerTopNav } from "./CustomerTopNav";
 import { RealtimeRefreshBeacon } from "@/components/RealtimeRefreshBeacon";
 
 export function CustomerPortalShell({ children }: { children: React.ReactNode }) {
   const { status } = useSession();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   if (status === "loading") {
     return (
@@ -21,7 +23,7 @@ export function CustomerPortalShell({ children }: { children: React.ReactNode })
       <RealtimeRefreshBeacon />
       <CustomerTopNav />
       <div className="flex min-h-0 flex-1">
-        <CustomerSidebar />
+        <CustomerSidebar collapsed={sidebarCollapsed} onCollapsedChange={setSidebarCollapsed} />
         <div className="min-w-0 flex-1 overflow-x-hidden bg-zinc-50 dark:bg-[#0e0e0d]">{children}</div>
       </div>
     </div>

@@ -12,7 +12,7 @@ export default async function KnowledgeBasePage() {
 
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100 sm:px-4">
-      <div className="mx-auto max-w-none">
+      <div className="mx-auto max-w-[1440px]">
         <div className="mb-4 flex items-center gap-3 rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
           <span className="flex size-11 items-center justify-center rounded-lg bg-orange-500/12 text-orange-300">
             <BookOpen className="size-6" />

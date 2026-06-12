@@ -150,7 +150,7 @@ export default async function MyTicketsPage({
 
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100">
-      <div className="mx-auto max-w-none space-y-4 px-3 py-4 sm:px-4 lg:px-4">
+      <div className="mx-auto max-w-[1440px] space-y-4 px-3 py-4 sm:px-4 lg:px-4">
         {submitted && role === "Customer" ? (
           <div className="rounded-md border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-sm text-orange-900 dark:bg-orange-500/15 dark:text-orange-100">
             Ticket submitted successfully. You can now track it here in your customer portal.
