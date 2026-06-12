@@ -141,11 +141,11 @@ export default async function AdminTicketRequestsPage({
         </header>
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <StatCard label="Created · 24h" value={String(created24h)} hint="New intake" accent />
-          <StatCard label="Created · 7d" value={String(created7d)} hint="Weekly volume" />
-          <StatCard label="Open pipeline" value={String(openPipeline)} hint="Active statuses" />
-          <StatCard label="Unassigned" value={String(unassignedOpen)} hint="Needs routing" />
-          <StatCard label="Urgent / high" value={String(urgentOpen)} hint="Hot queue" />
+          <StatCard label="Created · 24h" value={String(created24h)} accent />
+          <StatCard label="Created · 7d" value={String(created7d)} />
+          <StatCard label="Open pipeline" value={String(openPipeline)} />
+          <StatCard label="Unassigned" value={String(unassignedOpen)} />
+          <StatCard label="Urgent / high" value={String(urgentOpen)} />
         </section>
 
         <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.05)] sm:p-6 dark:border-zinc-800/90 dark:bg-[#0b1220] dark:shadow-[0_12px_40px_rgba(0,0,0,0.25)]">
@@ -155,9 +155,6 @@ export default async function AdminTicketRequestsPage({
                 <ClipboardList className="size-4 text-orange-600 dark:text-orange-400" aria-hidden />
                 Recent requests
               </h2>
-              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
-                Newest 35 tickets system-wide. Open a row in the agent workspace to respond or reassign.
-              </p>
             </div>
             <Link
               href="/"
@@ -249,12 +246,10 @@ export default async function AdminTicketRequestsPage({
 function StatCard({
   label,
   value,
-  hint,
   accent,
 }: {
   label: string;
   value: string;
-  hint: string;
   accent?: boolean;
 }) {
   return (
@@ -267,7 +262,6 @@ function StatCard({
     >
       <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">{label}</p>
       <p className="mt-2 text-3xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-white">{value}</p>
-      <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">{hint}</p>
     </article>
   );
 }

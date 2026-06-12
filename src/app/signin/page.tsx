@@ -243,10 +243,6 @@ function SignInForm() {
               <h2 className="text-[12px] font-bold uppercase tracking-[0.18em] text-zinc-700 dark:text-zinc-300">
                 Request password reset
               </h2>
-              <p className="mt-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
-                A SuperAdmin reviews each request. Once approved, your password is reset to the default value provided
-                by your administrator.
-              </p>
             </div>
             <button
               type="button"
@@ -332,11 +328,6 @@ function SignInForm() {
           {googleEnabled ? "Continue with Google" : "Google (not configured)"}
         </span>
       </button>
-
-      <p className="mt-3 text-center text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-500">
-        Google sign-in uses your Google email. It must match the email on your customer portal account
-        (not username alone).
-      </p>
 
       <p className="mt-4 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
         New here?{" "}

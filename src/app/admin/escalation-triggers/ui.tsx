@@ -62,9 +62,6 @@ export function EscalationTriggersClient({
               {BRAND_TITLE} · Priority alerts
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-white">Priority alerts</h1>
-            <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-300">
-              Configure who is notified when high-priority tickets are created. Transfer requests are handled separately in the ticket workspace.
-            </p>
           </div>
           <div className="hidden items-center justify-end sm:flex">
             <div className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs dark:border-zinc-700 dark:bg-zinc-900">

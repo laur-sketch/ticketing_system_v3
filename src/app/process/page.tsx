@@ -51,10 +51,6 @@ export default function ProcessPage() {
     <main className="mx-auto max-w-4xl space-y-10 px-4 py-10">
       <header>
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-white">Process & flow</h1>
-        <p className="mt-3 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
-          This page mirrors the lifecycle you provided and maps directly to ticket statuses, SLA timers, escalation
-          metadata, and KPI calculations implemented in the app.
-        </p>
       </header>
 
       <section className="space-y-3">

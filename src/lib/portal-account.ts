@@ -17,6 +17,7 @@ export type PortalRow = {
   companyName: string | null;
   staffDesignatedCompanyId: string | null;
   staffDesignatedCompanyName: string | null;
+  profileImage: string | null;
 };
 
 /** Match portal row by unique username or unique email (case-insensitive). */
@@ -40,6 +41,7 @@ export async function findPortalByLogin(loginId: string): Promise<PortalRow | nu
       companyId: true,
       customerOrgRole: true,
       staffDesignatedCompanyId: true,
+      profileImage: true,
       company: { select: { name: true } },
       staffDesignatedCompany: { select: { name: true } },
     },
@@ -57,6 +59,7 @@ export async function findPortalByLogin(loginId: string): Promise<PortalRow | nu
     companyName: row.company?.name ?? null,
     staffDesignatedCompanyId: row.staffDesignatedCompanyId,
     staffDesignatedCompanyName: row.staffDesignatedCompany?.name ?? null,
+    profileImage: row.profileImage,
   };
 }
 
@@ -75,6 +78,7 @@ export async function findPortalByUsername(username: string): Promise<PortalRow 
       companyId: true,
       customerOrgRole: true,
       staffDesignatedCompanyId: true,
+      profileImage: true,
       company: { select: { name: true } },
       staffDesignatedCompany: { select: { name: true } },
     },
@@ -92,6 +96,7 @@ export async function findPortalByUsername(username: string): Promise<PortalRow 
     companyName: row.company?.name ?? null,
     staffDesignatedCompanyId: row.staffDesignatedCompanyId,
     staffDesignatedCompanyName: row.staffDesignatedCompany?.name ?? null,
+    profileImage: row.profileImage,
   };
 }
 
@@ -110,6 +115,7 @@ export async function findPortalByEmailOnly(email: string): Promise<PortalRow | 
       companyId: true,
       customerOrgRole: true,
       staffDesignatedCompanyId: true,
+      profileImage: true,
       company: { select: { name: true } },
       staffDesignatedCompany: { select: { name: true } },
     },
@@ -127,6 +133,7 @@ export async function findPortalByEmailOnly(email: string): Promise<PortalRow | 
     companyName: row.company?.name ?? null,
     staffDesignatedCompanyId: row.staffDesignatedCompanyId,
     staffDesignatedCompanyName: row.staffDesignatedCompany?.name ?? null,
+    profileImage: row.profileImage,
   };
 }
 
@@ -233,6 +240,7 @@ export async function upsertPortalOAuthAccount(input: {
   email: string;
   name: string;
   role?: string;
+  profileImage?: string | null;
 }): Promise<PortalRow | null> {
   const email = input.email.trim().toLowerCase();
   if (!email) return null;
@@ -242,7 +250,10 @@ export async function upsertPortalOAuthAccount(input: {
   if (existing) {
     await prisma.portalAccount.update({
       where: { id: existing.id },
-      data: { name: name || existing.name },
+      data: {
+        name: name || existing.name,
+        ...(input.profileImage && !existing.profileImage ? { profileImage: input.profileImage } : {}),
+      },
     });
     return findPortalByEmailOnly(email);
   }
@@ -263,6 +274,7 @@ export async function upsertPortalOAuthAccount(input: {
       role,
       passwordHash: await bcrypt.hash(randomUUID(), SALT_ROUNDS),
       headPrivileges: false,
+      profileImage: input.profileImage?.trim() || null,
     },
   });
 

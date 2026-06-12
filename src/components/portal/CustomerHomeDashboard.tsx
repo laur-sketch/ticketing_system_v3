@@ -43,7 +43,7 @@ export async function CustomerHomeDashboard({
   pendingVerificationHref,
 }: Props) {
   const ticketScope = customerTicketWhereBySessionEmail(email);
-  const [tickets, activities, activeCount] = await Promise.all([
+  const [tickets, activities] = await Promise.all([
     prisma.ticket.findMany({
       where: ticketScope,
       orderBy: { updatedAt: "desc" },
@@ -55,12 +55,6 @@ export async function CustomerHomeDashboard({
       orderBy: { createdAt: "desc" },
       take: 5,
       include: { ticket: { select: { ticketNumber: true, title: true } } },
-    }),
-    prisma.ticket.count({
-      where: {
-        ...ticketScope,
-        status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"] },
-      },
     }),
   ]);
 
@@ -88,71 +82,62 @@ export async function CustomerHomeDashboard({
   });
 
   return (
-    <main className="px-3 py-5 text-zinc-900 sm:px-6 sm:py-6 md:py-8 dark:text-zinc-100">
-      <div className="mx-auto max-w-6xl space-y-8">
+    <main className="px-3 py-4 text-zinc-900 dark:text-zinc-100 sm:px-4 lg:px-4">
+      <div className="mx-auto max-w-none space-y-5">
         <section className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-zinc-100">
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-orange-700 dark:text-orange-400">
+              {BRAND_TITLE} · Customer portal
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-100 md:text-3xl">
               Welcome back, {firstName}.
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-700 sm:text-base dark:text-zinc-300">
-              Your infrastructure is stable. We are currently processing{" "}
-              <span className="font-semibold text-orange-700 dark:text-orange-300">{activeCount} active requests</span>{" "}
-              and monitoring your latest deployments.
-            </p>
           </div>
-          {canCreateTickets ? (
-            <Link
-              href="/tickets/new"
-              className="inline-flex items-center justify-center rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-500"
-            >
-              + Create Request
-            </Link>
-          ) : (
+          {!canCreateTickets ? (
             <Link
               href={pendingVerificationHref ?? "/my-tickets"}
-              className="inline-flex items-center justify-center rounded-xl border border-amber-500/60 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-500/25 dark:text-amber-200"
+              className="inline-flex items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/25"
             >
               {pendingVerificationHref?.includes("/verification")
                 ? "Confirm or close ticket"
                 : "View active ticket"}
             </Link>
-          )}
+          ) : null}
         </section>
 
-        <section className="grid gap-5 md:gap-6 lg:grid-cols-[1fr,280px]">
-          <div className="min-w-0 space-y-4">
+        <section className="grid gap-4 lg:grid-cols-[1fr,260px]">
+          <div className="min-w-0 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Active requests</h2>
-              <Link href="/my-tickets" className="text-sm font-semibold text-orange-700 hover:underline dark:text-orange-300">
+              <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-100">Active requests</h2>
+              <Link href="/my-tickets" className="text-sm font-semibold text-orange-300 hover:underline">
                 View all tickets
               </Link>
             </div>
             <TicketsKanbanBoard tickets={kanbanData} />
           </div>
 
-          <div className="space-y-4 md:grid md:grid-cols-2 md:gap-4 md:space-y-0 lg:grid-cols-1">
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_24px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+          <div className="space-y-3 md:grid md:grid-cols-2 md:gap-3 md:space-y-0 lg:grid-cols-1">
+            <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
                 Current system status
               </p>
-              <p className="mt-3 flex items-center gap-2 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                <span className="inline-block size-2.5 rounded-full bg-orange-600 dark:bg-orange-500" aria-hidden />
+              <p className="mt-3 flex items-center gap-2 text-lg font-semibold text-zinc-950 dark:text-zinc-100">
+                <span className="inline-block size-2.5 rounded-full bg-emerald-500" aria-hidden />
                 All systems operational
               </p>
             </div>
 
-            <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_24px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Recent activity</h3>
+            <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+              <h3 className="text-sm font-bold text-zinc-950 dark:text-zinc-100">Recent activity</h3>
               <ul className="mt-4 space-y-3 text-sm">
                 {activities.length === 0 ? (
-                  <li className="text-zinc-600 dark:text-zinc-500">No recent activity on your requests.</li>
+                  <li className="text-zinc-500">No recent activity on your requests.</li>
                 ) : (
                   activities.map((a) => (
                     <li key={a.id} className="border-b border-zinc-200 pb-3 last:border-0 last:pb-0 dark:border-zinc-800">
                       <p className="font-medium text-zinc-900 dark:text-zinc-200">{a.ticket.ticketNumber}</p>
-                      <p className="line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{a.summary}</p>
-                      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
+                      <p className="line-clamp-2 text-xs text-zinc-400">{a.summary}</p>
+                      <p className="mt-1 text-xs text-zinc-500">
                         {a.createdAt.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
                       </p>
                     </li>
@@ -164,44 +149,42 @@ export async function CustomerHomeDashboard({
         </section>
 
         <section>
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
             <div>
-              <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Help categories</h2>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">Browse our knowledge base by topic.</p>
+              <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-100">Help categories</h2>
             </div>
-            <Link href="/tickets/knowledge" className="text-sm font-semibold text-orange-700 hover:underline dark:text-orange-300">
+            <Link href="/tickets/knowledge" className="text-sm font-semibold text-orange-300 hover:underline">
               Open knowledge base
             </Link>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {categories.map((c) => {
               const Icon = c.icon;
               return (
                 <Link
                   key={c.title}
                   href="/tickets/knowledge"
-                  className="flex h-full flex-col items-center rounded-2xl border border-zinc-200 bg-white p-5 text-center shadow-[0_6px_20px_rgba(0,0,0,0.06)] transition hover:border-orange-400/50 hover:bg-orange-50/50 dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_8px_24px_rgba(0,0,0,0.2)] dark:hover:border-orange-400/40 dark:hover:bg-[#0f172a]"
+                  className="flex h-full flex-col items-center rounded-md border border-zinc-200 bg-white p-4 text-center shadow-[0_14px_28px_rgba(0,0,0,0.06)] transition hover:border-orange-500/45 hover:bg-orange-50/40 dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] dark:hover:bg-[#181716]"
                 >
-                  <span className="mb-3 flex size-12 items-center justify-center rounded-full bg-orange-500/20 text-orange-700 dark:text-orange-300">
+                  <span className="mb-3 flex size-12 items-center justify-center rounded-lg bg-orange-500/12 text-orange-300">
                     <Icon className="size-6" />
                   </span>
-                  <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{c.title}</span>
-                  <span className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400">{c.body}</span>
+                  <span className="text-sm font-bold text-zinc-950 dark:text-zinc-100">{c.title}</span>
                 </Link>
               );
             })}
           </div>
         </section>
 
-        <section className="rounded-2xl border border-orange-400/35 bg-orange-500/15 p-5 sm:p-6 dark:border-orange-400/30 dark:bg-orange-500/10">
+        <section className="rounded-md border border-orange-500/30 bg-orange-500/10 p-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-zinc-800 sm:max-w-2xl dark:text-zinc-200">
-              <span className="font-semibold text-orange-900 dark:text-orange-200">{BRAND_TITLE} v4.0 is now live.</span>{" "}
+            <p className="text-sm text-zinc-700 dark:text-zinc-200 sm:max-w-2xl">
+              <span className="font-semibold text-orange-800 dark:text-orange-200">{BRAND_TITLE} v4.0 is now live.</span>{" "}
               Discover new automated recovery protocols and an enhanced edge monitoring dashboard.
             </p>
             <Link
               href="/tickets/knowledge"
-              className="inline-flex shrink-0 items-center justify-center rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-500"
+              className="inline-flex shrink-0 items-center justify-center rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-500"
             >
               Explore features
             </Link>

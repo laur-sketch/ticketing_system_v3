@@ -67,15 +67,17 @@ function shortDayLabel(label: string): string {
   return label?.length >= 10 ? label.slice(5) : label ?? "—";
 }
 
-/** Created and closed tickets per day (Asia/Manila buckets) — stacked area chart. */
+/** Created and closed tickets per day (Asia/Manila buckets) — density plot. */
 export function MetricsTrendChart({
   labels,
   created,
   closed,
+  variant = "density",
 }: {
   labels: string[];
   created: number[];
   closed: number[];
+  variant?: "density" | "line";
 }) {
   const n = Math.min(labels.length, created.length, closed.length);
   if (n === 0) {
@@ -88,7 +90,6 @@ export function MetricsTrendChart({
   const safeLabels = labels.slice(0, n);
   const safeCreated = created.slice(0, n);
   const safeClosed = closed.slice(0, n);
-  const stackedTotals = safeCreated.map((value, index) => value + (safeClosed[index] ?? 0));
 
   const padX = 4;
   const padTop = 6;
@@ -96,26 +97,46 @@ export function MetricsTrendChart({
   const w = 100;
   const h = 48;
   const innerH = h - padTop - padBottom;
-  const peak = Math.max(1, ...stackedTotals);
+  const peak = Math.max(1, ...safeCreated, ...safeClosed);
   const max = Math.max(1, peak);
 
   const xAt = (i: number) =>
     n <= 1 ? w / 2 : padX + ((w - 2 * padX) * i) / Math.max(n - 1, 1);
   const yAt = (v: number) => padTop + innerH - (innerH * v) / max;
+  const straightLinePath = (values: number[]) =>
+    values.map((v, i) => `${i === 0 ? "M" : "L"} ${xAt(i)} ${yAt(v)}`).join(" ");
 
-  const createdLinePts = safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
-  const totalLinePts = stackedTotals.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
-  const createdAreaPts = [
-    `${xAt(0)},${h - padBottom}`,
-    ...safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`),
-    `${xAt(n - 1)},${h - padBottom}`,
-  ].join(" ");
-  const closedAreaPts = [
-    ...safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`),
-    ...stackedTotals
-      .map((v, i) => `${xAt(i)},${yAt(v)}`)
-      .reverse(),
-  ].join(" ");
+  const smoothLinePath = (values: number[]) => {
+    const pts = values.map((v, i) => ({ x: xAt(i), y: yAt(v) }));
+    if (pts.length === 1) return `M ${pts[0]!.x} ${pts[0]!.y}`;
+    const [first, ...rest] = pts;
+    const commands = [`M ${first!.x} ${first!.y}`];
+    for (let i = 0; i < rest.length; i += 1) {
+      const current = pts[i]!;
+      const next = pts[i + 1]!;
+      const midX = (current.x + next.x) / 2;
+      const midY = (current.y + next.y) / 2;
+      commands.push(`Q ${current.x} ${current.y} ${midX} ${midY}`);
+    }
+    const last = pts[pts.length - 1]!;
+    commands.push(`T ${last.x} ${last.y}`);
+    return commands.join(" ");
+  };
+  const smoothAreaPath = (values: number[]) => {
+    const baseY = h - padBottom;
+    if (values.length === 1) {
+      const x = xAt(0);
+      const y = yAt(values[0]!);
+      return `M ${x - 0.5} ${baseY} L ${x} ${y} L ${x + 0.5} ${baseY} Z`;
+    }
+    return `${smoothLinePath(values)} L ${xAt(values.length - 1)} ${baseY} L ${xAt(0)} ${baseY} Z`;
+  };
+  const createdLinePath = smoothLinePath(safeCreated);
+  const closedLinePath = smoothLinePath(safeClosed);
+  const createdStraightLinePath = straightLinePath(safeCreated);
+  const closedStraightLinePath = straightLinePath(safeClosed);
+  const createdAreaPath = smoothAreaPath(safeCreated);
+  const closedAreaPath = smoothAreaPath(safeClosed);
 
   const tickIdx = pickDailyTickIndices(n);
   /** Y-axis reference ticks — divide vertical space into 4 bands with rounded values. */
@@ -171,54 +192,57 @@ export function MetricsTrendChart({
             />
           ))}
 
-          <polygon points={createdAreaPts} fill={ORANGE} fillOpacity={0.2} />
-          <polygon points={closedAreaPts} fill={ZINC_LINE} fillOpacity={0.18} />
-          <polyline
+          {variant === "density" ? (
+            <>
+              <path d={closedAreaPath} fill={ZINC_LINE} fillOpacity={0.16} />
+              <path d={createdAreaPath} fill={ORANGE} fillOpacity={0.2} />
+            </>
+          ) : null}
+          <path
             fill="none"
             stroke={ORANGE}
             strokeWidth={0.95}
             strokeLinecap="round"
             strokeLinejoin="round"
-            points={createdLinePts}
+            d={variant === "line" ? createdStraightLinePath : createdLinePath}
             vectorEffect="non-scaling-stroke"
           />
-          <polyline
+          <path
             fill="none"
             stroke={ZINC_LINE}
             strokeWidth={0.95}
             strokeLinecap="round"
             strokeLinejoin="round"
-            points={totalLinePts}
+            d={variant === "line" ? closedStraightLinePath : closedLinePath}
             vectorEffect="non-scaling-stroke"
           />
 
-          {/** Per-day markers so each daily value is visible. */}
-          {safeCreated.map((v, i) => (
-            <circle
-              key={`created-point-${i}`}
-              cx={xAt(i)}
-              cy={yAt(v)}
-              r={0.55}
-              fill={ORANGE}
-              stroke="#ffffff"
-              strokeOpacity={0.6}
-              strokeWidth={0.18}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-          {stackedTotals.map((v, i) => (
-            <circle
-              key={`closed-point-${i}`}
-              cx={xAt(i)}
-              cy={yAt(v)}
-              r={0.5}
-              fill={ZINC_LINE}
-              stroke="#ffffff"
-              strokeOpacity={0.6}
-              strokeWidth={0.18}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
+          {variant === "line" ? (
+            <>
+              {safeCreated.map((v, i) => (
+                <path
+                  key={`created-point-${i}`}
+                  d={`M ${xAt(i)} ${yAt(v)} h 0.001`}
+                  fill="none"
+                  stroke={ORANGE}
+                  strokeWidth={3.2}
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+              {safeClosed.map((v, i) => (
+                <path
+                  key={`closed-point-${i}`}
+                  d={`M ${xAt(i)} ${yAt(v)} h 0.001`}
+                  fill="none"
+                  stroke={ZINC_LINE}
+                  strokeWidth={3}
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </>
+          ) : null}
         </svg>
 
         {/** Y-axis numeric labels overlay (HTML so they stay legible at any width). */}
@@ -269,12 +293,10 @@ export function MetricsTrendChart({
 export function MetricsGauge({
   label,
   value,
-  sub,
   target,
 }: {
   label: string;
   value: number | null;
-  sub?: string;
   target?: number | null;
 }) {
   const pct = value == null ? null : Math.max(0, Math.min(1, value));
@@ -326,10 +348,6 @@ export function MetricsGauge({
         </text>
       </svg>
       <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</p>
-      {sub ? <p className="mt-0.5 text-[10px] text-muted">{sub}</p> : null}
-      {targetPct != null ? (
-        <p className="mt-0.5 text-[10px] text-muted">Target {Math.round(targetPct * 100)}%</p>
-      ) : null}
     </div>
   );
 }
@@ -338,7 +356,6 @@ export function MetricsGauge({
 export function MetricsPieChart({
   segments,
   title,
-  subtitle,
   itemsLabel,
   emptyDescription,
   pieClassName,
@@ -348,7 +365,6 @@ export function MetricsPieChart({
   donut = false,
 }: {
   title: string;
-  subtitle?: string;
   segments: { label: string; value: number; color: string }[];
   /** Badge text for total count, e.g. `(n) => \`${n} tasks\`` */
   itemsLabel?: (total: number) => string;
@@ -395,9 +411,6 @@ export function MetricsPieChart({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-500">{title}</p>
-          {subtitle ? (
-            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{subtitle}</p>
-          ) : null}
         </div>
         {total > 0 ? (
           <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-200">
@@ -519,8 +532,7 @@ export function MetricsQueueStrip({
 
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Status mix bar</p>
-      <div className="mt-2 flex h-3 overflow-hidden rounded-full border border-border bg-surface-muted">
+      <div className="flex h-3 overflow-hidden rounded-full border border-border bg-surface-muted">
         {ordered.map((seg) => (
           <div
             key={seg.status}

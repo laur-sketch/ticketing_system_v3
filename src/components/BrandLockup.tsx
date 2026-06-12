@@ -62,21 +62,21 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "customer-sidebar":
       return (
-        <div className="flex gap-3">
-          <BrandLogo className="size-[4.75rem] shrink-0 object-contain object-left" />
-          <div className="min-w-0 flex-1 pt-0.5">
-            <p className="text-[13px] font-bold leading-snug tracking-[0.02em] text-zinc-900 dark:text-zinc-100">{BRAND_TITLE}</p>
-            <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-orange-400/95">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <BrandLogo className="h-8 w-auto max-w-[5.5rem] shrink-0 object-contain object-left" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-bold leading-snug tracking-[0.01em] text-zinc-100">{BRAND_TITLE}</p>
+            <p className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.2em] text-orange-400/95">
               {BRAND_TAGLINE_CUSTOMER}
             </p>
-            <p className="mt-0.5 text-[10px] font-medium leading-tight text-zinc-600 dark:text-zinc-500">{BRAND_TAGLINE_CUSTOMER_SUB}</p>
+            <p className="text-[9px] font-medium leading-tight text-zinc-400">{BRAND_TAGLINE_CUSTOMER_SUB}</p>
           </div>
         </div>
       );
     case "customer-topnav":
       return (
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <BrandLogo className="h-10 w-auto max-w-[min(200px,55vw)] shrink-0 object-contain object-left sm:h-12 md:h-14 lg:h-16" />
+          <BrandLogo className="h-9 w-auto max-w-[min(160px,55vw)] shrink-0 object-contain object-left sm:h-10" />
           <span className="min-w-0 truncate text-xs font-bold tracking-[0.04em] text-zinc-900 sm:text-sm dark:text-zinc-100">
             {BRAND_TITLE}
           </span>

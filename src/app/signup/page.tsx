@@ -133,10 +133,6 @@ function SignUpForm() {
       <h1 className="text-[1.5rem] font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-[1.65rem]">
         Create company account
       </h1>
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
-        Register your details and the company you belong to. Staff accounts are created by an administrator and are not
-        available for self-signup.
-      </p>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <label className="flex flex-col gap-1.5">
@@ -210,10 +206,6 @@ function SignUpForm() {
             </option>
           </select>
         </label>
-        <p className="-mt-1 text-[10px] leading-snug text-zinc-600 dark:text-zinc-600">
-          Admin vs Personnel is your role in your organization (not staff assignment).
-        </p>
-
         <label className="flex flex-col gap-1.5">
           <span className={authLabelClass}>Work email</span>
           <input

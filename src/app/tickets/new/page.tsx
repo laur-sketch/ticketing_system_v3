@@ -154,7 +154,6 @@ export default function NewTicketPage() {
 
   const isAdminStaffIntake =
     session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
-  const isStaffIntake = isAdminStaffIntake || isPersonnelIntake;
 
   /** Full roster for Admin/SuperAdmin intake; designated company merged in if missing from public list. */
   const adminCompanySelectOptions = useMemo(() => {
@@ -310,54 +309,48 @@ export default function NewTicketPage() {
   }
 
   return (
-    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 text-zinc-900 dark:bg-[#070d19] dark:text-zinc-100">
-      <div className="mx-auto max-w-3xl px-3 py-6 sm:px-4 sm:py-8 md:py-10">
-        <div className="mb-6 rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_16px_45px_rgba(0,0,0,0.35)] sm:mb-8 sm:p-6">
-          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-orange-700 dark:text-orange-400/95">
+    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100">
+      <div className="mx-auto max-w-5xl px-3 py-4 sm:px-4">
+        <div className="mb-4 rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-orange-400">
             {BRAND_TITLE} · Request intake
           </p>
-          <h1 className="text-xl font-semibold text-zinc-900 sm:text-2xl dark:text-zinc-100">Submit a request</h1>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-100">Submit a request</h1>
         </div>
 
         {isRequestorIntakeLockRole && !intakeGateReady ? (
-          <div className="mb-4 rounded-xl border border-zinc-300/80 bg-zinc-100/80 px-4 py-3 text-sm text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-200">
+          <div className="mb-4 rounded-md border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 dark:border-zinc-700/80 dark:bg-[#10100f] dark:text-zinc-300">
             Checking whether you already have a ticket in progress…
           </div>
         ) : null}
 
         {intakeBlocked && intake.pendingConfirmation ? (
-          <div className="mb-4 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+          <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
             <p className="font-semibold">Action required: ticket {intake.pendingConfirmation.ticketNumber}</p>
             <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
               You already have a ticket in progress or waiting on your confirmation. Confirm and close that ticket
               before submitting a new request.
             </p>
-            <Link
-              href={intake.pendingConfirmation.verificationHref}
-              className="mt-3 inline-flex text-sm font-semibold text-orange-700 underline-offset-4 hover:underline dark:text-orange-300"
-            >
+            <Link href={intake.pendingConfirmation.verificationHref} className="mt-3 inline-flex text-sm font-semibold text-orange-300 underline-offset-4 hover:underline">
               {intake.pendingConfirmation.verificationHref.includes("/verification")
                 ? "Go to confirmation"
                 : "Open ticket"}
             </Link>
           </div>
         ) : intakeBlocked ? (
-          <div className="mb-4 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+          <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
             <p className="font-semibold">You already have a ticket in progress or awaiting confirmation</p>
             <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
               Confirm and close your existing ticket before submitting a new request.
             </p>
-            <Link
-              href={myTicketsHref}
-              className="mt-3 inline-flex text-sm font-semibold text-orange-700 underline-offset-4 hover:underline dark:text-orange-300"
-            >
+            <Link href={myTicketsHref} className="mt-3 inline-flex text-sm font-semibold text-orange-300 underline-offset-4 hover:underline">
               {isPersonnelIntake ? "Open my ticket dashboard" : "Open my tickets"}
             </Link>
           </div>
         ) : null}
 
-        <Card className="border-zinc-200 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_16px_45px_rgba(0,0,0,0.35)]">
-          <form onSubmit={onSubmit} className="space-y-5">
+        <Card className="rounded-md border-zinc-200 bg-white shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+          <form onSubmit={onSubmit} className="space-y-4">
             {isAdminStaffIntake ? (
               <>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
@@ -448,9 +441,6 @@ export default function NewTicketPage() {
                       ? "Loading…"
                       : staffDesignatedCompany?.name?.trim() || "Not yet assigned"}
                   </div>
-                  <p className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-                    Your company is assigned at signup or by a SuperAdmin/Admin and cannot be changed here.
-                  </p>
                 </div>
 
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
@@ -475,11 +465,6 @@ export default function NewTicketPage() {
                     className="mt-1.5 border-zinc-300 bg-white text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
                 </label>
-                <p className="-mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-                  Use a roster SBU name when you can. If it does not match, your request still registers and is triaged
-                  under <strong className="font-medium text-zinc-600 dark:text-zinc-300">OUTSIDE COMPANY</strong> on the
-                  company board.
-                </p>
               </>
             ) : (
               <>

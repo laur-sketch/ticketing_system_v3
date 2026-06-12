@@ -38,8 +38,8 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
 
   return (
     <div className="space-y-4">
-      <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-4 shadow-sm sm:p-5">
-        <h2 className="text-sm font-semibold text-white">Add information</h2>
+      <article className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
+        <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Add information</h2>
         <p className="mt-1 text-xs text-zinc-500">
           Mirrors the “Need more info?” branch: your reply returns the ticket to active work.
         </p>
@@ -47,28 +47,28 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           rows={3}
-          className="mt-3 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring"
+          className="mt-3 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-100"
           placeholder="Provide missing details or answer agent questions"
         />
         <button
           type="button"
           disabled={busy}
           onClick={postMessage}
-          className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-200 disabled:opacity-60"
+          className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-500 disabled:opacity-60"
         >
           Send update
         </button>
       </article>
 
       {ticket.status === "FOR_CONFIRMATION" || ticket.status === "RESOLVED" ? (
-        <article className="rounded-2xl border border-orange-900/80 bg-orange-950/30 p-4 shadow-sm sm:p-5">
+        <article className="rounded-md border border-orange-500/30 bg-orange-500/10 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)] sm:p-5">
           <h2 className="text-sm font-semibold text-orange-100">Verification required</h2>
           <p className="mt-2 text-sm text-orange-100/80">
             A confirmation email was sent to your requestor email. Verify first, then submit your star rating.
           </p>
           <Link
             href={`/tickets/${ticket.id}/verification`}
-            className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-500"
+            className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-500"
           >
             Verify resolution
           </Link>
@@ -76,11 +76,11 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
       ) : null}
 
       {ticket.feedback ? (
-        <article className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4 shadow-sm sm:p-5">
-          <h2 className="text-sm font-semibold text-zinc-100">Recorded feedback</h2>
+        <article className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
+          <h2 className="text-sm font-semibold text-zinc-950 dark:text-zinc-100">Recorded feedback</h2>
           <p className="mt-2 text-sm text-zinc-300">CSAT: {ticket.feedback.csat}/5</p>
           {ticket.feedback.comment ? (
-            <p className="mt-2 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-sm break-words text-zinc-200">
+            <p className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm break-words text-zinc-700 dark:border-zinc-800 dark:bg-[#181716] dark:text-zinc-200">
               {ticket.feedback.comment}
             </p>
           ) : (

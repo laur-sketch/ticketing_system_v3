@@ -43,7 +43,7 @@ export async function StaffHomeDashboard({
 }: Props) {
   const ticketScope = operatorId ? { assignedAgentId: operatorId } : { id: "__none__" };
 
-  const [tickets, activities, activeCount] = await Promise.all([
+  const [tickets, activities] = await Promise.all([
     prisma.ticket.findMany({
       where: ticketScope,
       orderBy: { updatedAt: "desc" },
@@ -55,12 +55,6 @@ export async function StaffHomeDashboard({
       orderBy: { createdAt: "desc" },
       take: 5,
       include: { ticket: { select: { ticketNumber: true, title: true } } },
-    }),
-    prisma.ticket.count({
-      where: {
-        ...ticketScope,
-        status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"] },
-      },
     }),
   ]);
 
@@ -95,11 +89,6 @@ export async function StaffHomeDashboard({
             <h1 className="text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-zinc-100">
               Welcome back, {firstName}.
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-700 sm:text-base dark:text-zinc-300">
-              You have{" "}
-              <span className="font-semibold text-orange-700 dark:text-orange-300">{activeCount} active requests</span>{" "}
-              assigned to your account.
-            </p>
           </div>
           {canCreateTickets ? (
             <Link
@@ -171,7 +160,6 @@ export async function StaffHomeDashboard({
           <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Help categories</h2>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">Browse our knowledge base by topic.</p>
             </div>
             <Link
               href="/tickets/knowledge"
@@ -193,7 +181,6 @@ export async function StaffHomeDashboard({
                     <Icon className="size-6" />
                   </span>
                   <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{c.title}</span>
-                  <span className="mt-1.5 text-xs text-zinc-600 dark:text-zinc-400">{c.body}</span>
                 </Link>
               );
             })}

@@ -135,6 +135,7 @@ export default function InsightsPage() {
   const [data, setData] = useState<KpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [throughputView, setThroughputView] = useState<"cards" | "table">("table");
+  const [volumeChartView, setVolumeChartView] = useState<"density" | "line">("density");
   const [canAssignKpi, setCanAssignKpi] = useState(false);
   /** IANA zone for KPI period boundaries. */
   const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
@@ -338,10 +339,6 @@ export default function InsightsPage() {
       })),
     [charts.queueStatusMix],
   );
-  const activeQueueTotal = useMemo(
-    () => charts.queueStatusMix.reduce((sum, row) => sum + row.count, 0),
-    [charts.queueStatusMix],
-  );
   const satisfactionRows = useMemo(() => {
     const dist = data?.quality?.csatByStar;
     if (!dist?.length) {
@@ -375,11 +372,6 @@ export default function InsightsPage() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 md:text-4xl dark:text-white">
               {isPersonnel ? "Personal performance intelligence" : "Operations intelligence"}
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {isPersonnel
-                ? "Live charts for your assigned queue, SLA compliance, and throughput."
-                : "Live charts for intake vs closure, queue composition, SLA compliance, and throughput."}
-            </p>
         </div>
         <div className="mt-6 flex flex-wrap gap-1 rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
           <button
@@ -488,23 +480,19 @@ export default function InsightsPage() {
                 <MetricTile
                   label="Ticket volume"
                   value={String(data.operational.ticketVolume)}
-                  hint="Created in selected period"
                   accent
                 />
                 <MetricTile
                   label="Backlog"
                   value={String(data.operational.backlogSize)}
-                  hint="OPEN tickets only"
                 />
                 <MetricTile
                   label="For Confirmation"
                   value={String(data.operational.forConfirmationSize)}
-                  hint="Awaiting requestor sign-off"
                 />
                 <MetricTile
                   label="Closed"
                   value={String(data.sla.ticketsClosedInRange)}
-                  hint="Closed in selected period"
                 />
               </div>
               <div className="grid gap-4 md:grid-cols-3">
@@ -519,7 +507,6 @@ export default function InsightsPage() {
                 <MetricTile
                   label="Avg confirmation time"
                   value={formatDuration(data.operational.confirmationTimeMsAvg)}
-                  hint="Resolved → closed in period"
                 />
               </div>
             </div>
@@ -532,9 +519,37 @@ export default function InsightsPage() {
                 <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
                   Volume and throughput
                 </h2>
-                <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                  Created vs closed (daily, real-time)
-                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                    Created vs closed (daily, real-time)
+                  </p>
+                  <div className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 p-1 text-[10px] font-bold uppercase tracking-[0.12em] dark:border-zinc-700 dark:bg-zinc-900/90">
+                    <button
+                      type="button"
+                      onClick={() => setVolumeChartView("density")}
+                      className={cn(
+                        "rounded-full px-3 py-1 transition",
+                        volumeChartView === "density"
+                          ? "bg-orange-600 text-white shadow-sm"
+                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                      )}
+                    >
+                      Density
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVolumeChartView("line")}
+                      className={cn(
+                        "rounded-full px-3 py-1 transition",
+                        volumeChartView === "line"
+                          ? "bg-orange-600 text-white shadow-sm"
+                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                      )}
+                    >
+                      Line chart
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="flex flex-wrap items-end justify-end gap-3 text-xs text-zinc-600 dark:text-zinc-500">
                 <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
@@ -574,6 +589,7 @@ export default function InsightsPage() {
                 labels={charts.days}
                 created={charts.createdByDay}
                 closed={charts.closedByDay}
+                variant={volumeChartView}
               />
             </div>
           </section>
@@ -582,13 +598,9 @@ export default function InsightsPage() {
           <section className="grid gap-6 lg:grid-cols-2">
             <div className="stoic-card p-5 sm:p-7">
               <h2 className="stoic-label">Queue composition</h2>
-              <p className="mt-1 text-sm text-muted">
-                Non-closed tickets by status ({activeQueueTotal} active)
-              </p>
               <div className="mt-6">
                 <MetricsPieChart
                   title="Open queue distribution"
-                  subtitle="Status share of the active backlog."
                   itemsLabel={(n) => `${n} open ticket${n === 1 ? "" : "s"}`}
                   emptyDescription="No active queue items."
                   showPercentages
@@ -603,20 +615,15 @@ export default function InsightsPage() {
 
             <div className="stoic-card p-5 sm:p-7">
               <h2 className="stoic-label">SLA performance</h2>
-              <p className="mt-1 text-sm text-muted">
-                Sample-based in the selected window with 95% target markers.
-              </p>
               <div className="mt-6 grid grid-cols-2 gap-6 sm:gap-8">
                 <MetricsGauge
                   label="First response"
                   value={data.sla.firstResponseComplianceRate}
-                  sub="Met ÷ sampled"
                   target={0.95}
                 />
                 <MetricsGauge
                   label="Resolution"
                   value={data.sla.resolutionComplianceRate}
-                  sub="Met ÷ sampled"
                   target={0.95}
                 />
               </div>
@@ -663,7 +670,6 @@ export default function InsightsPage() {
                 <MetricTile
                   label="Quality note"
                   value="CSAT = 1–5 stars"
-                  hint="Counts are ratings submitted in the selected window."
                 />
               </div>
             </div>
@@ -681,9 +687,6 @@ export default function InsightsPage() {
                 <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
                   Agent throughput
                 </h2>
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-500">
-                  Detailed roster · same window as charts above
-                </p>
               </div>
               <div className="inline-flex rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
                 <button
@@ -854,7 +857,6 @@ function TaskProjectTrackerPanel({
   const detailPercent =
     detailTotal > 0 ? Math.round(detailTableRows.reduce((sum, task) => sum + task.completion, 0) / detailTotal) : 0;
   const titleColumnLabel = detailsView === "project" ? "Project Title" : "Task Title";
-  const selectedProjectLabel = selectedProject === allProjectsValue ? "All Tasks/Projects" : selectedProject;
   const projectTotal = projectTableRows.length;
   const projectDone = projectTableRows.filter((task) => task.completion === 100).length;
   const projectInProgress = projectTableRows.filter((task) => task.completion === 50 || task.completion === 75).length;
@@ -909,7 +911,6 @@ function TaskProjectTrackerPanel({
               </span>
               <div className="min-w-0">
                 <p className="text-xl font-black uppercase tracking-tight sm:text-2xl">Task &amp; Project Tracker</p>
-                <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">Track tasks, monitor progress, achieve results</p>
                 <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
                   {loading ? "Refreshing" : reportingPeriodLabel}
                 </p>
@@ -960,25 +961,21 @@ function TaskProjectTrackerPanel({
           <EfficiencyStatCard
             label="Total tasks"
             value={String(projectTotal)}
-            hint={selectedProjectLabel}
             tone="neutral"
           />
           <EfficiencyStatCard
             label="Completed tasks"
             value={String(projectDone)}
-            hint="Checklist items completed"
             tone="green"
           />
           <EfficiencyStatCard
             label="In progress"
             value={String(projectInProgress)}
-            hint="Started work still open"
             tone="orange"
           />
           <EfficiencyStatCard
             label="Pending tasks"
             value={String(projectMissing)}
-            hint="Work not completed yet"
             tone="amber"
           />
         </div>
@@ -988,7 +985,6 @@ function TaskProjectTrackerPanel({
         <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
           <MetricsPieChart
             title="Task status breakdown"
-            subtitle={projectTotal > 0 ? `${projectDone}/${projectTotal} checklist items complete` : "No task items in this period."}
             itemsLabel={(n) => `${n} task item${n === 1 ? "" : "s"}`}
             emptyDescription="No task work found for this period."
             showPercentages
@@ -1001,7 +997,6 @@ function TaskProjectTrackerPanel({
         <section className="min-w-0 rounded-2xl border border-orange-200/70 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-orange-500/20 dark:bg-[#0a0a0a]">
           <EmployeeCompletionProgressChart
             title="Completion % by employee"
-            subtitle="Average completion progress per assigned employee."
             emptyDescription="Assign IT project tasks to personnel to show employee completion."
             rows={employeeCompletionRows}
           />
@@ -1010,7 +1005,6 @@ function TaskProjectTrackerPanel({
         <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
           <MetricsPieChart
             title="Task by company"
-            subtitle="Task distribution by designated company."
             itemsLabel={(n) => `${n} task${n === 1 ? "" : "s"}`}
             emptyDescription="No company-scoped IT project tasks in this filter."
             showPercentages
@@ -1027,9 +1021,6 @@ function TaskProjectTrackerPanel({
             <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
               Task/project details
             </h3>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Switch between regular KPI task records and IT Project Implementation project rows.
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
             <div className="mr-1 flex rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-950">
@@ -1152,12 +1143,10 @@ function TaskProjectTrackerPanel({
 
 function EmployeeCompletionProgressChart({
   title,
-  subtitle,
   rows,
   emptyDescription,
 }: {
   title: string;
-  subtitle: string;
   rows: { label: string; value: number; taskCount: number }[];
   emptyDescription: string;
 }) {
@@ -1165,7 +1154,6 @@ function EmployeeCompletionProgressChart({
     <div className="min-w-0">
       <div className="min-w-0">
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-500">{title}</p>
-        <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{subtitle}</p>
       </div>
 
       {rows.length === 0 ? (
@@ -1219,12 +1207,10 @@ function EmployeeCompletionProgressChart({
 function EfficiencyStatCard({
   label,
   value,
-  hint,
   tone,
 }: {
   label: string;
   value: string;
-  hint: string;
   tone: "neutral" | "green" | "amber" | "orange";
 }) {
   const accentClass =
@@ -1248,7 +1234,6 @@ function EfficiencyStatCard({
       <span className={cn("absolute inset-x-0 top-0 h-1 bg-gradient-to-r", accentClass)} aria-hidden />
       <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">{label}</p>
       <p className={cn("mt-2 text-3xl font-black tabular-nums", valueClass)}>{value}</p>
-      <p className="mt-2 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">{hint}</p>
     </article>
   );
 }
@@ -1303,20 +1288,6 @@ function TaskMetricsPanel({
           <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
             Task metrics
           </h3>
-          <div className="mt-3 max-w-3xl rounded-2xl border border-orange-500/25 bg-gradient-to-br from-orange-500/10 via-zinc-100/70 to-white p-4 shadow-inner dark:from-orange-500/12 dark:via-zinc-900/80 dark:to-zinc-950">
-            <p className="text-lg font-bold tracking-tight text-zinc-950 dark:text-zinc-50">Task progress overview</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
-                Live checklist data
-              </span>
-              <span className="rounded-full border border-zinc-300 bg-white/80 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300">
-                Working days only
-              </span>
-              <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-cyan-700 dark:text-cyan-300">
-                Snapshot based
-              </span>
-            </div>
-          </div>
         </div>
         <div className="flex w-full shrink-0 flex-col gap-4 sm:min-w-[17rem] lg:w-auto lg:items-end">
           <div className="flex flex-col gap-1.5">
@@ -1432,12 +1403,10 @@ function TaskMetricsPanel({
 function MetricTile({
   label,
   value,
-  hint,
   accent,
 }: {
   label: string;
   value: string;
-  hint?: string;
   accent?: boolean;
 }) {
   return (
@@ -1458,9 +1427,6 @@ function MetricTile({
       >
         {value}
       </p>
-      {hint ? (
-        <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-600">{hint}</p>
-      ) : null}
     </article>
   );
 }
