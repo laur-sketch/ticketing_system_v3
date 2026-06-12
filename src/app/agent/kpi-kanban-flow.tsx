@@ -1421,7 +1421,7 @@ export function AgentKpiKanbanFlow({
         aria-label={`${activeTask.title} full task details`}
       >
         <div
-          className="max-h-[calc(100dvh-3rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-[#0b1220] sm:p-5"
+          className="max-h-[calc(100dvh-3rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-surface sm:p-5"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex flex-col gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800 sm:flex-row sm:items-start sm:justify-between">

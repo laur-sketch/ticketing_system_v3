@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Bell, CircleHelp, LifeBuoy, Menu, Plus, Search, X } from "lucide-react";
+import { Bell, CircleHelp, LifeBuoy, Menu, Plus, Search, UserRound, X } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/cn";
 import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CUSTOMER_PORTAL_NAV_ITEMS, customerPortalNavItemActive } from "@/components/portal/customer-portal-nav";
 import { useHash } from "@/components/portal/useHash";
 
@@ -39,7 +40,8 @@ export function CustomerTopNav() {
     authProvider: string | null;
     pendingConfirmation: { ticketId: string; ticketNumber: string; verificationHref: string } | null;
   }>({ canCreateTickets: true, authProvider: null, pendingConfirmation: null });
-  const initial = (data?.user?.name?.[0] ?? data?.user?.email?.[0] ?? "U").toUpperCase();
+  const userName = data?.user?.name ?? data?.user?.email ?? "Account";
+  const roleLabel = data?.user?.role ?? "Customer";
   const userKey = (data?.user?.email ?? "customer").toLowerCase();
   const seenStorageKey = `customer-notif-seen:${userKey}`;
 
@@ -307,13 +309,17 @@ export function CustomerTopNav() {
             <CircleHelp className="size-4" />
           </Link>
           <div className="flex items-center gap-2 pl-1">
-            <div className="flex size-9 items-center justify-center overflow-hidden rounded-lg border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-xs font-bold text-white shadow-sm">
-              {data?.user?.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={data.user.image} alt={data.user.name ?? "Profile"} className="h-full w-full object-cover" />
-              ) : (
-                initial
-              )}
+            <div className="flex max-w-[12rem] items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-1.5 py-1 shadow-sm dark:border-zinc-800 dark:bg-[#181716]">
+              <Avatar className="size-8 rounded-md border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
+                <AvatarImage src={data?.user?.image ?? undefined} alt={data?.user?.name ?? "Profile"} />
+                <AvatarFallback className="rounded-md bg-transparent">
+                  <UserRound className="size-4" aria-hidden />
+                </AvatarFallback>
+              </Avatar>
+              <div className="hidden min-w-0 pr-1 sm:block">
+                <p className="truncate text-[11px] font-bold leading-4 text-zinc-900 dark:text-zinc-100">{roleLabel}</p>
+                <p className="truncate text-[10px] leading-3 text-zinc-500 dark:text-zinc-500">{userName}</p>
+              </div>
             </div>
             <button
               type="button"

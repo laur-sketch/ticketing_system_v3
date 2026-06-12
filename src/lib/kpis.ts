@@ -56,6 +56,7 @@ export function parseKpiRangeFromQuery(fromParam: string | null, toParam: string
 }
 export type KpiScope = {
   assignedAgentId?: string;
+  assignedAgentIds?: string[];
 };
 
 /** Matches KPI pillar cadence on Insights → Task metrics. */
@@ -326,65 +327,10 @@ function emptyTaskMetricsHelpdesk(
  */
 const REPORT_TZ = process.env.REPORT_TZ || "Asia/Manila";
 
-function reportingTzTodayInterval(now: Date): { start: Date; end: Date } {
-  const dt = DateTime.fromMillis(now.getTime(), { zone: REPORT_TZ });
-  return {
-    start: dt.startOf("day").toJSDate(),
-    end: dt.endOf("day").toJSDate(),
-  };
-}
-
-/** One calendar day in REPORT_TZ from `YYYY-MM-DD`. */
-function reportingTzDayIntervalFromYmd(ymd: string): { start: Date; end: Date } {
-  const dt = DateTime.fromISO(ymd, { zone: REPORT_TZ });
-  if (!dt.isValid) return reportingTzTodayInterval(new Date());
-  return {
-    start: dt.startOf("day").toJSDate(),
-    end: dt.endOf("day").toJSDate(),
-  };
-}
-
-function reportingTzDayIntervalForRange(range: KpiRange): { start: Date; end: Date } {
-  return reportingTzDayIntervalFromYmd(localDayKey(range.from));
-}
-
 function kpiRangeToYmd(range: KpiRange): { fromYmd: string; toYmd: string } {
   const ymd = (d: Date) =>
     `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
   return { fromYmd: ymd(range.from), toYmd: ymd(range.to) };
-}
-
-async function countHelpdeskTicketsInRange(
-  range: KpiRange,
-  scoped: Record<string, unknown>,
-): Promise<{ closed: number; open: number }> {
-  const [closed, open] = await Promise.all([
-    prisma.ticket.count({ where: { closedAt: rangeFilter(range), ...scoped } }),
-    prisma.ticket.count({ where: openTicketsInRangeWhere(range, scoped) }),
-  ]);
-  return { closed, open };
-}
-
-/** Helpdesk counts + % for the full Insights date-picker window (not split by cadence). */
-async function aggregateHelpdeskForReportingRange(
-  range: KpiRange,
-  scoped: Record<string, unknown>,
-): Promise<{
-  closedCount: number;
-  openTicketsInPeriod: number;
-  percent: number | null;
-  rangeFromYmd: string;
-  rangeToYmd: string;
-}> {
-  const { fromYmd, toYmd } = kpiRangeToYmd(range);
-  const { closed, open } = await countHelpdeskTicketsInRange(range, scoped);
-  return {
-    closedCount: closed,
-    openTicketsInPeriod: open,
-    percent: helpdeskSupportPercent(closed, open),
-    rangeFromYmd: fromYmd,
-    rangeToYmd: toYmd,
-  };
 }
 
 function computeTaskMetricsHelpdesk(args: {
@@ -494,9 +440,11 @@ export async function computeTaskMetrics(
   helpdeskCadence: HelpdeskTaskCadence = "DAILY",
   opts: { timeZone?: string } = {},
 ): Promise<TaskMetricsPayload> {
-  const scoped = scope.assignedAgentId
-    ? ({ assignedAgentId: scope.assignedAgentId } as const)
-    : {};
+  const scoped = scope.assignedAgentIds
+    ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
+    : scope.assignedAgentId
+      ? ({ assignedAgentId: scope.assignedAgentId } as const)
+      : {};
   /** Helpdesk / User Support use Manila working days even when the browser sends UTC before hydration. */
   const helpdeskTz = snapshotTimeZoneForTaskMetrics(opts.timeZone);
   const workingDays = workingDayIntervalsInRange(range, helpdeskTz);
@@ -513,7 +461,7 @@ export async function computeTaskMetrics(
 
   if (workingDays.length > 0) {
     const span = workingDaysSpanRange(workingDays)!;
-    const globalScope = !scope.assignedAgentId;
+    const globalScope = !scope.assignedAgentId && !scope.assignedAgentIds;
 
     const [csvCounts, liveCounts] = await Promise.all([
       globalScope
@@ -558,9 +506,9 @@ export async function computeTaskMetrics(
       fromYmd,
       toYmd,
       timeZone: helpdeskTz,
-      kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId),
+      kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
     }),
-    scope.assignedAgentId
+    scope.assignedAgentId || scope.assignedAgentIds
       ? Promise.resolve({})
       : loadItSalfDisplayCsvRowsForTaskMetrics({
           fromYmd,
@@ -585,9 +533,21 @@ export async function computeKpis(
   opts: { helpdeskCadence?: HelpdeskTaskCadence } = {},
 ) {
   const helpdeskCadence = opts.helpdeskCadence ?? "DAILY";
-  const scoped = scope.assignedAgentId
-    ? ({ assignedAgentId: scope.assignedAgentId } as const)
-    : {};
+  const scoped = scope.assignedAgentIds
+    ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
+    : scope.assignedAgentId
+      ? ({ assignedAgentId: scope.assignedAgentId } as const)
+      : {};
+  const ticketRelationScope = scope.assignedAgentIds
+    ? ({ ticket: { assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } } as const)
+    : scope.assignedAgentId
+      ? ({ ticket: { assignedAgentId: scope.assignedAgentId } } as const)
+      : {};
+  const maintenanceScope = scope.assignedAgentIds
+    ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
+    : scope.assignedAgentId
+      ? ({ assignedAgentId: scope.assignedAgentId } as const)
+      : {};
   const createdInRange = { createdAt: rangeFilter(range), ...scoped };
   const closedInRangeWhere = { closedAt: rangeFilter(range), ...scoped };
 
@@ -620,7 +580,7 @@ export async function computeKpis(
       where: {
         summary: "Transfer requested",
         createdAt: rangeFilter(range),
-        ...(scope.assignedAgentId ? { ticket: { assignedAgentId: scope.assignedAgentId } } : {}),
+        ...ticketRelationScope,
       },
     }),
     prisma.ticket.count({
@@ -651,7 +611,7 @@ export async function computeKpis(
     prisma.ticketFeedback.aggregate({
       where: {
         createdAt: rangeFilter(range),
-        ...(scope.assignedAgentId ? { ticket: { assignedAgentId: scope.assignedAgentId } } : {}),
+        ...ticketRelationScope,
       },
       _avg: { csat: true, nps: true, ces: true },
       _count: true,
@@ -681,14 +641,14 @@ export async function computeKpis(
     prisma.kpiMaintenance.count({
       where: {
         createdAt: rangeFilter(range),
-        ...(scope.assignedAgentId ? { assignedAgentId: scope.assignedAgentId } : {}),
+        ...maintenanceScope,
       },
     }),
     prisma.ticketFeedback.groupBy({
       by: ["csat"],
       where: {
         createdAt: rangeFilter(range),
-        ...(scope.assignedAgentId ? { ticket: { assignedAgentId: scope.assignedAgentId } } : {}),
+        ...ticketRelationScope,
         csat: { gte: 1, lte: 5 },
       },
       _count: true,

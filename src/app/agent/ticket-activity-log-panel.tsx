@@ -26,7 +26,7 @@ export function TicketActivityLogPanel({
   const showPagination = Boolean(pagination && pagination.total > pagination.pageSize);
 
   return (
-    <section className="mt-8 rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+    <section className="mt-8 rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800">
         <div>
           <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">

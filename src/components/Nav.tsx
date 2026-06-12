@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Bell, Search, SlidersHorizontal } from "lucide-react";
+import { Bell, Search, SlidersHorizontal, UserRound } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
@@ -10,6 +10,7 @@ import { BrandLockup } from "@/components/BrandLockup";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export function Nav() {
   const { data } = useSession();
@@ -28,6 +29,7 @@ export function Nav() {
   const role = data?.user?.role;
   const isAdminRole = role === "SuperAdmin" || role === "Admin";
   const roleLabel = role === "SuperAdmin" ? "SuperAdmin" : role;
+  const userName = data?.user?.name ?? data?.user?.email ?? "Account";
   const showUtilities =
     role === "SuperAdmin" || role === "Admin" || role === "Personnel";
   const inQueueContext =
@@ -285,15 +287,23 @@ export function Nav() {
           {data?.user ? (
             <>
               <ThemeToggle />
-              <span className="hidden max-w-[min(280px,40vw)] truncate text-xs text-zinc-600 dark:text-zinc-500 md:inline">
-                {data.user.email}
-              </span>
-              <span
-                className="hidden rounded-full border border-zinc-300 bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-700 min-[420px]:inline-flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-300"
-                title={role ?? undefined}
+              <div
+                className="flex max-w-[14rem] items-center gap-2 rounded-full border border-zinc-300 bg-orange-50 py-1 pl-1 pr-3 text-orange-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-200"
+                title={data.user.email ?? role ?? undefined}
               >
-                {roleLabel}
-              </span>
+                <Avatar className="size-7 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
+                  <AvatarImage src={data.user.image ?? undefined} alt={data.user.name ?? "Profile"} />
+                  <AvatarFallback className="bg-transparent">
+                    <UserRound className="size-3.5" aria-hidden />
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold leading-4">{roleLabel}</p>
+                  <p className="hidden truncate text-[10px] leading-3 text-zinc-600 dark:text-zinc-500 sm:block">
+                    {userName}
+                  </p>
+                </div>
+              </div>
               <Button
                 variant="outline"
                 className="h-8 rounded-full border-zinc-300 bg-white px-2.5 text-xs text-zinc-900 hover:bg-zinc-100 sm:px-3 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"

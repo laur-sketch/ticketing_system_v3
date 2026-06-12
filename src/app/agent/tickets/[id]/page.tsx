@@ -112,16 +112,16 @@ export default async function AgentTicketPage({
     : false;
 
   return (
-    <main className="fixed inset-0 z-40 bg-black/55 px-3 py-4 text-zinc-100 backdrop-blur-[2px] sm:px-6 sm:py-6">
-      <div className="mx-auto flex h-full max-w-[1200px] items-center justify-center">
-        <div className="w-full rounded-3xl border border-zinc-700/80 bg-black/30 p-2 shadow-[0_30px_90px_rgba(0,0,0,0.55)] backdrop-blur-sm">
-          <section className="mx-auto flex max-h-[92vh] w-full flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-[#0b1220] p-4 shadow-[0_20px_60px_rgba(0,0,0,0.45)] sm:p-6">
-            <div className="mb-5 flex flex-col gap-3 rounded-2xl border border-zinc-800/90 bg-[#0e1629]/80 p-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:p-5">
-              <div>
+    <main className="min-h-dvh bg-background px-2 py-2 text-zinc-100 sm:fixed sm:inset-0 sm:z-40 sm:bg-black/55 sm:px-6 sm:py-6 sm:backdrop-blur-[2px]">
+      <div className="mx-auto flex min-h-dvh w-full max-w-[1200px] items-start justify-center sm:h-full sm:min-h-0 sm:items-center">
+        <div className="w-full rounded-2xl border border-zinc-700/80 bg-black/30 p-1.5 shadow-[0_30px_90px_rgba(0,0,0,0.55)] backdrop-blur-sm sm:rounded-3xl sm:p-2">
+          <section className="mx-auto flex w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-surface p-3 shadow-[0_20px_60px_rgba(0,0,0,0.45)] sm:max-h-[92vh] sm:rounded-2xl sm:p-6">
+            <div className="mb-4 flex flex-col gap-3 rounded-xl border border-zinc-800/90 bg-[#181716]/80 p-3 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:rounded-2xl sm:p-5">
+              <div className="min-w-0">
                 <Link href={backHref} className="text-xs font-semibold text-orange-300 hover:underline">
                   {backHref === "/agent" ? "← Back to queue" : "← Back"}
                 </Link>
-                <h1 className="mt-2 text-xl font-semibold text-zinc-100 sm:text-2xl">
+                <h1 className="mt-2 break-words text-lg font-semibold leading-tight text-zinc-100 sm:text-2xl">
                   {ticketForWorkspace.ticketNumber}{" "}
                   <span className="text-sm font-normal text-zinc-400 sm:text-base">· {ticketForWorkspace.title}</span>
                 </h1>
@@ -130,7 +130,7 @@ export default async function AgentTicketPage({
                 </p>
                 <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
                   Requestor Email:{" "}
-                  <span className="text-zinc-300 normal-case tracking-normal">
+                  <span className="break-all text-zinc-300 normal-case tracking-normal">
                     {ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail}
                   </span>
                 </p>
@@ -147,7 +147,7 @@ export default async function AgentTicketPage({
                   </p>
                 ) : null}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="w-fit rounded-full bg-zinc-700 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
                   {formatTicketStatusLabel(ticketForWorkspace.status)}
                 </span>
@@ -160,7 +160,7 @@ export default async function AgentTicketPage({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <div className="min-h-0 flex-1 overflow-visible sm:overflow-y-auto sm:pr-1">
               <AgentWorkspace
                 ticket={ticketForWorkspace}
                 canUpdatePriority={canUpdatePriority}

@@ -211,7 +211,7 @@ export function AgentKanban({
                     key={t.id}
                     assigneeColorKey={t.assigneeColorKey}
                     className={cn(
-                      "rounded-lg border border-zinc-200 bg-white shadow-sm transition dark:border-zinc-800 dark:bg-[#0f172a]",
+                      "rounded-lg border border-zinc-200 bg-white shadow-sm transition dark:border-zinc-800 dark:bg-[#181716]",
                       draggingItemId === t.id && "opacity-55",
                       busyId === t.id && "pointer-events-none opacity-50",
                       t.status === "ESCALATED" && "ring-1 ring-rose-500/40",
