@@ -196,15 +196,9 @@ export default async function Home() {
               </Link>
               <Link
                 href="/admin/ticket-requests"
-                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                className="inline-flex justify-center rounded-lg bg-orange-600 px-4 py-2 text-center text-sm font-semibold text-white shadow-[0_10px_28px_rgba(234,88,12,0.28)] transition hover:bg-orange-500"
               >
                 Create requests
-              </Link>
-              <Link
-                href="/tickets/new"
-                className="inline-flex justify-center rounded-lg bg-orange-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-orange-500"
-              >
-                New Ticket
               </Link>
             </div>
           </header>

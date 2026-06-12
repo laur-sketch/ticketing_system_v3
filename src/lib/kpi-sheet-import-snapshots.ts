@@ -468,7 +468,7 @@ async function upsertPercentSnapshotForKpi(args: {
   at: Date;
   percent: number;
 }): Promise<void> {
-  const { kpi, zone, periodKey, at, percent } = args;
+  const { kpi, zone, periodKey, percent } = args;
   const total = 100;
   const done = percent;
   const missing = total - done;

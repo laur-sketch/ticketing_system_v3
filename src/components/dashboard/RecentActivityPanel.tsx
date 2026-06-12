@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ActivityActor, TicketPriority, TicketStatus } from "@prisma/client";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
@@ -142,39 +141,52 @@ function TicketDetailFloat({
   ticketId: string | null;
   onClose: () => void;
 }) {
+  if (!ticketId) return null;
+
+  return <TicketDetailFloatPanel key={ticketId} ticketId={ticketId} onClose={onClose} />;
+}
+
+function TicketDetailFloatPanel({
+  ticketId,
+  onClose,
+}: {
+  ticketId: string;
+  onClose: () => void;
+}) {
   const [data, setData] = useState<TicketDetailJson | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (id: string) => {
-    setLoading(true);
-    setError(null);
-    setData(null);
-    try {
-      const res = await fetch(`/api/tickets/${id}`);
-      const json = (await res.json().catch(() => ({}))) as { error?: string } & Partial<TicketDetailJson>;
-      if (!res.ok) {
-        setError(json.error ?? "Could not load ticket.");
-        return;
-      }
-      setData(json as TicketDetailJson);
-    } catch {
-      setError("Network error.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    if (!ticketId) {
-      setData(null);
-      setError(null);
-      return;
-    }
-    void load(ticketId);
-  }, [ticketId, load]);
+    let cancelled = false;
 
-  if (!ticketId) return null;
+    async function fetchTicket() {
+      try {
+        const res = await fetch(`/api/tickets/${ticketId}`);
+        const json = (await res.json().catch(() => ({}))) as { error?: string } & Partial<TicketDetailJson>;
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(json.error ?? "Could not load ticket.");
+          setData(null);
+          return;
+        }
+        setError(null);
+        setData(json as TicketDetailJson);
+      } catch {
+        if (!cancelled) {
+          setError("Network error.");
+          setData(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void fetchTicket();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticketId]);
 
   return (
     <div className="fixed inset-0 z-[95] flex items-end justify-center p-3 sm:items-center sm:justify-end sm:p-6">

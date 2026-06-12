@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { customerCanAccessTicket, ensureTicketOwnership, requireSession } from "@/lib/access";
 import { sendResolutionEmail } from "@/lib/email";
 import { prisma } from "@/lib/prisma";
-import { findSessionAgentId, findSessionAgentWithTeam } from "@/lib/session-agent";
+import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { logActivity, touchFirstResponse } from "@/lib/ticket-actions";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { parseTransferRequestDetail, serializeTransferRequest } from "@/lib/ticket-transfer-request";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { normalizeOptionalUsDate, parseUsDateInput, ymdToUsDisplay } from "@/lib/us-date-format";
 import { cn } from "@/lib/cn";
 
@@ -22,25 +22,22 @@ export function UsDateField({
   "aria-label": ariaLabel,
 }: UsDateFieldProps) {
   const ymd = normalizeOptionalUsDate(value) ?? "";
-  const [text, setText] = useState(() => ymdToUsDisplay(ymd));
+  const [editingText, setEditingText] = useState<string | null>(null);
+  const text = editingText ?? ymdToUsDisplay(ymd);
 
-  useEffect(() => {
-    setText(ymdToUsDisplay(ymd));
-  }, [ymd]);
-
-  function commit() {
-    const parsed = parseUsDateInput(text);
+  function commit(nextText: string) {
+    const parsed = parseUsDateInput(nextText);
     if (parsed) {
       onChange(parsed);
-      setText(ymdToUsDisplay(parsed));
+      setEditingText(null);
       return;
     }
-    if (!text.trim()) {
+    if (!nextText.trim()) {
       onChange(null);
-      setText("");
+      setEditingText(null);
       return;
     }
-    setText(ymdToUsDisplay(ymd));
+    setEditingText(null);
   }
 
   return (
@@ -51,8 +48,8 @@ export function UsDateField({
       value={text}
       placeholder={placeholder}
       aria-label={ariaLabel}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
+      onChange={(e) => setEditingText(e.target.value)}
+      onBlur={() => commit(text)}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();

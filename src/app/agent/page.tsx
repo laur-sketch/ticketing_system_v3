@@ -20,6 +20,7 @@ import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AutoSubmitForm } from "@/components/AutoSubmitForm";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRAND_TITLE } from "@/lib/brand";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
@@ -730,36 +731,40 @@ export default async function AgentHome({
                     ) : null}
                   </div>
                   <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
-                    <div className="inline-flex w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
+                    <Tabs value={isCompanyBoard ? "company" : isBoard ? "board" : "table"} className="w-full sm:w-auto">
+                      <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
                       {isCompanyBoard ? (
                       <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
                       ) : session.user.role === "Personnel" ? (
                       <span className="rounded-md px-3 py-1.5 bg-orange-600 text-white">Board</span>
                       ) : (
                       <>
-                        <Link
+                        <TabsTrigger
+                          value="board"
+                          asChild
+                          className="flex-1 rounded-md px-3 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none"
+                        >
+                          <Link
                           href={buildHref({ view: null, page: "1" })}
-                          className={`flex-1 rounded-md px-3 py-1.5 text-center sm:flex-none ${
-                            isBoard
-                              ? "bg-orange-600 text-white"
-                              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
-                          }`}
                         >
                           Board
-                        </Link>
-                        <Link
+                          </Link>
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="table"
+                          asChild
+                          className="flex-1 rounded-md px-3 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none"
+                        >
+                          <Link
                           href={buildHref({ view: "table", page: "1" })}
-                          className={`flex-1 rounded-md px-3 py-1.5 text-center sm:flex-none ${
-                            !isBoard
-                              ? "bg-orange-600 text-white"
-                              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
-                          }`}
                         >
                           Table
-                        </Link>
+                          </Link>
+                        </TabsTrigger>
                       </>
                       )}
-                    </div>
+                      </TabsList>
+                    </Tabs>
                     <label className="flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
                       <span className="mr-2">Q</span>
                       <input

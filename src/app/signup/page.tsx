@@ -26,35 +26,39 @@ function SignUpForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function loadCompanies() {
-    setCompaniesStatus("loading");
-    setError(null);
-    try {
-      const r = await fetch("/api/public/companies", { cache: "no-store" });
-      if (!r.ok) {
-        setCompanies([]);
-        setCompaniesStatus("error");
-        return;
-      }
-      const rows = (await r.json()) as CompanyOption[];
-      setCompanies(Array.isArray(rows) ? rows : []);
-      setCompaniesStatus("ready");
-    } catch {
-      setCompanies([]);
-      setCompaniesStatus("error");
-    }
-  }
-
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadCompanies() {
+      try {
+        const r = await fetch("/api/public/companies", { cache: "no-store" });
+        if (cancelled) return;
+        if (!r.ok) {
+          setCompanies([]);
+          setCompaniesStatus("error");
+          return;
+        }
+        const rows = (await r.json()) as CompanyOption[];
+        const list = Array.isArray(rows) ? rows : [];
+        setCompanies(list);
+        setCompaniesStatus("ready");
+        setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
+      } catch {
+        if (!cancelled) {
+          setCompanies([]);
+          setCompaniesStatus("error");
+        }
+      }
+    }
+
     void loadCompanies();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useEffect(() => {
-    if (companies.length === 0) return;
-    if (!companyId) return;
-    const stillValid = companies.some((c) => c.id === companyId);
-    if (!stillValid) setCompanyId("");
-  }, [companies, companyId]);
+  const selectedCompanyId =
+    companyId && companies.some((c) => c.id === companyId) ? companyId : "";
 
   const bottomBanner = useMemo(
     () => (
@@ -176,7 +180,7 @@ function SignUpForm() {
             </div>
           ) : (
             <select
-              value={companyId}
+              value={selectedCompanyId}
               onChange={(e) => setCompanyId(e.target.value)}
               required
               className={`${authInputClass} cursor-pointer`}

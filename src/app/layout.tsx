@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk } from "next/font/google";
 import Script from "next/script";
 import { AuthProvider } from "@/components/AuthProvider";
+import { GlobalButtonParticles } from "@/components/GlobalButtonParticles";
 import { AppChrome } from "@/components/layout/AppChrome";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -45,6 +46,7 @@ export default async function RootLayout({
         </Script>
         <ThemeProvider>
           <AuthProvider session={session}>
+            <GlobalButtonParticles />
             <AppChrome>{children}</AppChrome>
           </AuthProvider>
         </ThemeProvider>

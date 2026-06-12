@@ -9,6 +9,7 @@ import { passwordHashLabel } from "@/lib/password-hash-display";
 import type { PersonnelRosterRow } from "@/lib/personnel-accounts-data";
 import { StaffAssignmentColorSelect } from "@/components/admin/StaffAssignmentColorSelect";
 import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
 
 function portalRegistryRoleLabel(role: (typeof PORTAL_ROLES)[number]) {
@@ -61,6 +62,77 @@ type PendingAccountRequestRow = {
   portalAccount: { id: string; name: string; email: string; role: string };
 };
 
+const registryFilterSelectClass = cn(
+  authInputClass,
+  "min-w-[10rem] py-1.5 text-xs sm:min-w-[11rem]",
+);
+
+function RegistryFiltersBar({
+  showCompanyFilter,
+  totalCount,
+  filteredCount,
+  registryRoleFilter,
+  onRegistryRoleFilterChange,
+  registryCompanyFilter,
+  onRegistryCompanyFilterChange,
+  rosterCompanies,
+  registryFiltersActive,
+}: {
+  showCompanyFilter: boolean;
+  totalCount: number;
+  filteredCount: number;
+  registryRoleFilter: string;
+  onRegistryRoleFilterChange: (value: string) => void;
+  registryCompanyFilter: string;
+  onRegistryCompanyFilterChange: (value: string) => void;
+  rosterCompanies: RosterCompany[];
+  registryFiltersActive: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800/90 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-end">
+      <label className="flex min-w-[10rem] flex-col gap-1">
+        <span className={authLabelClass}>Filter by role</span>
+        <select
+          value={registryRoleFilter}
+          onChange={(e) => onRegistryRoleFilterChange(e.target.value)}
+          className={registryFilterSelectClass}
+        >
+          <option value="">All roles</option>
+          {PORTAL_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {portalRegistryRoleLabel(r)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {showCompanyFilter ? (
+        <label className="flex min-w-[10rem] flex-col gap-1">
+          <span className={authLabelClass}>Filter by company</span>
+          <select
+            value={registryCompanyFilter}
+            onChange={(e) => onRegistryCompanyFilterChange(e.target.value)}
+            disabled={rosterCompanies.length === 0 && !registryCompanyFilter}
+            className={registryFilterSelectClass}
+          >
+            <option value="">All companies</option>
+            <option value={NO_COMPANY_FILTER}>No company assigned</option>
+            {rosterCompanies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
+        {registryFiltersActive
+          ? `Showing ${filteredCount} of ${totalCount} user${totalCount === 1 ? "" : "s"}`
+          : `${totalCount} user${totalCount === 1 ? "" : "s"}`}
+      </p>
+    </div>
+  );
+}
+
 export function PersonnelClient({
   initialTeams,
   initialPersonnel,
@@ -103,11 +175,6 @@ export function PersonnelClient({
   const { data: session, status: sessionStatus } = useSession();
   const canManagePortalAccounts = session?.user?.role === "SuperAdmin";
 
-  useEffect(() => {
-    void loadPendingAccountRequests();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const filteredPersonnel = useMemo(
     () =>
       personnel.filter((row) => matchesRegistryRoleFilter(row.staffRole, registryRoleFilter)),
@@ -126,32 +193,17 @@ export function PersonnelClient({
 
   const registryFiltersActive = Boolean(registryRoleFilter || registryCompanyFilter);
 
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(filteredPersonnel.length / PERSONNEL_REGISTRY_PAGE_SIZE));
-    setPersonnelRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [filteredPersonnel.length]);
-
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(filteredPortalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE));
-    setPortalRegistryPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [filteredPortalAccounts.length]);
-
-  useEffect(() => {
-    setPortalRegistryPage(1);
-  }, [view]);
-
-  useEffect(() => {
+  function handleRegistryRoleFilterChange(value: string) {
+    setRegistryRoleFilter(value);
     setPersonnelRegistryPage(1);
     setPortalRegistryPage(1);
-  }, [registryRoleFilter, registryCompanyFilter]);
+  }
 
-  useEffect(() => {
-    if (sessionStatus === "loading") return;
-    if (canManagePortalAccounts) {
-      void loadRoles();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionStatus, canManagePortalAccounts]);
+  function handleRegistryCompanyFilterChange(value: string) {
+    setRegistryCompanyFilter(value);
+    setPersonnelRegistryPage(1);
+    setPortalRegistryPage(1);
+  }
 
   async function reconcileDuplicateAgents() {
     setError(null);
@@ -290,6 +342,17 @@ export function PersonnelClient({
     setRosterCompanies(data.rosterCompanies ?? []);
   }
 
+  useEffect(() => {
+    void loadPendingAccountRequests();
+  }, []);
+
+  useEffect(() => {
+    if (sessionStatus === "loading") return;
+    if (canManagePortalAccounts) {
+      void loadRoles();
+    }
+  }, [sessionStatus, canManagePortalAccounts]);
+
   async function updateAccountPortalRole(id: string, role: string) {
     setError(null);
     setRoleBusyId(id);
@@ -408,65 +471,6 @@ export function PersonnelClient({
     const start = (portalRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
     return filteredPortalAccounts.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
   }, [filteredPortalAccounts, portalRegistryPageClamped]);
-
-  const registryFilterSelectClass = cn(
-    authInputClass,
-    "min-w-[10rem] py-1.5 text-xs sm:min-w-[11rem]",
-  );
-
-  function RegistryFiltersBar({
-    showCompanyFilter,
-    totalCount,
-    filteredCount,
-  }: {
-    showCompanyFilter: boolean;
-    totalCount: number;
-    filteredCount: number;
-  }) {
-    return (
-      <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800/90 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-end">
-        <label className="flex min-w-[10rem] flex-col gap-1">
-          <span className={authLabelClass}>Filter by role</span>
-          <select
-            value={registryRoleFilter}
-            onChange={(e) => setRegistryRoleFilter(e.target.value)}
-            className={registryFilterSelectClass}
-          >
-            <option value="">All roles</option>
-            {PORTAL_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {portalRegistryRoleLabel(r)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {showCompanyFilter ? (
-          <label className="flex min-w-[10rem] flex-col gap-1">
-            <span className={authLabelClass}>Filter by company</span>
-            <select
-              value={registryCompanyFilter}
-              onChange={(e) => setRegistryCompanyFilter(e.target.value)}
-              disabled={rosterCompanies.length === 0 && !registryCompanyFilter}
-              className={registryFilterSelectClass}
-            >
-              <option value="">All companies</option>
-              <option value={NO_COMPANY_FILTER}>No company assigned</option>
-              {rosterCompanies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
-          {registryFiltersActive
-            ? `Showing ${filteredCount} of ${totalCount} user${totalCount === 1 ? "" : "s"}`
-            : `${totalCount} user${totalCount === 1 ? "" : "s"}`}
-        </p>
-      </div>
-    );
-  }
 
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0a0b12] dark:text-zinc-100 sm:px-4 md:py-5">
@@ -670,6 +674,12 @@ export function PersonnelClient({
                   showCompanyFilter={false}
                   totalCount={personnel.length}
                   filteredCount={filteredPersonnel.length}
+                  registryRoleFilter={registryRoleFilter}
+                  onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
+                  registryCompanyFilter={registryCompanyFilter}
+                  onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
+                  rosterCompanies={rosterCompanies}
+                  registryFiltersActive={registryFiltersActive}
                 />
                 <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
                 <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800/80">
@@ -745,7 +755,7 @@ export function PersonnelClient({
                   </table>
                 </div>
                 <SimplePaginationBar
-                  page={personnelRegistryPage}
+                  page={personnelRegistryPageClamped}
                   pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
                   total={filteredPersonnel.length}
                   onPageChange={setPersonnelRegistryPage}
@@ -763,38 +773,34 @@ export function PersonnelClient({
                   <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
                     Portal accounts · one row per account · SuperAdmin roles & designated company
                   </p>
-                  <div className="inline-flex rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-[11px] font-semibold dark:border-zinc-700 dark:bg-zinc-900/80">
-                    <button
-                      type="button"
-                      onClick={() => setView("cards")}
-                      className={cn(
-                        "rounded-md px-3 py-1 transition",
-                        view === "cards"
-                          ? "bg-white text-zinc-900 shadow-sm dark:bg-white dark:text-zinc-900"
-                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                      )}
-                    >
-                      Cards
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setView("table")}
-                      className={cn(
-                        "rounded-md px-3 py-1 transition",
-                        view === "table"
-                          ? "bg-white text-zinc-900 shadow-sm dark:bg-white dark:text-zinc-900"
-                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                      )}
-                    >
-                      Table
-                    </button>
-                  </div>
+                  <Tabs
+                    value={view}
+                    onValueChange={(value) => {
+                      setView(value as typeof view);
+                      setPortalRegistryPage(1);
+                    }}
+                  >
+                    <TabsList className="rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-[11px] font-semibold dark:border-zinc-700 dark:bg-zinc-900/80">
+                      <TabsTrigger value="cards" className="rounded-md px-3 py-1 text-[11px] font-semibold data-[state=active]:bg-white data-[state=active]:text-zinc-900 dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900">
+                        Cards
+                      </TabsTrigger>
+                      <TabsTrigger value="table" className="rounded-md px-3 py-1 text-[11px] font-semibold data-[state=active]:bg-white data-[state=active]:text-zinc-900 dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900">
+                        Table
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                 </div>
 
                 <RegistryFiltersBar
                   showCompanyFilter
                   totalCount={portalAccounts.length}
                   filteredCount={filteredPortalAccounts.length}
+                  registryRoleFilter={registryRoleFilter}
+                  onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
+                  registryCompanyFilter={registryCompanyFilter}
+                  onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
+                  rosterCompanies={rosterCompanies}
+                  registryFiltersActive={registryFiltersActive}
                 />
 
                 {view === "cards" ? (
@@ -881,7 +887,7 @@ export function PersonnelClient({
                                     className={teamSelectClass}
                                   >
                                     <option value="">-</option>
-                                    <option value={ALL_SBUS_VALUE}>ALL SBU's</option>
+                                    <option value={ALL_SBUS_VALUE}>ALL SBUs</option>
                                     {rosterCompanies.map((c) => (
                                       <option key={c.id} value={c.id}>
                                         {c.name}
@@ -918,7 +924,7 @@ export function PersonnelClient({
                                   className={teamSelectClass}
                                 >
                                   <option value="">-</option>
-                                  <option value={ALL_SBUS_VALUE}>ALL SBU's</option>
+                                  <option value={ALL_SBUS_VALUE}>ALL SBUs</option>
                                   {rosterCompanies.map((c) => (
                                     <option key={c.id} value={c.id}>
                                       {c.name}
@@ -955,7 +961,7 @@ export function PersonnelClient({
                     )}
                   </section>
                   <SimplePaginationBar
-                    page={portalRegistryPage}
+                    page={portalRegistryPageClamped}
                     pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
                     total={filteredPortalAccounts.length}
                     onPageChange={setPortalRegistryPage}
@@ -1042,7 +1048,7 @@ export function PersonnelClient({
                                     className={teamSelectClass}
                                   >
                                     <option value="">-</option>
-                                    <option value={ALL_SBUS_VALUE}>ALL SBU's</option>
+                                    <option value={ALL_SBUS_VALUE}>ALL SBUs</option>
                                     {rosterCompanies.map((c) => (
                                       <option key={c.id} value={c.id}>
                                         {c.name}
@@ -1085,7 +1091,7 @@ export function PersonnelClient({
                       </tbody>
                     </table>
                     <SimplePaginationBar
-                      page={portalRegistryPage}
+                      page={portalRegistryPageClamped}
                       pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
                       total={filteredPortalAccounts.length}
                       onPageChange={setPortalRegistryPage}

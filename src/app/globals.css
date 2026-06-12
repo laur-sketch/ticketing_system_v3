@@ -258,19 +258,79 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   box-shadow: var(--shadow-elevated);
 }
 
+.shine-hover,
+.stoic-btn-primary,
+.stoic-btn-outline,
+:where(a, button).bg-brand,
+:where(a, button).bg-orange-600,
+:where(a, button).bg-blue-500,
+:where(a, button).bg-blue-600,
+:where(a, button).bg-sky-600,
+:where(a, button).bg-emerald-600 {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.shine-hover::before,
+.stoic-btn-primary::before,
+.stoic-btn-outline::before,
+:where(a, button).bg-brand::before,
+:where(a, button).bg-orange-600::before,
+:where(a, button).bg-blue-500::before,
+:where(a, button).bg-blue-600::before,
+:where(a, button).bg-sky-600::before,
+:where(a, button).bg-emerald-600::before {
+  pointer-events: none;
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: linear-gradient(45deg, transparent 25%, rgb(255 255 255 / 0.58) 50%, transparent 75%, transparent 100%);
+  background-position: 200% 0;
+  background-repeat: no-repeat;
+  background-size: 250% 250%;
+  transition: background-position 0s ease;
+}
+
+.shine-hover:hover::before,
+.stoic-btn-primary:hover::before,
+.stoic-btn-outline:hover::before,
+:where(a, button).bg-brand:hover::before,
+:where(a, button).bg-orange-600:hover::before,
+:where(a, button).bg-blue-500:hover::before,
+:where(a, button).bg-blue-600:hover::before,
+:where(a, button).bg-sky-600:hover::before,
+:where(a, button).bg-emerald-600:hover::before {
+  background-position: -100% 0;
+  transition-duration: 1000ms;
+}
+
+.dark .shine-hover::before,
+.dark .stoic-btn-primary::before,
+.dark .stoic-btn-outline::before,
+.dark :where(a, button).bg-brand::before,
+.dark :where(a, button).bg-orange-600::before,
+.dark :where(a, button).bg-blue-500::before,
+.dark :where(a, button).bg-blue-600::before,
+.dark :where(a, button).bg-sky-600::before,
+.dark :where(a, button).bg-emerald-600::before {
+  background-image: linear-gradient(45deg, transparent 25%, rgb(255 255 255 / 0.42) 50%, transparent 75%, transparent 100%);
+}
+
 .stoic-btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-stoic);
-  background: var(--brand);
+  background: #050505;
   color: var(--brand-ink);
   font-weight: 600;
-  transition: background-color 0.15s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 
 .stoic-btn-primary:hover {
-  background: var(--brand-hover);
+  background: var(--brand);
 }
 
 .stoic-btn-outline {
@@ -367,6 +427,27 @@ input[type="date"].date-input-with-icon::-ms-reveal {
 
   .dark .hover\:bg-orange-500:hover {
     background-color: var(--brand-hover) !important;
+  }
+
+  :where(a, button).bg-brand,
+  :where(a, button).bg-orange-600,
+  :where(a, button).bg-blue-500,
+  :where(a, button).bg-blue-600,
+  :where(a, button).bg-sky-600,
+  :where(a, button).bg-emerald-600 {
+    background-color: #050505 !important;
+    color: #ffffff !important;
+    transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+  }
+
+  :where(a, button).bg-brand:hover,
+  :where(a, button).bg-orange-600:hover,
+  :where(a, button).bg-blue-500:hover,
+  :where(a, button).bg-blue-600:hover,
+  :where(a, button).bg-sky-600:hover,
+  :where(a, button).bg-emerald-600:hover {
+    background-color: var(--brand) !important;
+    color: var(--brand-ink) !important;
   }
 
   .bg-orange-500\/10,

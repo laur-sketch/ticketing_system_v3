@@ -119,7 +119,6 @@ export async function POST(req: Request) {
     let priority: string | undefined;
     let contactPhone: string | undefined;
     let companyTeamIdRaw: string | undefined;
-    let portalCompanyTeamIdRaw: string | undefined;
     let customerOrgRoleRaw: string | undefined;
     let branchRaw: string | undefined;
     let assignedCompanyTextRaw: string | undefined;
@@ -163,9 +162,11 @@ export async function POST(req: Request) {
       priority = typeof body.priority === "string" ? body.priority : undefined;
       contactPhone = typeof body.contactPhone === "string" ? body.contactPhone : undefined;
       companyTeamIdRaw =
-        typeof body.companyTeamId === "string" ? body.companyTeamId : undefined;
-      portalCompanyTeamIdRaw =
-        typeof body.portalCompanyTeamId === "string" ? body.portalCompanyTeamId : undefined;
+        typeof body.companyTeamId === "string"
+          ? body.companyTeamId
+          : typeof body.portalCompanyTeamId === "string"
+            ? body.portalCompanyTeamId
+            : undefined;
       customerOrgRoleRaw =
         typeof body.customerOrgRole === "string" ? body.customerOrgRole : undefined;
       branchRaw = typeof body.branch === "string" ? body.branch : undefined;

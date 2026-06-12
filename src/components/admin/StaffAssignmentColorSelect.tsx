@@ -1,7 +1,6 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   PERSONNEL_ASSIGNMENT_COLORS,
   personnelAssignmentContrastText,
@@ -21,9 +20,8 @@ type Props = {
  * Swatch uses theme CSS variables; select chrome uses resolved hex for the active value.
  */
 export function StaffAssignmentColorSelect({ value, disabled, onChange, selectClassName }: Props) {
-  const { theme } = useTheme();
   const swatchVars = personnelAssignmentCssVars(value);
-  const hex = personnelAssignmentHex(value, theme);
+  const hex = personnelAssignmentHex(value);
   const wash = hex ? `color-mix(in srgb, ${hex} 30%, transparent)` : null;
   const label = value
     ? (PERSONNEL_ASSIGNMENT_COLORS.find((c) => c.key === value)?.label ?? value)
@@ -59,7 +57,7 @@ export function StaffAssignmentColorSelect({ value, disabled, onChange, selectCl
       >
         <option value="">None</option>
         {PERSONNEL_ASSIGNMENT_COLORS.map((c) => {
-          const optHex = personnelAssignmentHex(c.key, theme);
+          const optHex = personnelAssignmentHex(c.key);
           return (
             <option
               key={c.key}
