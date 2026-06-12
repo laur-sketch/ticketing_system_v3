@@ -67,7 +67,7 @@ function shortDayLabel(label: string): string {
   return label?.length >= 10 ? label.slice(5) : label ?? "—";
 }
 
-/** Created vs closed tickets per day (Asia/Manila buckets) — line chart. */
+/** Created and closed tickets per day (Asia/Manila buckets) — stacked area chart. */
 export function MetricsTrendChart({
   labels,
   created,
@@ -88,6 +88,7 @@ export function MetricsTrendChart({
   const safeLabels = labels.slice(0, n);
   const safeCreated = created.slice(0, n);
   const safeClosed = closed.slice(0, n);
+  const stackedTotals = safeCreated.map((value, index) => value + (safeClosed[index] ?? 0));
 
   const padX = 4;
   const padTop = 6;
@@ -95,15 +96,26 @@ export function MetricsTrendChart({
   const w = 100;
   const h = 48;
   const innerH = h - padTop - padBottom;
-  const peak = Math.max(1, ...safeCreated, ...safeClosed);
+  const peak = Math.max(1, ...stackedTotals);
   const max = Math.max(1, peak);
 
   const xAt = (i: number) =>
     n <= 1 ? w / 2 : padX + ((w - 2 * padX) * i) / Math.max(n - 1, 1);
   const yAt = (v: number) => padTop + innerH - (innerH * v) / max;
 
-  const createdPts = safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
-  const closedPts = safeClosed.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+  const createdLinePts = safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+  const totalLinePts = stackedTotals.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+  const createdAreaPts = [
+    `${xAt(0)},${h - padBottom}`,
+    ...safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`),
+    `${xAt(n - 1)},${h - padBottom}`,
+  ].join(" ");
+  const closedAreaPts = [
+    ...safeCreated.map((v, i) => `${xAt(i)},${yAt(v)}`),
+    ...stackedTotals
+      .map((v, i) => `${xAt(i)},${yAt(v)}`)
+      .reverse(),
+  ].join(" ");
 
   const tickIdx = pickDailyTickIndices(n);
   /** Y-axis reference ticks — divide vertical space into 4 bands with rounded values. */
@@ -159,30 +171,31 @@ export function MetricsTrendChart({
             />
           ))}
 
-          {/** Closed first so Created sits visually on top. */}
+          <polygon points={createdAreaPts} fill={ORANGE} fillOpacity={0.2} />
+          <polygon points={closedAreaPts} fill={ZINC_LINE} fillOpacity={0.18} />
           <polyline
             fill="none"
-            stroke={ZINC_LINE}
-            strokeWidth={0.7}
+            stroke={ORANGE}
+            strokeWidth={0.95}
             strokeLinecap="round"
             strokeLinejoin="round"
-            points={closedPts}
+            points={createdLinePts}
             vectorEffect="non-scaling-stroke"
           />
           <polyline
             fill="none"
-            stroke={ORANGE}
-            strokeWidth={0.85}
+            stroke={ZINC_LINE}
+            strokeWidth={0.95}
             strokeLinecap="round"
             strokeLinejoin="round"
-            points={createdPts}
+            points={totalLinePts}
             vectorEffect="non-scaling-stroke"
           />
 
           {/** Per-day markers so each daily value is visible. */}
           {safeCreated.map((v, i) => (
             <circle
-              key={`c-${i}`}
+              key={`created-point-${i}`}
               cx={xAt(i)}
               cy={yAt(v)}
               r={0.55}
@@ -193,16 +206,16 @@ export function MetricsTrendChart({
               vectorEffect="non-scaling-stroke"
             />
           ))}
-          {safeClosed.map((v, i) => (
+          {stackedTotals.map((v, i) => (
             <circle
-              key={`x-${i}`}
+              key={`closed-point-${i}`}
               cx={xAt(i)}
               cy={yAt(v)}
-              r={0.45}
+              r={0.5}
               fill={ZINC_LINE}
               stroke="#ffffff"
-              strokeOpacity={0.55}
-              strokeWidth={0.16}
+              strokeOpacity={0.6}
+              strokeWidth={0.18}
               vectorEffect="non-scaling-stroke"
             />
           ))}
@@ -332,6 +345,7 @@ export function MetricsPieChart({
   showPercentages = false,
   valueFormatter,
   centerLabel,
+  donut = false,
 }: {
   title: string;
   subtitle?: string;
@@ -343,11 +357,13 @@ export function MetricsPieChart({
   showPercentages?: boolean;
   valueFormatter?: (value: number) => string;
   centerLabel?: string;
+  donut?: boolean;
 }) {
   const total = segments.reduce((s, x) => s + x.value, 0);
   const cx = 50;
   const cy = 50;
   const r = 38;
+  const innerR = donut ? 21 : 10;
   let angle = -Math.PI / 2;
   /** Full 100% slice: SVG elliptical arc collapses when start === end; use a circle instead. */
   const slices: { d: string; color: string; label: string; value: number; full?: boolean }[] = [];
@@ -415,12 +431,12 @@ export function MetricsPieChart({
                 <path key={`${s.label}-${i}`} d={s.d} fill={s.color} stroke={KINETIC_PALETTE.surface} strokeWidth="0.35" />
               ),
             )}
-            <circle cx={cx} cy={cy} r={10} className="fill-surface" />
+            <circle cx={cx} cy={cy} r={innerR} className="fill-surface" />
             <text
               x={cx}
               y={cy + 2}
               textAnchor="middle"
-              className="fill-foreground text-[7px] font-bold"
+              className={cn("fill-foreground font-bold", donut ? "text-[8px]" : "text-[7px]")}
             >
               {centerLabel ?? total}
             </text>
