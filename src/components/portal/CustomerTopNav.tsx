@@ -203,7 +203,7 @@ export function CustomerTopNav() {
           <form
             action="/my-tickets"
             method="get"
-            className="order-last flex w-full items-center gap-2 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 shadow-inner md:order-none md:w-[min(34rem,45vw)] md:min-w-[20rem] dark:border-zinc-800 dark:bg-[#181716]"
+            className="order-last flex w-full items-center gap-2 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 shadow-inner md:order-none md:w-[min(30rem,38vw)] md:min-w-[18rem] dark:border-zinc-800 dark:bg-[#181716]"
           >
             <Search className="size-4 shrink-0 text-zinc-500" aria-hidden />
             <input

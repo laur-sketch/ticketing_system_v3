@@ -50,7 +50,7 @@ export default async function TicketPage({
   }
 
   return (
-    <main className="mx-auto max-w-none space-y-4 bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100 sm:px-4">
+    <main className="mx-auto max-w-[1440px] space-y-4 bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100 sm:px-4">
       <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wide text-orange-300">

@@ -83,7 +83,7 @@ export async function CustomerHomeDashboard({
 
   return (
     <main className="px-3 py-4 text-zinc-900 dark:text-zinc-100 sm:px-4 lg:px-4">
-      <div className="mx-auto max-w-none space-y-5">
+      <div className="mx-auto max-w-[1440px] space-y-5">
         <section className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-orange-700 dark:text-orange-400">
