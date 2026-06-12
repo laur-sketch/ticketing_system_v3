@@ -576,15 +576,6 @@ export default function InsightsPage() {
                 closed={charts.closedByDay}
               />
             </div>
-            <div className="mt-6 border-t border-zinc-200 pt-6 dark:border-zinc-800/80">
-              <MetricsBarChart
-                title="Range summary · created vs closed"
-                rows={[
-                  { label: "Created", value: data.operational.ticketVolume },
-                  { label: "Closed", value: data.sla.ticketsClosedInRange },
-                ]}
-              />
-            </div>
           </section>
 
           {/* Queue composition + SLA performance */}
@@ -878,7 +869,7 @@ function TaskProjectTrackerPanel({
     { label: "In progress", value: projectInProgress, color: KINETIC_PALETTE.brand },
     { label: "Pending", value: projectNotStarted, color: KINETIC_PALETTE.brandSoft },
   ].filter((segment) => segment.value > 0);
-  const employeeCompletionSegments = Array.from(
+  const employeeCompletionRows = Array.from(
     projectTableRows.reduce((map, task) => {
       const key = task.assigneeName?.trim() || "Unassigned";
       const current = map.get(key) ?? { totalCompletion: 0, count: 0 };
@@ -889,12 +880,12 @@ function TaskProjectTrackerPanel({
       return map;
     }, new Map<string, { totalCompletion: number; count: number }>()),
   )
-    .map(([label, value], index) => ({
+    .map(([label, value]) => ({
       label,
-      value: value.count > 0 ? Math.max(1, Math.round(value.totalCompletion / value.count)) : 0,
-      color: pieChartColor(index),
+      value: value.count > 0 ? Math.round(value.totalCompletion / value.count) : 0,
+      taskCount: value.count,
     }))
-    .filter((segment) => segment.value > 0);
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
   const companyTaskSegments = Array.from(
     projectTableRows.reduce((map, task) => {
       const key = task.companyName || "Unassigned company";
@@ -993,7 +984,7 @@ function TaskProjectTrackerPanel({
         </div>
       </div>
 
-      <div className={cn("grid gap-4 xl:grid-cols-3", loading && "opacity-60")}>
+      <div className={cn("grid items-start gap-4 xl:grid-cols-[1fr_1.18fr_1fr]", loading && "opacity-60")}>
         <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
           <MetricsPieChart
             title="Task status breakdown"
@@ -1001,21 +992,18 @@ function TaskProjectTrackerPanel({
             itemsLabel={(n) => `${n} task item${n === 1 ? "" : "s"}`}
             emptyDescription="No task work found for this period."
             showPercentages
+            donut
             pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
             segments={projectSegments}
           />
         </section>
 
-        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
-          <MetricsPieChart
+        <section className="min-w-0 rounded-2xl border border-orange-200/70 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-orange-500/20 dark:bg-[#0a0a0a]">
+          <EmployeeCompletionProgressChart
             title="Completion % by employee"
             subtitle="Average completion progress per assigned employee."
-            itemsLabel={() => `${projectPercent}% overall`}
             emptyDescription="Assign IT project tasks to personnel to show employee completion."
-            valueFormatter={(value) => `${value}%`}
-            centerLabel={`${projectPercent}%`}
-            pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
-            segments={employeeCompletionSegments}
+            rows={employeeCompletionRows}
           />
         </section>
 
@@ -1026,6 +1014,7 @@ function TaskProjectTrackerPanel({
             itemsLabel={(n) => `${n} task${n === 1 ? "" : "s"}`}
             emptyDescription="No company-scoped IT project tasks in this filter."
             showPercentages
+            donut
             pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
             segments={companyTaskSegments}
           />
@@ -1158,6 +1147,72 @@ function TaskProjectTrackerPanel({
         </div>
       </section>
     </section>
+  );
+}
+
+function EmployeeCompletionProgressChart({
+  title,
+  subtitle,
+  rows,
+  emptyDescription,
+}: {
+  title: string;
+  subtitle: string;
+  rows: { label: string; value: number; taskCount: number }[];
+  emptyDescription: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-500">{title}</p>
+        <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{subtitle}</p>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="mt-6 rounded-xl border border-dashed border-zinc-300 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
+          {emptyDescription}
+        </p>
+      ) : (
+        <div className="mt-5 space-y-3">
+          {rows.map((row) => {
+            const percent = Math.max(0, Math.min(100, row.value));
+            return (
+              <div
+                key={row.label}
+                className="grid grid-cols-[minmax(8rem,0.9fr)_minmax(9rem,1.4fr)_3.5rem] items-center gap-3 text-xs"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-zinc-900 dark:text-zinc-100" title={row.label}>
+                    {row.label}
+                  </p>
+                  <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                    {row.taskCount} task{row.taskCount === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <div
+                  className="relative h-3 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+                  aria-label={`${row.label} completion ${percent}%`}
+                >
+                  {percent === 0 ? <span className="absolute left-0 top-0 h-full w-1.5 rounded-full bg-orange-500/70" /> : null}
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-[width]",
+                      percent === 100
+                        ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
+                        : "bg-gradient-to-r from-orange-700 to-orange-500",
+                    )}
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+                <span className="text-right font-mono font-bold tabular-nums text-orange-700 dark:text-orange-300">
+                  {percent}%
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
