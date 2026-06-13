@@ -10,6 +10,7 @@ import {
   upsertPortalOAuthAccount,
 } from "@/lib/portal-account";
 import { normalizePortalRole } from "@/lib/staff-role";
+import { compactSessionPicture } from "@/lib/session-profile-image";
 
 export type UserRole = "SuperAdmin" | "Admin" | "Personnel" | "Customer";
 
@@ -227,7 +228,9 @@ export const authOptions: NextAuthOptions = {
         const portal = await findPortalByEmailOnly(token.email);
         if (portal) {
           token.name = portal.name;
-          token.picture = portal.profileImage ?? token.picture;
+          token.picture =
+            compactSessionPicture(portal.profileImage) ??
+            compactSessionPicture(typeof token.picture === "string" ? token.picture : undefined);
           token.companyId = portal.companyId;
           token.companyName = portal.companyName;
           token.customerOrgRole = portal.customerOrgRole;
@@ -242,6 +245,11 @@ export const authOptions: NextAuthOptions = {
           token.customerOrgRole = null;
           token.staffRoleLabel = null;
         }
+      }
+      if (typeof token.picture === "string") {
+        const compact = compactSessionPicture(token.picture);
+        if (compact) token.picture = compact;
+        else delete token.picture;
       }
       return token;
     },

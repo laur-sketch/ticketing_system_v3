@@ -57,6 +57,8 @@ export function parseKpiRangeFromQuery(fromParam: string | null, toParam: string
 export type KpiScope = {
   assignedAgentId?: string;
   assignedAgentIds?: string[];
+  teamId?: string;
+  teamIds?: string[];
 };
 
 /** Matches KPI pillar cadence on Insights → Task metrics. */
@@ -533,16 +535,18 @@ export async function computeKpis(
   opts: { helpdeskCadence?: HelpdeskTaskCadence } = {},
 ) {
   const helpdeskCadence = opts.helpdeskCadence ?? "DAILY";
-  const scoped = scope.assignedAgentIds
+  const agentScope = scope.assignedAgentIds
     ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
     : scope.assignedAgentId
       ? ({ assignedAgentId: scope.assignedAgentId } as const)
       : {};
-  const ticketRelationScope = scope.assignedAgentIds
-    ? ({ ticket: { assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } } as const)
-    : scope.assignedAgentId
-      ? ({ ticket: { assignedAgentId: scope.assignedAgentId } } as const)
+  const teamScope = scope.teamIds
+    ? ({ teamId: { in: scope.teamIds.length > 0 ? scope.teamIds : ["__none__"] } } as const)
+    : scope.teamId
+      ? ({ teamId: scope.teamId } as const)
       : {};
+  const scoped: Prisma.TicketWhereInput = { ...agentScope, ...teamScope };
+  const ticketRelationScope = Object.keys(scoped).length > 0 ? ({ ticket: scoped } as const) : {};
   const maintenanceScope = scope.assignedAgentIds
     ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
     : scope.assignedAgentId

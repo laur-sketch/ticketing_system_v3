@@ -17,6 +17,7 @@ import {
 } from "@/lib/kpi-recurrence";
 import { IT_PROJECT_IMPLEMENTATION_TITLE } from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { isStaffPortalRole } from "@/lib/staff-role";
 
 function taskPrefixForTitle(title: string) {
@@ -168,8 +169,10 @@ function completionHours(args: {
 }
 
 export async function GET() {
-  const { unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
   if (unauthorized) return unauthorized;
+  const restrictToAssignedCompany = session.user.role === "Admin";
+  const scopedCompanyId = session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;
 
   const [taskRows, staffCompanyRows, agents] = await Promise.all([
     prisma.kpiMaintenance.findMany({
@@ -208,19 +211,9 @@ export async function GET() {
     if (!isStaffPortalRole(row.role) || !row.staffDesignatedCompany) continue;
     companiesById.set(row.staffDesignatedCompany.id, row.staffDesignatedCompany);
   }
-  const companies = sortByRosterOrder(Array.from(companiesById.values()));
-
-  const seenProjects = new Set<string>();
-  const projects = taskRows.flatMap((row) => {
-    const name =
-      row.title === IT_PROJECT_IMPLEMENTATION_TITLE
-        ? row.itProjectName?.trim() || "IT Project Implementation"
-        : row.title.trim();
-    const key = name.toLowerCase();
-    if (seenProjects.has(key)) return [];
-    seenProjects.add(key);
-    return [{ name }];
-  });
+  const companies = sortByRosterOrder(Array.from(companiesById.values())).filter((company) =>
+    restrictToAssignedCompany ? company.id === scopedCompanyId : true,
+  );
 
   const assigneeEmails = [
     ...taskRows.map((row) => row.assignedAgent?.email?.trim().toLowerCase()),
@@ -341,9 +334,18 @@ export async function GET() {
     );
   });
 
+  const scopedTasks = restrictToAssignedCompany ? tasks.filter((task) => task.companyId === scopedCompanyId) : tasks;
+  const seenProjects = new Set<string>();
+  const projects = scopedTasks.flatMap((task) => {
+    const key = task.projectName.toLowerCase();
+    if (seenProjects.has(key)) return [];
+    seenProjects.add(key);
+    return [{ name: task.projectName }];
+  });
+
   return NextResponse.json({
     projects: projects.length > 0 ? projects : [{ name: "IT Project Implementation" }],
     companies,
-    tasks,
+    tasks: scopedTasks,
   });
 }

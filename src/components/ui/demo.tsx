@@ -1,22 +1,18 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs } from "@/components/ui/vercel-tabs";
+
+const tabs = [
+  { id: "overview", label: "Overview" },
+  { id: "integrations", label: "Integrations" },
+  { id: "activity", label: "Activity" },
+  { id: "domains", label: "Domains" },
+  { id: "usage", label: "Usage" },
+  { id: "monitoring", label: "Monitoring" },
+];
 
 export default function DemoOne() {
   return (
-    <Tabs defaultValue="tab-1">
-      <TabsList>
-        <TabsTrigger value="tab-1">Tab 1</TabsTrigger>
-        <TabsTrigger value="tab-2">Tab 2</TabsTrigger>
-        <TabsTrigger value="tab-3">Tab 3</TabsTrigger>
-      </TabsList>
-      <TabsContent value="tab-1">
-        <p className="p-4 text-center text-xs text-muted">Content for Tab 1</p>
-      </TabsContent>
-      <TabsContent value="tab-2">
-        <p className="p-4 text-center text-xs text-muted">Content for Tab 2</p>
-      </TabsContent>
-      <TabsContent value="tab-3">
-        <p className="p-4 text-center text-xs text-muted">Content for Tab 3</p>
-      </TabsContent>
-    </Tabs>
+    <div className="flex min-h-screen w-full items-center justify-center">
+      <Tabs tabs={tabs} />
+    </div>
   );
 }

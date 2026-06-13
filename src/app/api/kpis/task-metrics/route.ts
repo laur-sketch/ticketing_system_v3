@@ -8,6 +8,7 @@ import {
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 export async function GET(req: Request) {
   const startedAt = Date.now();
@@ -24,9 +25,11 @@ export async function GET(req: Request) {
       : null;
   const assignedAgentId = session?.user?.role === "Personnel" ? operator?.id ?? "__none__" : undefined;
   const companyId =
-    session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin"
-      ? searchParams.get("companyId")?.trim() || null
-      : null;
+    session?.user?.role === "Admin"
+      ? (await resolveStaffCompanyTeamId(session.user.email)) ?? "__none__"
+      : session?.user?.role === "SuperAdmin"
+        ? searchParams.get("companyId")?.trim() || null
+        : null;
   const assignedAgentIds = companyId && companyId !== "ALL" ? await agentIdsForCompany(companyId) : undefined;
 
   const timeZone = normalizeTimeZone(searchParams.get("tz"));
