@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
+import { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/access";
 import { computeKpis, parseKpiRangeFromQuery } from "@/lib/kpis";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -12,31 +14,42 @@ export default async function ReportsPage() {
   if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/");
 
   const { from, to } = parseKpiRangeFromQuery(null, null);
+  const scopedTeamId =
+    session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;
+  const reportScopeWhere: Prisma.TicketWhereInput =
+    session.user.role === "Admin" ? { teamId: scopedTeamId ?? "__none__" } : {};
+  const kpiScope = session.user.role === "Admin" ? { teamId: scopedTeamId ?? "__none__" } : {};
+  const resolvedScopeSql =
+    session.user.role === "Admin"
+      ? Prisma.sql`AND "teamId" = ${scopedTeamId ?? "__none__"}`
+      : Prisma.empty;
 
   const [kpis, transferPending, openByPriority, resolvedToday, statusMix, openByTeam, recentClosed] = await Promise.all([
-    computeKpis({ from, to }),
-    prisma.ticket.count({ where: { status: "ESCALATED" } }),
+    computeKpis({ from, to }, kpiScope),
+    prisma.ticket.count({ where: { status: "ESCALATED", ...reportScopeWhere } }),
     prisma.ticket.groupBy({
       by: ["priority"],
-      where: { status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"] } },
+      where: { status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"] }, ...reportScopeWhere },
       _count: true,
     }),
     prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::bigint AS count
       FROM "Ticket"
       WHERE "resolvedAt" >= NOW() - INTERVAL '24 hours'
+      ${resolvedScopeSql}
     `,
     prisma.ticket.groupBy({
       by: ["status"],
+      where: reportScopeWhere,
       _count: true,
     }),
     prisma.ticket.groupBy({
       by: ["teamId"],
-      where: { status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"] } },
+      where: { status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"] }, ...reportScopeWhere },
       _count: true,
     }),
     prisma.ticket.findMany({
-      where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] } },
+      where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] }, ...reportScopeWhere },
       orderBy: { updatedAt: "desc" },
       take: 8,
       select: {
@@ -51,6 +64,12 @@ export default async function ReportsPage() {
 
   const teams = await prisma.team.findMany({ select: { id: true, name: true } });
   const teamMap = new Map(teams.map((t) => [t.id, t.name]));
+  const scopeLabel =
+    session.user.role === "Admin"
+      ? scopedTeamId
+        ? (teamMap.get(scopedTeamId) ?? "Your assigned company")
+        : "No assigned company"
+      : "All companies";
 
   const resolvedN = String(resolvedToday[0]?.count ?? 0);
   const openBands = String(openByPriority.length);
@@ -71,6 +90,9 @@ export default async function ReportsPage() {
             {BRAND_TITLE} · Executive reporting
           </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight text-white md:text-4xl">Metrics & reports</h1>
+          <p className="mt-2 text-sm font-medium text-zinc-400">
+            Scope: <span className="text-orange-300">{scopeLabel}</span>
+          </p>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">

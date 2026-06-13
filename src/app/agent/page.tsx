@@ -541,7 +541,7 @@ export default async function AgentHome({
   return (
     <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-background dark:text-zinc-100 sm:px-4">
       <div
-        className={`mx-auto flex w-full flex-1 flex-col space-y-4 ${isCompanyBoard ? "max-w-none" : "max-w-7xl"}`}
+        className={`mx-auto flex w-full flex-1 flex-col space-y-4 ${isCompanyBoard ? "max-w-none" : "max-w-[96rem]"}`}
       >
         <section className="space-y-4">
           {notificationsOpen ? (

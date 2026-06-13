@@ -1,16 +1,24 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
+import { Tabs } from "@/components/ui/vercel-tabs";
 
-const pillActive =
-  "rounded-full border border-orange-400/50 bg-orange-500/15 px-3 py-1 text-orange-900 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200";
-const pillInactive =
-  "rounded-full border border-zinc-300 bg-white px-3 py-1 text-zinc-700 transition-colors hover:border-zinc-400 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-200";
+const adminTabs = [
+  { id: "assignment", label: "Assignment Board" },
+  { id: "company", label: "Company Board" },
+  { id: "ticket", label: "Ticket Board" },
+  { id: "kpi", label: "Task Board" },
+];
+
+const personnelTabs = [
+  { id: "ticket", label: "Ticket Board" },
+  { id: "kpi", label: "Task Board" },
+];
 
 export function OrchestrationQueueNav() {
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { data } = useSession();
@@ -44,42 +52,31 @@ export function OrchestrationQueueNav() {
   const canAccessAssignmentBoard = isAdmin || fetchedAllow === true;
   const board = searchParams.get("board") ?? "ticket";
   const onCompanyBoard = onOrchestration && board === "company";
-  const onTicketBoard = onOrchestration && (board === "ticket" || !searchParams.get("board"));
   const onKpiBoard = onOrchestration && board === "kpi";
 
   if (!onOrchestration && !onAssignment) return null;
 
+  const activeTab = onAssignment ? "assignment" : onCompanyBoard ? "company" : onKpiBoard ? "kpi" : "ticket";
+  const goToTab = (tabId: string) => {
+    if (tabId === "assignment") {
+      router.push("/admin/manual-assignment");
+      return;
+    }
+    if (tabId === "company") {
+      router.push("/agent?board=company");
+      return;
+    }
+    if (tabId === "kpi") {
+      router.push("/agent?board=kpi");
+      return;
+    }
+    router.push("/agent?board=ticket");
+  };
+
   if (canAccessAssignmentBoard) {
     return (
-      <nav className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 text-xs font-medium text-zinc-600 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 dark:text-zinc-500">
-        {onAssignment ? (
-          <span className={pillActive}>Assignment Board</span>
-        ) : (
-          <Link href="/admin/manual-assignment" className={pillInactive}>
-            Assignment Board
-          </Link>
-        )}
-        {onCompanyBoard ? (
-          <span className={pillActive}>Company Board</span>
-        ) : (
-          <Link href="/agent?board=company" className={pillInactive}>
-            Company Board
-          </Link>
-        )}
-        {onTicketBoard ? (
-          <span className={pillActive}>Ticket Board</span>
-        ) : (
-          <Link href="/agent?board=ticket" className={pillInactive}>
-            Ticket Board
-          </Link>
-        )}
-        {onKpiBoard ? (
-          <span className={pillActive}>Task Board</span>
-        ) : (
-          <Link href="/agent?board=kpi" className={pillInactive}>
-            Task Board
-          </Link>
-        )}
+      <nav className="-mx-1 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [-ms-overflow-style:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+        <Tabs tabs={adminTabs} activeTab={activeTab} onTabChange={goToTab} />
       </nav>
     );
   }
@@ -88,21 +85,8 @@ export function OrchestrationQueueNav() {
 
   /** Personnel see only Ticket Board + Task Board; Company Board is admin-only. */
   return (
-    <nav className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 text-xs font-medium text-zinc-600 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 dark:text-zinc-500">
-      {onTicketBoard ? (
-        <span className={pillActive}>Ticket Board</span>
-      ) : (
-        <Link href="/agent?board=ticket" className={pillInactive}>
-          Ticket Board
-        </Link>
-      )}
-      {onKpiBoard ? (
-        <span className={pillActive}>Task Board</span>
-      ) : (
-        <Link href="/agent?board=kpi" className={pillInactive}>
-          Task Board
-        </Link>
-      )}
+    <nav className="-mx-1 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [-ms-overflow-style:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+      <Tabs tabs={personnelTabs} activeTab={activeTab} onTabChange={goToTab} />
     </nav>
   );
 }

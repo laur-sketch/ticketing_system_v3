@@ -133,6 +133,7 @@ export default function InsightsPage() {
   const { data: session } = useSession();
   const isPersonnel = session?.user?.role === "Personnel";
   const isAdminRole = session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
+  const isCompanyScopedAdmin = session?.user?.role === "Admin";
   const [activeTab, setActiveTab] = useState<InsightsTab>("ticket-metrics");
   const [data, setData] = useState<KpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -455,6 +456,7 @@ export default function InsightsPage() {
             companies={taskMetricCompanies}
             selectedCompany={selectedTaskMetricCompany}
             onSelectedCompanyChange={setSelectedTaskMetricCompany}
+            lockCompanySelection={isCompanyScopedAdmin}
           />
         </div>
       ) : activeTab === "task-project-tracker" && showTaskReportingTabs ? (
@@ -464,6 +466,7 @@ export default function InsightsPage() {
           dailyDate={taskMetricsDailyDate}
           rangeFrom={taskMetricsFrom}
           rangeTo={taskMetricsTo}
+          lockCompanySelection={isCompanyScopedAdmin}
         />
       ) : (
         <div className="space-y-8">
@@ -538,20 +541,31 @@ export default function InsightsPage() {
               </div>
               <div className="flex flex-wrap items-end justify-end gap-3 text-xs text-zinc-600 dark:text-zinc-500">
                 {isAdminRole ? (
-                  <label className="flex min-w-[12rem] flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                    Company
-                    <select
-                      value={selectedTicketMetricCompany}
-                      onChange={(e) => setSelectedTicketMetricCompany(e.target.value)}
-                      className="mt-1.5 min-h-10 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
-                    >
-                      {taskMetricCompanies.map((company) => (
-                        <option key={company.id} value={company.id}>
-                          {company.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  isCompanyScopedAdmin ? (
+                    <CompanyValueLabel
+                      label="Company"
+                      value={
+                        taskMetricCompanies.find((company) => company.id === selectedTicketMetricCompany)?.name ??
+                        "No assigned company"
+                      }
+                      className="min-w-[12rem]"
+                    />
+                  ) : (
+                    <label className="flex min-w-[12rem] flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                      Company
+                      <select
+                        value={selectedTicketMetricCompany}
+                        onChange={(e) => setSelectedTicketMetricCompany(e.target.value)}
+                        className="mt-1.5 min-h-10 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
+                      >
+                        {taskMetricCompanies.map((company) => (
+                          <option key={company.id} value={company.id}>
+                            {company.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )
                 ) : null}
                 <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
                   From
@@ -770,18 +784,48 @@ export default function InsightsPage() {
   );
 }
 
+function CompanyValueLabel({
+  label,
+  value,
+  className,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-1.5 text-left", className)}>
+      <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+        {label}
+      </span>
+      <span
+        className={cn(
+          "flex min-h-9 items-center rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100",
+          valueClassName,
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function TaskProjectTrackerPanel({
   loading,
   taskMetricsCadence,
   dailyDate,
   rangeFrom,
   rangeTo,
+  lockCompanySelection,
 }: {
   loading: boolean;
   taskMetricsCadence: KpiFrequencyCode;
   dailyDate: string;
   rangeFrom: string;
   rangeTo: string;
+  lockCompanySelection: boolean;
 }) {
   const reportingPeriodLabel = formatTaskMetricsPeriodLabel(taskMetricsCadence, {
     dailyDate,
@@ -913,20 +957,32 @@ function TaskProjectTrackerPanel({
                   ))}
                 </select>
               </label>
-              <label className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
-                Select Company
-                <select
-                  value={selectedCompany}
-                  onChange={(e) => setSelectedCompany(e.target.value)}
-                  className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
-                >
-                  {trackerOptions.companies.map((company) => (
-                    <option key={company.id} value={company.id}>
-                      {company.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {lockCompanySelection ? (
+                <CompanyValueLabel
+                  label="Company"
+                  value={
+                    trackerOptions.companies.find((company) => company.id === selectedCompany)?.name ??
+                    "No assigned company"
+                  }
+                  className="rounded-lg border border-zinc-200 bg-zinc-50 p-2 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70"
+                  valueClassName="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+                />
+              ) : (
+                <label className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
+                  Select Company
+                  <select
+                    value={selectedCompany}
+                    onChange={(e) => setSelectedCompany(e.target.value)}
+                    className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
+                  >
+                    {trackerOptions.companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
                 Today&apos;s date
                 <span className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50">
@@ -1220,6 +1276,7 @@ function TaskMetricsPanel({
   companies,
   selectedCompany,
   onSelectedCompanyChange,
+  lockCompanySelection,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
@@ -1238,6 +1295,7 @@ function TaskMetricsPanel({
   companies: TaskProjectTrackerOptions["companies"];
   selectedCompany: string;
   onSelectedCompanyChange: (v: string) => void;
+  lockCompanySelection: boolean;
 }) {
   const freq = taskMetricsCadence;
   const isDaily = freq === "DAILY";
@@ -1262,22 +1320,29 @@ function TaskMetricsPanel({
         </div>
         <div className="flex w-full shrink-0 flex-col gap-4 lg:w-auto lg:items-end">
           <div className="grid w-full gap-3 sm:grid-cols-[minmax(12rem,18rem)_auto] sm:items-end">
-            <label className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-                Company
-              </span>
-              <select
-                value={selectedCompany}
-                onChange={(e) => onSelectedCompanyChange(e.target.value)}
-                className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
-              >
-                {companies.map((company) => (
-                  <option key={company.id} value={company.id}>
-                    {company.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {lockCompanySelection ? (
+              <CompanyValueLabel
+                label="Company"
+                value={companies.find((company) => company.id === selectedCompany)?.name ?? "No assigned company"}
+              />
+            ) : (
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+                  Company
+                </span>
+                <select
+                  value={selectedCompany}
+                  onChange={(e) => onSelectedCompanyChange(e.target.value)}
+                  className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
+                >
+                  {companies.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="flex flex-col gap-1.5">
               <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
                 Cadence
