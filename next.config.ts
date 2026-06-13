@@ -22,6 +22,14 @@ for (const envUrl of [process.env.NEXTAUTH_URL, process.env.APP_BASE_URL]) {
 
 const nextConfig: NextConfig = {
   allowedDevOrigins,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

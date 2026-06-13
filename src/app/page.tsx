@@ -5,6 +5,7 @@ import { LandingAccessVisual } from "@/components/landing/LandingAccessVisual";
 import { LandingHeroVisual } from "@/components/landing/LandingHeroVisual";
 import { LandingWorkflowVisual } from "@/components/landing/LandingWorkflowVisual";
 import { LandingGallery } from "@/components/landing/LandingGallery";
+import { TaskCommandLanding } from "@/components/landing/TaskCommandLanding";
 import type { TicketPriority, TicketStatus } from "@prisma/client";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
 import { OnDutyPanel } from "@/components/dashboard/OnDutyPanel";
@@ -354,6 +355,10 @@ export default async function Home() {
         </div>
       </main>
     );
+  }
+
+  if (!session?.user) {
+    return <TaskCommandLanding />;
   }
 
   return (
