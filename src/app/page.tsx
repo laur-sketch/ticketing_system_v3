@@ -28,6 +28,15 @@ function minsBetween(a: Date, b: Date) {
   return Math.max(0, (a.getTime() - b.getTime()) / 60000);
 }
 
+function formatResponseDuration(totalMinutes: number) {
+  const minutes = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(minutes / 60);
+  const remainderMinutes = minutes % 60;
+  if (hours === 0) return `${remainderMinutes}m`;
+  if (remainderMinutes === 0) return `${hours}h`;
+  return `${hours}h ${remainderMinutes}m`;
+}
+
 function priorityTone(priority: TicketPriority) {
   if (priority === "URGENT") return "border-l-rose-400";
   if (priority === "UNSET") return "border-l-amber-400";
@@ -211,7 +220,7 @@ export default async function Home() {
             </article>
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Avg. Response</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{avgMins}m</p>
+              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{formatResponseDuration(avgMins)}</p>
             </article>
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
               <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Resolution Rate</p>
