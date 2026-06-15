@@ -112,13 +112,13 @@ export default async function AgentTicketPage({
     : false;
 
   return (
-    <main className="min-h-dvh bg-background px-2 py-2 text-zinc-100 sm:fixed sm:inset-0 sm:z-40 sm:bg-black/55 sm:px-6 sm:py-6 sm:backdrop-blur-[2px]">
+    <main className="min-h-dvh bg-zinc-100 px-2 py-2 text-zinc-950 sm:fixed sm:inset-0 sm:z-40 sm:bg-zinc-950/20 sm:px-6 sm:py-6 sm:backdrop-blur-[2px] dark:bg-black/55 dark:text-zinc-100">
       <div className="mx-auto flex min-h-dvh w-full max-w-[1200px] items-start justify-center sm:h-full sm:min-h-0 sm:items-center">
-        <div className="w-full rounded-2xl border border-zinc-700/80 bg-black/30 p-1.5 shadow-[0_30px_90px_rgba(0,0,0,0.55)] backdrop-blur-sm sm:rounded-3xl sm:p-2">
-          <section className="mx-auto flex w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-surface p-3 shadow-[0_20px_60px_rgba(0,0,0,0.45)] sm:max-h-[92vh] sm:rounded-2xl sm:p-6">
-            <div className="mb-4 flex flex-col gap-3 rounded-xl border border-zinc-800/90 bg-[#181716]/80 p-3 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:rounded-2xl sm:p-5">
+        <div className="w-full rounded-2xl border border-zinc-200 bg-white/75 p-1.5 shadow-[0_30px_90px_rgba(15,23,42,0.20)] backdrop-blur-sm sm:rounded-3xl sm:p-2 dark:border-zinc-700/80 dark:bg-black/30 dark:shadow-[0_30px_90px_rgba(0,0,0,0.55)]">
+          <section className="mx-auto flex w-full flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white p-3 shadow-[0_20px_60px_rgba(15,23,42,0.16)] sm:max-h-[92vh] sm:rounded-2xl sm:p-6 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+            <div className="mb-4 flex flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-950 p-3 text-white shadow-sm sm:mb-5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:rounded-2xl sm:p-5 dark:border-zinc-800/90 dark:bg-[#181716]/80">
               <div className="min-w-0">
-                <Link href={backHref} className="text-xs font-semibold text-orange-300 hover:underline">
+                <Link href={backHref} className="text-xs font-semibold text-orange-300 hover:text-orange-200 hover:underline">
                   {backHref === "/agent" ? "← Back to queue" : "← Back"}
                 </Link>
                 <h1 className="mt-2 break-words text-lg font-semibold leading-tight text-zinc-100 sm:text-2xl">
@@ -148,12 +148,12 @@ export default async function AgentTicketPage({
                 ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="w-fit rounded-full bg-zinc-700 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                <span className="w-fit rounded-full bg-white/12 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-100 dark:bg-zinc-700 dark:text-zinc-200">
                   {formatTicketStatusLabel(ticketForWorkspace.status)}
                 </span>
                 <Link
                   href={backHref}
-                  className="inline-flex h-8 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 px-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800"
+                  className="inline-flex h-8 items-center justify-center rounded-full border border-white/15 bg-black/30 px-3 text-xs font-semibold text-zinc-100 hover:bg-black/45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 >
                   Close
                 </Link>

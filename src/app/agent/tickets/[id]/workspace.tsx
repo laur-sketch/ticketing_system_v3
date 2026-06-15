@@ -129,28 +129,28 @@ export function AgentWorkspace({
     <div className="grid min-w-0 gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1.9fr)_minmax(280px,1fr)] xl:items-start">
       <AssigneeColorHighlight
         assigneeColorKey={ticket.assignedAgent?.staffAssignmentColor}
-        className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#0a101d] shadow-[0_14px_40px_rgba(0,0,0,0.3)]"
+        className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.10)] dark:border-zinc-800 dark:bg-[#0a101d] dark:shadow-[0_14px_40px_rgba(0,0,0,0.3)]"
       >
         <div className="flex flex-col">
-        <div className="border-b border-zinc-800/90 px-3 py-3 sm:px-5 sm:py-4">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500">
+        <div className="border-b border-zinc-200 px-3 py-3 sm:px-5 sm:py-4 dark:border-zinc-800/90">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
             <span>Incident</span>
-            <span className="break-all text-zinc-300">{ticket.ticketNumber}</span>
-            <span className="rounded-full bg-zinc-700/70 px-2 py-0.5 text-[10px] text-zinc-200">
+            <span className="break-all text-zinc-700 dark:text-zinc-300">{ticket.ticketNumber}</span>
+            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-zinc-700/70 dark:text-zinc-200">
               {formatTicketPriorityLabel(ticket.priority)}
             </span>
           </div>
-          <h2 className="mt-2 break-words text-lg font-bold tracking-tight text-zinc-100 sm:text-2xl md:text-3xl">{ticket.title}</h2>
-          <p className="mt-2 max-w-4xl whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-300 sm:text-base">{cleanedDescription}</p>
+          <h2 className="mt-2 break-words text-lg font-bold tracking-tight text-zinc-950 sm:text-2xl md:text-3xl dark:text-zinc-100">{ticket.title}</h2>
+          <p className="mt-2 max-w-4xl whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 sm:text-base dark:text-zinc-300">{cleanedDescription}</p>
           {ticket.team?.name ? (
-            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">
+            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
               Company Requested to:{" "}
-              <span className="normal-case tracking-normal text-zinc-300">{ticket.team.name}</span>
+              <span className="normal-case tracking-normal text-zinc-700 dark:text-zinc-300">{ticket.team.name}</span>
             </p>
           ) : null}
           {intakeScreenshots.length > 0 ? (
-            <div className="mt-4 border-t border-zinc-800/80 pt-4">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">
+            <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                 Screenshots from request
               </p>
               <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -159,7 +159,7 @@ export function AgentWorkspace({
                   return (
                     <li
                       key={m.storedFileName}
-                      className="overflow-hidden rounded-lg border border-zinc-700/80 bg-zinc-950/50"
+                      className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700/80 dark:bg-zinc-950/50"
                     >
                       <a href={href} target="_blank" rel="noreferrer" className="block">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -170,7 +170,7 @@ export function AgentWorkspace({
                           loading="lazy"
                         />
                       </a>
-                      <p className="truncate px-1.5 py-1 text-[10px] text-zinc-500" title={m.originalName}>
+                      <p className="truncate px-1.5 py-1 text-[10px] text-zinc-600 dark:text-zinc-500" title={m.originalName}>
                         {m.originalName}
                       </p>
                     </li>
@@ -181,27 +181,27 @@ export function AgentWorkspace({
           ) : null}
         </div>
 
-        <div className="border-b border-zinc-800/90 px-3 sm:px-5">
+        <div className="border-b border-zinc-200 px-3 sm:px-5 dark:border-zinc-800/90">
           <div className="flex gap-5 text-sm font-medium">
-            <span className="border-b-2 border-orange-500 py-3 text-orange-300">Verification outcome</span>
+            <span className="border-b-2 border-orange-500 py-3 text-orange-700 dark:text-orange-300">Verification outcome</span>
           </div>
         </div>
 
         <div className="space-y-3 px-3 py-3 sm:px-5 sm:py-4">
           {verificationState.state === "verified" ? (
-            <article className="rounded-xl border border-emerald-700/50 bg-emerald-950/20 p-4">
-              <p className="text-sm font-semibold text-emerald-300">Verified by requestor</p>
-              <p className="mt-2 text-sm text-zinc-200">
+            <article className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700/50 dark:bg-emerald-950/20">
+              <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Verified by requestor</p>
+              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">
                 {ticket.feedback
                   ? "Star rating and feedback have been submitted."
                   : "Verification complete. Waiting for star rating and feedback."}
               </p>
               {ticket.feedback ? (
-                <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
-                  <p className="text-sm text-zinc-100">
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+                  <p className="text-sm text-zinc-900 dark:text-zinc-100">
                     Star rating: <span className="font-semibold">{ticket.feedback.csat}/5</span>
                   </p>
-                  <p className="mt-1 text-sm text-zinc-300">
+                  <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
                     {ticket.feedback.comment?.trim() || "No written feedback submitted."}
                   </p>
                 </div>
@@ -210,22 +210,22 @@ export function AgentWorkspace({
           ) : null}
 
           {verificationState.state === "rejected" ? (
-            <article className="rounded-xl border border-rose-700/50 bg-rose-950/20 p-4">
-              <p className="text-sm font-semibold text-rose-300">Not verified by requestor</p>
-              <p className="mt-2 text-sm text-zinc-200">
+            <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-700/50 dark:bg-rose-950/20">
+              <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">Not verified by requestor</p>
+              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">
                 The requestor did not verify the resolution. Ticket workflow returns to active handling.
               </p>
-              <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
-                <p className="text-xs uppercase tracking-[0.12em] text-zinc-400">Reason provided</p>
-                <p className="mt-1 text-sm text-zinc-100">{verificationState.rejectedReason}</p>
+              <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+                <p className="text-xs uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">Reason provided</p>
+                <p className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{verificationState.rejectedReason}</p>
               </div>
             </article>
           ) : null}
 
           {verificationState.state === "pending" ? (
-            <article className="rounded-xl border border-zinc-700 bg-zinc-900/60 p-4">
-              <p className="text-sm font-semibold text-zinc-100">Awaiting requestor verification</p>
-              <p className="mt-2 text-sm text-zinc-300">
+            <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/60">
+              <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Awaiting requestor verification</p>
+              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
                 A verification email was sent. This tab will automatically reflect rating and feedback once verified,
                 or show the requestor&apos;s rejection reason when not verified.
               </p>
@@ -233,8 +233,8 @@ export function AgentWorkspace({
           ) : null}
         </div>
 
-        <div className="border-t border-zinc-800/90 bg-zinc-950/35 px-3 py-3 sm:px-5 sm:py-4">
-          <div className="text-sm text-zinc-400">
+        <div className="border-t border-zinc-200 bg-zinc-50 px-3 py-3 sm:px-5 sm:py-4 dark:border-zinc-800/90 dark:bg-zinc-950/35">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
             Use the right-side controls to request transfer, update priority, or complete resolution workflow.
           </div>
         </div>
@@ -242,24 +242,24 @@ export function AgentWorkspace({
       </AssigneeColorHighlight>
 
       <aside className="min-w-0 space-y-4">
-        <article className="rounded-2xl border border-zinc-800 bg-surface p-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
-          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Assignment</h2>
-          <p className="mt-2 text-sm text-zinc-300">
+        <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Assignment</h2>
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
             Ticket assignment is managed on the Assignment Board Kanban flow.
           </p>
         </article>
 
-        <article className="rounded-2xl border border-zinc-800 bg-surface p-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
-          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Ticket controls</h2>
+        <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Ticket controls</h2>
           <div className="mt-3 flex flex-col gap-2">
             {canUpdatePriority ? (
-              <div className="space-y-2 rounded-xl border border-zinc-700 bg-zinc-900/50 p-3">
-                <label className="text-xs font-semibold text-zinc-300">Priority level</label>
+              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Priority level</label>
                 <div className="flex flex-col gap-2 min-[420px]:flex-row">
                   <select
                     value={priority}
                     onChange={(e) => setPriority(e.target.value as typeof ticket.priority)}
-                    className="min-h-10 min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                    className="min-h-10 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   >
                     {(ticket.priority === "UNSET"
                       ? (["UNSET", "LOW", "MEDIUM", "HIGH", "URGENT"] as const)
@@ -280,7 +280,7 @@ export function AgentWorkspace({
                         note: "Priority updated",
                       })
                     }
-                    className="min-h-10 rounded-lg border border-orange-500/60 bg-orange-600/20 px-4 py-2 text-xs font-semibold text-orange-100 hover:bg-orange-600/30 disabled:opacity-60"
+                    className="min-h-10 rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60 dark:border-orange-500/60 dark:bg-orange-600/20 dark:text-orange-100 dark:hover:bg-orange-600/30"
                   >
                     Update
                   </button>
@@ -295,7 +295,7 @@ export function AgentWorkspace({
                 onClick={() =>
                   patch({ action: "request_more_info", note: "Requested more information from the requestor." })
                 }
-                className="min-h-10 rounded-lg border border-amber-500 px-4 py-2 text-sm font-semibold text-amber-200 hover:bg-amber-500/10 disabled:opacity-60"
+                className="min-h-10 rounded-lg border border-amber-500 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-500/10"
               >
                 Request more information
               </button>
@@ -306,17 +306,17 @@ export function AgentWorkspace({
                 type="button"
                 disabled={busy}
                 onClick={() => patch({ action: "status", status: "IN_PROGRESS", note: "Customer replied" })}
-                className="min-h-10 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-800 disabled:opacity-60"
+                className="min-h-10 rounded-lg border border-zinc-300 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
               >
                 Resume after customer reply
               </button>
             ) : null}
 
             {transferPending ? (
-              <div className="space-y-2 rounded-xl border border-amber-700/60 bg-amber-950/20 p-3">
-                <p className="text-xs font-semibold text-amber-200">Transfer request pending admin approval.</p>
+              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-950/20">
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">Transfer request pending admin approval.</p>
                 {pendingTransfer?.targetTeamName ? (
-                  <p className="text-xs text-amber-100/80">
+                  <p className="text-xs text-amber-700 dark:text-amber-100/80">
                     Destination: {pendingTransfer.targetTeamName} unassigned queue.
                   </p>
                 ) : null}
@@ -330,7 +330,7 @@ export function AgentWorkspace({
                         note: "Admin approved transfer request.",
                       })
                     }
-                    className="min-h-10 w-full rounded-lg border border-amber-500/70 bg-amber-500/20 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-60"
+                    className="min-h-10 w-full rounded-lg border border-amber-500/70 bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60 dark:bg-amber-500/20 dark:text-amber-100 dark:hover:bg-amber-500/30"
                   >
                     Approve transfer
                   </button>
@@ -339,14 +339,14 @@ export function AgentWorkspace({
             ) : null}
 
             {canRequestTransfer && !transferPending ? (
-              <div className="space-y-2 rounded-xl border border-zinc-700 bg-zinc-900/50 p-3">
-                <label className="text-xs font-semibold text-zinc-300">Request for transfer</label>
-                <label className="block text-[11px] font-semibold text-zinc-400">
+              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Request for transfer</label>
+                <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                   Send approval request to
                   <select
                     value={transferRecipientId}
                     onChange={(e) => setTransferRecipientId(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   >
                     {transferRecipients.length === 0 ? (
                       <option value="">Loading reviewers…</option>
@@ -360,27 +360,27 @@ export function AgentWorkspace({
                     )}
                   </select>
                 </label>
-                <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5">
-                  <label className="block text-[11px] font-semibold text-zinc-400">
+                <div className="space-y-2 rounded-lg border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-zinc-950/40">
+                  <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                     Transfer destination
                     <select
                       value={transferDestinationMode}
                       onChange={(e) =>
                         setTransferDestinationMode(e.target.value as "same_company" | "other_company")
                       }
-                      className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
                       <option value="same_company">Same company unassigned queue</option>
                       <option value="other_company">Different company unassigned queue</option>
                     </select>
                   </label>
                   {transferDestinationMode === "other_company" ? (
-                    <label className="block text-[11px] font-semibold text-zinc-400">
+                    <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                       Destination company
                       <select
                         value={transferTargetTeamId}
                         onChange={(e) => setTransferTargetTeamId(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                       >
                         {destinationCompanies.length === 0 ? (
                           <option value="">No other companies available</option>
@@ -399,7 +399,7 @@ export function AgentWorkspace({
                   value={transferReason}
                   onChange={(e) => setTransferReason(e.target.value)}
                   rows={2}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   placeholder="Why this ticket needs transfer"
                 />
                 <button
@@ -420,7 +420,7 @@ export function AgentWorkspace({
                         transferDestinationMode === "other_company" ? transferTargetTeamId : undefined,
                     });
                   }}
-                  className="min-h-10 w-full rounded-lg border border-zinc-600 bg-zinc-900 px-4 py-2 text-sm font-semibold text-zinc-100 hover:bg-zinc-800 disabled:opacity-60"
+                  className="min-h-10 w-full rounded-lg border border-zinc-300 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                 >
                   Request transfer
                 </button>
@@ -429,14 +429,14 @@ export function AgentWorkspace({
 
             {["IN_PROGRESS", "PENDING_INFO", "ESCALATED", "OPEN"].includes(ticket.status) ? (
               <div className="space-y-2">
-                <label className="text-xs font-semibold text-zinc-300">Resolution notes</label>
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Resolution notes</label>
                 <textarea
                   value={resolution}
                   onChange={(e) => setResolution(e.target.value)}
                   rows={3}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                 />
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   Move the ticket to the For confirmation lane in Kanban to trigger the requestor confirmation email.
                 </p>
               </div>
@@ -444,13 +444,13 @@ export function AgentWorkspace({
           </div>
         </article>
 
-        <article className="rounded-2xl border border-zinc-800 bg-surface p-4 text-xs text-zinc-300 shadow-[0_10px_30px_rgba(0,0,0,0.25)] sm:p-5">
+        <article className="rounded-2xl border border-zinc-200 bg-white p-4 text-xs text-zinc-600 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:text-zinc-300 dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Audit log</h2>
+            <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Audit log</h2>
             <button
               type="button"
               onClick={() => setLogModalOpen(true)}
-              className="rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-200 hover:bg-zinc-800"
+              className="rounded-full border border-zinc-300 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >
               View all log
             </button>
@@ -458,14 +458,14 @@ export function AgentWorkspace({
           <ul className="mt-3 space-y-2">
             {ticket.activities.slice(-6).map((a) => (
               <li key={a.id}>
-                <span className="font-semibold text-zinc-100">{a.summary}</span>
-                <div className="text-[11px] text-zinc-400">{a.createdAt.toLocaleString()}</div>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">{a.summary}</span>
+                <div className="text-[11px] text-zinc-500 dark:text-zinc-400">{a.createdAt.toLocaleString()}</div>
               </li>
             ))}
           </ul>
         </article>
 
-        {error ? <p className="text-sm text-red-300">{error}</p> : null}
+        {error ? <p className="text-sm text-red-600 dark:text-red-300">{error}</p> : null}
       </aside>
 
       {logModalOpen ? (
@@ -473,19 +473,19 @@ export function AgentWorkspace({
           <button
             type="button"
             onClick={() => setLogModalOpen(false)}
-            className="absolute inset-0 bg-black/70"
+            className="absolute inset-0 bg-zinc-950/55 dark:bg-black/70"
             aria-label="Close ticket logs"
           />
-          <section className="absolute inset-x-2 bottom-2 top-2 flex flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-surface shadow-[0_25px_90px_rgba(0,0,0,0.65)] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-[80vh] sm:w-[min(920px,94vw)] sm:-translate-x-1/2 sm:-translate-y-1/2">
-            <header className="flex items-center justify-between gap-3 border-b border-zinc-800 px-3 py-3 sm:px-5 sm:py-4">
+          <section className="absolute inset-x-2 bottom-2 top-2 flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_25px_90px_rgba(15,23,42,0.35)] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-[80vh] sm:w-[min(920px,94vw)] sm:-translate-x-1/2 sm:-translate-y-1/2 dark:border-zinc-700 dark:bg-surface dark:shadow-[0_25px_90px_rgba(0,0,0,0.65)]">
+            <header className="flex items-center justify-between gap-3 border-b border-zinc-200 px-3 py-3 sm:px-5 sm:py-4 dark:border-zinc-800">
               <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500">Ticket logs</p>
-                <h3 className="mt-1 break-all text-base font-semibold text-zinc-100">{ticket.ticketNumber}</h3>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Ticket logs</p>
+                <h3 className="mt-1 break-all text-base font-semibold text-zinc-950 dark:text-zinc-100">{ticket.ticketNumber}</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setLogModalOpen(false)}
-                className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-800"
+                className="rounded-md border border-zinc-300 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
               >
                 Close
               </button>
@@ -493,10 +493,10 @@ export function AgentWorkspace({
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4">
               <ul className="space-y-3">
                 {ticket.activities.map((a) => (
-                  <li key={a.id} className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-                    <p className="text-sm font-semibold text-zinc-100">{a.summary}</p>
-                    {a.detail ? <p className="mt-1 text-sm text-zinc-300">{a.detail}</p> : null}
-                    <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-zinc-500">
+                  <li key={a.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-100">{a.summary}</p>
+                    {a.detail ? <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{a.detail}</p> : null}
+                    <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                       {a.actor} · {a.createdAt.toLocaleString()}
                     </p>
                   </li>

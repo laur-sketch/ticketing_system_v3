@@ -78,8 +78,8 @@ export function personnelAssigneeHighlightStyleFromKey(
 ): CSSProperties | undefined {
   if (!isPersonnelAssignmentColorKey(key)) return undefined;
   const v = `var(--personnel-assign-${key.toLowerCase()})`;
-  const wash = `color-mix(in srgb, ${v} 28%, transparent)`;
-  const frame = `color-mix(in srgb, ${v} 52%, transparent)`;
+  const wash = `color-mix(in srgb, ${v} 48%, transparent)`;
+  const frame = `color-mix(in srgb, ${v} 76%, transparent)`;
   return {
     backgroundImage: `linear-gradient(${wash}, ${wash})`,
     outline: `1px solid ${frame}`,
@@ -90,8 +90,8 @@ export function personnelAssigneeHighlightStyleFromKey(
 /** @deprecated Use {@link personnelAssigneeHighlightStyleFromKey} with a registry key. */
 export function personnelAssigneeHighlightStyle(hex: string | null): CSSProperties | undefined {
   if (!hex) return undefined;
-  const wash = `color-mix(in srgb, ${hex} 28%, transparent)`;
-  const frame = `color-mix(in srgb, ${hex} 52%, transparent)`;
+  const wash = `color-mix(in srgb, ${hex} 48%, transparent)`;
+  const frame = `color-mix(in srgb, ${hex} 76%, transparent)`;
   return {
     backgroundImage: `linear-gradient(${wash}, ${wash})`,
     outline: `1px solid ${frame}`,
