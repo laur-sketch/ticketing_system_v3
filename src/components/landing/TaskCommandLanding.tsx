@@ -165,7 +165,7 @@ export function TaskCommandLanding() {
               Schedule Demo
             </Link>
             <Link
-              href="/signup"
+              href="/signin"
               className="bg-[#ff5c00] px-5 py-2 text-xs font-black uppercase tracking-[0.1em] text-[#521800] shadow-[0_0_15px_-5px_rgba(255,92,0,0.5)] transition hover:brightness-110"
             >
               Get Started
@@ -195,7 +195,7 @@ export function TaskCommandLanding() {
             </p>
             <div className="mt-12 flex flex-col items-center justify-center gap-5 md:flex-row">
               <Link
-                href="/signup"
+                href="/signin"
                 className="w-full bg-[#ff5c00] px-10 py-5 text-center text-xs font-black uppercase tracking-[0.1em] text-[#521800] shadow-[0_0_15px_-5px_rgba(255,92,0,0.5)] transition hover:brightness-110 md:w-auto"
               >
                 Deploy Instance
@@ -275,7 +275,7 @@ export function TaskCommandLanding() {
                   <h3 className="text-3xl font-bold text-[#2b140a] dark:text-[#fadcd2]">Ready to initialize?</h3>
                   <p className="mt-2 text-orange-950/70 dark:text-[#e4beb1]">Join technical teams using {BRAND_TITLE} to run support operations.</p>
                 </div>
-                <Link href="/signup" className="bg-[#ff5c00] px-8 py-4 text-center text-xs font-black uppercase tracking-[0.1em] text-[#521800]">
+                <Link href="/signin" className="bg-[#ff5c00] px-8 py-4 text-center text-xs font-black uppercase tracking-[0.1em] text-[#521800]">
                   Get Started
                 </Link>
               </div>
