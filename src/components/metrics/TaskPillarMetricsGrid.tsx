@@ -90,11 +90,13 @@ function PillarDonutCard({
   pillar,
   segments,
   headline,
+  subLabel,
   onInspect,
 }: {
   pillar: ItTaskPillarTitle;
   segments: DonutSegment[];
   headline: string;
+  subLabel?: string;
   onInspect: () => void;
 }) {
   const Icon = PILLAR_ICONS[pillar];
@@ -153,6 +155,11 @@ function PillarDonutCard({
           <p className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
             {headline}
           </p>
+          {subLabel ? (
+            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+              {subLabel}
+            </p>
+          ) : null}
         </div>
         <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
           <Icon className="size-[18px]" strokeWidth={1.75} aria-hidden />
@@ -329,9 +336,18 @@ function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
   ];
 }
 
-function incidentOnlyHeadline(agg: KpiChecklistProgress, view: { negative: number }, metricName: string): string {
-  const incidentPercent = agg.total > 0 ? Math.round((view.negative / agg.total) * 100) : 0;
-  return `${incidentPercent}% ${metricName}`;
+function incidentDaysLabel(
+  agg: { dailyProgressRows?: Array<KpiChecklistProgress & { date: string }>; periodsCounted?: number },
+  metricName: string,
+): string {
+  const rowsWithData = (agg.dailyProgressRows ?? []).filter((row) => row.total > 0);
+  const incidentDays = rowsWithData.filter((row) => row.done > 0).length;
+  const daysCounted = rowsWithData.length || agg.periodsCounted || 0;
+  return `${metricName} days: ${incidentDays} of ${daysCounted}`;
+}
+
+function countedPeriodsLabel(agg: { periodsCounted?: number; periodsInRange?: number }): string {
+  return `Counted periods: ${agg.periodsCounted ?? 0} of ${agg.periodsInRange ?? 0}`;
 }
 
 function spreadsheetColumnLabel(index: number): string {
@@ -737,21 +753,31 @@ export function TaskPillarMetricsGrid({
           const isNetworkPerformance = pillar === "NETWORK PERFORMANCE";
           const isCybersecurity = pillar === "CYBERSECURITY";
           const incidentOnly = isNetworkPerformance || isCybersecurity;
-          const incidentMetricName = isCybersecurity ? "breached" : "downtime";
+          const incidentMetricName = isCybersecurity ? "Breached" : "Downtime";
+          const showCountedPeriods =
+            pillar === "SYSTEM AVAILABILITY" ||
+            pillar === "DATA BACKUP" ||
+            pillar === "MONITORING";
           const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
             hideZeroNegative: invert,
           });
           const headline = incidentOnly
-            ? incidentOnlyHeadline(agg, view, incidentMetricName)
+            ? `${view.percent}% efficiency`
             : agg.total === 0
               ? "—"
               : `${view.percent}% ${cfg.metricName}`;
+          const subLabel = incidentOnly
+            ? incidentDaysLabel(agg, incidentMetricName)
+            : showCountedPeriods
+              ? countedPeriodsLabel(agg)
+              : undefined;
           return (
             <PillarDonutCard
               key={pillar}
               pillar={pillar}
               segments={segments}
               headline={headline}
+              subLabel={subLabel}
               onInspect={() => {
                 setInspectedPillar(pillar);
                 setExtendedView(false);
