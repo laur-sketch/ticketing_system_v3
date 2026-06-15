@@ -456,14 +456,21 @@ export default function NewTicketPage() {
 
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                   Company Requested to
-                  <Textarea
+                  <Select
                     name="requestToCompanySbu"
                     required
-                    rows={3}
-                    maxLength={500}
-                    placeholder="Type the company or SBU you are requesting (e.g. AGC, ALI, IT support)."
+                    disabled={companiesLoading}
                     className="mt-1.5 border-zinc-300 bg-white text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  />
+                  >
+                    <option value="">
+                      {companiesLoading ? "Loading companies..." : "Select a company/SBU"}
+                    </option>
+                    {companyTeams.map((team) => (
+                      <option key={team.id} value={team.name}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </Select>
                 </label>
               </>
             ) : (
