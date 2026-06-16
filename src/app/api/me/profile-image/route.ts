@@ -26,7 +26,7 @@ export async function GET() {
     if (!parsed) {
       return new NextResponse(null, { status: 404 });
     }
-    return new NextResponse(parsed.bytes, {
+    return new NextResponse(new Uint8Array(parsed.bytes), {
       headers: {
         "Content-Type": parsed.mime,
         "Cache-Control": "private, max-age=300",

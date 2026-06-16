@@ -45,6 +45,7 @@ module.exports = {
       cwd,
       script: path.join(cwd, "server.js"),
       interpreter: "node",
+      node_args: "--max-http-header-size=65536",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,

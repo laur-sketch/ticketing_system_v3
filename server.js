@@ -42,6 +42,8 @@ const { PrismaClient } = require("@prisma/client");
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOSTNAME || "0.0.0.0";
+/** Default Node limit is 16KB; large NextAuth cookie stacks can trigger HTTP 431. */
+const maxHeaderSize = Number(process.env.MAX_HTTP_HEADER_SIZE || "65536");
 
 const app = next({
   dev: false,
@@ -99,7 +101,7 @@ async function runConfirmationReminderJob() {
 app
   .prepare()
   .then(() => {
-    const server = http.createServer((req, res) => {
+    const server = http.createServer({ maxHeaderSize }, (req, res) => {
       handle(req, res);
     });
     const io = new Server(server, {

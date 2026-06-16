@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -26,36 +26,29 @@ function SignUpForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadCompanies() {
-      try {
-        const r = await fetch("/api/public/companies", { cache: "no-store" });
-        if (cancelled) return;
-        if (!r.ok) {
-          setCompanies([]);
-          setCompaniesStatus("error");
-          return;
-        }
-        const rows = (await r.json()) as CompanyOption[];
-        const list = Array.isArray(rows) ? rows : [];
-        setCompanies(list);
-        setCompaniesStatus("ready");
-        setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
-      } catch {
-        if (!cancelled) {
-          setCompanies([]);
-          setCompaniesStatus("error");
-        }
+  const loadCompanies = useCallback(async () => {
+    setCompaniesStatus("loading");
+    try {
+      const r = await fetch("/api/public/companies", { cache: "no-store" });
+      if (!r.ok) {
+        setCompanies([]);
+        setCompaniesStatus("error");
+        return;
       }
+      const rows = (await r.json()) as CompanyOption[];
+      const list = Array.isArray(rows) ? rows : [];
+      setCompanies(list);
+      setCompaniesStatus("ready");
+      setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
+    } catch {
+      setCompanies([]);
+      setCompaniesStatus("error");
     }
-
-    void loadCompanies();
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    void loadCompanies();
+  }, [loadCompanies]);
 
   const selectedCompanyId =
     companyId && companies.some((c) => c.id === companyId) ? companyId : "";

@@ -38,6 +38,9 @@ yarn-error.log*
 
 # pm2
 /logs
+/.pm2
+/.pm2-runtime
+/logs/server.pid
 
 # user-uploaded ticket screenshots (served via /api/tickets/[id]/screenshots/...)
 /uploads

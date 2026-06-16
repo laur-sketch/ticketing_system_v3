@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { Suspense } from "react";
 import { GlobalSidebar } from "@/components/GlobalSidebar";
 import { Nav } from "@/components/Nav";
 import { RealtimeRefreshBeacon } from "@/components/RealtimeRefreshBeacon";
@@ -53,7 +54,9 @@ export function AppChrome({ children }: Props) {
       <RealtimeRefreshBeacon />
       <GlobalSidebar />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        <Nav />
+        <Suspense fallback={null}>
+          <Nav />
+        </Suspense>
         <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
           {children}
         </div>

@@ -133,7 +133,9 @@ export async function POST(req: Request) {
       const ct = fd.get("companyTeamId");
       companyTeamIdRaw = ct != null ? String(ct) : undefined;
       const pct = fd.get("portalCompanyTeamId");
-      portalCompanyTeamIdRaw = pct != null ? String(pct) : undefined;
+      if (!companyTeamIdRaw && pct != null) {
+        companyTeamIdRaw = String(pct);
+      }
       const cor = fd.get("customerOrgRole");
       customerOrgRoleRaw = cor != null ? String(cor) : undefined;
       const br = fd.get("branch");

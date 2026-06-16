@@ -53,7 +53,7 @@ export function UsDateField({
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          commit();
+          commit(text);
         }
       }}
       className={cn(

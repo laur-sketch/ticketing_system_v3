@@ -142,7 +142,7 @@ export default function NewTicketPage() {
   const intakeBlocked = isRequestorIntakeLockRole && !intake.canCreateTickets;
   const intakeSubmitLocked = isRequestorIntakeLockRole && (!intakeGateReady || intakeBlocked);
   const myTicketsHref = isPersonnelIntake ? "/my-requests" : "/my-tickets";
-  const portalCustomer = session?.user as {
+  const portalCustomer = (session?.user ?? {}) as {
     companyName?: string | null;
     customerOrgRole?: string | null;
     companyId?: string | null;
