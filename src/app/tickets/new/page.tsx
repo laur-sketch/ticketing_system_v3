@@ -207,7 +207,7 @@ export default function NewTicketPage() {
     if (intakeSubmitLocked) {
       if (intakeBlocked) {
         setError(
-          "You already have a ticket in progress or awaiting your confirmation. Confirm and close it before creating a new request.",
+          "You already have an assigned or active ticket. Close it before creating a new request.",
         );
       } else {
         setError("Checking whether you can open a new request… try again in a moment.");
@@ -328,8 +328,7 @@ export default function NewTicketPage() {
           <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
             <p className="font-semibold">Action required: ticket {intake.pendingConfirmation.ticketNumber}</p>
             <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
-              You already have a ticket in progress or waiting on your confirmation. Confirm and close that ticket
-              before submitting a new request.
+              You already have an assigned or active ticket. Close that ticket before submitting a new request.
             </p>
             <Link href={intake.pendingConfirmation.verificationHref} className="mt-3 inline-flex text-sm font-semibold text-orange-300 underline-offset-4 hover:underline">
               {intake.pendingConfirmation.verificationHref.includes("/verification")
@@ -339,9 +338,9 @@ export default function NewTicketPage() {
           </div>
         ) : intakeBlocked ? (
           <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            <p className="font-semibold">You already have a ticket in progress or awaiting confirmation</p>
+            <p className="font-semibold">You already have an assigned or active ticket</p>
             <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-200/90">
-              Confirm and close your existing ticket before submitting a new request.
+              Close your existing ticket before submitting a new request.
             </p>
             <Link href={myTicketsHref} className="mt-3 inline-flex text-sm font-semibold text-orange-300 underline-offset-4 hover:underline">
               {isPersonnelIntake ? "Open my ticket dashboard" : "Open my tickets"}

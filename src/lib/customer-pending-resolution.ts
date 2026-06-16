@@ -5,7 +5,7 @@ import { resolveTicketContactFields } from "@/lib/ticket-intake-contact";
 /**
  * Requestor cannot open another ticket while any ticket tied to them (contact or requestor email)
  * is in one of these states. They may submit again once the ticket is **CLOSED** (or never opened
- * a conflicting one). `OPEN` is intentionally allowed so a brand-new ticket does not block itself.
+ * a conflicting one). Unassigned `OPEN` tickets are allowed, but assigned `OPEN` tickets block intake.
  */
 export const CUSTOMER_INTAKE_LOCK_STATUSES: TicketStatus[] = [
   "IN_PROGRESS",
@@ -57,8 +57,14 @@ export function requestorIdentityWhereForEmails(emails: Iterable<string>): Prism
 }
 
 const intakeBlockingWhere = (emails: Iterable<string>): Prisma.TicketWhereInput => ({
-  status: { in: [...CUSTOMER_INTAKE_LOCK_STATUSES] },
   ...requestorIdentityWhereForEmails(emails),
+  OR: [
+    { status: { in: [...CUSTOMER_INTAKE_LOCK_STATUSES] } },
+    {
+      status: { not: "CLOSED" },
+      assignedAgentId: { not: null },
+    },
+  ],
 });
 
 /**
