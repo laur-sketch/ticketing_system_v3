@@ -232,7 +232,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "This requestor already has a ticket that is in progress or awaiting confirmation. Confirm and close that ticket before submitting a new one.",
+            "This requestor already has an assigned or active ticket. Close that ticket before submitting a new one.",
           pendingTicketId: blocking.id,
           pendingTicketNumber: blocking.ticketNumber,
         },
