@@ -999,6 +999,7 @@ export function AgentKpiKanbanFlow({
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = Boolean(s.done);
+    const showCheckbox = subCompletable && busyId !== r.id;
     return (
       <div
         key={s.id}
@@ -1008,17 +1009,18 @@ export function AgentKpiKanbanFlow({
         )}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <label className="flex min-w-0 items-start gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            <input
-              type="checkbox"
-              className="mt-1"
-              disabled={!subCompletable || busyId === r.id}
-              checked={finished}
-              onChange={() => void toggleSubKpi(r.id, s.id, finished)}
-              aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
-            />
+          <div className="flex min-w-0 items-start gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {showCheckbox ? (
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={finished}
+                onChange={() => void toggleSubKpi(r.id, s.id, finished)}
+                aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
+              />
+            ) : null}
             <span className={cn("min-w-0", finished && "line-through opacity-70")}>{s.title}</span>
-          </label>
+          </div>
           <span
             className={cn(
               "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
