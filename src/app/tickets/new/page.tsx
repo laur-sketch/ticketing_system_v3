@@ -496,7 +496,7 @@ export default function NewTicketPage() {
                     required
                     maxLength={500}
                     autoComplete="organization"
-                    defaultValue={portalCustomer.companyName?.trim() ?? ""}
+                    defaultValue={portalCustomer?.companyName?.trim() ?? ""}
                     placeholder="Type your company / SBU (e.g. AGC, ALI, MCONPINCO)"
                     className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
@@ -513,7 +513,7 @@ export default function NewTicketPage() {
                       maxLength={120}
                       autoComplete="organization-title"
                       placeholder="e.g. Operations lead, Analyst"
-                      defaultValue={portalCustomer.customerOrgRole?.trim() || "Personnel"}
+                      defaultValue={portalCustomer?.customerOrgRole?.trim() || "Personnel"}
                       className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   </label>
