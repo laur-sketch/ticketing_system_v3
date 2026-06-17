@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -26,7 +26,38 @@ function SignUpForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const loadCompanies = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCompanies() {
+      try {
+        const r = await fetch("/api/public/companies", { cache: "no-store" });
+        if (cancelled) return;
+        if (!r.ok) {
+          setCompanies([]);
+          setCompaniesStatus("error");
+          return;
+        }
+        const rows = (await r.json()) as CompanyOption[];
+        const list = Array.isArray(rows) ? rows : [];
+        setCompanies(list);
+        setCompaniesStatus("ready");
+        setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
+      } catch {
+        if (!cancelled) {
+          setCompanies([]);
+          setCompaniesStatus("error");
+        }
+      }
+    }
+
+    void loadCompanies();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function retryLoadCompanies() {
     setCompaniesStatus("loading");
     try {
       const r = await fetch("/api/public/companies", { cache: "no-store" });
@@ -44,11 +75,7 @@ function SignUpForm() {
       setCompanies([]);
       setCompaniesStatus("error");
     }
-  }, []);
-
-  useEffect(() => {
-    void loadCompanies();
-  }, [loadCompanies]);
+  }
 
   const selectedCompanyId =
     companyId && companies.some((c) => c.id === companyId) ? companyId : "";
@@ -165,7 +192,7 @@ function SignUpForm() {
               <p>Could not load the company list.</p>
               <button
                 type="button"
-                onClick={() => void loadCompanies()}
+                onClick={() => void retryLoadCompanies()}
                 className="rounded-md border border-amber-600/50 bg-white px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-50 dark:border-amber-500/40 dark:bg-zinc-900 dark:text-amber-200 dark:hover:bg-zinc-800"
               >
                 Retry
