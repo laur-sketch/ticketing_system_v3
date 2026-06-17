@@ -85,8 +85,24 @@ function roleFromJwt(token: JWT): UserRole {
 
 const googleReady = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
+const SESSION_MAX_AGE_SECONDS = 30 * 60;
+
+function sessionExpiresAtFromToken(token: JWT, now: number): number {
+  if (typeof token.sessionExpiresAt === "number") return token.sessionExpiresAt;
+  const iat = typeof token.iat === "number" ? token.iat : now;
+  return iat + SESSION_MAX_AGE_SECONDS;
+}
+
 export const authOptions: NextAuthOptions = {
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+    /** Ignored for JWT strategy in NextAuth v4; kept for parity with session.maxAge. */
+    updateAge: 60,
+  },
+  jwt: {
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  },
   logger: {
     error(code, metadata) {
       if (code === "JWT_SESSION_ERROR") {
@@ -193,6 +209,17 @@ export const authOptions: NextAuthOptions = {
       return true;
     },
     async jwt({ token, profile, user, account }) {
+      const now = Math.floor(Date.now() / 1000);
+      if (user) {
+        token.sessionExpiresAt = now + SESSION_MAX_AGE_SECONDS;
+      }
+      const expiresAt = sessionExpiresAtFromToken(token, now);
+      if (now >= expiresAt) {
+        return { exp: now - 1 };
+      }
+      token.sessionExpiresAt = expiresAt;
+      token.exp = expiresAt;
+
       if (account?.provider) {
         token.authProvider = account.provider;
       }

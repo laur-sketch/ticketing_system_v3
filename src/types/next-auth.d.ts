@@ -28,6 +28,8 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
+    /** Unix seconds; fixed at sign-in so refresh does not extend the session. */
+    sessionExpiresAt?: number;
     role?: UserRole;
     authProvider?: string | null;
     companyId?: string | null;
