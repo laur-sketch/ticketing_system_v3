@@ -57,12 +57,16 @@ export function requestorIdentityWhereForEmails(emails: Iterable<string>): Prism
 }
 
 const intakeBlockingWhere = (emails: Iterable<string>): Prisma.TicketWhereInput => ({
-  ...requestorIdentityWhereForEmails(emails),
-  OR: [
-    { status: { in: [...CUSTOMER_INTAKE_LOCK_STATUSES] } },
+  AND: [
+    requestorIdentityWhereForEmails(emails),
     {
-      status: { not: "CLOSED" },
-      assignedAgentId: { not: null },
+      OR: [
+        { status: { in: [...CUSTOMER_INTAKE_LOCK_STATUSES] } },
+        {
+          status: { not: "CLOSED" },
+          assignedAgentId: { not: null },
+        },
+      ],
     },
   ],
 });

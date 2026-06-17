@@ -60,15 +60,9 @@ export function PendingConfirmationLoginModal() {
     !isVerificationPath(pathname);
 
   useEffect(() => {
-    if (!shouldCheck) {
-      setFetchState("idle");
-      setTickets([]);
-      setOpen(false);
-      return;
-    }
+    if (!shouldCheck) return;
 
     let cancelled = false;
-    setFetchState("loading");
 
     void (async () => {
       try {
@@ -110,7 +104,7 @@ export function PendingConfirmationLoginModal() {
     setOpen(false);
   }
 
-  if (!open || visibleTickets.length === 0 || fetchState !== "ready") return null;
+  if (!shouldCheck || !open || visibleTickets.length === 0 || fetchState !== "ready") return null;
 
   const primaryTicket = visibleTickets[0];
   const multiple = visibleTickets.length > 1;
