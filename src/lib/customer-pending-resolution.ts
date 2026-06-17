@@ -147,3 +147,33 @@ export async function listCustomerPendingResolvedTickets(
   const emails = await resolveCustomerIntakeIdentityEmails(accountEmail, authProvider ?? null);
   return listIntakeBlockingTicketsForEmails(emails);
 }
+
+/** Tickets where the requestor must confirm or reject the resolution. */
+export async function listTicketsAwaitingCustomerConfirmation(
+  accountEmail: string,
+  authProvider?: string | null,
+) {
+  const emails = await resolveCustomerIntakeIdentityEmails(accountEmail, authProvider ?? null);
+  const normalized = [
+    ...new Set(
+      [...emails]
+        .map((x) => (x ?? "").trim().toLowerCase())
+        .filter((x) => x.length > 0),
+    ),
+  ];
+  if (normalized.length === 0) return [];
+  return prisma.ticket.findMany({
+    where: {
+      ...requestorIdentityWhereForEmails(normalized),
+      status: { in: ["FOR_CONFIRMATION", "RESOLVED"] },
+    },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      ticketNumber: true,
+      title: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
+}

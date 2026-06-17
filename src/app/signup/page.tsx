@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -11,6 +11,17 @@ import {
 } from "@/components/auth/AuthShell";
 
 type CompanyOption = { id: string; name: string };
+
+async function fetchPublicCompanies(): Promise<CompanyOption[] | null> {
+  try {
+    const r = await fetch("/api/public/companies", { cache: "no-store" });
+    if (!r.ok) return null;
+    const rows = (await r.json()) as CompanyOption[];
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return null;
+  }
+}
 
 function SignUpForm() {
   const router = useRouter();
@@ -26,56 +37,32 @@ function SignUpForm() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const applyCompanyList = useCallback((list: CompanyOption[] | null) => {
+    if (list === null) {
+      setCompanies([]);
+      setCompaniesStatus("error");
+      return;
+    }
+    setCompanies(list);
+    setCompaniesStatus("ready");
+    setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-
-    async function loadCompanies() {
-      try {
-        const r = await fetch("/api/public/companies", { cache: "no-store" });
-        if (cancelled) return;
-        if (!r.ok) {
-          setCompanies([]);
-          setCompaniesStatus("error");
-          return;
-        }
-        const rows = (await r.json()) as CompanyOption[];
-        const list = Array.isArray(rows) ? rows : [];
-        setCompanies(list);
-        setCompaniesStatus("ready");
-        setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
-      } catch {
-        if (!cancelled) {
-          setCompanies([]);
-          setCompaniesStatus("error");
-        }
-      }
-    }
-
-    void loadCompanies();
+    void (async () => {
+      const list = await fetchPublicCompanies();
+      if (!cancelled) applyCompanyList(list);
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyCompanyList]);
 
-  async function retryLoadCompanies() {
+  const retryLoadCompanies = useCallback(async () => {
     setCompaniesStatus("loading");
-    try {
-      const r = await fetch("/api/public/companies", { cache: "no-store" });
-      if (!r.ok) {
-        setCompanies([]);
-        setCompaniesStatus("error");
-        return;
-      }
-      const rows = (await r.json()) as CompanyOption[];
-      const list = Array.isArray(rows) ? rows : [];
-      setCompanies(list);
-      setCompaniesStatus("ready");
-      setCompanyId((prev) => (prev && list.some((c) => c.id === prev) ? prev : ""));
-    } catch {
-      setCompanies([]);
-      setCompaniesStatus("error");
-    }
-  }
+    applyCompanyList(await fetchPublicCompanies());
+  }, [applyCompanyList]);
 
   const selectedCompanyId =
     companyId && companies.some((c) => c.id === companyId) ? companyId : "";

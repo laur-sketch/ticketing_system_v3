@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { Session } from "next-auth";
 import { SessionProvider, signOut, useSession } from "next-auth/react";
+import { PendingConfirmationLoginModal } from "@/components/portal/PendingConfirmationLoginModal";
 
 const DEV_SESSION_RESET_ENABLED = false;
 
@@ -59,6 +60,7 @@ export function AuthProvider({
   return (
     <SessionProvider session={session}>
       <DevSessionReset />
+      <PendingConfirmationLoginModal />
       {children}
     </SessionProvider>
   );
