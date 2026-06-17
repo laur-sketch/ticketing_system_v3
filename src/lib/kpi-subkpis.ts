@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { normalizePersonName } from "@/lib/admin-roster";
 import { DateTime } from "luxon";
 import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
 import {
@@ -453,6 +454,20 @@ export function setSubKpiItemDone(raw: unknown, subKpiId: string, done: boolean)
 export function subKpiAssignedAgentId(item: SubKpiItem): string | null {
   const id = item.assignedAgentId?.trim();
   return id ? id : null;
+}
+
+/** Match sub-task assignee to the signed-in operator by Agent id or display name. */
+export function subKpiAssignedToOperator(
+  item: SubKpiItem,
+  operator: { id?: string | null; name?: string | null },
+): boolean {
+  const operatorId = operator.id?.trim();
+  const subAssigneeId = subKpiAssignedAgentId(item);
+  if (operatorId && subAssigneeId === operatorId) return true;
+  const operatorName = (operator.name ?? "").trim();
+  const subAssigneeName = (item.assignedAgentName ?? "").trim();
+  if (!operatorName || !subAssigneeName) return false;
+  return normalizePersonName(operatorName) === normalizePersonName(subAssigneeName);
 }
 
 export function hasSubKpiAssignedTo(raw: unknown, agentId: string | null | undefined): boolean {

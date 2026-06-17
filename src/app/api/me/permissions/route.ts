@@ -19,5 +19,6 @@ export async function GET() {
   return NextResponse.json({
     canAccessAssignmentBoard,
     operatorAgentId: operator?.id ?? null,
+    operatorAgentName: operator?.name ?? null,
   });
 }

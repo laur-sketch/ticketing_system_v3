@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, GripVertical, Maximize2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { normalizePersonName } from "@/lib/admin-roster";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import {
   incompletePastDeadlineDelayMs,
@@ -31,6 +32,7 @@ import {
   normalizeSubKpis,
   pillarScreenshotsEnabled,
   subKpiAssignedAgentId,
+  subKpiAssignedToOperator,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import { hasValidActualDate } from "@/lib/us-date-format";
@@ -197,6 +199,7 @@ export function AgentKpiKanbanFlow({
   const [canUnassignWork, setCanUnassignWork] = useState(false);
   const [canCompleteUnassignedWork, setCanCompleteUnassignedWork] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
+  const [operatorAgentName, setOperatorAgentName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
@@ -239,11 +242,19 @@ export function AgentKpiKanbanFlow({
       canAssignWork?: boolean;
       canUnassignWork?: boolean;
       canCompleteUnassignedWork?: boolean;
+      operatorAgentId?: string | null;
+      operatorAgentName?: string | null;
     };
     if (Array.isArray(payload.rows)) setRows(payload.rows);
     setCanAssignWork(Boolean(payload.canAssignWork));
     setCanUnassignWork(Boolean(payload.canUnassignWork));
     setCanCompleteUnassignedWork(Boolean(payload.canCompleteUnassignedWork));
+    if (typeof payload.operatorAgentId === "string" && payload.operatorAgentId.trim()) {
+      setOperatorAgentId(payload.operatorAgentId);
+    }
+    if (typeof payload.operatorAgentName === "string" && payload.operatorAgentName.trim()) {
+      setOperatorAgentName(payload.operatorAgentName);
+    }
   }
 
   async function loadContext() {
@@ -257,8 +268,16 @@ export function AgentKpiKanbanFlow({
       fetch("/api/agents", { cache: "no-store" }),
     ]);
     if (permRes.ok) {
-      const p = (await permRes.json()) as { operatorAgentId?: string | null };
-      setOperatorAgentId(p.operatorAgentId ?? null);
+      const p = (await permRes.json()) as {
+        operatorAgentId?: string | null;
+        operatorAgentName?: string | null;
+      };
+      if (typeof p.operatorAgentId === "string" && p.operatorAgentId.trim()) {
+        setOperatorAgentId(p.operatorAgentId);
+      }
+      if (typeof p.operatorAgentName === "string" && p.operatorAgentName.trim()) {
+        setOperatorAgentName(p.operatorAgentName);
+      }
     }
     if (agentsRes.ok) {
       const a = (await agentsRes.json()) as AssignableAgent[];
@@ -344,21 +363,36 @@ export function AgentKpiKanbanFlow({
   }
 
   function canEditChecklist(r: KpiRecord) {
-    return !!operatorAgentId && r.assignedAgent?.id === operatorAgentId;
+    const main = r.assignedAgent;
+    if (!main) return false;
+    if (operatorAgentId && main.id === operatorAgentId) return true;
+    const mainName = (main.name ?? "").trim();
+    const operatorName = (operatorAgentName ?? "").trim();
+    return Boolean(
+      operatorName && mainName && normalizePersonName(operatorName) === normalizePersonName(mainName),
+    );
   }
 
   function canEditSubKpi(r: KpiRecord, s: SubKpiItem) {
     if (canEditChecklist(r)) return true;
+    if (
+      subKpiAssignedToOperator(s, {
+        id: operatorAgentId,
+        name: operatorAgentName,
+      })
+    ) {
+      return true;
+    }
     const subAssigneeId = subKpiAssignedAgentId(s);
-    if (operatorAgentId && subAssigneeId === operatorAgentId) return true;
     return canCompleteUnassignedWork && !r.assignedAgent?.id && !subAssigneeId;
   }
 
   function canCompleteSubKpi(r: KpiRecord, s: SubKpiItem) {
-    const screenshotsEnabled = taskScreenshotsEnabled(s);
-    if (screenshotsEnabled && !hasBeforeAndAfterScreenshots(s)) return false;
-    if (canEditSubKpi(r, s)) return true;
-    return canAssignWork && screenshotsEnabled && hasBeforeAndAfterScreenshots(s);
+    if (!canEditSubKpi(r, s)) {
+      return canAssignWork && taskScreenshotsEnabled(s) && hasBeforeAndAfterScreenshots(s);
+    }
+    if (taskScreenshotsEnabled(s) && !hasBeforeAndAfterScreenshots(s)) return false;
+    return true;
   }
 
   function taskCardDone(r: KpiRecord) {
@@ -378,7 +412,9 @@ export function AgentKpiKanbanFlow({
   function canOpenSubtaskDrawer(r: KpiRecord, items: SubKpiItem[]) {
     if (canAssignWork || canEditChecklist(r)) return true;
     if (!operatorAgentId) return canCompleteUnassignedWork && !r.assignedAgent?.id;
-    return items.some((item) => subKpiAssignedAgentId(item) === operatorAgentId);
+    return items.some((item) =>
+      subKpiAssignedToOperator(item, { id: operatorAgentId, name: operatorAgentName }),
+    );
   }
 
   function toggleSubtaskDrawer(recordId: string) {
@@ -999,7 +1035,7 @@ export function AgentKpiKanbanFlow({
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = Boolean(s.done);
-    const showCheckbox = subCompletable && busyId !== r.id;
+    const showCheckbox = subEditable && busyId !== r.id;
     return (
       <div
         key={s.id}
@@ -1015,6 +1051,7 @@ export function AgentKpiKanbanFlow({
                 type="checkbox"
                 className="mt-1"
                 checked={finished}
+                disabled={!subCompletable}
                 onChange={() => void toggleSubKpi(r.id, s.id, finished)}
                 aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
               />

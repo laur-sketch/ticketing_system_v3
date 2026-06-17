@@ -29,6 +29,7 @@ import {
   setSubKpiItemWorkMeta,
   setTaskPriority,
   subKpiAssignedAgentId,
+  subKpiAssignedToOperator,
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
   wrapForPersist,
@@ -259,6 +260,8 @@ export async function GET(req: Request) {
     canAssignWork: perms.canAssignWork,
     canUnassignWork: session.user.role === "SuperAdmin",
     canCompleteUnassignedWork: session.user.role === "SuperAdmin",
+    operatorAgentId: perms.operator?.id ?? null,
+    operatorAgentName: perms.operator?.name ?? null,
   });
 }
 
@@ -648,17 +651,27 @@ export async function PATCH(req: Request) {
     : collectAllSubKpiItems(normalizeSubKpis(kpiRow.subKpis));
   const canEditSubKpi = (subKpiId: string) => {
     if (isAssignee) return true;
-    const operatorId = perms.operator?.id;
     const item = subKpiItems.find((it) => it.id === subKpiId);
     if (!item) return false;
+    if (
+      subKpiAssignedToOperator(item, {
+        id: perms.operator?.id,
+        name: perms.operator?.name ?? session.user.name,
+      })
+    ) {
+      return true;
+    }
     const subAssigneeId = subKpiAssignedAgentId(item);
-    if (operatorId && subAssigneeId === operatorId) return true;
     return session.user.role === "SuperAdmin" && !kpiRow.assignedAgentId && !subAssigneeId;
   };
   const canCompleteSubKpi = (subKpiId: string) => {
-    if (canEditSubKpi(subKpiId)) return true;
     const item = subKpiItems.find((it) => it.id === subKpiId);
-    return Boolean(item && perms.canAssignWork && taskScreenshotsEnabled(item) && hasBeforeAndAfterScreenshots(item));
+    if (!item) return false;
+    if (!canEditSubKpi(subKpiId)) {
+      return Boolean(perms.canAssignWork && taskScreenshotsEnabled(item) && hasBeforeAndAfterScreenshots(item));
+    }
+    if (taskScreenshotsEnabled(item) && !hasBeforeAndAfterScreenshots(item)) return false;
+    return true;
   };
 
   if (body.itProjectName !== undefined || body.itProjectPhase !== undefined) {

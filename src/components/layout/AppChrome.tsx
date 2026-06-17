@@ -3,7 +3,6 @@
 import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Suspense } from "react";
 import { GlobalSidebar } from "@/components/GlobalSidebar";
 import { Nav } from "@/components/Nav";
 import { RealtimeRefreshBeacon } from "@/components/RealtimeRefreshBeacon";
