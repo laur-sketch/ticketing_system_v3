@@ -4,10 +4,10 @@ import {
   customerHasPendingResolvedTicket,
   customerPendingTicketHref,
 } from "@/lib/customer-pending-resolution";
+import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 
 /**
  * Whether the signed-in user may open another request as **requestor** (same rules as POST /api/tickets).
- * Used by Customer and Personnel intake UIs; Admin/SuperAdmin are always allowed here (they file for others).
  */
 export async function GET() {
   const session = await requireSession();
@@ -16,7 +16,7 @@ export async function GET() {
   }
 
   const role = session.user.role;
-  if (role !== "Customer" && role !== "Personnel") {
+  if (!isTicketRequestorRole(role)) {
     return NextResponse.json({
       canCreateTickets: true,
       authProvider: session.user.authProvider ?? null,

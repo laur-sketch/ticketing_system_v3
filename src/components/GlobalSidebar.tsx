@@ -37,6 +37,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         label: "Tickets",
         children: [
           { href: "/", label: "Ticket Dashboard" },
+          { href: "/my-requests", label: "My requests" },
           { href: "/admin/ticket-requests", label: "Create requests" },
         ],
       },
@@ -60,6 +61,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         label: "Tickets",
         children: [
           { href: "/", label: "Ticket Dashboard" },
+          { href: "/my-requests", label: "My requests" },
           { href: "/admin/ticket-requests", label: "Create requests" },
         ],
       },
@@ -98,7 +100,7 @@ function linksForRole(role: string | undefined): NavItem[] {
 
 function iconForLink(label: string) {
   const key = label.toLowerCase();
-  if (key.includes("ticket dashboard")) return LayoutDashboard;
+  if (key.includes("my request")) return LayoutDashboard;
   if (key === "board") return Ticket;
   if (key.includes("ticket board")) return Ticket;
   if (key.includes("task board")) return CheckSquare;

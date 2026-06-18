@@ -8,11 +8,13 @@ import { requireSession } from "@/lib/access";
 import {
   customerHasPendingResolvedTicket,
   customerPendingTicketHref,
+  isAwaitingCustomerConfirmation,
 } from "@/lib/customer-pending-resolution";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { BRAND_TITLE } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/prisma";
+import { isTicketRequestorRole, ticketRequestorNavLabel } from "@/lib/ticket-requestor";
 
 export const dynamic = "force-dynamic";
 
@@ -132,7 +134,9 @@ export default async function MyRequestsPage({
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (session.user.role !== "Personnel") redirect("/");
+  if (!isTicketRequestorRole(session.user.role)) redirect("/");
+
+  const roleLabel = ticketRequestorNavLabel(session.user.role);
 
   const me = (session.user.email ?? "").trim().toLowerCase();
   if (!me) redirect("/");
@@ -203,11 +207,15 @@ export default async function MyRequestsPage({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-orange-700 dark:text-orange-400/95">
-                {BRAND_TITLE} · Personnel
+                {BRAND_TITLE} · {roleLabel}
               </p>
               <h1 className="mt-1.5 text-[1.7rem] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-[2rem]">
-                Ticket dashboard
+                My requests
               </h1>
+              <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
+                Tickets you submitted as requestor. Confirm and rate resolved work in the{" "}
+                <span className="font-semibold text-emerald-800 dark:text-emerald-300">For confirmation</span> column.
+              </p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <form
@@ -320,6 +328,10 @@ export default async function MyRequestsPage({
                       const assigneeKey = t.assignedAgent?.email
                         ? (assigneeColorByEmail.get(t.assignedAgent.email.trim().toLowerCase()) ?? null)
                         : null;
+                      const awaitingConfirmation = isAwaitingCustomerConfirmation(t.status);
+                      const ticketHref = awaitingConfirmation
+                        ? customerPendingTicketHref(t)
+                        : `/tickets/${t.id}`;
                       return (
                       <AssigneeColorHighlight
                         key={t.id}
@@ -327,7 +339,7 @@ export default async function MyRequestsPage({
                         className="group block rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#181716] dark:hover:border-orange-500/40 dark:hover:bg-[#201f1d]"
                       >
                       <Link
-                        href={`/tickets/${t.id}`}
+                        href={ticketHref}
                         className="block p-3.5"
                       >
                         <div className="flex items-start justify-between gap-2">
@@ -383,6 +395,11 @@ export default async function MyRequestsPage({
                             {relativeTime(t.updatedAt)}
                           </span>
                         </div>
+                        {awaitingConfirmation ? (
+                          <p className="mt-3 inline-flex w-full items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-center text-xs font-bold uppercase tracking-[0.08em] text-white shadow-sm transition group-hover:bg-emerald-500">
+                            Confirm resolution
+                          </p>
+                        ) : null}
                       </Link>
                       </AssigneeColorHighlight>
                       );

@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Input, Select, Textarea } from "@/components/ui/field";
 import { BRAND_TITLE } from "@/lib/brand";
 import { MAX_SCREENSHOT_BYTES, MAX_SCREENSHOT_COUNT } from "@/lib/ticket-intake-screenshots-constants";
+import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 
 function pickImageFiles(list: File[]) {
   return list.filter((f) => {
@@ -61,7 +62,7 @@ export default function NewTicketPage() {
     async function loadIntakeLock() {
       if (sessionStatus !== "authenticated") return;
       const role = session?.user?.role;
-      if (role !== "Customer" && role !== "Personnel") {
+      if (!isTicketRequestorRole(role)) {
         setIntakeGateReady(true);
         return;
       }
@@ -138,10 +139,10 @@ export default function NewTicketPage() {
 
   const isCustomer = session?.user?.role === "Customer";
   const isPersonnelIntake = session?.user?.role === "Personnel";
-  const isRequestorIntakeLockRole = isCustomer || isPersonnelIntake;
+  const isRequestorIntakeLockRole = isTicketRequestorRole(session?.user?.role);
   const intakeBlocked = isRequestorIntakeLockRole && !intake.canCreateTickets;
   const intakeSubmitLocked = isRequestorIntakeLockRole && (!intakeGateReady || intakeBlocked);
-  const myTicketsHref = isPersonnelIntake ? "/my-requests" : "/my-tickets";
+  const myTicketsHref = isCustomer ? "/my-tickets" : "/my-requests";
   const portalCustomer = (session?.user ?? {}) as {
     companyName?: string | null;
     customerOrgRole?: string | null;
@@ -294,12 +295,12 @@ export default function NewTicketPage() {
       }
       await res.json();
       const role = session?.user?.role;
-      if (isPersonnelIntake) {
-        router.push("/my-requests?submitted=1");
-      } else if (role === "SuperAdmin" || role === "Admin") {
-        router.push("/admin/ticket-requests?submitted=1");
-      } else {
+      if (role === "Customer") {
         router.push("/my-tickets?submitted=1");
+      } else if (isTicketRequestorRole(role)) {
+        router.push("/my-requests?submitted=1");
+      } else {
+        router.push("/");
       }
     } catch {
       setError("Could not create ticket.");

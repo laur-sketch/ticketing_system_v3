@@ -7,6 +7,7 @@ import { AlertCircle, ArrowRight, ClipboardCheck, X } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { cn } from "@/lib/cn";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
+import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 
 type PendingTicket = {
   id: string;
@@ -55,7 +56,7 @@ export function PendingConfirmationLoginModal() {
   const userKey = (session?.user?.email ?? "user").trim().toLowerCase();
   const shouldCheck =
     status === "authenticated" &&
-    (role === "Customer" || role === "Personnel") &&
+    isTicketRequestorRole(role) &&
     !AUTH_PATHS.has(pathname) &&
     !isVerificationPath(pathname);
 

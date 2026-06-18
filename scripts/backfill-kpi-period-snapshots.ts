@@ -21,6 +21,7 @@ async function main() {
       recurrenceMonthDay: true,
       periodCycleStartAt: true,
       isRecurring: true,
+      assignedAgent: { select: { id: true, name: true } },
     },
   });
 

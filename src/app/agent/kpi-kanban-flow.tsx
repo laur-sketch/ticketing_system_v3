@@ -33,6 +33,8 @@ import {
   pillarScreenshotsEnabled,
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
+  subKpiProgressMismatchWarning,
+  SUB_KPI_PROGRESS_MISMATCH_WARNING,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import { hasValidActualDate } from "@/lib/us-date-format";
@@ -1036,6 +1038,12 @@ export function AgentKpiKanbanFlow({
     const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = Boolean(s.done);
     const showCheckbox = subEditable && busyId !== r.id;
+    const progressMismatchWarning =
+      showCheckbox &&
+      subKpiProgressMismatchWarning(s, r.assignedAgent, {
+        id: operatorAgentId,
+        name: operatorAgentName,
+      });
     return (
       <div
         key={s.id}
@@ -1072,6 +1080,14 @@ export function AgentKpiKanbanFlow({
         {needsScreenshots ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
             Upload both before and after screenshots before marking this sub-task done.
+          </p>
+        ) : null}
+        {progressMismatchWarning ? (
+          <p
+            className="mt-1 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
+            role="status"
+          >
+            {SUB_KPI_PROGRESS_MISMATCH_WARNING}
           </p>
         ) : null}
         {renderSubKpiAssignmentControl(r, s)}

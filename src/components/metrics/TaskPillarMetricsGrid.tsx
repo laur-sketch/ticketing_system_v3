@@ -419,6 +419,157 @@ function formatDailyProgressDate(ymd: string): string {
   });
 }
 
+type ContributorKpiRow = {
+  id: string;
+  name: string;
+  role: string;
+  total: number;
+  done: number;
+  remaining: number;
+  percent: number;
+};
+
+function ContributorPersonalKpiCard({
+  row,
+  completedLabel = "Completed",
+  remainingLabel = "Remaining",
+}: {
+  row: ContributorKpiRow;
+  completedLabel?: string;
+  remainingLabel?: string;
+}) {
+  return (
+    <article className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50/90 p-3.5 dark:border-zinc-800 dark:from-zinc-900/80 dark:to-zinc-950/60">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">{row.name}</p>
+          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+            {row.role}
+          </p>
+        </div>
+        <div className="rounded-full border border-orange-500/25 bg-orange-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+          Personal KPI
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-2.5 py-2 dark:bg-emerald-500/10">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700 dark:text-emerald-300">
+            {completedLabel}
+          </p>
+          <p className="mt-1 text-xl font-bold tabular-nums text-emerald-900 dark:text-emerald-100">{row.done}</p>
+          <p className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80">tasks done</p>
+        </div>
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 px-2.5 py-2 dark:bg-amber-500/10">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+            {remainingLabel}
+          </p>
+          <p className="mt-1 text-xl font-bold tabular-nums text-amber-900 dark:text-amber-100">{row.remaining}</p>
+          <p className="text-[10px] text-amber-700/80 dark:text-amber-300/80">to accomplish</p>
+        </div>
+        <div className="rounded-lg border border-zinc-300/80 bg-white/80 px-2.5 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+            Assigned
+          </p>
+          <p className="mt-1 text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{row.total}</p>
+          <p className="text-[10px] text-zinc-500 dark:text-zinc-400">total tasks</p>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
+          <span className="font-semibold text-zinc-600 dark:text-zinc-400">Completion rate</span>
+          <span className="font-mono font-bold tabular-nums text-zinc-800 dark:text-zinc-200">{row.percent}%</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+          <div
+            className="h-full rounded-full bg-[var(--accent-teal)] transition-[width]"
+            style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }}
+          />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function ContributorPersonalKpiSection({
+  rows,
+  metricsCadence,
+  reportingPeriodLabel,
+  teamTotals,
+}: {
+  rows: ContributorKpiRow[];
+  metricsCadence: KpiFrequencyCode;
+  reportingPeriodLabel?: string;
+  teamTotals?: {
+    completed: number;
+    remaining: number;
+    total: number;
+    percent: number;
+    completedLabel: string;
+    remainingLabel: string;
+  };
+}) {
+  if (rows.length === 0) return null;
+
+  const cadenceLabel =
+    metricsCadence === "DAILY"
+      ? "daily"
+      : metricsCadence === "WEEKLY"
+        ? "weekly"
+        : metricsCadence === "MONTHLY"
+          ? "monthly"
+          : "quarterly";
+  const periodLabel = reportingPeriodLabel?.trim() || "the selected period";
+
+  const totals = teamTotals ?? {
+    completed: rows.reduce((acc, row) => acc + row.done, 0),
+    remaining: rows.reduce((acc, row) => acc + row.remaining, 0),
+    total: rows.reduce((acc, row) => acc + row.total, 0),
+    percent: 0,
+    completedLabel: "Completed",
+    remainingLabel: "Remaining",
+  };
+  const teamPercent =
+    teamTotals?.percent ??
+    (totals.total > 0 ? Math.round((totals.completed / totals.total) * 100) : 0);
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
+      <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+          Contributor personal KPI
+        </p>
+        <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
+          Task Board checkbox counts on a <span className="font-semibold">{cadenceLabel}</span> scale for{" "}
+          <span className="font-semibold">{periodLabel}</span> — completed vs remaining sub-tasks per contributor.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 font-semibold text-emerald-800 dark:text-emerald-200">
+            {totals.completed} {totals.completedLabel.toLowerCase()} team-wide
+          </span>
+          <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 font-semibold text-amber-800 dark:text-amber-200">
+            {totals.remaining} {totals.remainingLabel.toLowerCase()}
+          </span>
+          <span className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+            {teamPercent}% overall
+          </span>
+        </div>
+      </div>
+      <div className="max-h-[min(52vh,28rem)] space-y-2.5 overflow-y-auto bg-white p-3 dark:bg-zinc-950">
+        {rows.map((row) => (
+          <ContributorPersonalKpiCard
+            key={row.id}
+            row={row}
+            completedLabel={totals.completedLabel}
+            remainingLabel={totals.remainingLabel}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function csvLayoutRowsForPillar(args: {
   pillar: ItTaskPillarTitle;
   metricsCadence: KpiFrequencyCode;
@@ -502,7 +653,23 @@ function sourceDetailsForPillar(args: {
 }): {
   title: string;
   rows: Array<{ label: string; value: string }>;
-  assigneeProgress: Array<{ id: string; name: string; role: string; total: number; done: number; percent: number }>;
+  assigneeProgress: Array<{
+    id: string;
+    name: string;
+    role: string;
+    total: number;
+    done: number;
+    remaining: number;
+    percent: number;
+  }>;
+  contributorTeamTotals?: {
+    completed: number;
+    remaining: number;
+    total: number;
+    percent: number;
+    completedLabel: string;
+    remainingLabel: string;
+  };
   tableColumns: string[];
   tableRows: string[][];
   csvColumns: string[];
@@ -620,6 +787,14 @@ function sourceDetailsForPillar(args: {
       { label: cfg?.negativeLabel ?? "Missing", value: String(agg?.missing ?? 0) },
     ],
     assigneeProgress: agg?.assigneeProgress ?? [],
+    contributorTeamTotals: {
+      completed: view.positive,
+      remaining: view.negative,
+      total: agg?.total ?? 0,
+      percent: view.percent,
+      completedLabel: cfg?.positiveLabel ?? "Completed",
+      remainingLabel: cfg?.negativeLabel ?? "Remaining",
+    },
     tableColumns: ["Gathered field", "Value", "Recorded source"],
     tableRows: [
       ["Task rows counted", String(agg?.total ?? 0), `KPI checklist items for ${pillar}`],
@@ -642,7 +817,8 @@ function sourceDetailsForPillar(args: {
         : agg?.csvRows?.length
         ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
         : "Checkboxes on the Task Board are the source of completion data.",
-      "Past periods come from immutable snapshots; only the current period uses live task card data.",
+      "Past periods come from immutable snapshots; the active period uses live Task Board checkbox state.",
+      "Contributor personal KPI is averaged across the same counted periods as the pillar donut and scaled to the same headline buckets.",
     ],
   };
 }
@@ -850,41 +1026,12 @@ export function TaskPillarMetricsGrid({
             </ul>
             {extendedView ? (
               <div className="mt-4 space-y-3">
-                {inspected.assigneeProgress.length > 0 ? (
-                  <section className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
-                    <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
-                      <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                        Assignee/Sub Assignee Progress
-                      </p>
-                      <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-                        Average contribution scaled to the same progress shown in this metric donut.
-                      </p>
-                    </div>
-                    <div className="max-h-44 space-y-2 overflow-y-auto bg-white p-3 dark:bg-zinc-950">
-                      {inspected.assigneeProgress.map((row) => (
-                        <div key={row.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">{row.name}</p>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
-                                {row.role}
-                              </p>
-                            </div>
-                            <div className="text-right font-mono text-xs font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
-                              {row.percent}%
-                            </div>
-                          </div>
-                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                            <div
-                              className="h-full rounded-full bg-[var(--accent-teal)]"
-                              style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
+                <ContributorPersonalKpiSection
+                  rows={inspected.assigneeProgress}
+                  metricsCadence={metricsCadence}
+                  reportingPeriodLabel={reportingPeriodLabel}
+                  teamTotals={inspected.contributorTeamTotals}
+                />
                 <div className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
                   <div>

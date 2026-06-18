@@ -470,6 +470,76 @@ export function subKpiAssignedToOperator(
   return normalizePersonName(operatorName) === normalizePersonName(subAssigneeName);
 }
 
+export const SUB_KPI_PROGRESS_MISMATCH_WARNING =
+  "If you check this it will not record to your own progress";
+
+export type SubKpiProgressOwner = {
+  id: string;
+  name: string;
+  role: "Assignee" | "Sub-assignee" | "Unassigned";
+};
+
+/** Single contributor credited for a sub-task in personal KPI metrics. */
+export function subKpiProgressOwner(
+  item: SubKpiItem,
+  parentAssignee?: { id: string; name: string } | null,
+): SubKpiProgressOwner {
+  const subAssigneeId = subKpiAssignedAgentId(item);
+  const parentAssigneeId = parentAssignee?.id?.trim() || "";
+  if (subAssigneeId) {
+    return {
+      id: subAssigneeId,
+      name: item.assignedAgentName?.trim() || parentAssignee?.name?.trim() || "Assigned user",
+      role: subAssigneeId === parentAssigneeId ? "Assignee" : "Sub-assignee",
+    };
+  }
+  if (parentAssigneeId) {
+    return {
+      id: parentAssigneeId,
+      name: parentAssignee?.name?.trim() || "Assigned user",
+      role: "Assignee",
+    };
+  }
+  return { id: "__unassigned__", name: "Unassigned", role: "Unassigned" };
+}
+
+export function operatorIsMainKpiAssignee(
+  parentAssignee: { id: string; name: string } | null | undefined,
+  operator: { id?: string | null; name?: string | null },
+): boolean {
+  const parentId = parentAssignee?.id?.trim() || "";
+  if (!parentId) return false;
+  if (operator.id?.trim() === parentId) return true;
+  const parentName = (parentAssignee?.name ?? "").trim();
+  const operatorName = (operator.name ?? "").trim();
+  if (!parentName || !operatorName) return false;
+  return normalizePersonName(parentName) === normalizePersonName(operatorName);
+}
+
+export function operatorOwnsSubKpiProgress(
+  item: SubKpiItem,
+  parentAssignee: { id: string; name: string } | null | undefined,
+  operator: { id?: string | null; name?: string | null },
+): boolean {
+  const owner = subKpiProgressOwner(item, parentAssignee);
+  if (owner.id === "__unassigned__") return false;
+  if (operator.id?.trim() && owner.id === operator.id.trim()) return true;
+  const operatorName = (operator.name ?? "").trim();
+  const ownerName = owner.name.trim();
+  if (!operatorName || !ownerName) return false;
+  return normalizePersonName(operatorName) === normalizePersonName(ownerName);
+}
+
+/** True when the signed-in operator can check the box but progress credits another assignee. */
+export function subKpiProgressMismatchWarning(
+  item: SubKpiItem,
+  parentAssignee: { id: string; name: string } | null | undefined,
+  operator: { id?: string | null; name?: string | null },
+): boolean {
+  if (!operator.id && !operator.name?.trim()) return false;
+  return !operatorOwnsSubKpiProgress(item, parentAssignee, operator);
+}
+
 export function hasSubKpiAssignedTo(raw: unknown, agentId: string | null | undefined): boolean {
   const id = agentId?.trim();
   if (!id) return false;

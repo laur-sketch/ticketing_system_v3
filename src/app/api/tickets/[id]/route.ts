@@ -1,6 +1,6 @@
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { customerCanAccessTicket, ensureTicketOwnership, requireSession } from "@/lib/access";
+import { customerCanAccessTicket, requireSession } from "@/lib/access";
 import { sendResolutionEmail } from "@/lib/email";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
@@ -149,13 +149,11 @@ export async function PATCH(
     include: { assignedAgent: { select: { email: true, teamId: true } } },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const isOwner =
-    session.user.role === "Customer"
-      ? customerCanAccessTicket(
-          { contactEmail: ticket.contactEmail, requestorEmail: ticket.requestorEmail },
-          session.user.email,
-        )
-      : ensureTicketOwnership(ticket.contactEmail, session.user.email);
+  const isRequestor = customerCanAccessTicket(
+    { contactEmail: ticket.contactEmail, requestorEmail: ticket.requestorEmail },
+    session.user.email,
+  );
+  const isOwner = isRequestor;
   const isAdminOrAgent = ["SuperAdmin", "Admin", "Personnel"].includes(session.user.role);
   const roleIsAdmin = ["SuperAdmin", "Admin"].includes(session.user.role);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
@@ -528,7 +526,7 @@ export async function PATCH(
     }
 
     if (action === "feedback") {
-      if (!isOwner && !["SuperAdmin", "Admin"].includes(session.user.role)) {
+      if (!isRequestor) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       if (!["FOR_CONFIRMATION", "RESOLVED", "CLOSED"].includes(ticket.status)) {
@@ -605,7 +603,7 @@ export async function PATCH(
     }
 
     if (action === "resolution_verification") {
-      if (!isOwner && !["SuperAdmin", "Admin"].includes(session.user.role)) {
+      if (!isRequestor) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       if (!isAwaitingCustomerConfirmation(ticket.status)) {

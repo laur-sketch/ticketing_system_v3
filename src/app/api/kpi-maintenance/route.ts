@@ -184,6 +184,9 @@ export async function GET(req: Request) {
           recurrenceMonthDay: row.recurrenceMonthDay,
           periodCycleStartAt: row.periodCycleStartAt,
           isRecurring: row.isRecurring,
+          assignedAgent: row.assignedAgent
+            ? { id: row.assignedAgent.id, name: row.assignedAgent.name }
+            : null,
         },
         timeZone,
         anchor,
@@ -211,6 +214,9 @@ export async function GET(req: Request) {
             recurrenceMonthDay: row.recurrenceMonthDay,
             periodCycleStartAt: row.periodCycleStartAt,
             isRecurring: row.isRecurring,
+            assignedAgent: row.assignedAgent
+              ? { id: row.assignedAgent.id, name: row.assignedAgent.name }
+              : null,
           },
           timeZone,
           now,
@@ -610,7 +616,7 @@ export async function PATCH(req: Request) {
       id: true,
       title: true,
       assignedAgentId: true,
-      assignedAgent: { select: { id: true, email: true } },
+      assignedAgent: { select: { id: true, name: true, email: true } },
       subKpis: true,
       isRecurring: true,
       frequency: true,
@@ -641,6 +647,9 @@ export async function PATCH(req: Request) {
         recurrenceMonthDay: kpiRow.recurrenceMonthDay,
         periodCycleStartAt: kpiRow.periodCycleStartAt,
         isRecurring: kpiRow.isRecurring,
+        assignedAgent: kpiRow.assignedAgent
+          ? { id: kpiRow.assignedAgent.id, name: kpiRow.assignedAgent.name }
+          : null,
       },
       snapshotTz,
     );

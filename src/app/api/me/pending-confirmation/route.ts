@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {
+  customerHasPendingResolvedTicket,
   customerPendingTicketHref,
   listTicketsAwaitingCustomerConfirmation,
 } from "@/lib/customer-pending-resolution";
+import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 
 /**
  * Tickets awaiting the signed-in requestor's confirmation (FOR_CONFIRMATION / RESOLVED).
- * Used by the post-login modal for Customer and Personnel accounts.
+ * Used by the post-login modal for Customer, Personnel, Admin, and SuperAdmin accounts.
  */
 export async function GET() {
   const session = await requireSession();
@@ -16,7 +18,7 @@ export async function GET() {
   }
 
   const role = session.user.role;
-  if (role !== "Customer" && role !== "Personnel") {
+  if (!isTicketRequestorRole(role)) {
     return NextResponse.json({ tickets: [] });
   }
 

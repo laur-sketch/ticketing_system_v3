@@ -17,6 +17,7 @@ import {
   kpiChecklistMetricView,
   kpiChecklistProgress,
   normalizeSubKpis,
+  subKpiProgressOwner,
   type KpiChecklistProgress,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
@@ -39,6 +40,15 @@ export type KpiRowForSnapshot = {
   recurrenceMonthDay: number | null;
   periodCycleStartAt: Date | null;
   isRecurring: boolean;
+  assignedAgent?: { id: string; name: string } | null;
+};
+
+export type StoredContributorProgress = {
+  id: string;
+  name: string;
+  role: string;
+  total: number;
+  done: number;
 };
 
 export function timeZoneFromPeriodKey(periodKey: string | null | undefined): string {
@@ -92,6 +102,12 @@ export async function upsertKpiPeriodSnapshot(
     periodKeyOverride?.trim() || resolvePeriodKeyForKpi(row, at, zone);
   const progress = kpiChecklistProgress(row.subKpis);
   const fullyComplete = progress.total > 0 && progress.missing === 0;
+  const contributorProgress = assigneeProgressToStored(
+    assigneeProgressForRows(
+      [{ subKpis: row.subKpis, assignedAgent: row.assignedAgent ?? null }],
+      rawCheckboxIsDone,
+    ),
+  );
 
   await prisma.kpiMaintenancePeriodSnapshot.upsert({
     where: {
@@ -110,6 +126,7 @@ export async function upsertKpiPeriodSnapshot(
       missing: progress.missing,
       percent: progress.percent,
       fullyComplete,
+      contributorProgress,
     },
     update: {
       total: progress.total,
@@ -117,6 +134,7 @@ export async function upsertKpiPeriodSnapshot(
       missing: progress.missing,
       percent: progress.percent,
       fullyComplete,
+      contributorProgress,
       capturedAt: new Date(),
     },
   });
@@ -258,6 +276,8 @@ export type TaskAssigneeProgress = {
   role: string;
   total: number;
   done: number;
+  /** Checklist items still open for this contributor in the counted period. */
+  remaining: number;
   percent: number;
 };
 
@@ -329,7 +349,7 @@ async function computeItProjectImplementationPillarMetric(args: {
     percent,
     periodsCounted: rows.length,
     periodsInRange: rows.length,
-    assigneeProgress: averageAssigneeProgressToDonut(assigneeProgress, percent),
+    assigneeProgress,
   };
 }
 
@@ -350,40 +370,18 @@ function assigneeProgressForRows(
     const items = row.items ?? collectAllSubKpiItems(normalizeSubKpis(row.subKpis));
     for (const item of items) {
       if (!item.title.trim()) continue;
-      const subAssigneeId = item.assignedAgentId?.trim() || "";
-      const parentAssigneeId = row.assignedAgent?.id?.trim() || "";
-      const candidates = new Map<string, { id: string; name: string; roles: string[] }>();
-      if (parentAssigneeId) {
-        candidates.set(parentAssigneeId, {
-          id: parentAssigneeId,
-          name: row.assignedAgent?.name?.trim() || "Assigned user",
-          roles: ["Assignee"],
-        });
-      }
-      if (subAssigneeId && subAssigneeId !== parentAssigneeId) {
-        candidates.set(subAssigneeId, {
-          id: subAssigneeId,
-          name: item.assignedAgentName?.trim() || row.assignedAgent?.name?.trim() || "Assigned user",
-          roles: ["Sub-assignee"],
-        });
-      }
-      if (candidates.size === 0) {
-        candidates.set("__unassigned__", { id: "__unassigned__", name: "Unassigned", roles: ["Unassigned"] });
-      }
-
-      for (const candidate of candidates.values()) {
-        const current = byAssignee.get(candidate.id) ?? {
-          id: candidate.id,
-          name: candidate.name,
-          roles: new Set<string>(),
-          total: 0,
-          done: 0,
-        };
-        for (const role of candidate.roles) current.roles.add(role);
-        current.total += 1;
-        if (isDone(item)) current.done += 1;
-        byAssignee.set(candidate.id, current);
-      }
+      const owner = subKpiProgressOwner(item, row.assignedAgent);
+      const current = byAssignee.get(owner.id) ?? {
+        id: owner.id,
+        name: owner.name,
+        roles: new Set<string>(),
+        total: 0,
+        done: 0,
+      };
+      current.roles.add(owner.role);
+      current.total += 1;
+      if (isDone(item)) current.done += 1;
+      byAssignee.set(owner.id, current);
     }
   }
 
@@ -415,39 +413,278 @@ function assigneeProgressForRows(
       const roles = [...row.roles].sort();
       const displayRoles =
         roles.includes("Assignee") && roles.includes("Sub-assignee") ? ["Assignee"] : roles;
+      const done = row.done;
+      const total = row.total;
       return {
         id: row.id,
         name: row.name,
         role: displayRoles.join(" / "),
-        total: row.total,
-        done: row.done,
-        percent: row.total > 0 ? Math.round((row.done / row.total) * 100) : 0,
+        total,
+        done,
+        remaining: Math.max(0, total - done),
+        percent: total > 0 ? Math.round((done / total) * 100) : 0,
       };
     })
     .sort((a, b) => b.percent - a.percent || b.done - a.done || a.name.localeCompare(b.name));
 }
 
-function averageAssigneeProgressToDonut(
-  rows: TaskAssigneeProgress[],
-  targetPercent: number,
-): TaskAssigneeProgress[] {
-  const safeTarget = Math.min(100, Math.max(0, Math.round(targetPercent)));
-  const total = rows.reduce((sum, row) => sum + row.total, 0);
-  const done = rows.reduce((sum, row) => sum + row.done, 0);
-  const currentPercent = total > 0 ? Math.round((done / total) * 100) : 0;
+function assigneeProgressToStored(rows: TaskAssigneeProgress[]): StoredContributorProgress[] {
+  return rows.map(({ id, name, role, total, done }) => ({ id, name, role, total, done }));
+}
 
-  return rows
+function parseContributorProgress(raw: unknown): StoredContributorProgress[] {
+  if (!Array.isArray(raw)) return [];
+  const out: StoredContributorProgress[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const name = typeof row.name === "string" ? row.name.trim() : "";
+    if (!name) continue;
+    const total = Number(row.total);
+    const done = Number(row.done);
+    if (!Number.isFinite(total) || !Number.isFinite(done) || total < 0 || done < 0) continue;
+    out.push({
+      id: typeof row.id === "string" ? row.id : name.toLowerCase(),
+      name,
+      role: typeof row.role === "string" ? row.role : "Contributor",
+      total: Math.round(total),
+      done: Math.round(Math.min(done, total)),
+    });
+  }
+  return out;
+}
+
+function storedToAssigneeProgress(rows: StoredContributorProgress[]): TaskAssigneeProgress[] {
+  return rows.map((row) => {
+    const total = row.total;
+    const done = row.done;
+    return {
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      total,
+      done,
+      remaining: Math.max(0, total - done),
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+    };
+  });
+}
+
+function rawCheckboxIsDone(item: SubKpiItem): boolean {
+  return Boolean(item.done);
+}
+
+/** Average contributor rows across the same counted periods used by pillar donut metrics. */
+function averageAssigneeProgressAcrossPeriods(
+  bundles: Array<{ progress: KpiChecklistProgress; contributors: TaskAssigneeProgress[] }>,
+): TaskAssigneeProgress[] {
+  const withData = bundles.filter((b) => b.progress.total > 0);
+  if (withData.length === 0) return [];
+
+  const byPerson = new Map<
+    string,
+    { id: string; name: string; roles: Set<string>; totals: number[]; dones: number[] }
+  >();
+
+  for (const bundle of withData) {
+    for (const row of bundle.contributors) {
+      const nameKey = row.name.trim().toLowerCase();
+      const existing = byPerson.get(nameKey);
+      if (existing) {
+        for (const part of row.role.split(" / ")) {
+          const role = part.trim();
+          if (role) existing.roles.add(role);
+        }
+        existing.totals.push(row.total);
+        existing.dones.push(row.done);
+        if (row.id !== "__unassigned__") existing.id = row.id;
+        continue;
+      }
+      byPerson.set(nameKey, {
+        id: row.id,
+        name: row.name,
+        roles: new Set(row.role.split(" / ").map((r) => r.trim()).filter(Boolean)),
+        totals: [row.total],
+        dones: [row.done],
+      });
+    }
+  }
+
+  return [...byPerson.values()]
     .map((row) => {
-      const scaledPercent =
-        currentPercent > 0 ? Math.round((row.percent * safeTarget) / currentPercent) : safeTarget;
-      const percent = Math.min(100, Math.max(0, scaledPercent));
+      const roles = [...row.roles].sort();
+      const displayRoles =
+        roles.includes("Assignee") && roles.includes("Sub-assignee") ? ["Assignee"] : roles;
+      const total =
+        row.totals.length > 0
+          ? Math.round(row.totals.reduce((sum, value) => sum + value, 0) / row.totals.length)
+          : 0;
+      const done =
+        row.dones.length > 0
+          ? Math.round(row.dones.reduce((sum, value) => sum + value, 0) / row.dones.length)
+          : 0;
+      const remaining = Math.max(0, total - done);
       return {
-        ...row,
-        done: Math.round((row.total * percent) / 100),
-        percent,
+        id: row.id,
+        name: row.name,
+        role: displayRoles.join(" / "),
+        total,
+        done,
+        remaining,
+        percent: total > 0 ? Math.round((done / total) * 100) : 0,
       };
     })
     .sort((a, b) => b.percent - a.percent || b.done - a.done || a.name.localeCompare(b.name));
+}
+
+function applyAssigneeDonutView(rows: TaskAssigneeProgress[], invert: boolean): TaskAssigneeProgress[] {
+  return rows.map((row) => {
+    const missing = Math.max(0, row.total - row.done);
+    const view = kpiChecklistMetricView(
+      { total: row.total, done: row.done, missing, percent: row.percent },
+      invert,
+    );
+    return {
+      ...row,
+      done: view.positive,
+      remaining: view.negative,
+      percent: view.percent,
+    };
+  });
+}
+
+function scaleAssigneeBucketsToTargets(
+  rows: TaskAssigneeProgress[],
+  targetPositive: number,
+  targetNegative: number,
+  targetTotal: number,
+): TaskAssigneeProgress[] {
+  if (rows.length === 0) return rows;
+  const sumDone = rows.reduce((sum, row) => sum + row.done, 0);
+  const sumRemaining = rows.reduce((sum, row) => sum + row.remaining, 0);
+  const sumTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  if (sumTotal <= 0) return rows;
+
+  let allocatedDone = 0;
+  let allocatedRemaining = 0;
+  let allocatedTotal = 0;
+
+  return rows.map((row, index) => {
+    const isLast = index === rows.length - 1;
+    const done = isLast
+      ? Math.max(0, targetPositive - allocatedDone)
+      : sumDone > 0
+        ? Math.min(row.total, Math.round((row.done / sumDone) * targetPositive))
+        : 0;
+    const remaining = isLast
+      ? Math.max(0, targetNegative - allocatedRemaining)
+      : sumRemaining > 0
+        ? Math.min(Math.max(0, row.total - done), Math.round((row.remaining / sumRemaining) * targetNegative))
+        : 0;
+    const total = isLast
+      ? Math.max(done + remaining, targetTotal - allocatedTotal)
+      : sumTotal > 0
+        ? Math.max(done + remaining, Math.round((row.total / sumTotal) * targetTotal))
+        : done + remaining;
+    allocatedDone += done;
+    allocatedRemaining += remaining;
+    allocatedTotal += total;
+    return {
+      ...row,
+      done,
+      remaining,
+      total,
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+    };
+  });
+}
+
+function syncAssigneeProgressToPillarAgg(
+  rows: TaskAssigneeProgress[],
+  agg: KpiChecklistProgress,
+  invert: boolean,
+): TaskAssigneeProgress[] {
+  if (rows.length === 0 || agg.total <= 0) return rows;
+  const view = kpiChecklistMetricView(agg, invert);
+  const sumDone = rows.reduce((sum, row) => sum + row.done, 0);
+  const sumRemaining = rows.reduce((sum, row) => sum + row.remaining, 0);
+  const sumTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  if (sumDone === view.positive && sumRemaining === view.negative && sumTotal === view.total) {
+    return rows;
+  }
+  return scaleAssigneeBucketsToTargets(rows, view.positive, view.negative, view.total);
+}
+
+/** Spread legacy snapshot totals across current assignee weights when contributor JSON is missing. */
+function scaleAssigneeProgressToTotals(
+  rows: TaskAssigneeProgress[],
+  targetDone: number,
+  targetTotal: number,
+): TaskAssigneeProgress[] {
+  if (targetTotal <= 0 || rows.length === 0) return [];
+  const liveTotal = rows.reduce((sum, row) => sum + row.total, 0);
+  if (liveTotal <= 0) return [];
+
+  let allocatedDone = 0;
+  let allocatedTotal = 0;
+  const scaled = rows.map((row, index) => {
+    const isLast = index === rows.length - 1;
+    const share = row.total / liveTotal;
+    const total = isLast ? Math.max(0, targetTotal - allocatedTotal) : Math.round(targetTotal * share);
+    const done = isLast
+      ? Math.max(0, Math.min(total, targetDone - allocatedDone))
+      : Math.min(total, Math.round(targetDone * share));
+    allocatedTotal += total;
+    allocatedDone += done;
+    return {
+      ...row,
+      total,
+      done,
+      remaining: Math.max(0, total - done),
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+    };
+  });
+  return scaled;
+}
+
+type PeriodSnapshotRow = {
+  total: number;
+  done: number;
+  missing: number;
+  percent: number;
+  contributorProgress?: unknown;
+};
+
+/** Per-period contributor rows aligned with the same snapshot/live source as pillar donut metrics. */
+function contributorProgressForKpiPeriod(
+  kpi: {
+    subKpis: unknown;
+    assignedAgent?: { id: string; name: string } | null;
+  },
+  periodKey: string,
+  nowPeriodKey: string,
+  snap: PeriodSnapshotRow | undefined,
+  isDone: (item: SubKpiItem) => boolean,
+): TaskAssigneeProgress[] {
+  const checkboxRow = { subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null };
+
+  if (periodKey === nowPeriodKey) {
+    return assigneeProgressForRows([checkboxRow], isDone);
+  }
+  if (!snap) return [];
+
+  const stored = parseContributorProgress(snap.contributorProgress);
+  if (stored.length > 0) {
+    return storedToAssigneeProgress(stored);
+  }
+  if (snap.total > 0) {
+    return scaleAssigneeProgressToTotals(
+      assigneeProgressForRows([checkboxRow], isDone),
+      snap.done,
+      snap.total,
+    );
+  }
+  return [];
 }
 
 export async function computeTaskChecklistPillarMetrics(args: {
@@ -552,10 +789,9 @@ export async function computeTaskChecklistPillarMetrics(args: {
     }
 
     const progressRows: KpiChecklistProgress[] = [];
+    const assigneeBundles: Array<{ progress: KpiChecklistProgress; contributors: TaskAssigneeProgress[] }> =
+      [];
     const invert = isInvertedChecklistPillar(pillar);
-    const rawAssigneeProgress = assigneeProgressForRows(pillarKpis, (item) =>
-      invert ? !item.done : Boolean(item.done),
-    );
     let periodsInRange = 0;
 
     for (const kpi of pillarKpis) {
@@ -565,12 +801,20 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
       for (const key of periodKeys) {
         const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
+        let progress: KpiChecklistProgress | null = null;
         if (snap) {
-          progressRows.push(snapshotToProgress(snap));
-        } else if (metricsCadence === "DAILY" && key === nowPeriodKey) {
-          /** Daily view may show today's live checklist before a snapshot exists. Wider cadences use stored snapshots only. */
-          progressRows.push(kpiChecklistProgress(kpi.subKpis));
+          progress = snapshotToProgress(snap);
+        } else if (key === nowPeriodKey) {
+          /** Live Task Board checkboxes for the active period when no snapshot exists yet. */
+          progress = kpiChecklistProgress(kpi.subKpis);
         }
+        if (!progress) continue;
+
+        progressRows.push(progress);
+        assigneeBundles.push({
+          progress,
+          contributors: contributorProgressForKpiPeriod(kpi, key, nowPeriodKey, snap, rawCheckboxIsDone),
+        });
       }
     }
 
@@ -586,7 +830,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
           const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
           if (snap) {
             dayRows.push(snapshotToProgress(snap));
-          } else if (metricsCadence === "DAILY" && key === nowPeriodKey) {
+          } else if (key === nowPeriodKey) {
             dayRows.push(kpiChecklistProgress(kpi.subKpis));
           }
         }
@@ -605,30 +849,34 @@ export async function computeTaskChecklistPillarMetrics(args: {
         periodsCounted: 0,
         periodsInRange,
         dailyProgressRows,
-        assigneeProgress: averageAssigneeProgressToDonut(rawAssigneeProgress, 0),
+        assigneeProgress: [],
       };
       continue;
     }
 
-    if (progressRows.length === 1) {
-      const targetPercent = kpiChecklistMetricView(progressRows[0]!, invert).percent;
-      result[pillar] = {
-        ...progressRows[0]!,
-        periodsCounted: 1,
-        periodsInRange: Math.max(1, periodsInRange),
-        dailyProgressRows,
-        assigneeProgress: averageAssigneeProgressToDonut(rawAssigneeProgress, targetPercent),
-      };
-      continue;
-    }
+    const pillarAgg =
+      progressRows.length === 1
+        ? {
+            ...progressRows[0]!,
+            periodsCounted: 1,
+            periodsInRange: Math.max(1, periodsInRange),
+          }
+        : (() => {
+            const averaged = averageProgress(progressRows);
+            averaged.periodsInRange = periodsInRange;
+            return averaged;
+          })();
 
-    const averaged = averageProgress(progressRows);
-    averaged.periodsInRange = periodsInRange;
-    const targetPercent = kpiChecklistMetricView(averaged, invert).percent;
+    const assigneeProgress = syncAssigneeProgressToPillarAgg(
+      applyAssigneeDonutView(averageAssigneeProgressAcrossPeriods(assigneeBundles), invert),
+      pillarAgg,
+      invert,
+    );
+
     result[pillar] = {
-      ...averaged,
+      ...pillarAgg,
       dailyProgressRows,
-      assigneeProgress: averageAssigneeProgressToDonut(rawAssigneeProgress, targetPercent),
+      assigneeProgress,
     };
   }
 
@@ -668,6 +916,7 @@ export async function backfillKpiPeriodSnapshotsForRange(args: {
       recurrenceMonthDay: true,
       periodCycleStartAt: true,
       isRecurring: true,
+      assignedAgent: { select: { id: true, name: true } },
     },
   });
 

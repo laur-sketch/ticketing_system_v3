@@ -270,6 +270,8 @@ model KpiMaintenancePeriodSnapshot {
   missing          Int
   percent          Int
   fullyComplete    Boolean        @default(false)
+  /// Per-contributor checklist counts (`id`, `name`, `role`, `total`, `done`) at capture time.
+  contributorProgress Json?
   capturedAt       DateTime       @default(now())
 
   @@unique([kpiMaintenanceId, periodKey])

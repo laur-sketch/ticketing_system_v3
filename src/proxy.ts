@@ -90,6 +90,17 @@ export async function proxy(req: NextRequest) {
     }
   }
 
+  if (pathname.startsWith("/my-requests")) {
+    if (!token) {
+      const signInUrl = new URL("/signin", req.url);
+      signInUrl.searchParams.set("callbackUrl", pathname);
+      return NextResponse.redirect(signInUrl);
+    }
+    if (!isAllowed(token.role as string | undefined, ["Admin", "Personnel", "SuperAdmin"])) {
+      return NextResponse.redirect(new URL("/", req.url));
+    }
+  }
+
   return NextResponse.next();
 }
 
@@ -102,6 +113,7 @@ export const config = {
     "/tickets/new",
     "/tickets/:path*",
     "/my-tickets/:path*",
+    "/my-requests/:path*",
     "/customer/:path*",
   ],
 };
