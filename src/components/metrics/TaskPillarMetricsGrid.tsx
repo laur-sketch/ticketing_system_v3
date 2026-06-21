@@ -18,6 +18,7 @@ import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pil
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   isInvertedChecklistPillar,
+  incidentMetricPercents,
   kpiChecklistMetricView,
   type KpiChecklistProgress,
 } from "@/lib/kpi-subkpis";
@@ -85,6 +86,41 @@ type DonutSegment = { key: string; label: string; value: number; color: string }
 const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
 const MONITORING_CSV_COLUMNS = ["DONE", "ON GOING", "NOT STARTED", "EFF %"];
 const DAILY_PROGRESS_CSV_COLUMNS = ["DATE", "DONE", "ON GOING", "NOT STARTED", "EFF %"];
+/** Cybersecurity / network: unchecked = safe, checked = breached. */
+const INCIDENT_DAILY_CSV_COLUMNS = ["DATE", "SAFE", "BREACHED", "EFF %"];
+
+function dailyProgressCsvColumnsForPillar(pillar: ItTaskPillarTitle, hasDailyRows: boolean): string[] {
+  if (!hasDailyRows) {
+    return pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
+  }
+  if (isInvertedChecklistPillar(pillar)) return INCIDENT_DAILY_CSV_COLUMNS;
+  return DAILY_PROGRESS_CSV_COLUMNS;
+}
+
+function dailyProgressCsvRow(
+  row: KpiChecklistProgress & { date: string },
+  invert: boolean,
+): string[] {
+  if (invert) {
+    const { safePercent, breachedPercent, effPercent } = incidentMetricPercents(row);
+    return [
+      formatDailyProgressDate(row.date),
+      row.total > 0 ? String(safePercent) : "—",
+      row.total > 0 ? String(breachedPercent) : "—",
+      effPercent == null ? "—" : `${effPercent}%`,
+    ];
+  }
+  const dailyView = kpiChecklistMetricView(row, false);
+  const donePercent = dailyView.percent;
+  const notStartedPercent = Math.max(0, 100 - donePercent);
+  return [
+    formatDailyProgressDate(row.date),
+    String(donePercent),
+    "0",
+    String(notStartedPercent),
+    row.total > 0 ? `${dailyView.percent}%` : "—",
+  ];
+}
 
 function PillarDonutCard({
   pillar,
@@ -739,26 +775,16 @@ function sourceDetailsForPillar(args: {
   const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
   const cadenceLabel = metricsCadence.toLowerCase();
   const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
-  const dailyCsvRows = (agg?.dailyProgressRows ?? []).map((row) => {
-    const dailyView = kpiChecklistMetricView(row, invert);
-    const donePercent = dailyView.percent;
-    const notStartedPercent = Math.max(0, 100 - donePercent);
-    return [
-      formatDailyProgressDate(row.date),
-      String(donePercent),
-      "0",
-      String(notStartedPercent),
-      `${dailyView.percent}%`,
-    ];
-  });
+  const dailyCsvRows = (agg?.dailyProgressRows ?? []).map((row) =>
+    dailyProgressCsvRow(row, invert),
+  );
   const sourceCsvRows =
     dailyCsvRows.length > 0
       ? dailyCsvRows
       : agg?.csvRows && agg.csvRows.length > 0
         ? agg.csvRows
         : csvLayoutRowsForPillar(args);
-  const csvColumns =
-    dailyCsvRows.length > 0 ? DAILY_PROGRESS_CSV_COLUMNS : pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
+  const csvColumns = dailyProgressCsvColumnsForPillar(pillar, dailyCsvRows.length > 0);
   const view = kpiChecklistMetricView(
     {
       total: agg?.total ?? 0,
@@ -783,8 +809,8 @@ function sourceDetailsForPillar(args: {
       { label: "Cadence", value: metricsCadence },
       { label: "Mapped KPI rows", value: `Recurring ${cadenceLabel} KPI rows titled "${pillar}"` },
       { label: "Counted periods", value: `${agg?.periodsCounted ?? 0} of ${agg?.periodsInRange ?? 0}` },
-      { label: cfg?.positiveLabel ?? "Done", value: String(agg?.done ?? 0) },
-      { label: cfg?.negativeLabel ?? "Missing", value: String(agg?.missing ?? 0) },
+      { label: cfg?.positiveLabel ?? "Done", value: String(view.positive) },
+      { label: cfg?.negativeLabel ?? "Missing", value: String(view.negative) },
     ],
     assigneeProgress: agg?.assigneeProgress ?? [],
     contributorTeamTotals: {
@@ -798,8 +824,16 @@ function sourceDetailsForPillar(args: {
     tableColumns: ["Gathered field", "Value", "Recorded source"],
     tableRows: [
       ["Task rows counted", String(agg?.total ?? 0), `KPI checklist items for ${pillar}`],
-      ["Checked / done rows", String(agg?.done ?? 0), "Task Board checkbox completions"],
-      ["Unchecked / missing rows", String(agg?.missing ?? 0), "Task Board rows not checked in the counted period"],
+      [
+        invert ? "Unchecked / safe rows" : "Checked / done rows",
+        String(invert ? view.positive : agg?.done ?? 0),
+        invert ? "Task Board rows left unchecked (safe)" : "Task Board checkbox completions",
+      ],
+      [
+        invert ? "Checked / breached rows" : "Unchecked / missing rows",
+        String(invert ? view.negative : agg?.missing ?? 0),
+        invert ? "Task Board rows checked (breach/downtime)" : "Task Board rows not checked in the counted period",
+      ],
       ["Positive bucket", String(view.positive), `${cfg?.positiveLabel ?? "Positive"} display bucket`],
       ["Negative bucket", String(view.negative), `${cfg?.negativeLabel ?? "Negative"} display bucket`],
       ["Stored checklist percent", `${agg?.percent ?? 0}%`, "Raw done / total snapshot percent"],
@@ -813,7 +847,9 @@ function sourceDetailsForPillar(args: {
     showCsvPreview: true,
     notes: [
       dailyCsvRows.length
-        ? "CSV preview lists daily progress rows from the same snapshots used by this metric."
+        ? invert
+          ? "CSV preview lists daily SAFE / BREACHED percentages from snapshots (unchecked = safe, checked = breached). EFF % is 0% only when BREACHED is 100; days without snapshot data are omitted."
+          : "CSV preview lists daily progress rows from the same snapshots used by this metric."
         : agg?.csvRows?.length
         ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
         : "Checkboxes on the Task Board are the source of completion data.",

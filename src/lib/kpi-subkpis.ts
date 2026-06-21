@@ -238,6 +238,23 @@ export function kpiChecklistMetricView(
   return { ...agg, percent, positive, negative, inverted: true };
 }
 
+/** Cybersecurity / network CSV + headline: unchecked = safe, checked = breached/downtime. */
+export function incidentMetricPercents(agg: KpiChecklistProgress): {
+  safePercent: number;
+  breachedPercent: number;
+  /** Null when there is no checklist data for the day/period. */
+  effPercent: number | null;
+} {
+  if (agg.total <= 0) {
+    return { safePercent: 0, breachedPercent: 0, effPercent: null };
+  }
+  const view = kpiChecklistMetricView(agg, true);
+  const safePercent = view.percent;
+  const breachedPercent = Math.round((view.negative / agg.total) * 100);
+  const effPercent = breachedPercent >= 100 ? 0 : safePercent;
+  return { safePercent, breachedPercent, effPercent };
+}
+
 export function wrapForPersist(norm: NormalizedSubKpis): Prisma.InputJsonValue {
   if (norm.segmented) {
     return { segmented: true, segments: norm.segments } as Prisma.InputJsonValue;

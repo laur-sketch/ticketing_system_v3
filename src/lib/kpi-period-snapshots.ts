@@ -836,7 +836,12 @@ export async function computeTaskChecklistPillarMetrics(args: {
         }
       }
       if (hasDailyKpis) {
-        dailyProgressRows.push({ date: ymd, ...averageDailyProgress(dayRows) });
+        const dayAgg = averageDailyProgress(dayRows);
+        const skipEmptyIncidentDay =
+          isInvertedChecklistPillar(pillar) && dayAgg.total <= 0;
+        if (!skipEmptyIncidentDay) {
+          dailyProgressRows.push({ date: ymd, ...dayAgg });
+        }
       }
     }
 

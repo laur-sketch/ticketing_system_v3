@@ -215,7 +215,11 @@ function GlobalSidebarInner() {
                   const GroupIcon = iconForLink(item.label);
                   const groupActive = navGroupActive(pathname, searchParams, item);
                   return (
-                    <details key={`m-group-${item.label}`} className="group space-y-1" open={groupActive}>
+                    <details
+                      key={`m-group-${item.label}`}
+                      className="group space-y-1"
+                      {...(groupActive ? { open: true } : {})}
+                    >
                       <summary
                         className={`flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-2 text-sm font-semibold transition marker:hidden [&::-webkit-details-marker]:hidden ${
                           groupActive
@@ -308,7 +312,11 @@ function GlobalSidebarInner() {
               const groupActive = navGroupActive(pathname, searchParams, item);
               if (!collapsed) {
                 return (
-                  <details key={`group-${item.label}`} className="group space-y-1" open={groupActive}>
+                  <details
+                    key={`group-${item.label}`}
+                    className="group space-y-1"
+                    {...(groupActive ? { open: true } : {})}
+                  >
                     <summary
                       className={`flex cursor-pointer list-none items-center justify-between rounded-md px-3 py-2 text-sm font-semibold transition marker:hidden [&::-webkit-details-marker]:hidden ${
                         groupActive
