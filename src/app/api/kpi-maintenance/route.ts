@@ -30,6 +30,10 @@ import {
   setTaskPriority,
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
+  appendSubKpiItem,
+  removeSubKpiItem,
+  updateSubKpiItem,
+  stripSubKpiStartDates,
   validateSegmentStructureForPersist,
   validateStructuredUpdate,
   wrapForPersist,
@@ -582,6 +586,29 @@ export async function PATCH(req: Request) {
     pillarScreenshotDelete?: {
       slot?: TaskScreenshotSlot;
       storedFileName?: string;
+    };
+    addSubKpi?: {
+      title?: string;
+      segmentId?: string | null;
+      startDate?: string | null;
+      dueDate?: string | null;
+    };
+    updateSubKpi?: {
+      subKpiId?: string;
+      title?: string;
+      startDate?: string | null;
+      dueDate?: string | null;
+    };
+    removeSubKpi?: {
+      subKpiId?: string;
+    };
+    taskSchedule?: {
+      isRecurring?: boolean;
+      frequency?: string;
+      recurrenceWeekday?: number;
+      recurrenceMonthDay?: number;
+      nonRecurringStartAt?: string;
+      nonRecurringEndAt?: string;
     };
   };
   const contentType = req.headers.get("content-type") ?? "";
@@ -1139,6 +1166,268 @@ export async function PATCH(req: Request) {
         assignedRole,
       },
     });
+    return NextResponse.json(updated);
+  }
+
+  if (body.addSubKpi != null && typeof body.addSubKpi === "object") {
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Use task management to edit IT Project Implementation checklists." },
+        { status: 400 },
+      );
+    }
+    const title = String(body.addSubKpi.title ?? "").trim();
+    if (!title) {
+      return NextResponse.json({ error: "Sub Task title is required." }, { status: 400 });
+    }
+    const result = appendSubKpiItem(kpiRow.subKpis, {
+      title,
+      segmentId: body.addSubKpi.segmentId,
+      startDate: body.addSubKpi.startDate,
+      dueDate: body.addSubKpi.dueDate,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(result.json);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: result.json,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
+    });
+    await captureCurrentPeriodSnapshot(result.json);
+    return NextResponse.json(updated);
+  }
+
+  if (body.updateSubKpi != null && typeof body.updateSubKpi === "object") {
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Use task management to edit IT Project Implementation checklists." },
+        { status: 400 },
+      );
+    }
+    const subKpiIdUpdate = String(body.updateSubKpi.subKpiId ?? "").trim();
+    if (!subKpiIdUpdate) {
+      return NextResponse.json({ error: "updateSubKpi.subKpiId is required." }, { status: 400 });
+    }
+    const hasTitle = body.updateSubKpi.title !== undefined;
+    const hasStartDate = body.updateSubKpi.startDate !== undefined;
+    const hasDueDate = body.updateSubKpi.dueDate !== undefined;
+    if (!hasTitle && !hasStartDate && !hasDueDate) {
+      return NextResponse.json(
+        { error: "Provide title, startDate, and/or dueDate to update a Sub Task." },
+        { status: 400 },
+      );
+    }
+    const result = updateSubKpiItem(kpiRow.subKpis, subKpiIdUpdate, {
+      ...(hasTitle ? { title: body.updateSubKpi.title } : {}),
+      ...(hasStartDate ? { startDate: body.updateSubKpi.startDate } : {}),
+      ...(hasDueDate ? { dueDate: body.updateSubKpi.dueDate } : {}),
+    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(result.json);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: result.json,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
+    });
+    await captureCurrentPeriodSnapshot(result.json);
+    return NextResponse.json(updated);
+  }
+
+  if (body.removeSubKpi != null && typeof body.removeSubKpi === "object") {
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Use task management to edit IT Project Implementation checklists." },
+        { status: 400 },
+      );
+    }
+    const subKpiIdRemove = String(body.removeSubKpi.subKpiId ?? "").trim();
+    if (!subKpiIdRemove) {
+      return NextResponse.json({ error: "removeSubKpi.subKpiId is required." }, { status: 400 });
+    }
+    const result = removeSubKpiItem(kpiRow.subKpis, subKpiIdRemove);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(result.json);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: result.json,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
+    });
+    await captureCurrentPeriodSnapshot(result.json);
+    return NextResponse.json(updated);
+  }
+
+  if (body.taskSchedule != null && typeof body.taskSchedule === "object") {
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "IT Project Implementation tasks do not use task schedule types." },
+        { status: 400 },
+      );
+    }
+
+    const schedule = body.taskSchedule;
+    const isRecurring = schedule.isRecurring !== false;
+    const frequency = (schedule.frequency?.toUpperCase() ?? kpiRow.frequency) as KpiFrequency;
+    if (!allowedFrequencies.has(frequency)) {
+      return NextResponse.json({ error: "Invalid frequency." }, { status: 400 });
+    }
+
+    let recurrenceWeekday: number | null = null;
+    let recurrenceMonthDay: number | null = null;
+    if (isRecurring && frequency === "WEEKLY") {
+      const wd = schedule.recurrenceWeekday ?? kpiRow.recurrenceWeekday ?? 1;
+      if (typeof wd !== "number" || wd < 0 || wd > 6 || !Number.isInteger(wd)) {
+        return NextResponse.json(
+          { error: "recurrenceWeekday is required for WEEKLY (0=Sunday … 6=Saturday)." },
+          { status: 400 },
+        );
+      }
+      recurrenceWeekday = wd;
+    }
+    if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY")) {
+      const dom = schedule.recurrenceMonthDay ?? kpiRow.recurrenceMonthDay ?? 1;
+      if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
+        return NextResponse.json(
+          { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY (1–31)." },
+          { status: 400 },
+        );
+      }
+      recurrenceMonthDay = dom;
+    }
+
+    let nonRecurringStartAt: Date | null = null;
+    let nonRecurringEndAt: Date | null = null;
+    if (!isRecurring) {
+      const startIso = schedule.nonRecurringStartAt?.trim() ?? "";
+      const endIso = schedule.nonRecurringEndAt?.trim() ?? "";
+      if (!startIso || !endIso) {
+        return NextResponse.json(
+          { error: "nonRecurringStartAt and nonRecurringEndAt are required when task is not recurring." },
+          { status: 400 },
+        );
+      }
+      const parsedStart = new Date(startIso);
+      const parsedEnd = new Date(endIso);
+      if (
+        !Number.isFinite(parsedStart.getTime()) ||
+        !Number.isFinite(parsedEnd.getTime()) ||
+        parsedEnd.getTime() <= parsedStart.getTime()
+      ) {
+        return NextResponse.json(
+          { error: "For non-recurring tasks, end date/time must be after start date/time." },
+          { status: 400 },
+        );
+      }
+      nonRecurringStartAt = parsedStart;
+      nonRecurringEndAt = parsedEnd;
+    }
+
+    if (kpiRow.isRecurring) {
+      await captureCurrentPeriodSnapshot(kpiRow.subKpis);
+    }
+
+    const now = new Date();
+    const freqCode = frequency as KpiFrequencyCode;
+    let subKpisUpdate: Prisma.InputJsonValue | undefined;
+    if (isRecurring && freqCode === "DAILY" && kpiRow.frequency !== "DAILY") {
+      subKpisUpdate = stripSubKpiStartDates(kpiRow.subKpis);
+    }
+
+    const data: Prisma.KpiMaintenanceUpdateInput = {
+      isRecurring,
+      frequency,
+      ...(subKpisUpdate !== undefined ? { subKpis: subKpisUpdate } : {}),
+    };
+
+    if (isRecurring) {
+      data.nonRecurringStartAt = null;
+      data.nonRecurringEndAt = null;
+      data.recurrenceWeekday = recurrenceWeekday;
+      data.recurrenceMonthDay = recurrenceMonthDay;
+      data.periodCycleStartAt = getPeriodStartInclusive(
+        freqCode,
+        recurrenceWeekday,
+        recurrenceMonthDay,
+        now,
+        patchTz,
+      );
+      data.periodKey = computePeriodKey(freqCode, recurrenceWeekday, recurrenceMonthDay, now, patchTz);
+      data.rolledOverIncomplete = false;
+    } else {
+      data.nonRecurringStartAt = nonRecurringStartAt;
+      data.nonRecurringEndAt = nonRecurringEndAt;
+      data.recurrenceWeekday = null;
+      data.recurrenceMonthDay = null;
+      data.periodCycleStartAt = null;
+      data.periodKey = null;
+      data.lastFullCompletionAt = null;
+      data.rolledOverIncomplete = false;
+    }
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data,
+    });
+    if (isRecurring) {
+      await upsertKpiPeriodSnapshot(
+        {
+          id: updated.id,
+          title: updated.title,
+          frequency: updated.frequency,
+          subKpis: updated.subKpis,
+          periodKey: updated.periodKey,
+          recurrenceWeekday: updated.recurrenceWeekday,
+          recurrenceMonthDay: updated.recurrenceMonthDay,
+          periodCycleStartAt: updated.periodCycleStartAt,
+          isRecurring: updated.isRecurring,
+          assignedAgent: kpiRow.assignedAgent
+            ? { id: kpiRow.assignedAgent.id, name: kpiRow.assignedAgent.name }
+            : null,
+        },
+        patchTz,
+      );
+    }
     return NextResponse.json(updated);
   }
 

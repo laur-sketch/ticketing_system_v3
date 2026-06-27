@@ -976,3 +976,159 @@ export function validateStructuredUpdate(
   }
   return { ok: true, norm: { segmented: false, flat } };
 }
+
+export type AppendSubKpiInput = {
+  title: string;
+  segmentId?: string | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+  screenshotsEnabled?: boolean;
+};
+
+/** Append one sub-task to an existing flat or segmented checklist (preserves envelope metadata). */
+export function appendSubKpiItem(
+  raw: unknown,
+  input: AppendSubKpiInput,
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const item = subKpiFromCreateDraft({
+    title: input.title,
+    startDate: input.startDate,
+    dueDate: input.dueDate,
+    screenshotsEnabled: input.screenshotsEnabled,
+  });
+  if (!item) return { ok: false, error: "Sub Task title is required." };
+
+  const n = normalizeSubKpis(raw);
+  if (n.segmented) {
+    const segmentId = typeof input.segmentId === "string" ? input.segmentId.trim() : "";
+    if (!segmentId) {
+      return { ok: false, error: "Choose a segment before adding a Sub Task." };
+    }
+    const segIdx = n.segments.findIndex((seg) => seg.id === segmentId);
+    if (segIdx < 0) return { ok: false, error: "Segment not found." };
+    const segments = n.segments.map((seg, idx) =>
+      idx === segIdx ? { ...seg, items: [...seg.items, item] } : seg,
+    );
+    return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: true, segments }, raw) };
+  }
+
+  return {
+    ok: true,
+    json: wrapForPersistWithExistingMeta({ segmented: false, flat: [...n.flat, item] }, raw),
+  };
+}
+
+export type UpdateSubKpiItemInput = {
+  title?: string;
+  startDate?: string | null;
+  dueDate?: string | null;
+};
+
+/** Update Sub Task title and/or schedule fields (preserves other item metadata). */
+export function updateSubKpiItem(
+  raw: unknown,
+  subKpiId: string,
+  input: UpdateSubKpiItemInput,
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const id = subKpiId.trim();
+  if (!id) return { ok: false, error: "Sub Task id is required." };
+
+  const n = normalizeSubKpis(raw);
+  const allItems = n.segmented ? n.segments.flatMap((seg) => seg.items) : n.flat;
+  if (!allItems.some((item) => item.id === id)) {
+    return { ok: false, error: "Sub Task not found." };
+  }
+
+  const title =
+    input.title === undefined ? undefined : typeof input.title === "string" ? input.title.trim() : "";
+  if (title !== undefined && !title) {
+    return { ok: false, error: "Sub Task title is required." };
+  }
+
+  const startDate =
+    input.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.startDate) ?? null;
+  const dueDate =
+    input.dueDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.dueDate) ?? null;
+
+  const touch = (item: SubKpiItem): SubKpiItem => {
+    if (item.id !== id) return item;
+    let next = { ...item };
+    if (title !== undefined) next = { ...next, title };
+    if (startDate !== undefined) {
+      if (startDate) next = { ...next, startDate };
+      else delete (next as { startDate?: string }).startDate;
+    }
+    if (dueDate !== undefined) {
+      if (dueDate) next = { ...next, dueDate };
+      else delete (next as { dueDate?: string }).dueDate;
+    }
+    return next;
+  };
+
+  if (n.segmented) {
+    const segments = n.segments.map((seg) => ({
+      ...seg,
+      items: seg.items.map(touch),
+    }));
+    return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: true, segments }, raw) };
+  }
+
+  return {
+    ok: true,
+    json: wrapForPersistWithExistingMeta({ segmented: false, flat: n.flat.map(touch) }, raw),
+  };
+}
+
+/** Remove one Sub Task from a flat or segmented checklist (preserves envelope metadata). */
+export function removeSubKpiItem(
+  raw: unknown,
+  subKpiId: string,
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const id = subKpiId.trim();
+  if (!id) return { ok: false, error: "Sub Task id is required." };
+
+  const n = normalizeSubKpis(raw);
+  if (n.segmented) {
+    const targetSegment = n.segments.find((seg) => seg.items.some((item) => item.id === id));
+    if (!targetSegment) return { ok: false, error: "Sub Task not found." };
+    if (targetSegment.items.length <= 1) {
+      return { ok: false, error: "Each segment must keep at least one Sub Task." };
+    }
+    const totalAfter = collectAllSubKpiItems(n).length - 1;
+    if (totalAfter < MIN_SEGMENTED_SUBKPIS) {
+      return {
+        ok: false,
+        error: `Segmented checklists must keep at least ${MIN_SEGMENTED_SUBKPIS} Sub Tasks in total.`,
+      };
+    }
+    const segments = n.segments.map((seg) => ({
+      ...seg,
+      items: seg.items.filter((item) => item.id !== id),
+    }));
+    return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: true, segments }, raw) };
+  }
+
+  if (n.flat.length <= 1) {
+    return { ok: false, error: "Checklists must keep at least one Sub Task." };
+  }
+  const flat = n.flat.filter((item) => item.id !== id);
+  return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: false, flat }, raw) };
+}
+
+/** Remove schedule start dates from all sub-tasks (used when cadence becomes daily). */
+export function stripSubKpiStartDates(raw: unknown): Prisma.InputJsonValue {
+  const n = normalizeSubKpis(raw);
+  const strip = (item: SubKpiItem): SubKpiItem => {
+    const next = { ...item };
+    delete (next as { startDate?: string }).startDate;
+    return next;
+  };
+  if (n.segmented) {
+    const segments = n.segments.map((seg) => ({
+      ...seg,
+      items: seg.items.map(strip),
+    }));
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
+  }
+  return wrapForPersistWithExistingMeta({ segmented: false, flat: n.flat.map(strip) }, raw);
+}

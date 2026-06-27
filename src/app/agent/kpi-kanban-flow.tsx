@@ -45,6 +45,7 @@ import {
 } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
+import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
@@ -124,6 +125,36 @@ type CompanyFilterOption = {
 type AssignmentCompanyOption = CompanyFilterOption & {
   agentCount: number;
 };
+
+type TaskScheduleDraft = {
+  isRecurring: boolean;
+  frequency: KpiFrequencyCode;
+  recurrenceWeekday: number;
+  recurrenceMonthDay: number;
+  nonRecurringStartDate: string;
+  nonRecurringEndDate: string;
+};
+
+function isoToLocalYmd(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function taskToScheduleDraft(r: KpiRecord): TaskScheduleDraft {
+  return {
+    isRecurring: r.isRecurring !== false,
+    frequency: r.frequency,
+    recurrenceWeekday: typeof r.recurrenceWeekday === "number" ? r.recurrenceWeekday : 1,
+    recurrenceMonthDay: typeof r.recurrenceMonthDay === "number" ? r.recurrenceMonthDay : 1,
+    nonRecurringStartDate: isoToLocalYmd(r.nonRecurringStartAt),
+    nonRecurringEndDate: isoToLocalYmd(r.nonRecurringEndAt),
+  };
+}
 
 function assignmentCompanyKey(agent: AssignableAgent): string {
   return (
@@ -212,8 +243,14 @@ export function AgentKpiKanbanFlow({
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [taskManagementOpen, setTaskManagementOpen] = useState(false);
+  const [assignmentBoardOpen, setAssignmentBoardOpen] = useState(false);
   const [subAssigneePeersByMainId, setSubAssigneePeersByMainId] = useState<Record<string, AssignableAgent[]>>({});
   const subAssigneePeersFetchedRef = useRef(new Set<string>());
+  const [addSubTaskById, setAddSubTaskById] = useState<
+    Record<string, { title: string; dueDate: string; segmentId: string }>
+  >({});
+  const [scheduleDraft, setScheduleDraft] = useState<TaskScheduleDraft | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -316,6 +353,16 @@ export function AgentKpiKanbanFlow({
         });
     }
   }, [rows]);
+
+  useEffect(() => {
+    if (!activeTaskId || !showAdminTaskManagement) {
+      setScheduleDraft(null);
+      return;
+    }
+    const task = rows.find((row) => row.id === activeTaskId);
+    if (task) setScheduleDraft(taskToScheduleDraft(task));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTaskId, showAdminTaskManagement]);
 
   function progress(r: KpiRecord) {
     const p = isItProjectImplementationPillar(r.title)
@@ -789,6 +836,182 @@ export function AgentKpiKanbanFlow({
     }
   }
 
+  function addSubTaskDraftFor(r: KpiRecord) {
+    const normalized = normalizeSubKpis(r.subKpis);
+    return (
+      addSubTaskById[r.id] ?? {
+        title: "",
+        dueDate: "",
+        segmentId: normalized.segmented ? (normalized.segments[0]?.id ?? "") : "",
+      }
+    );
+  }
+
+  function patchAddSubTaskDraft(
+    r: KpiRecord,
+    patch: Partial<{ title: string; dueDate: string; segmentId: string }>,
+  ) {
+    setAddSubTaskById((prev) => ({
+      ...prev,
+      [r.id]: { ...addSubTaskDraftFor(r), ...patch },
+    }));
+  }
+
+  function hideAddSubTaskScheduleDate(r: KpiRecord) {
+    return Boolean(r.isRecurring && r.frequency === "DAILY");
+  }
+
+  async function addSubTaskToRecord(r: KpiRecord) {
+    if (!showAdminTaskManagement) return;
+    const draft = addSubTaskDraftFor(r);
+    const title = draft.title.trim();
+    if (!title) {
+      setError("Sub Task title is required.");
+      return;
+    }
+    const normalized = normalizeSubKpis(r.subKpis);
+    if (normalized.segmented && !draft.segmentId.trim()) {
+      setError("Choose a segment before adding a Sub Task.");
+      return;
+    }
+    const dueDate = hideAddSubTaskScheduleDate(r) ? null : draft.dueDate.trim() || null;
+    setBusyId(r.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: r.id,
+          addSubKpi: {
+            title,
+            segmentId: normalized.segmented ? draft.segmentId.trim() : null,
+            dueDate,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not add Sub Task.");
+        return;
+      }
+      const updated = (await res.json()) as KpiRecord;
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      setAddSubTaskById((prev) => {
+        const next = { ...prev };
+        delete next[r.id];
+        return next;
+      });
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function updateSubTask(
+    recordId: string,
+    subKpiId: string,
+    patch: { title?: string; startDate?: string | null; dueDate?: string | null },
+  ) {
+    if (!showAdminTaskManagement) return;
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: recordId, updateSubKpi: { subKpiId, ...patch } }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update Sub Task.");
+        return;
+      }
+      const updated = (await res.json()) as KpiRecord;
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeSubTask(recordId: string, subKpiId: string, title: string) {
+    if (!showAdminTaskManagement) return;
+    if (!window.confirm(`Remove Sub Task "${title}"? This cannot be undone.`)) return;
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: recordId, removeSubKpi: { subKpiId } }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not remove Sub Task.");
+        return;
+      }
+      const updated = (await res.json()) as KpiRecord;
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function patchTaskSchedule(r: KpiRecord, draft: TaskScheduleDraft) {
+    if (!showAdminTaskManagement) return;
+    const taskSchedule: Record<string, unknown> = {
+      isRecurring: draft.isRecurring,
+      frequency: draft.frequency,
+    };
+    if (draft.isRecurring && draft.frequency === "WEEKLY") {
+      taskSchedule.recurrenceWeekday = draft.recurrenceWeekday;
+    }
+    if (draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY")) {
+      taskSchedule.recurrenceMonthDay = draft.recurrenceMonthDay;
+    }
+    if (!draft.isRecurring) {
+      if (!draft.nonRecurringStartDate || !draft.nonRecurringEndDate) {
+        setError("Choose start and end dates for this one-off task.");
+        return;
+      }
+      const startAt = new Date(`${draft.nonRecurringStartDate}T00:00:00`);
+      const endAt = new Date(`${draft.nonRecurringEndDate}T23:59:59`);
+      if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) {
+        setError("Invalid start or end date.");
+        return;
+      }
+      if (endAt.getTime() <= startAt.getTime()) {
+        setError("End date must be after start date.");
+        return;
+      }
+      taskSchedule.nonRecurringStartAt = startAt.toISOString();
+      taskSchedule.nonRecurringEndAt = endAt.toISOString();
+    }
+
+    setBusyId(r.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: r.id, taskSchedule }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update task schedule.");
+        return;
+      }
+      const updated = (await res.json()) as KpiRecord;
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      setScheduleDraft(taskToScheduleDraft(updated));
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const hasRows = useMemo(() => rows.length > 0, [rows.length]);
   const unassignedRows = useMemo(() => rows.filter((r) => !r.assignedAgent?.id), [rows]);
   const assignedCountByAgent = useMemo(
@@ -805,8 +1028,8 @@ export function AgentKpiKanbanFlow({
 
   function subKpiAssigneeLabel(s: SubKpiItem) {
     const id = subKpiAssignedAgentId(s);
-    if (!id) return "Sub-task assignee: unassigned";
-    return `Sub-task assignee: ${agentNameById.get(id) ?? s.assignedAgentName ?? "assigned personnel"}`;
+    if (!id) return "Sub Task assignee: unassigned";
+    return `Sub Task assignee: ${agentNameById.get(id) ?? s.assignedAgentName ?? "assigned personnel"}`;
   }
 
   function renderSubKpiAssignmentControl(r: KpiRecord, s: SubKpiItem) {
@@ -830,7 +1053,7 @@ export function AgentKpiKanbanFlow({
     const assignedStillVisible = assignedId && !companyScopedAgents.some((a) => a.id === assignedId);
     return (
       <label className="mt-2 flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-        Sub-task assignee
+        Sub Task assignee
         <select
           value={assignedId}
           disabled={busyId === r.id || (!r.assignedAgent?.id && !assignedId)}
@@ -1032,8 +1255,9 @@ export function AgentKpiKanbanFlow({
   function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem, showPriority = true) {
     const subEditable = canEditSubKpi(r, s);
     const subCompletable = canCompleteSubKpi(r, s);
+    const canManageSubTasks = showAdminTaskManagement;
     const needsScreenshots = taskScreenshotsEnabled(s) && !hasBeforeAndAfterScreenshots(s);
-    const canEditWorkDetails = subEditable || canAssignWork;
+    const canEditWorkDetails = subEditable || canAssignWork || canManageSubTasks;
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = Boolean(s.done);
@@ -1053,7 +1277,7 @@ export function AgentKpiKanbanFlow({
         )}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="flex min-w-0 items-start gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          <div className="flex min-w-0 flex-1 items-start gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             {showCheckbox ? (
               <input
                 type="checkbox"
@@ -1064,18 +1288,59 @@ export function AgentKpiKanbanFlow({
                 aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
               />
             ) : null}
-            <span className={cn("min-w-0", finished && "line-through opacity-70")}>{s.title}</span>
-          </div>
-          <span
-            className={cn(
-              "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-              finished
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+            {canManageSubTasks ? (
+              <input
+                key={`subtask-title-${r.id}-${s.id}-${s.title}`}
+                type="text"
+                defaultValue={s.title}
+                disabled={busyId === r.id}
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                onBlur={(e) => {
+                  const next = e.target.value.trim();
+                  const prev = s.title.trim();
+                  if (next && next !== prev) {
+                    void updateSubTask(r.id, s.id, { title: next });
+                  } else if (!next) {
+                    e.target.value = prev;
+                  }
+                }}
+                aria-label="Sub Task title"
+                className={cn(
+                  "min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100",
+                  finished && "line-through opacity-70",
+                )}
+              />
+            ) : (
+              <span className={cn("min-w-0", finished && "line-through opacity-70")}>{s.title}</span>
             )}
-          >
-            {finished ? "Finished" : "Pending"}
-          </span>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {canManageSubTasks ? (
+              <button
+                type="button"
+                disabled={busyId === r.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void removeSubTask(r.id, s.id, s.title);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="rounded-full border border-rose-400/60 px-2 py-0.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-950/40"
+              >
+                Remove
+              </button>
+            ) : null}
+            <span
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                finished
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              {finished ? "Finished" : "Pending"}
+            </span>
+          </div>
         </div>
         {needsScreenshots ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
@@ -1118,12 +1383,15 @@ export function AgentKpiKanbanFlow({
               Schedule date
               <DatePickerField
                 value={s.startDate ?? ""}
-                disabled={!canAssignWork || busyId === r.id}
-                onChange={(e) =>
-                  void patchSubKpiWorkMeta(r.id, s.id, {
-                    startDate: e.target.value || null,
-                  })
-                }
+                disabled={!canEditWorkDetails || busyId === r.id}
+                onChange={(e) => {
+                  const value = e.target.value || null;
+                  if (canManageSubTasks) {
+                    void updateSubTask(r.id, s.id, { startDate: value });
+                    return;
+                  }
+                  void patchSubKpiWorkMeta(r.id, s.id, { startDate: value });
+                }}
                 wrapperClassName="mt-1"
                 aria-label={`Schedule date for ${s.title}`}
               />
@@ -1134,12 +1402,15 @@ export function AgentKpiKanbanFlow({
               Target date
               <DatePickerField
                 value={s.dueDate ?? ""}
-                disabled={!canAssignWork || busyId === r.id}
-                onChange={(e) =>
-                  void patchSubKpiWorkMeta(r.id, s.id, {
-                    dueDate: e.target.value || null,
-                  })
-                }
+                disabled={!canEditWorkDetails || busyId === r.id}
+                onChange={(e) => {
+                  const value = e.target.value || null;
+                  if (canManageSubTasks) {
+                    void updateSubTask(r.id, s.id, { dueDate: value });
+                    return;
+                  }
+                  void patchSubKpiWorkMeta(r.id, s.id, { dueDate: value });
+                }}
                 wrapperClassName="mt-1"
                 aria-label={`Target date for ${s.title}`}
               />
@@ -1269,7 +1540,7 @@ export function AgentKpiKanbanFlow({
           </p>
         ) : null}
         <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Sub-task
+          Sub Task
         </p>
         <div className="mt-1.5 grid gap-2">
           <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
@@ -1302,6 +1573,78 @@ export function AgentKpiKanbanFlow({
             {subTaskStatusLabel(s, nowMs, tz)}
           </span>
         </p>
+      </div>
+    );
+  }
+
+  function renderAddSubTaskPanel(r: KpiRecord) {
+    if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title)) return null;
+    const normalized = normalizeSubKpis(r.subKpis);
+    const draft = addSubTaskDraftFor(r);
+    const hideSchedule = hideAddSubTaskScheduleDate(r);
+    return (
+      <div className="mt-3 rounded-lg border border-dashed border-orange-400/50 bg-orange-500/[0.04] p-3 dark:border-orange-500/35 dark:bg-orange-500/[0.07]">
+        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+          Add Sub Task
+        </p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+          {normalized.segmented ? (
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500 sm:col-span-2">
+              Segment
+              <select
+                value={draft.segmentId}
+                disabled={busyId === r.id}
+                onChange={(e) => patchAddSubTaskDraft(r, { segmentId: e.target.value })}
+                className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              >
+                {normalized.segments.map((seg) => (
+                  <option key={seg.id} value={seg.id}>
+                    {seg.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Title
+            <input
+              type="text"
+              value={draft.title}
+              disabled={busyId === r.id}
+              placeholder="Sub Task title"
+              onChange={(e) => patchAddSubTaskDraft(r, { title: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void addSubTaskToRecord(r);
+                }
+              }}
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+          </label>
+          {!hideSchedule ? (
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Due date
+              <DatePickerField
+                value={draft.dueDate}
+                disabled={busyId === r.id}
+                onChange={(e) => patchAddSubTaskDraft(r, { dueDate: e.target.value })}
+                wrapperClassName="mt-1"
+                aria-label="Due date for new Sub Task"
+              />
+            </label>
+          ) : null}
+          <div className={cn("flex items-end", hideSchedule ? "" : "sm:col-span-2")}>
+            <button
+              type="button"
+              disabled={busyId === r.id || !draft.title.trim()}
+              onClick={() => void addSubTaskToRecord(r)}
+              className="rounded-lg bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Add Sub Task
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1467,6 +1810,306 @@ export function AgentKpiKanbanFlow({
 
   const activeTask = activeTaskId ? rows.find((row) => row.id === activeTaskId) ?? null : null;
 
+  function renderAssignmentBoard() {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-[0_10px_34px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:bg-[#080808] dark:shadow-[0_14px_40px_rgba(0,0,0,0.28)]">
+        <div className="grid gap-3 p-3 md:grid-cols-[minmax(16rem,0.7fr)_minmax(0,1.8fr)] lg:p-4">
+          <div
+            ref={canUnassignWork ? assignLaneDrag.registerColumn("__UNASSIGNED__") : undefined}
+            className={cn(
+              "rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 transition dark:border-zinc-800 dark:bg-zinc-950/50",
+              canUnassignWork &&
+                assignLaneDrag.hoverColumn === "__UNASSIGNED__" &&
+                "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
+            )}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                  Unassigned
+                </p>
+                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-500">Drop here to clear assignment.</p>
+              </div>
+              <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                {unassignedRows.length}
+              </span>
+            </div>
+            <div className="max-h-[min(42dvh,24rem)] space-y-1.5 overflow-y-auto pr-1">
+              {unassignedRows.length === 0 ? (
+                <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/70 px-3 py-6 text-center dark:border-zinc-700 dark:bg-zinc-900/30">
+                  <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">No unassigned tasks.</p>
+                </div>
+              ) : null}
+              {unassignedRows.map((r) => (
+                <div
+                  key={`unassigned-${r.id}`}
+                  {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => r.title })}
+                  className={cn(
+                    "touch-pan-y select-none rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-950/40 sm:py-2",
+                    assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
+                    busyId === r.id && "pointer-events-none opacity-50",
+                  )}
+                >
+                  <div className="flex items-start gap-1.5">
+                    <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
+                    <p className="line-clamp-2 min-w-0 leading-snug">{r.title}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="min-w-0">
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
+              <div className="flex flex-col gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                    Personnel group
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Drag over a company to reveal its users, then drop on a person.
+                  </p>
+                </div>
+              </div>
+              {assignmentCompanyOptions.length > 0 ? (
+                <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                  {assignmentCompanyOptions.map((company) => {
+                    const targetId = assignmentCompanyDropTarget(company.id);
+                    const isSelected = assignmentCompanyId === company.id;
+                    const isRevealed = activeAssignmentCompanyId === company.id;
+                    const companyAgents = agentsByAssignmentCompany.get(company.id) ?? [];
+                    const adminAgents = companyAgents.filter((agent) => assignmentRoleLabel(agent) === "Admin");
+                    const personnelAgents = companyAgents.filter(
+                      (agent) => assignmentRoleLabel(agent) === "Personnel",
+                    );
+                    return (
+                      <div
+                        key={`company-drop-${company.id}`}
+                        ref={assignLaneDrag.registerColumn(targetId)}
+                        className={cn(
+                          "touch-pan-y rounded-xl border border-zinc-200 bg-white p-2 transition dark:border-zinc-800 dark:bg-zinc-900/40",
+                          isSelected &&
+                            "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
+                          isRevealed &&
+                            "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAssignmentCompanyId((current) =>
+                              current === company.id ? ASSIGNMENT_COMPANY_ALL : company.id,
+                            );
+                          }}
+                          aria-pressed={isSelected}
+                          aria-expanded={isRevealed}
+                          className="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg px-2 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-950/60"
+                        >
+                          <span className="min-w-0 truncate text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                            {company.name}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1">
+                            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                              {company.agentCount}
+                            </span>
+                            <ChevronDown
+                              className={cn(
+                                "size-3.5 text-zinc-500 transition-transform dark:text-zinc-400",
+                                isRevealed && "rotate-180",
+                              )}
+                              aria-hidden
+                            />
+                          </span>
+                        </button>
+                        {isRevealed ? (
+                          <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
+                            <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                              Drop on admin or personnel
+                            </p>
+                            <div className="max-h-[min(44dvh,20rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-60">
+                              {companyAgents.length === 0 ? (
+                                <p className="rounded-md border border-dashed border-zinc-300 px-2 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                                  No users in this company.
+                                </p>
+                              ) : null}
+                              {[
+                                { label: "Admins", list: adminAgents },
+                                { label: "Personnel", list: personnelAgents },
+                              ].map((group) =>
+                                group.list.length > 0 ? (
+                                  <div key={`${company.id}-${group.label}`} className="space-y-1">
+                                    <p className="px-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                                      {group.label}
+                                    </p>
+                                    {group.list.map((agent) => {
+                                      const userTargetId = assignmentUserDropTarget(agent.id);
+                                      const isUserHovered = assignLaneDrag.hoverColumn === userTargetId;
+                                      return (
+                                        <div
+                                          key={`company-user-${company.id}-${agent.id}`}
+                                          ref={assignLaneDrag.registerColumn(userTargetId)}
+                                          role="option"
+                                          aria-selected={isUserHovered}
+                                          className={cn(
+                                            "rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 text-left transition dark:border-zinc-800 dark:bg-zinc-900/50 sm:py-1.5",
+                                            isUserHovered &&
+                                              "border-orange-400 bg-orange-50 ring-2 ring-orange-500/50 dark:border-orange-700 dark:bg-orange-950/30",
+                                          )}
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <p className="min-w-0 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                              {agent.name}
+                                            </p>
+                                            <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                              {assignedCountByAgent.get(agent.id) ?? 0}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : null,
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderTaskScheduleEditor(r: KpiRecord) {
+    if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title) || !scheduleDraft) return null;
+    const draft = scheduleDraft;
+    return (
+      <div className="space-y-2 rounded-lg border border-orange-400/35 bg-orange-500/[0.07] p-3 dark:border-orange-500/30 dark:bg-orange-500/10">
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+          Task schedule type
+        </p>
+        <label className="flex items-center gap-2 text-xs font-semibold normal-case tracking-normal text-zinc-800 dark:text-zinc-200">
+          <input
+            type="checkbox"
+            checked={draft.isRecurring}
+            disabled={busyId === r.id}
+            onChange={(e) => {
+              const nextRecurring = e.target.checked;
+              setScheduleDraft((prev) => (prev ? { ...prev, isRecurring: nextRecurring } : prev));
+            }}
+          />
+          Recurring task
+        </label>
+        {!draft.isRecurring ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Start date
+              <DatePickerField
+                value={draft.nonRecurringStartDate}
+                disabled={busyId === r.id}
+                onChange={(e) =>
+                  setScheduleDraft((prev) =>
+                    prev ? { ...prev, nonRecurringStartDate: e.target.value } : prev,
+                  )
+                }
+                wrapperClassName="mt-1"
+                aria-label="One-off task start date"
+              />
+            </label>
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              End date
+              <DatePickerField
+                value={draft.nonRecurringEndDate}
+                disabled={busyId === r.id}
+                onChange={(e) =>
+                  setScheduleDraft((prev) =>
+                    prev ? { ...prev, nonRecurringEndDate: e.target.value } : prev,
+                  )
+                }
+                wrapperClassName="mt-1"
+                aria-label="One-off task end date"
+              />
+            </label>
+          </div>
+        ) : null}
+        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          Frequency
+          <select
+            value={draft.frequency}
+            disabled={!draft.isRecurring || busyId === r.id}
+            onChange={(e) =>
+              setScheduleDraft((prev) =>
+                prev ? { ...prev, frequency: e.target.value as KpiFrequencyCode } : prev,
+              )
+            }
+            className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+          >
+            <option value="DAILY">Daily</option>
+            <option value="WEEKLY">Weekly</option>
+            <option value="MONTHLY">Monthly</option>
+            <option value="QUARTERLY">Quarterly</option>
+          </select>
+        </label>
+        {draft.isRecurring && draft.frequency === "WEEKLY" ? (
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Week starts on ({tz})
+            <select
+              value={draft.recurrenceWeekday}
+              disabled={busyId === r.id}
+              onChange={(e) =>
+                setScheduleDraft((prev) =>
+                  prev ? { ...prev, recurrenceWeekday: Number(e.target.value) } : prev,
+                )
+              }
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              <option value={0}>Sunday</option>
+              <option value={1}>Monday</option>
+              <option value={2}>Tuesday</option>
+              <option value={3}>Wednesday</option>
+              <option value={4}>Thursday</option>
+              <option value={5}>Friday</option>
+              <option value={6}>Saturday</option>
+            </select>
+          </label>
+        ) : null}
+        {draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY") ? (
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            {draft.frequency === "QUARTERLY" ? "4-month cycle" : "Month cycle"} starts on day (1–31, {tz})
+            <select
+              value={draft.recurrenceMonthDay}
+              disabled={busyId === r.id}
+              onChange={(e) =>
+                setScheduleDraft((prev) =>
+                  prev ? { ...prev, recurrenceMonthDay: Number(e.target.value) } : prev,
+                )
+              }
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <button
+          type="button"
+          disabled={busyId === r.id}
+          onClick={() => void patchTaskSchedule(r, draft)}
+          className="rounded-lg bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Save schedule
+        </button>
+      </div>
+    );
+  }
+
   function renderActiveTaskModal() {
     if (!activeTask) return null;
     const editable = canEditChecklist(activeTask);
@@ -1553,6 +2196,7 @@ export function AgentKpiKanbanFlow({
                   </div>
                 ) : null}
               </dl>
+              {renderTaskScheduleEditor(activeTask)}
               {usesTaskPriority ? (
                 <label className="block rounded-lg border border-zinc-200 bg-white p-3 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-500">
                   Task priority
@@ -1599,12 +2243,13 @@ export function AgentKpiKanbanFlow({
 
             <section className="min-w-0">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Subtasks</h4>
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Sub Tasks</h4>
                 <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
                   {p.total} item{p.total === 1 ? "" : "s"}
                 </span>
               </div>
               <div className="space-y-2">{renderTaskSubtaskContent(activeTask)}</div>
+              {renderAddSubTaskPanel(activeTask)}
             </section>
           </div>
         </div>
@@ -1616,186 +2261,26 @@ export function AgentKpiKanbanFlow({
     <section className="mt-3 space-y-4">
       <PointerDragGhostLayer ghost={assignLaneDrag.ghost} />
       <PointerDragGhostLayer ghost={kpiStatusDrag.ghost} />
-      {showAdminTaskManagement ? (
-        <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => void load()} />
-      ) : null}
-      {canAssignWork ? (
-        <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-[0_10px_34px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:bg-[#080808] dark:shadow-[0_14px_40px_rgba(0,0,0,0.28)]">
-          <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/70">
-            <div className="flex flex-col gap-1.5 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-              <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
-                Task Assignment Board
-              </h4>
-              <p className="mt-1 max-w-3xl text-xs text-zinc-600 dark:text-zinc-400">
-                Drag a task over a company to reveal users, then release over an admin or personnel.
-              </p>
-              </div>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-                Screenshots remain available inside eligible task cards.
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-3 p-3 md:grid-cols-[minmax(16rem,0.7fr)_minmax(0,1.8fr)] lg:p-4">
-            <div
-              ref={canUnassignWork ? assignLaneDrag.registerColumn("__UNASSIGNED__") : undefined}
-              className={cn(
-                "rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 transition dark:border-zinc-800 dark:bg-zinc-950/50",
-                canUnassignWork && assignLaneDrag.hoverColumn === "__UNASSIGNED__" &&
-                  "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
-              )}
+      {showAdminTaskManagement || canAssignWork ? (
+        <div className="flex flex-wrap gap-2">
+          {showAdminTaskManagement ? (
+            <button
+              type="button"
+              onClick={() => setTaskManagementOpen(true)}
+              className="rounded-lg border border-orange-500/40 bg-orange-500/10 px-4 py-2 text-xs font-semibold text-orange-900 transition hover:bg-orange-500/20 dark:text-orange-100"
             >
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">Unassigned</p>
-                  <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-500">Drop here to clear assignment.</p>
-                </div>
-                <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                  {unassignedRows.length}
-                </span>
-              </div>
-              <div className="max-h-[min(42dvh,24rem)] space-y-1.5 overflow-y-auto pr-1">
-                {unassignedRows.length === 0 ? (
-                  <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/70 px-3 py-6 text-center dark:border-zinc-700 dark:bg-zinc-900/30">
-                    <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">No unassigned tasks.</p>
-                  </div>
-                ) : null}
-                {unassignedRows.map((r) => (
-                  <div
-                    key={`unassigned-${r.id}`}
-                    {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => r.title })}
-                    className={cn(
-                      "touch-pan-y select-none rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-950/40 sm:py-2",
-                      assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
-                      busyId === r.id && "pointer-events-none opacity-50",
-                    )}
-                  >
-                    <div className="flex items-start gap-1.5">
-                      <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
-                      <p className="line-clamp-2 min-w-0 leading-snug">{r.title}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="min-w-0">
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
-                <div className="flex flex-col gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
-                      Personnel group
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                      Drag over a company to reveal its users, then drop on a person.
-                    </p>
-                  </div>
-                </div>
-                {assignmentCompanyOptions.length > 0 ? (
-                  <div className="mt-3 grid gap-2 xl:grid-cols-2">
-                    {assignmentCompanyOptions.map((company) => {
-                      const targetId = assignmentCompanyDropTarget(company.id);
-                      const isSelected = assignmentCompanyId === company.id;
-                      const isRevealed = activeAssignmentCompanyId === company.id;
-                      const companyAgents = agentsByAssignmentCompany.get(company.id) ?? [];
-                      const adminAgents = companyAgents.filter((agent) => assignmentRoleLabel(agent) === "Admin");
-                      const personnelAgents = companyAgents.filter((agent) => assignmentRoleLabel(agent) === "Personnel");
-                      return (
-                        <div
-                          key={`company-drop-${company.id}`}
-                          ref={assignLaneDrag.registerColumn(targetId)}
-                          className={cn(
-                            "touch-pan-y rounded-xl border border-zinc-200 bg-white p-2 transition dark:border-zinc-800 dark:bg-zinc-900/40",
-                            isSelected && "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
-                            isRevealed && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
-                          )}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAssignmentCompanyId((current) =>
-                                current === company.id ? ASSIGNMENT_COMPANY_ALL : company.id,
-                              );
-                            }}
-                            aria-pressed={isSelected}
-                            aria-expanded={isRevealed}
-                            className="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg px-2 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-950/60"
-                          >
-                            <span className="min-w-0 truncate text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                              {company.name}
-                            </span>
-                            <span className="flex shrink-0 items-center gap-1">
-                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                                {company.agentCount}
-                              </span>
-                              <ChevronDown
-                                className={cn(
-                                  "size-3.5 text-zinc-500 transition-transform dark:text-zinc-400",
-                                  isRevealed && "rotate-180",
-                                )}
-                                aria-hidden
-                              />
-                            </span>
-                          </button>
-                          {isRevealed ? (
-                            <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
-                              <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                                Drop on admin or personnel
-                              </p>
-                              <div className="max-h-[min(44dvh,20rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-60">
-                                {companyAgents.length === 0 ? (
-                                  <p className="rounded-md border border-dashed border-zinc-300 px-2 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                                    No users in this company.
-                                  </p>
-                                ) : null}
-                                {[
-                                  { label: "Admins", list: adminAgents },
-                                  { label: "Personnel", list: personnelAgents },
-                                ].map((group) =>
-                                  group.list.length > 0 ? (
-                                    <div key={`${company.id}-${group.label}`} className="space-y-1">
-                                      <p className="px-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                                        {group.label}
-                                      </p>
-                                      {group.list.map((agent) => {
-                                        const userTargetId = assignmentUserDropTarget(agent.id);
-                                        const isUserHovered = assignLaneDrag.hoverColumn === userTargetId;
-                                        return (
-                                          <div
-                                            key={`company-user-${company.id}-${agent.id}`}
-                                            ref={assignLaneDrag.registerColumn(userTargetId)}
-                                            role="option"
-                                            aria-selected={isUserHovered}
-                                            className={cn(
-                                              "rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 text-left transition dark:border-zinc-800 dark:bg-zinc-900/50 sm:py-1.5",
-                                              isUserHovered &&
-                                                "border-orange-400 bg-orange-50 ring-2 ring-orange-500/50 dark:border-orange-700 dark:bg-orange-950/30",
-                                            )}
-                                          >
-                                            <div className="flex items-center justify-between gap-2">
-                                              <p className="min-w-0 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                                                {agent.name}
-                                              </p>
-                                              <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                                                {assignedCountByAgent.get(agent.id) ?? 0}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : null,
-                                )}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
+              Open task management
+            </button>
+          ) : null}
+          {canAssignWork ? (
+            <button
+              type="button"
+              onClick={() => setAssignmentBoardOpen(true)}
+              className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            >
+              Open task assignment board
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="flex items-end justify-between gap-4">
@@ -2008,7 +2493,7 @@ export function AgentKpiKanbanFlow({
                                   className={cn("size-3.5 transition-transform", drawerOpen && "rotate-180")}
                                   aria-hidden
                                 />
-                                {drawerOpen ? "Close subtasks" : "Open subtasks"}
+                                {drawerOpen ? "Close Sub Tasks" : "Open Sub Tasks"}
                               </button>
                             ) : null}
                             <button
@@ -2027,6 +2512,7 @@ export function AgentKpiKanbanFlow({
                           {drawerOpen ? (
                             <div className="mt-3 space-y-2">
                               {renderTaskSubtaskContent(r)}
+                              {renderAddSubTaskPanel(r)}
                             </div>
                           ) : null}
                             </div>
@@ -2041,6 +2527,24 @@ export function AgentKpiKanbanFlow({
           })}
         </div>
       )}
+      <TaskBoardPopup
+        open={taskManagementOpen}
+        title="Task management"
+        description="Create recurring tasks, pillars, and sub-task checklists for the Task Board."
+        onClose={() => setTaskManagementOpen(false)}
+        size="xl"
+      >
+        <KpiDefinitionConsole embedded onMaintenanceRecordsUpdated={() => void load()} />
+      </TaskBoardPopup>
+      <TaskBoardPopup
+        open={assignmentBoardOpen}
+        title="Task assignment board"
+        description="Drag a task over a company to reveal users, then release over an admin or personnel. Screenshots remain available inside eligible task cards."
+        onClose={() => setAssignmentBoardOpen(false)}
+        size="xl"
+      >
+        {renderAssignmentBoard()}
+      </TaskBoardPopup>
       {renderActiveTaskModal()}
     </section>
   );

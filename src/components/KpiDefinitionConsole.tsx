@@ -49,9 +49,11 @@ export type KpiDefinitionMaintenanceRecord = {
 type Props = {
   /** Called after a successful create so parents can refresh KPI lists / metrics. */
   onMaintenanceRecordsUpdated?: (rows: KpiDefinitionMaintenanceRecord[]) => void;
+  /** When true, omit outer card chrome (for use inside a popup). */
+  embedded?: boolean;
 };
 
-export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
+export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = false }: Props) {
   const { data: session } = useSession();
   const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
   const [maintenanceTitle, setMaintenanceTitle] = useState("");
@@ -549,17 +551,25 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated }: Props) {
   }
 
   return (
-    <section className="mb-5 rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-6 dark:border-zinc-800/90 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-      <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-        Task management
-      </h2>
+    <section
+      className={
+        embedded
+          ? undefined
+          : "mb-5 rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-6 dark:border-zinc-800/90 dark:bg-[#0b1220] dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+      }
+    >
+      {!embedded ? (
+        <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
+          Task management
+        </h2>
+      ) : null}
       {localError ? (
         <p className="mt-2 rounded-lg border border-red-500/35 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-200">
           {localError}
         </p>
       ) : null}
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2">
+      <div className={cn("grid gap-3 md:grid-cols-2", embedded ? "mt-0" : "mt-5")}>
         <label
           className={cn(
             "flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500",
