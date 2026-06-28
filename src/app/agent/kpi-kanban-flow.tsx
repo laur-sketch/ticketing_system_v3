@@ -354,15 +354,20 @@ export function AgentKpiKanbanFlow({
     }
   }, [rows]);
 
-  useEffect(() => {
-    if (!activeTaskId || !showAdminTaskManagement) {
+  function openActiveTask(taskId: string) {
+    setActiveTaskId(taskId);
+    if (!showAdminTaskManagement) {
       setScheduleDraft(null);
       return;
     }
-    const task = rows.find((row) => row.id === activeTaskId);
-    if (task) setScheduleDraft(taskToScheduleDraft(task));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTaskId, showAdminTaskManagement]);
+    const task = rows.find((row) => row.id === taskId);
+    setScheduleDraft(task ? taskToScheduleDraft(task) : null);
+  }
+
+  function closeActiveTask() {
+    setActiveTaskId(null);
+    setScheduleDraft(null);
+  }
 
   function progress(r: KpiRecord) {
     const p = isItProjectImplementationPillar(r.title)
@@ -829,7 +834,7 @@ export function AgentKpiKanbanFlow({
       }
       await load();
       if (shouldCloseWhenSaved) {
-        setActiveTaskId(null);
+        closeActiveTask();
       }
     } finally {
       setBusyId(null);
@@ -953,6 +958,37 @@ export function AgentKpiKanbanFlow({
       }
       const updated = (await res.json()) as KpiRecord;
       setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeTask(r: KpiRecord) {
+    if (!showAdminTaskManagement) return;
+    const label = r.title.trim() || "this task";
+    if (
+      !window.confirm(
+        `Remove task "${label}" from the board? This permanently deletes the task and cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(r.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: r.id, deleteTask: true }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not remove task.");
+        return;
+      }
+      if (activeTaskId === r.id) closeActiveTask();
+      setRows((prev) => prev.filter((row) => row.id !== r.id));
       await load();
     } finally {
       setBusyId(null);
@@ -2128,7 +2164,7 @@ export function AgentKpiKanbanFlow({
     return (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 py-6 backdrop-blur-sm"
-        onClick={() => setActiveTaskId(null)}
+        onClick={() => closeActiveTask()}
         role="dialog"
         aria-modal="true"
         aria-label={`${activeTask.title} full task details`}
@@ -2147,14 +2183,26 @@ export function AgentKpiKanbanFlow({
                 Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"} · {itProject ? "Project" : activeTask.frequency}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setActiveTaskId(null)}
-              className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white p-2 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              aria-label="Close task details"
-            >
-              <X className="size-4" aria-hidden />
-            </button>
+            <div className="flex shrink-0 items-start gap-2">
+              {showAdminTaskManagement ? (
+                <button
+                  type="button"
+                  disabled={busyId === activeTask.id}
+                  onClick={() => void removeTask(activeTask)}
+                  className="inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-800 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                >
+                  Remove task
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => closeActiveTask()}
+                className="inline-flex items-center justify-center rounded-full border border-zinc-300 bg-white p-2 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                aria-label="Close task details"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[0.9fr_1.6fr]">
@@ -2386,12 +2434,12 @@ export function AgentKpiKanbanFlow({
                           onClick={(e) => {
                             const target = e.target as HTMLElement;
                             if (target.closest("a,button,input,select,textarea,label")) return;
-                            setActiveTaskId(r.id);
+                            openActiveTask(r.id);
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
-                              setActiveTaskId(r.id);
+                              openActiveTask(r.id);
                             }
                           }}
                         >
@@ -2496,11 +2544,24 @@ export function AgentKpiKanbanFlow({
                                 {drawerOpen ? "Close Sub Tasks" : "Open Sub Tasks"}
                               </button>
                             ) : null}
+                            {showAdminTaskManagement ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void removeTask(r);
+                                }}
+                                disabled={busyId === r.id}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/60 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-800 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                              >
+                                Remove task
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setActiveTaskId(r.id);
+                                openActiveTask(r.id);
                               }}
                               className="inline-flex items-center gap-1.5 rounded-full bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500"
                             >

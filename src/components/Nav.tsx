@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Bell, Search, SlidersHorizontal, UserRound } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "./ui/button";
 import { BrandLockup } from "@/components/BrandLockup";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
@@ -26,6 +27,8 @@ export function Nav() {
   >([]);
   const [unreadOpenCount, setUnreadOpenCount] = useState(0);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const mobileNotifPanelRef = useRef<HTMLDivElement | null>(null);
+  const desktopNotifPanelRef = useRef<HTMLDivElement | null>(null);
   const role = data?.user?.role;
   const isAdminRole = role === "SuperAdmin" || role === "Admin";
   const roleLabel = role === "SuperAdmin" ? "SuperAdmin" : role;
@@ -132,11 +135,23 @@ export function Nav() {
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
-      if (!notifRef.current) return;
-      if (!notifRef.current.contains(e.target as Node)) setNotifOpen(false);
+      const target = e.target as Node;
+      if (notifRef.current?.contains(target)) return;
+      if (mobileNotifPanelRef.current?.contains(target)) return;
+      if (desktopNotifPanelRef.current?.contains(target)) return;
+      setNotifOpen(false);
     }
     if (notifOpen) document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [notifOpen]);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
   }, [notifOpen]);
 
   if (
@@ -148,8 +163,98 @@ export function Nav() {
     return null;
   }
 
+  const notifPanelBody = (
+    <>
+      <div className="flex items-center justify-between px-2 py-1.5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Notifications
+        </p>
+        <Link href={agentHref({ page: "1" })} className="text-[11px] text-orange-700 hover:underline dark:text-orange-300">
+          Open board
+        </Link>
+      </div>
+      <div className="mt-1 max-h-[min(320px,calc(100dvh_-_9rem))] space-y-1 overflow-y-auto">
+        {notifLoading ? (
+          <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">Loading…</p>
+        ) : notifications.length === 0 && accountRequestNotifications.length === 0 ? (
+          <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">
+            No recent notifications.
+          </p>
+        ) : (
+          <>
+            {isAdminRole && accountRequestNotifications.length > 0 ? (
+              <div className="space-y-1">
+                <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+                  Account requests
+                </p>
+                {accountRequestNotifications.map((n) => (
+                  <Link
+                    key={n.id}
+                    href="/admin/account"
+                    onClick={() => setNotifOpen(false)}
+                    className="block rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 hover:bg-amber-500/15 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15"
+                  >
+                    <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                      {n.requestType === "DELETION"
+                        ? "Deletion request"
+                        : n.requestType === "PASSWORD_RESET"
+                          ? "Password reset request"
+                          : "Suspension request"}
+                    </p>
+                    <p className="line-clamp-1 text-xs text-zinc-700 dark:text-zinc-300">
+                      {n.portalAccount.name} · {n.portalAccount.email}
+                    </p>
+                    <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                      Pending · <ElapsedFromIso iso={n.createdAt} className="inline" />
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            ) : null}
+            {notifications.map((n) => (
+              <AgentTicketDeepLink
+                key={n.id}
+                ticketId={n.id}
+                onNavigate={() => setNotifOpen(false)}
+                className="block rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950/60 dark:hover:bg-zinc-800/70"
+              >
+                <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200">{n.ticketNumber}</p>
+                <p className="line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{n.title}</p>
+                <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                  {n.status.replaceAll("_", " ")} ·{" "}
+                  <ElapsedFromIso iso={n.updatedAt} className="inline" />
+                </p>
+              </AgentTicketDeepLink>
+            ))}
+          </>
+        )}
+      </div>
+    </>
+  );
+
+  const mobileNotifOverlay =
+    notifOpen && typeof document !== "undefined"
+      ? createPortal(
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-[200] bg-background sm:hidden"
+              aria-label="Close notifications"
+              onClick={() => setNotifOpen(false)}
+            />
+            <div
+              ref={mobileNotifPanelRef}
+              className="fixed inset-x-3 top-[calc(4.25rem_+_env(safe-area-inset-top,0px))] z-[201] max-h-[calc(100dvh_-_5.5rem_-_env(safe-area-inset-bottom,0px))] overflow-hidden rounded-[var(--radius-stoic-lg)] border border-border bg-[var(--surface-elevated)] p-2 shadow-[var(--shadow-elevated)] sm:hidden"
+            >
+              {notifPanelBody}
+            </div>
+          </>,
+          document.body,
+        )
+      : null;
+
   return (
-    <header className="shrink-0 border-b border-border bg-surface/95 backdrop-blur-md">
+    <header className="relative z-50 shrink-0 border-b border-border bg-surface/95 backdrop-blur-md">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2.5 sm:gap-x-4 sm:px-4">
         {showUtilities ? (
           <>
@@ -202,74 +307,15 @@ export function Nav() {
                 ) : null}
               </button>
               {notifOpen ? (
-                <div className="fixed inset-x-3 top-[calc(4.25rem_+_env(safe-area-inset-top,0px))] z-40 max-h-[calc(100dvh_-_5.5rem_-_env(safe-area-inset-bottom,0px))] overflow-hidden stoic-card-elevated p-2 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(360px,calc(100vw_-_2rem))] sm:max-w-[calc(100vw_-_2rem)]">
-                  <div className="flex items-center justify-between px-2 py-1.5">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                      Notifications
-                    </p>
-                    <Link href={agentHref({ page: "1" })} className="text-[11px] text-orange-700 hover:underline dark:text-orange-300">
-                      Open board
-                    </Link>
-                  </div>
-                  <div className="mt-1 max-h-[min(320px,calc(100dvh_-_9rem))] space-y-1 overflow-y-auto">
-                    {notifLoading ? (
-                      <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">Loading…</p>
-                    ) : notifications.length === 0 && accountRequestNotifications.length === 0 ? (
-                      <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">
-                        No recent notifications.
-                      </p>
-                    ) : (
-                      <>
-                        {isAdminRole && accountRequestNotifications.length > 0 ? (
-                          <div className="space-y-1">
-                            <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-                              Account requests
-                            </p>
-                            {accountRequestNotifications.map((n) => (
-                              <Link
-                                key={n.id}
-                                href="/admin/account"
-                                onClick={() => setNotifOpen(false)}
-                                className="block rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 hover:bg-amber-500/15 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15"
-                              >
-                                <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                                  {n.requestType === "DELETION"
-                                    ? "Deletion request"
-                                    : n.requestType === "PASSWORD_RESET"
-                                      ? "Password reset request"
-                                      : "Suspension request"}
-                                </p>
-                                <p className="line-clamp-1 text-xs text-zinc-700 dark:text-zinc-300">
-                                  {n.portalAccount.name} · {n.portalAccount.email}
-                                </p>
-                                <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                                  Pending · <ElapsedFromIso iso={n.createdAt} className="inline" />
-                                </p>
-                              </Link>
-                            ))}
-                          </div>
-                        ) : null}
-                        {notifications.map((n) => (
-                          <AgentTicketDeepLink
-                            key={n.id}
-                            ticketId={n.id}
-                            onNavigate={() => setNotifOpen(false)}
-                            className="block rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950/60 dark:hover:bg-zinc-800/70"
-                          >
-                            <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200">{n.ticketNumber}</p>
-                            <p className="line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{n.title}</p>
-                            <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                              {n.status.replaceAll("_", " ")} ·{" "}
-                              <ElapsedFromIso iso={n.updatedAt} className="inline" />
-                            </p>
-                          </AgentTicketDeepLink>
-                        ))}
-                      </>
-                    )}
-                  </div>
+                <div
+                  ref={desktopNotifPanelRef}
+                  className="absolute right-0 z-50 mt-2 hidden w-[min(360px,calc(100vw_-_2rem))] max-w-[calc(100vw_-_2rem)] max-h-[min(420px,calc(100dvh_-_6rem))] overflow-hidden stoic-card-elevated bg-[var(--surface-elevated)] p-2 sm:block"
+                >
+                  {notifPanelBody}
                 </div>
               ) : null}
             </div>
+            {mobileNotifOverlay}
             <Link
               href="/process"
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:h-9 sm:w-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"

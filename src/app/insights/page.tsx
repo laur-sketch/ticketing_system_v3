@@ -426,7 +426,7 @@ export default function InsightsPage() {
         </Tabs>
       </header>
 
-      {error ? (
+      {error && activeTab === "ticket-metrics" ? (
         <p className="rounded-xl border border-red-500/35 bg-red-50 px-4 py-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </p>

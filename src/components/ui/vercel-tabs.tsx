@@ -27,11 +27,18 @@ const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
     const activeRef = React.useRef<HTMLDivElement | null>(null);
     const tabRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
 
-    const positionElement = React.useCallback((element: HTMLElement | null, target: HTMLDivElement | null) => {
-      if (!element || !target) return;
-      target.style.left = `${element.offsetLeft}px`;
-      target.style.width = `${element.offsetWidth}px`;
-    }, []);
+    const trackRef = React.useRef<HTMLDivElement | null>(null);
+
+    const positionElement = React.useCallback(
+      (element: HTMLElement | null, target: HTMLDivElement | null) => {
+        if (!element || !target || !trackRef.current) return;
+        const containerRect = trackRef.current.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        target.style.left = `${elementRect.left - containerRect.left}px`;
+        target.style.width = `${elementRect.width}px`;
+      },
+      [],
+    );
 
     const positionActive = React.useCallback(() => {
       positionElement(tabRefs.current[selectedIndex] ?? null, activeRef.current);
@@ -48,7 +55,7 @@ const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
 
     return (
       <div ref={ref} className={cn("relative", className)} {...props}>
-        <div className="relative">
+        <div className="relative" ref={trackRef}>
           <div
             ref={hoverRef}
             className="absolute flex h-[30px] items-center rounded-[6px] bg-[#0e0f1114] opacity-0 transition-all duration-300 ease-out dark:bg-[#ffffff1a]"

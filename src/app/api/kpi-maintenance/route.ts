@@ -60,7 +60,7 @@ import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
-import { persistTaskScreenshot, validateTaskScreenshotFile } from "@/lib/task-screenshots";
+import { persistTaskScreenshot, validateTaskScreenshotFile, deleteTaskScreenshotsDir } from "@/lib/task-screenshots";
 import { MAX_TASK_SCREENSHOTS_PER_SLOT } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 
@@ -602,6 +602,7 @@ export async function PATCH(req: Request) {
     removeSubKpi?: {
       subKpiId?: string;
     };
+    deleteTask?: boolean;
     taskSchedule?: {
       isRecurring?: boolean;
       frequency?: string;
@@ -658,6 +659,15 @@ export async function PATCH(req: Request) {
   });
   if (!row) return NextResponse.json({ error: "KPI not found." }, { status: 404 });
   const kpiRow = row;
+
+  if (body.deleteTask === true) {
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    await prisma.kpiMaintenance.delete({ where: { id } });
+    await deleteTaskScreenshotsDir(id);
+    return NextResponse.json({ ok: true, id });
+  }
 
   const snapshotTz = timeZoneFromPeriodKey(kpiRow.periodKey) || patchTz;
 

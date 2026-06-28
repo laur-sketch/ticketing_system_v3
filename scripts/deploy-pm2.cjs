@@ -58,6 +58,13 @@ if (process.platform === "win32") {
 execSync("npm run build", opts);
 
 try {
+  execSync("npx prisma migrate deploy", opts);
+} catch (e) {
+  console.error("Database migration failed. Fix migrations before serving traffic.");
+  throw e;
+}
+
+try {
   execSync("npx tsx scripts/ensure-unset-priority-data.ts", opts);
 } catch {
   /* DB may be unreachable from build host; SLA row is required only when using UNSET priority */

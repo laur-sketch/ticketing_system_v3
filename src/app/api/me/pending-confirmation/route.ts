@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {
-  customerHasPendingResolvedTicket,
   customerPendingTicketHref,
   listTicketsAwaitingCustomerConfirmation,
 } from "@/lib/customer-pending-resolution";

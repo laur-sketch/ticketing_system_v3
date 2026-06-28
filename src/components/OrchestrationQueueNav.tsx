@@ -75,7 +75,7 @@ export function OrchestrationQueueNav() {
 
   if (canAccessAssignmentBoard) {
     return (
-      <nav className="-mx-1 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [-ms-overflow-style:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+      <nav className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         <Tabs tabs={adminTabs} activeTab={activeTab} onTabChange={goToTab} />
       </nav>
     );
@@ -85,7 +85,7 @@ export function OrchestrationQueueNav() {
 
   /** Personnel see only Ticket Board + Task Board; Company Board is admin-only. */
   return (
-    <nav className="-mx-1 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [-ms-overflow-style:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+    <nav className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
       <Tabs tabs={personnelTabs} activeTab={activeTab} onTabChange={goToTab} />
     </nav>
   );

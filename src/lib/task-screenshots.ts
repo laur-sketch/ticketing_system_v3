@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, rm, writeFile } from "fs/promises";
 import path from "path";
 import { MAX_TASK_SCREENSHOT_BYTES } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotMetaItem } from "@/lib/task-screenshot-meta";
@@ -48,4 +48,13 @@ export async function persistTaskScreenshot(
     size: file.size,
     uploadedAt: new Date().toISOString(),
   };
+}
+
+/** Best-effort cleanup when a task card is deleted. */
+export async function deleteTaskScreenshotsDir(kpiId: string): Promise<void> {
+  try {
+    await rm(taskScreenshotsUploadDir(kpiId), { recursive: true, force: true });
+  } catch {
+    /* uploads dir may already be absent */
+  }
 }
