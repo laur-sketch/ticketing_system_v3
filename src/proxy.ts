@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
+import { isJwtSessionExpired, sanitizeCallbackUrl, signInUrlWithCallback } from "@/lib/session-expiry";
+
+const SESSION_TIMEOUT_SIGNIN_URL = "/signin?reason=session-expired";
 
 function isAllowed(role: string | undefined, allowed: string[]) {
   if (!role) return false;
@@ -8,96 +11,100 @@ function isAllowed(role: string | undefined, allowed: string[]) {
   return allowed.includes(role);
 }
 
+function redirectSessionExpired(req: NextRequest) {
+  return NextResponse.redirect(new URL(SESSION_TIMEOUT_SIGNIN_URL, req.url));
+}
+
+function redirectToSignIn(req: NextRequest) {
+  const { pathname, search } = req.nextUrl;
+  const signInPath = signInUrlWithCallback(pathname, search);
+  return NextResponse.redirect(new URL(signInPath, req.url));
+}
+
+function requireAuth(
+  req: NextRequest,
+  token: Awaited<ReturnType<typeof getToken>>,
+  sessionInvalid: boolean,
+) {
+  if (sessionInvalid) return redirectSessionExpired(req);
+  if (!token) return redirectToSignIn(req);
+  return null;
+}
+
 export async function proxy(req: NextRequest) {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET }).catch(() => {
     return null;
   });
   const { pathname } = req.nextUrl;
+  const sessionInvalid = isJwtSessionExpired(token);
 
   if (pathname.startsWith("/agent")) {
-    if (!token) {
-      const signInUrl = new URL("/signin", req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(signInUrl);
-    }
-    if (!isAllowed(token.role as string | undefined, ["Admin", "Personnel"])) {
+    const denied = requireAuth(req, token, sessionInvalid);
+    if (denied) return denied;
+    if (!isAllowed(token!.role as string | undefined, ["Admin", "Personnel"])) {
       return NextResponse.redirect(new URL("/", req.url));
     }
   }
 
   if (pathname.startsWith("/insights")) {
-    if (!token) {
-      const signInUrl = new URL("/signin", req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(signInUrl);
-    }
-    if (!isAllowed(token.role as string | undefined, ["Admin", "Personnel"])) {
+    const denied = requireAuth(req, token, sessionInvalid);
+    if (denied) return denied;
+    if (!isAllowed(token!.role as string | undefined, ["Admin", "Personnel"])) {
       return NextResponse.redirect(new URL("/", req.url));
     }
   }
 
   if (pathname.startsWith("/admin") || pathname.startsWith("/reports")) {
     if (pathname.startsWith("/admin/manual-assignment")) {
-      if (!token) {
-        const signInUrl = new URL("/signin", req.url);
-        signInUrl.searchParams.set("callbackUrl", pathname);
-        return NextResponse.redirect(signInUrl);
-      }
-      if (!isAllowed(token.role as string | undefined, ["Admin", "Personnel"])) {
+      const denied = requireAuth(req, token, sessionInvalid);
+      if (denied) return denied;
+      if (!isAllowed(token!.role as string | undefined, ["Admin", "Personnel"])) {
         return NextResponse.redirect(new URL("/", req.url));
       }
       return NextResponse.next();
     }
     if (pathname.startsWith("/admin/account")) {
-      if (!token) {
-        const signInUrl = new URL("/signin", req.url);
-        signInUrl.searchParams.set("callbackUrl", pathname);
-        return NextResponse.redirect(signInUrl);
-      }
-      if (!isAllowed(token.role as string | undefined, ["Admin", "Personnel", "Customer"])) {
+      const denied = requireAuth(req, token, sessionInvalid);
+      if (denied) return denied;
+      if (!isAllowed(token!.role as string | undefined, ["Admin", "Personnel", "Customer"])) {
         return NextResponse.redirect(new URL("/", req.url));
       }
       return NextResponse.next();
     }
-    if (!token) {
-      const signInUrl = new URL("/signin", req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(signInUrl);
-    }
-    if (!isAllowed(token.role as string | undefined, ["Admin"])) {
+    const denied = requireAuth(req, token, sessionInvalid);
+    if (denied) return denied;
+    if (!isAllowed(token!.role as string | undefined, ["Admin"])) {
       return NextResponse.redirect(new URL("/", req.url));
     }
   }
 
   if (pathname.startsWith("/tickets/new") || pathname.startsWith("/tickets/")) {
-    if (!token) {
-      const signInUrl = new URL("/signin", req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(signInUrl);
+    if (sessionInvalid) {
+      return redirectSessionExpired(req);
     }
   }
 
   /** `/customer/signin` is a compatibility redirect to `/signin` (no session required). */
   const publicCustomerAuthPaths = ["/customer/signin", "/customer/signup"];
   if (pathname.startsWith("/customer/") && !publicCustomerAuthPaths.includes(pathname)) {
-    if (!token) {
-      const signInUrl = new URL("/signin", req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(signInUrl);
-    }
-    if (!isAllowed(token.role as string | undefined, ["Customer"])) {
+    const denied = requireAuth(req, token, sessionInvalid);
+    if (denied) return denied;
+    if (!isAllowed(token!.role as string | undefined, ["Customer"])) {
       return NextResponse.redirect(new URL("/", req.url));
     }
   }
 
   if (pathname.startsWith("/my-requests")) {
-    if (!token) {
-      const signInUrl = new URL("/signin", req.url);
-      signInUrl.searchParams.set("callbackUrl", pathname);
-      return NextResponse.redirect(signInUrl);
-    }
-    if (!isAllowed(token.role as string | undefined, ["Admin", "Personnel", "SuperAdmin"])) {
+    const denied = requireAuth(req, token, sessionInvalid);
+    if (denied) return denied;
+    if (!isAllowed(token!.role as string | undefined, ["Admin", "Personnel", "SuperAdmin"])) {
       return NextResponse.redirect(new URL("/", req.url));
+    }
+  }
+
+  if (pathname.startsWith("/my-tickets")) {
+    if (sessionInvalid) {
+      return redirectSessionExpired(req);
     }
   }
 
@@ -112,6 +119,7 @@ export const config = {
     "/reports/:path*",
     "/tickets/new",
     "/tickets/:path*",
+    "/my-tickets",
     "/my-tickets/:path*",
     "/my-requests/:path*",
     "/customer/:path*",

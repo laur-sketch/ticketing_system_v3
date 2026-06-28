@@ -1,10 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import type { Session } from "next-auth";
 import { SessionProvider, signOut, useSession } from "next-auth/react";
 import { PendingConfirmationLoginModal } from "@/components/portal/PendingConfirmationLoginModal";
+import { SessionExpiryGuard } from "@/components/SessionExpiryGuard";
 
 const DEV_SESSION_RESET_ENABLED = false;
 
@@ -58,7 +59,10 @@ export function AuthProvider({
   session: Session | null;
 }) {
   return (
-    <SessionProvider session={session} refetchInterval={60}>
+    <SessionProvider session={session} refetchInterval={0} refetchOnWindowFocus>
+      <Suspense fallback={null}>
+        <SessionExpiryGuard />
+      </Suspense>
       <DevSessionReset />
       <PendingConfirmationLoginModal />
       {children}

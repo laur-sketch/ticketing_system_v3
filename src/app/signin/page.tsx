@@ -3,7 +3,7 @@
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { signIn } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { Eye, EyeOff } from "lucide-react";
 import {
   AuthShell,
@@ -12,10 +12,22 @@ import {
   authPrimaryButtonClass,
   authSecondaryButtonClass,
 } from "@/components/auth/AuthShell";
+import { isSessionExpired } from "@/lib/session-expiry-client";
+import { sanitizeCallbackUrl } from "@/lib/session-expiry";
+import { RedirectLoadingIndicator } from "@/components/ui/redirect-loading-indicator";
 
-function safeCallbackUrl(raw: string | null): string {
-  if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
-  return "/";
+function postLoginDestination(resUrl: string | null | undefined, fallback: string): string {
+  if (resUrl) {
+    try {
+      const parsed = new URL(resUrl, window.location.origin);
+      if (parsed.origin === window.location.origin) {
+        return sanitizeCallbackUrl(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return sanitizeCallbackUrl(fallback);
 }
 
 function oauthErrorMessage(code: string | null): string | null {
@@ -37,14 +49,18 @@ function oauthErrorMessage(code: string | null): string | null {
 
 function SignInForm() {
   const searchParams = useSearchParams();
+  const { data: session, status } = useSession();
   const registered = searchParams.get("registered") === "1";
-  const callbackUrl = safeCallbackUrl(searchParams.get("callbackUrl"));
+  const sessionExpired = searchParams.get("reason") === "session-expired";
+  const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"));
   const oauthError = oauthErrorMessage(searchParams.get("error"));
   const wantsGoogle = searchParams.get("google") === "1";
   const googleRedirectStarted = useRef(false);
   const banner = registered
     ? "Account created. Sign in with your username and password."
-    : oauthError;
+    : sessionExpired
+      ? "Your session ended after 30 minutes. Please sign in again."
+      : oauthError;
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -58,6 +74,7 @@ function SignInForm() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
 
   const revealPassword = () => setShowPassword(true);
   const hidePassword = () => setShowPassword(false);
@@ -75,6 +92,12 @@ function SignInForm() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (status !== "authenticated" || !session || isSessionExpired(session)) return;
+    setRedirecting(true);
+    window.location.replace(callbackUrl);
+  }, [status, session, callbackUrl]);
 
   useEffect(() => {
     if (!googleEnabled || !wantsGoogle || googleRedirectStarted.current) return;
@@ -95,7 +118,8 @@ function SignInForm() {
       setError("Invalid username or password.");
       return;
     }
-    window.location.href = res?.url ?? callbackUrl;
+    setRedirecting(true);
+    window.location.href = postLoginDestination(res?.url, callbackUrl);
   }
 
   function openResetPanel() {
@@ -140,6 +164,15 @@ function SignInForm() {
     } finally {
       setResetBusy(false);
     }
+  }
+
+  if (redirecting) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-4 text-foreground">
+        <RedirectLoadingIndicator />
+        <p className="text-sm font-medium">Redirecting…</p>
+      </div>
+    );
   }
 
   return (

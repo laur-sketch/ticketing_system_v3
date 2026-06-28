@@ -27,6 +27,7 @@ import { AgentKanban, type KanbanTicket } from "./agent-kanban";
 import { CompanyKanban } from "./company-kanban";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
+import { TicketBoardCompanySelect } from "./ticket-board-filters";
 
 export const dynamic = "force-dynamic";
 
@@ -149,7 +150,16 @@ export default async function AgentHome({
     (session.user.role === "SuperAdmin" ||
       session.user.role === "Admin" ||
       companyCoordinator);
+  const showTicketCompanyFilter =
+    boardTab === "ticket" &&
+    session.user.role !== "Personnel" &&
+    (session.user.role === "SuperAdmin" ||
+      session.user.role === "Admin" ||
+      companyCoordinator);
   const showTopTicketFilters = boardTab !== "kpi";
+  const ticketCompanySelected = boardTab === "ticket" && selectedCompany !== "ALL";
+  const ticketAssignedFilterActive =
+    boardTab === "ticket" && session.user.role !== "Personnel" && ticketCompanySelected;
 
   const adminScopedCompanyId =
     (isCompanyBoard || showKpiCompanyFilter) &&
@@ -176,6 +186,15 @@ export default async function AgentHome({
       ).filter((t) => (adminScopedCompanyId ? t.id !== adminScopedCompanyId : true))
     : [];
 
+  const rosterTeamsForTicketFilter = showTicketCompanyFilter
+    ? sortByRosterOrder(
+        await prisma.team.findMany({
+          where: rosterTeamNameFilter(),
+          select: { id: true, name: true },
+        }),
+      )
+    : [];
+
   if (isCompanyBoard) {
     const priorityForCompany = (selectedPriority === "ALL" ? "ALL" : selectedPriority) as TicketPriority | "ALL";
     const [dep, agg, logs] = await Promise.all([
@@ -200,19 +219,51 @@ export default async function AgentHome({
 
   const fetchTicketPipeline = !isCompanyBoard && boardTab !== "kpi";
 
-  const agents = await prisma.agent.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
+  const agentsForTicketAssigneeFilter =
+    ticketCompanySelected && fetchTicketPipeline
+      ? await (async () => {
+          const portals = await prisma.portalAccount.findMany({
+            where: {
+              role: { in: ["Admin", "Personnel"] },
+              accountStatus: "ACTIVE",
+              staffDesignatedCompanyId: selectedCompany,
+            },
+            select: { email: true },
+          });
+          const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
+          if (emails.length === 0) return [];
+          return prisma.agent.findMany({
+            where: { email: { in: emails } },
+            orderBy: { name: "asc" },
+            select: { id: true, name: true },
+          });
+        })()
+      : [];
+
+  const effectiveAssigned =
+    ticketAssignedFilterActive &&
+    selectedAssigned !== "ALL" &&
+    selectedAssigned !== "UNASSIGNED" &&
+    !agentsForTicketAssigneeFilter.some((a) => a.id === selectedAssigned)
+      ? "ALL"
+      : ticketAssignedFilterActive
+        ? selectedAssigned
+        : "ALL";
 
   const whereBase: Prisma.TicketWhereInput = {};
   if (session.user.role === "Personnel") {
     whereBase.assignedAgentId = operator?.id ?? "__none__";
   }
-  if (selectedAssigned === "UNASSIGNED") {
+  if (ticketCompanySelected && session.user.role !== "Personnel") {
+    whereBase.teamId = selectedCompany;
+  }
+  if (effectiveAssigned === "UNASSIGNED") {
     if (session.user.role !== "Personnel") {
       whereBase.assignedAgentId = null;
     }
-  } else if (selectedAssigned !== "ALL") {
+  } else if (effectiveAssigned !== "ALL") {
     if (session.user.role !== "Personnel") {
-      whereBase.assignedAgentId = selectedAssigned;
+      whereBase.assignedAgentId = effectiveAssigned;
     }
   }
   if (selectedPriority !== "ALL") {
@@ -388,7 +439,9 @@ export default async function AgentHome({
   function buildHref(next: Record<string, string | null>) {
     const qs = new URLSearchParams();
     if (viewMode === "table") qs.set("view", "table");
-    if (selectedAssigned !== "ALL") qs.set("assigned", selectedAssigned);
+    if (ticketAssignedFilterActive && effectiveAssigned !== "ALL") {
+      qs.set("assigned", effectiveAssigned);
+    }
     if (!isBoard) {
       if (selectedStatus !== "ALL") qs.set("status", selectedStatus);
     }
@@ -400,7 +453,7 @@ export default async function AgentHome({
     if (isCompanyBoard && companyLogPage !== 1) qs.set("logsPage", String(companyLogPage));
     if (notificationsOpen) qs.set("notifications", "1");
     if (boardTab !== "ticket") qs.set("board", boardTab);
-    if ((isCompanyBoard || boardTab === "kpi") && selectedCompany !== "ALL") {
+    if ((isCompanyBoard || boardTab === "kpi" || showTicketCompanyFilter) && selectedCompany !== "ALL") {
       qs.set("company", selectedCompany);
     }
 
@@ -655,48 +708,51 @@ export default async function AgentHome({
                 {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
                 <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
                   <div className="grid w-full grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
-                    {isCompanyBoard ? (
+                    {isCompanyBoard || showTicketCompanyFilter ? (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
+                      {showTicketCompanyFilter ? (
+                        <TicketBoardCompanySelect
+                          defaultValue={selectedCompany}
+                          options={rosterTeamsForTicketFilter}
+                          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
+                        />
+                      ) : (
+                        <select
+                          name="company"
+                          key={`cc-${selectedCompany}`}
+                          defaultValue={selectedCompany}
+                          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
+                        >
+                          <option value="ALL">All companies</option>
+                          {rosterTeamsForFilter.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </label>
+                    ) : null}
+                    {ticketAssignedFilterActive ? (
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
                       <select
-                        name="company"
-                        key={`cc-${selectedCompany}`}
-                        defaultValue={selectedCompany}
-                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
+                        name="assigned"
+                        key={`assigned-${selectedCompany}-${effectiveAssigned}`}
+                        defaultValue={effectiveAssigned}
+                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[200px]"
                       >
-                        <option value="ALL">All companies</option>
-                        {rosterTeamsForFilter.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
+                        <option value="ALL">All</option>
+                        <option value="UNASSIGNED">Unassigned</option>
+                        {agentsForTicketAssigneeFilter.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
                           </option>
                         ))}
                       </select>
                     </label>
                     ) : null}
-                    {isCompanyBoard ? null : (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
-                      <select
-                        name="assigned"
-                        defaultValue={selectedAssigned}
-                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[200px]"
-                      >
-                        {session.user.role === "Personnel" ? (
-                          <option value="ALL">My assigned tickets</option>
-                        ) : (
-                          <>
-                            <option value="ALL">All</option>
-                            <option value="UNASSIGNED">Unassigned</option>
-                            {agents.map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.name}
-                              </option>
-                            ))}
-                          </>
-                        )}
-                      </select>
-                    </label>
-                    )}
                     {isBoard || isCompanyBoard ? null : (
                     <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Status:</span>
@@ -780,6 +836,9 @@ export default async function AgentHome({
                   <p className="hidden text-[11px] text-zinc-600 sm:block dark:text-zinc-500">
                     Board view uses lanes (Open, In progress, Feedback) for active pipeline work. Use Table for resolved
                     items and full filters.
+                    {showTicketCompanyFilter && !ticketCompanySelected
+                      ? " Select a company to filter by assignee."
+                      : null}
                   </p>
                 ) : isCompanyBoard ? (
                   <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
@@ -818,7 +877,10 @@ export default async function AgentHome({
                   <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 py-20 text-center dark:border-zinc-800">
                     <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">No tickets in the pipeline</p>
                     <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-600">
-                      {query || selectedPriority !== "ALL" || selectedAssigned !== "ALL"
+                      {query ||
+                      selectedPriority !== "ALL" ||
+                      ticketCompanySelected ||
+                      (ticketAssignedFilterActive && effectiveAssigned !== "ALL")
                         ? "Adjust filters or switch to Table view for resolved tickets."
                         : "The queue is clear — new tickets will land in Open."}
                     </p>

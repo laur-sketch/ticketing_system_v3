@@ -3,6 +3,9 @@ import type { UserRole } from "@/lib/auth";
 
 declare module "next-auth" {
   interface Session {
+    error?: "SessionExpired";
+    /** Unix seconds; fixed at sign-in — used for immediate client-side expiry redirects. */
+    sessionExpiresAt?: number;
     user: DefaultSession["user"] & {
       role: UserRole;
       /** OAuth / credentials provider id (e.g. google, credentials). */
@@ -28,6 +31,7 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
+    error?: "SessionExpired";
     /** Unix seconds; fixed at sign-in so refresh does not extend the session. */
     sessionExpiresAt?: number;
     role?: UserRole;

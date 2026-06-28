@@ -7,6 +7,9 @@ import { GlobalSidebar } from "@/components/GlobalSidebar";
 import { Nav } from "@/components/Nav";
 import { RealtimeRefreshBeacon } from "@/components/RealtimeRefreshBeacon";
 import { CustomerPortalShell } from "@/components/portal/CustomerPortalShell";
+import { SessionLogoutSplash } from "@/components/SessionLogoutSplash";
+import { RedirectLoadingIndicator } from "@/components/ui/redirect-loading-indicator";
+import { isAuthRequiredPath, isSessionExpired } from "@/lib/session-expiry-client";
 
 type Props = { children: React.ReactNode };
 
@@ -30,12 +33,24 @@ export function AppChrome({ children }: Props) {
     );
   }
 
-  if (status === "loading") {
+  if (isSessionExpired(data)) {
+    return <SessionLogoutSplash />;
+  }
+
+  if (status === "unauthenticated" && isAuthRequiredPath(pathname)) {
+    return <SessionLogoutSplash message="Sign in required…" />;
+  }
+
+  if (status === "loading" && !data) {
     return (
       <div className="flex min-h-dvh flex-1 flex-col items-center justify-center gap-4 bg-background px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
-        <div
-          className="h-11 w-11 animate-spin rounded-full border-2 border-brand/30 border-t-brand"
-          aria-hidden
+        <RedirectLoadingIndicator
+          fallback={
+            <div
+              className="h-11 w-11 animate-spin rounded-full border-2 border-brand/30 border-t-brand"
+              aria-hidden
+            />
+          }
         />
         <div className="max-w-sm text-center">
           <p className="text-sm font-medium text-foreground">Loading workspace</p>

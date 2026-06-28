@@ -11,6 +11,7 @@ import {
 } from "@/lib/portal-account";
 import { normalizePortalRole } from "@/lib/staff-role";
 import { compactSessionPicture } from "@/lib/session-profile-image";
+import { sanitizeCallbackUrl } from "@/lib/session-expiry";
 
 export type UserRole = "SuperAdmin" | "Admin" | "Personnel" | "Customer";
 
@@ -23,10 +24,24 @@ function normalizeRole(role: string | undefined | null): UserRole | null {
   /** Legacy JWT / stored session values */
   if (v === "head") return "Admin";
   const portal = normalizePortalRole(role);
+  if (portal === "SuperAdmin") return "SuperAdmin";
   if (portal === "Admin") return "Admin";
   if (portal === "Personnel") return "Personnel";
   if (portal === "Customer") return "Customer";
   return null;
+}
+
+function roleFromJwt(token: JWT): UserRole | null {
+  return normalizeRole(typeof token.role === "string" ? token.role : null);
+}
+
+function resolvePortalJwtRole(
+  email: string,
+  portalRoleRaw: string,
+  priorRole: UserRole | null,
+): UserRole {
+  const portalRole = normalizeRole(portalRoleRaw);
+  return elevateRoleByEmail(email, portalRole ?? priorRole ?? roleFromEmail(email));
 }
 
 function roleFromEmail(email: string | undefined | null): UserRole {
@@ -77,10 +92,6 @@ function extractRoleFromProfile(
   }
 
   return null;
-}
-
-function roleFromJwt(token: JWT): UserRole {
-  return normalizeRole(typeof token.role === "string" ? token.role : null) ?? "Customer";
 }
 
 const googleReady = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -183,13 +194,19 @@ export const authOptions: NextAuthOptions = {
      * `//host` paths that start with "/" but are not same-site relative URLs.
      */
     async redirect({ url, baseUrl }) {
-      if (url.startsWith("/") && !url.startsWith("//")) return `${baseUrl}${url}`;
-      try {
-        if (new URL(url).origin === baseUrl) return url;
-      } catch {
-        /* ignore */
+      let path = url;
+      if (url.startsWith("/") && !url.startsWith("//")) {
+        path = url;
+      } else {
+        try {
+          if (new URL(url).origin === baseUrl) path = `${new URL(url).pathname}${new URL(url).search}${new URL(url).hash}`;
+          else return baseUrl;
+        } catch {
+          return baseUrl;
+        }
       }
-      return baseUrl;
+      const safe = sanitizeCallbackUrl(path);
+      return `${baseUrl}${safe}`;
     },
     async signIn({ user, account }) {
       if (!account || account.provider === "credentials") return true;
@@ -210,12 +227,28 @@ export const authOptions: NextAuthOptions = {
     },
     async jwt({ token, profile, user, account }) {
       const now = Math.floor(Date.now() / 1000);
+
+      if (token.error === "SessionExpired") {
+        return token;
+      }
+
+      if (
+        !user &&
+        !token.error &&
+        typeof token.email !== "string" &&
+        !roleFromJwt(token)
+      ) {
+        return { ...token, error: "SessionExpired", exp: now - 1 };
+      }
+
       if (user) {
         token.sessionExpiresAt = now + SESSION_MAX_AGE_SECONDS;
+        delete token.error;
       }
+
       const expiresAt = sessionExpiresAtFromToken(token, now);
       if (now >= expiresAt) {
-        return { exp: now - 1 };
+        return { ...token, error: "SessionExpired", exp: now - 1 };
       }
       token.sessionExpiresAt = expiresAt;
       token.exp = expiresAt;
@@ -244,7 +277,10 @@ export const authOptions: NextAuthOptions = {
         if (u.staffRoleLabel !== undefined) token.staffRoleLabel = u.staffRoleLabel;
       }
       if (typeof token.role === "string") {
-        token.role = elevateRoleByEmail(token.email, normalizeRole(token.role) ?? "Customer");
+        const normalized = normalizeRole(token.role);
+        if (normalized) {
+          token.role = elevateRoleByEmail(token.email, normalized);
+        }
       }
       if (!token.role) token.role = roleFromEmail(token.email);
       /**
@@ -252,6 +288,7 @@ export const authOptions: NextAuthOptions = {
        * stale Customer roles or missing company metadata self-heal on the next refresh.
        */
       if (typeof token.email === "string" && token.email.length > 0) {
+        const priorRole = roleFromJwt(token);
         const portal = await findPortalByEmailOnly(token.email);
         if (portal) {
           token.name = portal.name;
@@ -262,10 +299,7 @@ export const authOptions: NextAuthOptions = {
           token.companyName = portal.companyName;
           token.customerOrgRole = portal.customerOrgRole;
           token.staffRoleLabel = normalizePortalRole(portal.role);
-          token.role = elevateRoleByEmail(
-            portal.email,
-            normalizeRole(portal.role) ?? (normalizeRole(String(token.role ?? "")) ?? "Customer"),
-          );
+          token.role = resolvePortalJwtRole(portal.email, portal.role, priorRole);
         } else if (token.companyId === undefined) {
           token.companyId = null;
           token.companyName = null;
@@ -281,7 +315,18 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }) {
-      session.user.role = roleFromJwt(token);
+      if (token.error === "SessionExpired") {
+        session.error = "SessionExpired";
+        return session;
+      }
+
+      if (typeof token.sessionExpiresAt === "number") {
+        session.sessionExpiresAt = token.sessionExpiresAt;
+        session.expires = new Date(token.sessionExpiresAt * 1000).toISOString();
+      }
+
+      const role = roleFromJwt(token) ?? roleFromEmail(typeof token.email === "string" ? token.email : null);
+      session.user.role = role;
       if (!session.user.email && typeof token.email === "string") {
         session.user.email = token.email;
       }
