@@ -428,11 +428,21 @@ function countPerDay(labels: string[], timestamps: Date[], dayOf: (d: Date) => s
   return labels.map((l) => map.get(l) ?? 0);
 }
 
+export type PersonnelTicketMetric = {
+  id: string;
+  name: string;
+  closed: number;
+  /** Assigned tickets currently OPEN or IN_PROGRESS. */
+  pending: number;
+  efficiency: number;
+};
+
 export type TaskMetricsPayload = {
   range: KpiRange;
   taskMetricsHelpdesk: TaskMetricsHelpdeskTickets;
   taskMetricsUserSupport: TaskMetricsUserSupportTickets;
   taskChecklistPillars: TaskChecklistPillarMetrics;
+  personnelTicketMetrics: PersonnelTicketMetric[];
 };
 
 /** Task metrics tab: helpdesk ratio + user support (scoped reporting range). */
@@ -526,7 +536,86 @@ export async function computeTaskMetrics(
     }
   }
 
-  return { range, taskMetricsHelpdesk, taskMetricsUserSupport, taskChecklistPillars };
+  const personnelTicketMetrics =
+    workingDays.length > 0
+      ? await loadPersonnelTicketMetrics(scoped, workingDays)
+      : [];
+
+  return {
+    range,
+    taskMetricsHelpdesk,
+    taskMetricsUserSupport,
+    taskChecklistPillars,
+    personnelTicketMetrics,
+  };
+}
+
+async function loadPersonnelTicketMetrics(
+  scoped: Record<string, unknown>,
+  workingDayIntervals: WorkingDayInterval[],
+): Promise<PersonnelTicketMetric[]> {
+  const [closedByAgent, pendingByAgent] = await Promise.all([
+    prisma.ticket.groupBy({
+      by: ["assignedAgentId"],
+      where: {
+        ...scoped,
+        assignedAgentId: { not: null },
+        AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDayIntervals)],
+      },
+      _count: true,
+    }),
+    prisma.ticket.groupBy({
+      by: ["assignedAgentId"],
+      where: {
+        ...scoped,
+        assignedAgentId: { not: null },
+        status: { in: ["OPEN", "IN_PROGRESS"] },
+      },
+      _count: true,
+    }),
+  ]);
+
+  const agentIds = [
+    ...new Set(
+      [...closedByAgent, ...pendingByAgent]
+        .map((row) => row.assignedAgentId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (agentIds.length === 0) return [];
+
+  const agents = await prisma.agent.findMany({
+    where: { id: { in: agentIds } },
+    select: { id: true, name: true },
+  });
+  const agentMap = new Map(agents.map((agent) => [agent.id, agent.name]));
+
+  const closedMap = new Map(
+    closedByAgent
+      .filter((row) => row.assignedAgentId)
+      .map((row) => [row.assignedAgentId!, row._count] as const),
+  );
+  const pendingMap = new Map(
+    pendingByAgent
+      .filter((row) => row.assignedAgentId)
+      .map((row) => [row.assignedAgentId!, row._count] as const),
+  );
+
+  return agentIds
+    .map((id) => {
+      const closed = closedMap.get(id) ?? 0;
+      const pending = pendingMap.get(id) ?? 0;
+      const efficiency = helpdeskSupportPercent(closed, pending) ?? 0;
+      return {
+        id,
+        name: agentMap.get(id)?.trim() || "Unknown",
+        closed,
+        pending,
+        efficiency,
+      };
+    })
+    .filter((row) => row.closed > 0 || row.pending > 0)
+    .sort((a, b) => b.efficiency - a.efficiency || b.closed - a.closed || a.name.localeCompare(b.name));
 }
 
 export async function computeKpis(

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
-import { onDutyCompanyLine, resolveStaffOnDutyAgentIds } from "@/lib/on-duty-company-line";
-import { prisma } from "@/lib/prisma";
+import { loadOnDutySnapshot } from "@/lib/load-on-duty-snapshot";
 import { withTtlCache } from "@/lib/ttl-cache";
 
 export const dynamic = "force-dynamic";
@@ -11,62 +10,16 @@ export async function GET(req: Request) {
   if (unauthorized) return unauthorized;
 
   const { searchParams } = new URL(req.url);
-  const pageSize = 2;
+  const pageSizeRaw = Number.parseInt(searchParams.get("pageSize") ?? "6", 10) || 6;
+  const pageSize = Math.min(48, Math.max(1, pageSizeRaw));
   const pageRaw = Number.parseInt(searchParams.get("page") ?? "1", 10) || 1;
-  const result = await withTtlCache(`on-duty:${pageRaw}`, 10_000, async () => {
-    const [allAgents, portalAccounts] = await Promise.all([
-      prisma.agent.findMany({
-        orderBy: { createdAt: "asc" },
-        select: { id: true, email: true, name: true, createdAt: true },
-      }),
-      prisma.portalAccount.findMany({
-        select: {
-          email: true,
-          name: true,
-          role: true,
-          staffDesignatedCompany: { select: { name: true } },
-        },
-      }),
-    ]);
+  const companyFilter = searchParams.get("company")?.trim() ?? "";
 
-    const dutyIds = resolveStaffOnDutyAgentIds(portalAccounts, allAgents);
-    const total = dutyIds.length;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-    const page = Math.min(totalPages, Math.max(1, pageRaw));
+  const cacheKey = `on-duty:${pageRaw}:${pageSize}:${companyFilter}`;
+  const result = await withTtlCache(cacheKey, 10_000, () =>
+    loadOnDutySnapshot({ page: pageRaw, pageSize, companyFilter }),
+  );
 
-    const agents =
-      dutyIds.length === 0
-        ? []
-        : await prisma.agent.findMany({
-            where: { id: { in: dutyIds } },
-            orderBy: { name: "asc" },
-            skip: (page - 1) * pageSize,
-            take: pageSize,
-            include: {
-              team: true,
-              tickets: {
-                select: { updatedAt: true },
-                orderBy: { updatedAt: "desc" },
-                take: 1,
-              },
-            },
-          });
-
-    const onlineWindowMs = 15 * 60 * 1000;
-    const now = Date.now();
-    return {
-      page,
-      totalPages,
-      agents: agents.map((a) => ({
-        id: a.id,
-        name: a.name,
-        companyName: onDutyCompanyLine(a, a.team?.name, portalAccounts, allAgents),
-        isOnline:
-          !!a.tickets[0]?.updatedAt &&
-          now - new Date(a.tickets[0].updatedAt).getTime() <= onlineWindowMs,
-      })),
-    };
-  });
   return NextResponse.json(result, {
     headers: { "cache-control": "private, max-age=10, stale-while-revalidate=20" },
   });

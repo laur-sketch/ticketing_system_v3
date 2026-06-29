@@ -8,7 +8,6 @@ import { LandingGallery } from "@/components/landing/LandingGallery";
 import { TaskCommandLanding } from "@/components/landing/TaskCommandLanding";
 import type { TicketPriority, TicketStatus } from "@prisma/client";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
-import { OnDutyPanel } from "@/components/dashboard/OnDutyPanel";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -19,7 +18,6 @@ import {
 } from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
-import { onDutyCompanyLine, resolveStaffOnDutyAgentIds } from "@/lib/on-duty-company-line";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -73,8 +71,6 @@ export default async function Home() {
       ? await listTicketsAwaitingCustomerConfirmation(adminEmail, session.user.authProvider)
       : [];
 
-    const onDutyPageSize = 2;
-    const onDutyPage = 1;
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const activeStatuses: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"];
@@ -87,8 +83,6 @@ export default async function Home() {
       firstResponses,
       activityLog,
       priorityStackSeed,
-      onDutyPortalAccounts,
-      onDutyAgentsCanonical,
       newLast24h,
       resolvedLast24h,
     ] = await Promise.all([
@@ -128,18 +122,6 @@ export default async function Home() {
         take: 6,
         select: { id: true, title: true, priority: true, category: true },
       }),
-      prisma.portalAccount.findMany({
-        select: {
-          email: true,
-          name: true,
-          role: true,
-          staffDesignatedCompany: { select: { name: true } },
-        },
-      }),
-      prisma.agent.findMany({
-        orderBy: { createdAt: "asc" },
-        select: { id: true, email: true, name: true, createdAt: true },
-      }),
       prisma.ticket.count({ where: { createdAt: { gte: yesterday } } }),
       prisma.ticket.count({
         where: {
@@ -148,27 +130,6 @@ export default async function Home() {
         },
       }),
     ]);
-
-    const dutyAgentIds = resolveStaffOnDutyAgentIds(onDutyPortalAccounts, onDutyAgentsCanonical);
-    const onDutyTotal = dutyAgentIds.length;
-    const onDutyTotalPages = Math.max(1, Math.ceil(onDutyTotal / onDutyPageSize));
-    const onDutyAgents =
-      dutyAgentIds.length === 0
-        ? []
-        : await prisma.agent.findMany({
-            where: { id: { in: dutyAgentIds } },
-            orderBy: { name: "asc" },
-            skip: (onDutyPage - 1) * onDutyPageSize,
-            take: onDutyPageSize,
-            include: {
-              team: true,
-              tickets: {
-                select: { updatedAt: true },
-                orderBy: { updatedAt: "desc" },
-                take: 1,
-              },
-            },
-          });
 
     const avgMins =
       firstResponses.length === 0
@@ -181,8 +142,6 @@ export default async function Home() {
           );
 
     const resolutionRate = totalTickets === 0 ? 0 : (resolvedClosed / totalTickets) * 100;
-    const onlineWindowMs = 15 * 60 * 1000;
-    const onlineNow = now.getTime();
     const priorityStack = priorityStackSeed
       .sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "URGENT" ? -1 : 1))
       .slice(0, 3);
@@ -340,19 +299,6 @@ export default async function Home() {
                   )}
                 </div>
               </article>
-
-              <OnDutyPanel
-                initialAgents={onDutyAgents.map((agent) => ({
-                  id: agent.id,
-                  name: agent.name,
-                  companyName: onDutyCompanyLine(agent, agent.team?.name, onDutyPortalAccounts, onDutyAgentsCanonical),
-                  isOnline:
-                    !!agent.tickets[0]?.updatedAt &&
-                    onlineNow - new Date(agent.tickets[0].updatedAt).getTime() <= onlineWindowMs,
-                }))}
-                initialPage={onDutyPage}
-                totalPages={onDutyTotalPages}
-              />
             </aside>
           </section>
 

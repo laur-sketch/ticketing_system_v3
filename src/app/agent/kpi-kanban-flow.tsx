@@ -37,6 +37,14 @@ import {
   SUB_KPI_PROGRESS_MISMATCH_WARNING,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
+import {
+  hasBeforeAndAfterScreenshots,
+  resolveSubKpiCompletionMode,
+  SUB_KPI_COMPLETION_MODE_OPTIONS,
+  subKpiRequiresCheckbox,
+  subKpiRequiresScreenshots,
+  type SubKpiCompletionMode,
+} from "@/lib/sub-kpi-completion-mode";
 import { hasValidActualDate } from "@/lib/us-date-format";
 import {
   MAX_TASK_SCREENSHOT_BYTES,
@@ -59,18 +67,6 @@ function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): str
   if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
   if (hasValidActualDate(s)) return "On time";
   return "Pending";
-}
-
-function taskScreenshotsEnabled(s: SubKpiItem): boolean {
-  return (
-    s.screenshotsEnabled === true ||
-    (s.beforeScreenshot?.length ?? 0) > 0 ||
-    (s.afterScreenshot?.length ?? 0) > 0
-  );
-}
-
-function hasBeforeAndAfterScreenshots(s: SubKpiItem): boolean {
-  return (s.beforeScreenshot?.length ?? 0) > 0 && (s.afterScreenshot?.length ?? 0) > 0;
 }
 
 function ChecklistProgressBar({
@@ -442,10 +438,12 @@ export function AgentKpiKanbanFlow({
   }
 
   function canCompleteSubKpi(r: KpiRecord, s: SubKpiItem) {
+    const mode = resolveSubKpiCompletionMode(s);
+    if (mode === "screenshots") return false;
     if (!canEditSubKpi(r, s)) {
-      return canAssignWork && taskScreenshotsEnabled(s) && hasBeforeAndAfterScreenshots(s);
+      return canAssignWork && subKpiRequiresScreenshots(mode) && hasBeforeAndAfterScreenshots(s);
     }
-    if (taskScreenshotsEnabled(s) && !hasBeforeAndAfterScreenshots(s)) return false;
+    if (mode === "both" && !hasBeforeAndAfterScreenshots(s)) return false;
     return true;
   }
 
@@ -771,7 +769,6 @@ export function AgentKpiKanbanFlow({
       startDate?: string | null;
       dueDate?: string | null;
       actualDate?: string | null;
-      location?: string | null;
       projectPriority?: string | null;
     },
   ) {
@@ -916,7 +913,12 @@ export function AgentKpiKanbanFlow({
   async function updateSubTask(
     recordId: string,
     subKpiId: string,
-    patch: { title?: string; startDate?: string | null; dueDate?: string | null },
+    patch: {
+      title?: string;
+      startDate?: string | null;
+      dueDate?: string | null;
+      completionMode?: SubKpiCompletionMode;
+    },
   ) {
     if (!showAdminTaskManagement) return;
     setBusyId(recordId);
@@ -1274,7 +1276,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderTaskScreenshotFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
-    if (!taskScreenshotsEnabled(s)) return null;
+    if (!subKpiRequiresScreenshots(resolveSubKpiCompletionMode(s))) return null;
     return (
       <div className="mt-2">
         <p className="mb-1 text-[10px] text-zinc-500 dark:text-zinc-500">
@@ -1292,12 +1294,14 @@ export function AgentKpiKanbanFlow({
     const subEditable = canEditSubKpi(r, s);
     const subCompletable = canCompleteSubKpi(r, s);
     const canManageSubTasks = showAdminTaskManagement;
-    const needsScreenshots = taskScreenshotsEnabled(s) && !hasBeforeAndAfterScreenshots(s);
+    const completionMode = resolveSubKpiCompletionMode(s);
+    const needsScreenshotsForCheckbox =
+      completionMode === "both" && !hasBeforeAndAfterScreenshots(s);
     const canEditWorkDetails = subEditable || canAssignWork || canManageSubTasks;
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = Boolean(s.done);
-    const showCheckbox = subEditable && busyId !== r.id;
+    const showCheckbox = subEditable && busyId !== r.id && subKpiRequiresCheckbox(completionMode);
     const progressMismatchWarning =
       showCheckbox &&
       subKpiProgressMismatchWarning(s, r.assignedAgent, {
@@ -1378,9 +1382,14 @@ export function AgentKpiKanbanFlow({
             </span>
           </div>
         </div>
-        {needsScreenshots ? (
+        {needsScreenshotsForCheckbox ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
             Upload both before and after screenshots before marking this sub-task done.
+          </p>
+        ) : null}
+        {completionMode === "screenshots" && !finished ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Upload before and after screenshots to complete this sub-task.
           </p>
         ) : null}
         {progressMismatchWarning ? (
@@ -1392,6 +1401,29 @@ export function AgentKpiKanbanFlow({
           </p>
         ) : null}
         {renderSubKpiAssignmentControl(r, s)}
+        {canManageSubTasks ? (
+          <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Assignee completion
+            <select
+              value={completionMode}
+              disabled={busyId === r.id}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                void updateSubTask(r.id, s.id, {
+                  completionMode: e.target.value as SubKpiCompletionMode,
+                });
+              }}
+              className="mt-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              {SUB_KPI_COMPLETION_MODE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {showPriority ? (
             <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
@@ -1452,26 +1484,6 @@ export function AgentKpiKanbanFlow({
               />
             </label>
           ) : null}
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Location
-            <input
-              key={`loc-${r.id}-${s.id}-${s.location ?? ""}`}
-              type="text"
-              defaultValue={s.location ?? ""}
-              disabled={!canEditWorkDetails || busyId === r.id}
-              placeholder="Enter location"
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              onBlur={(e) => {
-                const next = e.target.value.trim();
-                const prev = (s.location ?? "").trim();
-                if (next !== prev) {
-                  void patchSubKpiWorkMeta(r.id, s.id, { location: next || null });
-                }
-              }}
-              className="mt-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-          </label>
           {!recurring ? (
             <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
               Date finished

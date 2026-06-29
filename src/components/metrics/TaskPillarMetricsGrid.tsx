@@ -12,7 +12,7 @@ import {
   Smile,
   Wrench,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
@@ -27,6 +27,7 @@ import type {
   TaskMetricsHelpdeskTickets,
   TaskMetricsUserSupportTickets,
 } from "@/lib/kpis";
+import type { PersonnelCombinedMetricCard } from "@/lib/task-personnel-metrics";
 import {
   KPI_DONUT_COLORS,
   KINETIC_PALETTE,
@@ -455,24 +456,70 @@ function formatDailyProgressDate(ymd: string): string {
   });
 }
 
-type ContributorKpiRow = {
-  id: string;
-  name: string;
-  role: string;
-  total: number;
-  done: number;
-  remaining: number;
-  percent: number;
-};
-
-function ContributorPersonalKpiCard({
-  row,
-  completedLabel = "Completed",
-  remainingLabel = "Remaining",
+function PersonnelMetricStatBox({
+  label,
+  value,
+  subLabel,
+  tone,
 }: {
-  row: ContributorKpiRow;
-  completedLabel?: string;
-  remainingLabel?: string;
+  label: string;
+  value: string | number;
+  subLabel: string;
+  tone: "green" | "neutral" | "amber" | "teal";
+}) {
+  const toneClass =
+    tone === "green"
+      ? "border-emerald-500/20 bg-emerald-500/8 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : tone === "amber"
+        ? "border-amber-500/20 bg-amber-500/8 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : tone === "teal"
+          ? "border-teal-500/25 bg-teal-500/8 dark:bg-teal-500/10 text-teal-700 dark:text-teal-300"
+          : "border-zinc-300/80 bg-white/80 dark:border-zinc-700 dark:bg-zinc-900/50 text-zinc-500 dark:text-zinc-400";
+  const valueClass =
+    tone === "green"
+      ? "text-emerald-900 dark:text-emerald-100"
+      : tone === "amber"
+        ? "text-amber-900 dark:text-amber-100"
+        : tone === "teal"
+          ? "text-teal-900 dark:text-teal-100"
+          : "text-zinc-900 dark:text-zinc-100";
+  const subClass =
+    tone === "green"
+      ? "text-emerald-700/80 dark:text-emerald-300/80"
+      : tone === "amber"
+        ? "text-amber-700/80 dark:text-amber-300/80"
+        : tone === "teal"
+          ? "text-teal-700/80 dark:text-teal-300/80"
+          : "text-zinc-500 dark:text-zinc-400";
+
+  return (
+    <div className={cn("rounded-lg border px-2.5 py-2", toneClass)}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em]">{label}</p>
+      <p className={cn("mt-1 text-xl font-bold tabular-nums", valueClass)}>{value}</p>
+      <p className={cn("text-[10px]", subClass)}>{subLabel}</p>
+    </div>
+  );
+}
+
+function PersonnelMetricSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">{title}</p>
+      <div className="mt-2 grid grid-cols-3 gap-2">{children}</div>
+    </div>
+  );
+}
+
+export function ContributorPersonalKpiCard({
+  row,
+}: {
+  row: PersonnelCombinedMetricCard;
 }) {
   return (
     <article className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50/90 p-3.5 dark:border-zinc-800 dark:from-zinc-900/80 dark:to-zinc-950/60">
@@ -488,121 +535,81 @@ function ContributorPersonalKpiCard({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/8 px-2.5 py-2 dark:bg-emerald-500/10">
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700 dark:text-emerald-300">
-            {completedLabel}
-          </p>
-          <p className="mt-1 text-xl font-bold tabular-nums text-emerald-900 dark:text-emerald-100">{row.done}</p>
-          <p className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80">tasks done</p>
-        </div>
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 px-2.5 py-2 dark:bg-amber-500/10">
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
-            {remainingLabel}
-          </p>
-          <p className="mt-1 text-xl font-bold tabular-nums text-amber-900 dark:text-amber-100">{row.remaining}</p>
-          <p className="text-[10px] text-amber-700/80 dark:text-amber-300/80">to accomplish</p>
-        </div>
-        <div className="rounded-lg border border-zinc-300/80 bg-white/80 px-2.5 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
-            Assigned
-          </p>
-          <p className="mt-1 text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{row.total}</p>
-          <p className="text-[10px] text-zinc-500 dark:text-zinc-400">total tasks</p>
-        </div>
+      <div className="mt-3 space-y-3">
+        {row.tickets ? (
+          <PersonnelMetricSection title="Tickets">
+            <PersonnelMetricStatBox
+              label="Closed"
+              value={row.tickets.closed}
+              subLabel="tickets closed"
+              tone="green"
+            />
+            <PersonnelMetricStatBox
+              label="Pending"
+              value={row.tickets.pending}
+              subLabel="open & in progress"
+              tone="neutral"
+            />
+            <PersonnelMetricStatBox
+              label="Efficiency"
+              value={`${row.tickets.efficiency}%`}
+              subLabel="completion rate"
+              tone="teal"
+            />
+          </PersonnelMetricSection>
+        ) : null}
+
+        {row.tickets && row.tasks ? (
+          <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
+        ) : null}
+
+        {row.tasks ? (
+          <>
+            <PersonnelMetricSection title="Tasks">
+              <PersonnelMetricStatBox
+                label="Done"
+                value={row.tasks.closed}
+                subLabel="tasks done"
+                tone="green"
+              />
+              <PersonnelMetricStatBox
+                label="Assigned"
+                value={row.tasks.assigned}
+                subLabel="total tasks"
+                tone="neutral"
+              />
+              <PersonnelMetricStatBox
+                label="Efficiency"
+                value={`${row.tasks.efficiency}%`}
+                subLabel="completion rate"
+                tone="teal"
+              />
+            </PersonnelMetricSection>
+            <div className="mt-2">
+              <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
+                <span className="font-semibold text-zinc-600 dark:text-zinc-400">Completion rate</span>
+                <span className="font-mono font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
+                  {row.tasks.efficiency}%
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-[var(--accent-teal)] transition-[width]"
+                  style={{ width: `${Math.min(100, Math.max(0, row.tasks.efficiency))}%` }}
+                />
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
-      <div className="mt-3">
-        <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
-          <span className="font-semibold text-zinc-600 dark:text-zinc-400">Completion rate</span>
-          <span className="font-mono font-bold tabular-nums text-zinc-800 dark:text-zinc-200">{row.percent}%</span>
-        </div>
-        <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-          <div
-            className="h-full rounded-full bg-[var(--accent-teal)] transition-[width]"
-            style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }}
-          />
-        </div>
-      </div>
+      {row.tasks && row.tasks.pillarsContributed > 0 ? (
+        <p className="mt-3 border-t border-zinc-200/80 pt-2 text-[11px] text-zinc-600 dark:border-zinc-700/80 dark:text-zinc-400">
+          Contributing across {row.tasks.pillarsContributed} task pillar
+          {row.tasks.pillarsContributed === 1 ? "" : "s"}
+        </p>
+      ) : null}
     </article>
-  );
-}
-
-function ContributorPersonalKpiSection({
-  rows,
-  metricsCadence,
-  reportingPeriodLabel,
-  teamTotals,
-}: {
-  rows: ContributorKpiRow[];
-  metricsCadence: KpiFrequencyCode;
-  reportingPeriodLabel?: string;
-  teamTotals?: {
-    completed: number;
-    remaining: number;
-    total: number;
-    percent: number;
-    completedLabel: string;
-    remainingLabel: string;
-  };
-}) {
-  if (rows.length === 0) return null;
-
-  const cadenceLabel =
-    metricsCadence === "DAILY"
-      ? "daily"
-      : metricsCadence === "WEEKLY"
-        ? "weekly"
-        : metricsCadence === "MONTHLY"
-          ? "monthly"
-          : "quarterly";
-  const periodLabel = reportingPeriodLabel?.trim() || "the selected period";
-
-  const totals = teamTotals ?? {
-    completed: rows.reduce((acc, row) => acc + row.done, 0),
-    remaining: rows.reduce((acc, row) => acc + row.remaining, 0),
-    total: rows.reduce((acc, row) => acc + row.total, 0),
-    percent: 0,
-    completedLabel: "Completed",
-    remainingLabel: "Remaining",
-  };
-  const teamPercent =
-    teamTotals?.percent ??
-    (totals.total > 0 ? Math.round((totals.completed / totals.total) * 100) : 0);
-
-  return (
-    <section className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
-      <div className="border-b border-zinc-300 bg-zinc-100 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
-        <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-          Contributor personal KPI
-        </p>
-        <p className="mt-0.5 text-xs text-zinc-600 dark:text-zinc-400">
-          Task Board checkbox counts on a <span className="font-semibold">{cadenceLabel}</span> scale for{" "}
-          <span className="font-semibold">{periodLabel}</span> — completed vs remaining sub-tasks per contributor.
-        </p>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-          <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 font-semibold text-emerald-800 dark:text-emerald-200">
-            {totals.completed} {totals.completedLabel.toLowerCase()} team-wide
-          </span>
-          <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 font-semibold text-amber-800 dark:text-amber-200">
-            {totals.remaining} {totals.remainingLabel.toLowerCase()}
-          </span>
-          <span className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
-            {teamPercent}% overall
-          </span>
-        </div>
-      </div>
-      <div className="max-h-[min(52vh,28rem)] space-y-2.5 overflow-y-auto bg-white p-3 dark:bg-zinc-950">
-        {rows.map((row) => (
-          <ContributorPersonalKpiCard
-            key={row.id}
-            row={row}
-            completedLabel={totals.completedLabel}
-            remainingLabel={totals.remainingLabel}
-          />
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -689,23 +696,6 @@ function sourceDetailsForPillar(args: {
 }): {
   title: string;
   rows: Array<{ label: string; value: string }>;
-  assigneeProgress: Array<{
-    id: string;
-    name: string;
-    role: string;
-    total: number;
-    done: number;
-    remaining: number;
-    percent: number;
-  }>;
-  contributorTeamTotals?: {
-    completed: number;
-    remaining: number;
-    total: number;
-    percent: number;
-    completedLabel: string;
-    remainingLabel: string;
-  };
   tableColumns: string[];
   tableRows: string[][];
   csvColumns: string[];
@@ -725,7 +715,6 @@ function sourceDetailsForPillar(args: {
         { label: "Closed", value: String(helpdeskTickets?.closedCount ?? 0) },
         { label: "Open", value: String(helpdeskTickets?.openTicketsInPeriod ?? 0) },
       ],
-      assigneeProgress: [],
       tableColumns: ["Metric", "Value", "How it is used"],
       tableRows: [
         ["Closed tickets", String(helpdeskTickets?.closedCount ?? 0), "Numerator for helpdesk support percent"],
@@ -754,7 +743,6 @@ function sourceDetailsForPillar(args: {
         { label: "Rated tickets", value: String(rated) },
         { label: "Total tickets", value: String(total) },
       ],
-      assigneeProgress: [],
       tableColumns: ["Rating", "Count", "Recorded meaning"],
       tableRows: [
         ...(userSupportTickets?.starCounts ?? []).map((row) => [
@@ -812,15 +800,6 @@ function sourceDetailsForPillar(args: {
       { label: cfg?.positiveLabel ?? "Done", value: String(view.positive) },
       { label: cfg?.negativeLabel ?? "Missing", value: String(view.negative) },
     ],
-    assigneeProgress: agg?.assigneeProgress ?? [],
-    contributorTeamTotals: {
-      completed: view.positive,
-      remaining: view.negative,
-      total: agg?.total ?? 0,
-      percent: view.percent,
-      completedLabel: cfg?.positiveLabel ?? "Completed",
-      remainingLabel: cfg?.negativeLabel ?? "Remaining",
-    },
     tableColumns: ["Gathered field", "Value", "Recorded source"],
     tableRows: [
       ["Task rows counted", String(agg?.total ?? 0), `KPI checklist items for ${pillar}`],
@@ -854,7 +833,6 @@ function sourceDetailsForPillar(args: {
         ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
         : "Checkboxes on the Task Board are the source of completion data.",
       "Past periods come from immutable snapshots; the active period uses live Task Board checkbox state.",
-      "Contributor personal KPI is averaged across the same counted periods as the pillar donut and scaled to the same headline buckets.",
     ],
   };
 }
@@ -1061,14 +1039,7 @@ export function TaskPillarMetricsGrid({
               ))}
             </ul>
             {extendedView ? (
-              <div className="mt-4 space-y-3">
-                <ContributorPersonalKpiSection
-                  rows={inspected.assigneeProgress}
-                  metricsCadence={metricsCadence}
-                  reportingPeriodLabel={reportingPeriodLabel}
-                  teamTotals={inspected.contributorTeamTotals}
-                />
-                <div className="overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
+              <div className="mt-4 overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
                   <div>
                     <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
@@ -1208,7 +1179,6 @@ export function TaskPillarMetricsGrid({
                     <span>Generated from current Task Metrics payload</span>
                   </div>
                 ) : null}
-                </div>
               </div>
             ) : null}
             </div>

@@ -1,28 +1,50 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
-type OnDutyAgent = {
-  id: string;
-  name: string;
-  companyName: string;
-  isOnline: boolean;
-};
+import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
+import { cn } from "@/lib/cn";
+import type { OnDutyAgentSnapshot } from "@/lib/load-on-duty-snapshot";
 
 type Props = {
-  initialAgents: OnDutyAgent[];
+  initialAgents: OnDutyAgentSnapshot[];
   initialPage: number;
   totalPages: number;
+  initialTotal?: number;
+  initialCompanies?: string[];
+  pageSize?: number;
+  variant?: "list" | "cards";
+  showCompanyFilter?: boolean;
+  className?: string;
 };
 
-export function OnDutyPanel({ initialAgents, initialPage, totalPages }: Props) {
-  const [agents, setAgents] = useState<OnDutyAgent[]>(initialAgents);
+export function OnDutyPanel({
+  initialAgents,
+  initialPage,
+  totalPages,
+  initialTotal = initialAgents.length,
+  initialCompanies = [],
+  pageSize = 6,
+  variant = "list",
+  showCompanyFilter = false,
+  className,
+}: Props) {
+  const [agents, setAgents] = useState<OnDutyAgentSnapshot[]>(initialAgents);
   const [page, setPage] = useState(initialPage);
   const [pages, setPages] = useState(totalPages);
+  const [total, setTotal] = useState(initialTotal);
+  const [companies, setCompanies] = useState<string[]>(initialCompanies);
+  const [companyFilter, setCompanyFilter] = useState("");
   const canPrev = page > 1;
   const canNext = page < pages;
 
-  const endpoint = useMemo(() => `/api/dashboard/on-duty?page=${page}`, [page]);
+  const endpoint = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (companyFilter) params.set("company", companyFilter);
+    return `/api/dashboard/on-duty?${params.toString()}`;
+  }, [page, pageSize, companyFilter]);
 
   useEffect(() => {
     let stopped = false;
@@ -31,14 +53,20 @@ export function OnDutyPanel({ initialAgents, initialPage, totalPages }: Props) {
         const res = await fetch(endpoint, { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as {
-          agents: OnDutyAgent[];
+          agents: OnDutyAgentSnapshot[];
           page: number;
           totalPages: number;
+          total: number;
+          companies: string[];
         };
         if (stopped) return;
         setAgents(data.agents ?? []);
         setPage(data.page ?? 1);
         setPages(data.totalPages ?? 1);
+        setTotal(data.total ?? 0);
+        if (Array.isArray(data.companies) && data.companies.length > 0) {
+          setCompanies(data.companies);
+        }
       } catch {
         // Ignore intermittent polling failures.
       }
@@ -54,48 +82,133 @@ export function OnDutyPanel({ initialAgents, initialPage, totalPages }: Props) {
     };
   }, [endpoint]);
 
+  function handleCompanyFilterChange(value: string) {
+    setCompanyFilter(value);
+    setPage(1);
+  }
+
+  const cardGridClass =
+    variant === "cards"
+      ? "mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+      : "mt-4 space-y-3";
+
   return (
-    <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-      <div className="flex items-center justify-between gap-3">
+    <article
+      className={cn(
+        "rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]",
+        className,
+      )}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">On Duty</h3>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          {page}/{pages}
-        </span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          <span>{total} staff</span>
+          <span>
+            {page}/{pages}
+          </span>
+        </div>
       </div>
-      <div className="mt-4 space-y-3">
-        {agents.length === 0 ? (
-          <p className="text-sm text-zinc-600 dark:text-zinc-500">No agents available.</p>
-        ) : (
-          agents.map((agent) => (
-            <div
-              key={agent.id}
-              className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900"
+
+      {showCompanyFilter ? (
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <label className="flex min-w-[12rem] flex-col gap-1">
+            <span className={authLabelClass}>Filter by company</span>
+            <select
+              value={companyFilter}
+              onChange={(e) => handleCompanyFilterChange(e.target.value)}
+              className={cn(authInputClass, "py-2 text-xs")}
             >
-              <div>
-                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
-                <p className="text-xs text-zinc-600 dark:text-zinc-500">{agent.companyName || "General Queue"}</p>
+              <option value="">All companies</option>
+              {companies.map((company) => (
+                <option key={company} value={company}>
+                  {company}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            {companyFilter
+              ? `Showing ${agents.length} of ${total} in ${companyFilter}`
+              : `Showing ${agents.length} of ${total}`}
+          </p>
+        </div>
+      ) : null}
+
+      {variant === "cards" ? (
+        <div className={cardGridClass}>
+          {agents.length === 0 ? (
+            <p className="col-span-full text-sm text-zinc-600 dark:text-zinc-500">
+              {companyFilter ? "No staff on duty for this company." : "No agents available."}
+            </p>
+          ) : (
+            agents.map((agent) => (
+              <div
+                key={agent.id}
+                className="flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
+                    <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-500">
+                      {agent.companyName || "General Queue"}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-block size-2.5 shrink-0 rounded-full",
+                      agent.isOnline ? "bg-orange-600 dark:bg-orange-500" : "bg-zinc-400 dark:bg-zinc-600",
+                    )}
+                    title={agent.isOnline ? "Online" : "Offline"}
+                  />
+                </div>
+                <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                  {agent.isOnline ? "Online" : "Offline"}
+                </p>
               </div>
-              <span
-                className={`inline-block size-2.5 rounded-full ${
-                  agent.isOnline ? "bg-orange-600 dark:bg-orange-500" : "bg-zinc-400 dark:bg-zinc-600"
-                }`}
-                title={agent.isOnline ? "Online" : "Offline"}
-              />
-            </div>
-          ))
-        )}
-      </div>
+            ))
+          )}
+        </div>
+      ) : (
+        <div className={cardGridClass}>
+          {agents.length === 0 ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-500">
+              {companyFilter ? "No staff on duty for this company." : "No agents available."}
+            </p>
+          ) : (
+            agents.map((agent) => (
+              <div
+                key={agent.id}
+                className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
+                  <p className="text-xs text-zinc-600 dark:text-zinc-500">{agent.companyName || "General Queue"}</p>
+                </div>
+                <span
+                  className={cn(
+                    "inline-block size-2.5 rounded-full",
+                    agent.isOnline ? "bg-orange-600 dark:bg-orange-500" : "bg-zinc-400 dark:bg-zinc-600",
+                  )}
+                  title={agent.isOnline ? "Online" : "Offline"}
+                />
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
       {pages > 1 ? (
         <div className="mt-4 flex items-center justify-end gap-2 text-xs font-semibold">
           <button
             type="button"
             onClick={() => canPrev && setPage((p) => Math.max(1, p - 1))}
             disabled={!canPrev}
-            className={`rounded-md px-2.5 py-1.5 ${
+            className={cn(
+              "rounded-md px-2.5 py-1.5",
               canPrev
                 ? "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                : "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-600"
-            }`}
+                : "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-600",
+            )}
           >
             Prev
           </button>
@@ -103,11 +216,12 @@ export function OnDutyPanel({ initialAgents, initialPage, totalPages }: Props) {
             type="button"
             onClick={() => canNext && setPage((p) => Math.min(pages, p + 1))}
             disabled={!canNext}
-            className={`rounded-md px-2.5 py-1.5 ${
+            className={cn(
+              "rounded-md px-2.5 py-1.5",
               canNext
                 ? "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                : "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-600"
-            }`}
+                : "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-600",
+            )}
           >
             Next
           </button>

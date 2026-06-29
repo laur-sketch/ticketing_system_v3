@@ -47,6 +47,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         label: "Management",
         children: [
           { href: "/admin/personnel", label: "Personnel" },
+          { href: "/admin/activities", label: "Activities" },
           { href: "/admin/escalation-triggers", label: "Priority alerts" },
         ],
       },
@@ -71,6 +72,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         label: "Management",
         children: [
           { href: "/admin/personnel", label: "Personnel" },
+          { href: "/admin/activities", label: "Activities" },
           { href: "/admin/escalation-triggers", label: "Priority alerts" },
         ],
       },
@@ -111,6 +113,7 @@ function iconForLink(label: string) {
   if (key.includes("analytics")) return BarChart3;
   if (key.includes("report")) return Activity;
   if (key.includes("personnel")) return Users;
+  if (key.includes("activities")) return Activity;
   if (key.includes("my account")) return UserCircle;
   if (key.includes("account")) return UserCircle;
   if (key.includes("escalation")) return LifeBuoy;

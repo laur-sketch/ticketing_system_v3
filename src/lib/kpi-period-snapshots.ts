@@ -264,6 +264,8 @@ export type TaskChecklistPillarMetric = KpiChecklistProgress & {
   csvRows?: string[][];
   dailyProgressRows?: TaskChecklistDailyProgress[];
   assigneeProgress?: TaskAssigneeProgress[];
+  /** Sum of contributor tasks across every counted period (personnel monthly rollup). */
+  assigneeProgressAccumulated?: TaskAssigneeProgress[];
 };
 
 export type TaskChecklistDailyProgress = KpiChecklistProgress & {
@@ -350,6 +352,7 @@ async function computeItProjectImplementationPillarMetric(args: {
     periodsCounted: rows.length,
     periodsInRange: rows.length,
     assigneeProgress,
+    assigneeProgressAccumulated: assigneeProgress,
   };
 }
 
@@ -474,9 +477,14 @@ function rawCheckboxIsDone(item: SubKpiItem): boolean {
   return Boolean(item.done);
 }
 
-/** Average contributor rows across the same counted periods used by pillar donut metrics. */
-function averageAssigneeProgressAcrossPeriods(
-  bundles: Array<{ progress: KpiChecklistProgress; contributors: TaskAssigneeProgress[] }>,
+type AssigneeProgressBundle = {
+  progress: KpiChecklistProgress;
+  contributors: TaskAssigneeProgress[];
+};
+
+function rollupAssigneeProgressAcrossPeriods(
+  bundles: AssigneeProgressBundle[],
+  combine: (values: number[]) => number,
 ): TaskAssigneeProgress[] {
   const withData = bundles.filter((b) => b.progress.total > 0);
   if (withData.length === 0) return [];
@@ -515,14 +523,8 @@ function averageAssigneeProgressAcrossPeriods(
       const roles = [...row.roles].sort();
       const displayRoles =
         roles.includes("Assignee") && roles.includes("Sub-assignee") ? ["Assignee"] : roles;
-      const total =
-        row.totals.length > 0
-          ? Math.round(row.totals.reduce((sum, value) => sum + value, 0) / row.totals.length)
-          : 0;
-      const done =
-        row.dones.length > 0
-          ? Math.round(row.dones.reduce((sum, value) => sum + value, 0) / row.dones.length)
-          : 0;
+      const total = row.totals.length > 0 ? combine(row.totals) : 0;
+      const done = row.dones.length > 0 ? combine(row.dones) : 0;
       const remaining = Math.max(0, total - done);
       return {
         id: row.id,
@@ -532,6 +534,104 @@ function averageAssigneeProgressAcrossPeriods(
         done,
         remaining,
         percent: total > 0 ? Math.round((done / total) * 100) : 0,
+      };
+    })
+    .sort((a, b) => b.percent - a.percent || b.done - a.done || a.name.localeCompare(b.name));
+}
+
+function averageAcrossPeriodValues(values: number[]): number {
+  return values.length > 0
+    ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+    : 0;
+}
+
+function sumAcrossPeriodValues(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+/** Average contributor rows across the same counted periods used by pillar donut metrics. */
+function averageAssigneeProgressAcrossPeriods(bundles: AssigneeProgressBundle[]): TaskAssigneeProgress[] {
+  return rollupAssigneeProgressAcrossPeriods(bundles, averageAcrossPeriodValues);
+}
+
+/** Sum contributor rows across every Mon–Sat period in the reporting window (personnel view). */
+export function accumulateAssigneeProgressAcrossPeriods(
+  bundles: AssigneeProgressBundle[],
+): TaskAssigneeProgress[] {
+  return rollupAssigneeProgressAcrossPeriods(bundles, sumAcrossPeriodValues);
+}
+
+type PersonnelKpiRosterRow = {
+  row: {
+    subKpis: unknown;
+    assignedAgent?: { id: string; name: string } | null;
+  };
+  periodCount: number;
+};
+
+/**
+ * Personnel monthly totals: sum completions from each day's snapshot, but derive Assigned
+ * from the current task roster × Mon–Sat periods (so removed tasks do not inflate Assigned).
+ */
+export function personnelAssigneeProgressAcrossPeriods(
+  bundles: AssigneeProgressBundle[],
+  roster: PersonnelKpiRosterRow[],
+  isDone: (item: SubKpiItem) => boolean,
+): TaskAssigneeProgress[] {
+  const doneByPerson = new Map(
+    rollupAssigneeProgressAcrossPeriods(bundles, sumAcrossPeriodValues).map((row) => [
+      row.name.trim().toLowerCase(),
+      row,
+    ]),
+  );
+
+  const rosterByPerson = new Map<
+    string,
+    { id: string; name: string; roles: Set<string>; total: number }
+  >();
+
+  for (const { row, periodCount } of roster) {
+    if (periodCount <= 0) continue;
+    for (const person of assigneeProgressForRows([row], isDone)) {
+      const nameKey = person.name.trim().toLowerCase();
+      const chunk = person.total * periodCount;
+      const existing = rosterByPerson.get(nameKey);
+      if (existing) {
+        for (const part of person.role.split(" / ")) {
+          const role = part.trim();
+          if (role) existing.roles.add(role);
+        }
+        existing.total += chunk;
+        if (person.id !== "__unassigned__") existing.id = person.id;
+        continue;
+      }
+      rosterByPerson.set(nameKey, {
+        id: person.id,
+        name: person.name,
+        roles: new Set(person.role.split(" / ").map((r) => r.trim()).filter(Boolean)),
+        total: chunk,
+      });
+    }
+  }
+
+  return [...rosterByPerson.values()]
+    .map((row) => {
+      const roles = [...row.roles].sort();
+      const displayRoles =
+        roles.includes("Assignee") && roles.includes("Sub-assignee") ? ["Assignee"] : roles;
+      const total = row.total;
+      const rawDone = doneByPerson.get(row.name.trim().toLowerCase())?.done ?? 0;
+      const done = Math.min(rawDone, total);
+      const remaining = Math.max(0, total - done);
+      const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      return {
+        id: row.id,
+        name: row.name,
+        role: displayRoles.join(" / "),
+        total,
+        done,
+        remaining,
+        percent,
       };
     })
     .sort((a, b) => b.percent - a.percent || b.done - a.done || a.name.localeCompare(b.name));
@@ -784,19 +884,24 @@ export async function computeTaskChecklistPillarMetrics(args: {
         periodsInRange: 0,
         dailyProgressRows: [],
         assigneeProgress: [],
+        assigneeProgressAccumulated: [],
       };
       continue;
     }
 
     const progressRows: KpiChecklistProgress[] = [];
-    const assigneeBundles: Array<{ progress: KpiChecklistProgress; contributors: TaskAssigneeProgress[] }> =
-      [];
+    const assigneeBundles: AssigneeProgressBundle[] = [];
+    const personnelRoster: PersonnelKpiRosterRow[] = [];
     const invert = isInvertedChecklistPillar(pillar);
     let periodsInRange = 0;
 
     for (const kpi of pillarKpis) {
       const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone);
       periodsInRange += periodKeys.length;
+      personnelRoster.push({
+        row: { subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null },
+        periodCount: periodKeys.length,
+      });
       const nowPeriodKey = currentPeriodKeyFor(kpi);
 
       for (const key of periodKeys) {
@@ -855,6 +960,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
         periodsInRange,
         dailyProgressRows,
         assigneeProgress: [],
+        assigneeProgressAccumulated: [],
       };
       continue;
     }
@@ -877,11 +983,16 @@ export async function computeTaskChecklistPillarMetrics(args: {
       pillarAgg,
       invert,
     );
+    const assigneeProgressAccumulated = applyAssigneeDonutView(
+      personnelAssigneeProgressAcrossPeriods(assigneeBundles, personnelRoster, rawCheckboxIsDone),
+      invert,
+    );
 
     result[pillar] = {
       ...pillarAgg,
       dailyProgressRows,
       assigneeProgress,
+      assigneeProgressAccumulated,
     };
   }
 

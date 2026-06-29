@@ -8,6 +8,14 @@ import {
   type TaskScreenshotSlot,
 } from "@/lib/task-screenshot-meta";
 import { normalizeTimeZone } from "./kpi-recurrence";
+import {
+  applySubKpiCompletionMode,
+  hasBeforeAndAfterScreenshots,
+  isSubKpiCompletionMode,
+  resolveSubKpiCompletionMode,
+  subKpiRequiresScreenshots,
+  type SubKpiCompletionMode,
+} from "@/lib/sub-kpi-completion-mode";
 
 /** Optional schedule fields are calendar days `YYYY-MM-DD` (IT Project Implementation sub-tasks). */
 export type SubKpiItem = {
@@ -18,6 +26,8 @@ export type SubKpiItem = {
   assignedAgentName?: string | null;
   projectPriority?: "High" | "Medium" | "Low" | null;
   projectStatus?: "Pending" | "On Going" | "Finalizing" | "Done" | null;
+  /** How assignees complete this sub-task (checkbox, screenshots, or both). */
+  completionMode?: SubKpiCompletionMode;
   screenshotsEnabled?: boolean;
   beforeScreenshot?: TaskScreenshotMetaItem[];
   afterScreenshot?: TaskScreenshotMetaItem[];
@@ -59,8 +69,16 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
       : null;
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
-  const screenshotsEnabled = r?.screenshotsEnabled === true || beforeScreenshot.length > 0 || afterScreenshot.length > 0;
-  const location = typeof r?.location === "string" ? r.location.trim() : "";
+  const completionMode = isSubKpiCompletionMode(r?.completionMode)
+    ? r.completionMode
+    : resolveSubKpiCompletionMode({
+        completionMode: undefined,
+        screenshotsEnabled: r?.screenshotsEnabled === true,
+        beforeScreenshot,
+        afterScreenshot,
+      });
+  const screenshotsEnabled =
+    r?.screenshotsEnabled === true || subKpiRequiresScreenshots(completionMode);
   const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(r?.actualDate);
@@ -72,10 +90,10 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(assignedAgentName ? { assignedAgentName } : {}),
     ...(projectPriority ? { projectPriority } : {}),
     ...(projectStatus ? { projectStatus } : {}),
+    ...(completionMode !== "checkbox" ? { completionMode } : {}),
     ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
-    ...(location ? { location } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
@@ -801,8 +819,15 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   const assignedAgentName = typeof it.assignedAgentName === "string" ? it.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(it.afterScreenshot);
-  const screenshotsEnabled = it.screenshotsEnabled === true || beforeScreenshot.length > 0 || afterScreenshot.length > 0;
-  const location = typeof it.location === "string" ? it.location.trim() : "";
+  const completionMode = isSubKpiCompletionMode(it.completionMode)
+    ? it.completionMode
+    : resolveSubKpiCompletionMode({
+        completionMode: undefined,
+        screenshotsEnabled: it.screenshotsEnabled === true,
+        beforeScreenshot,
+        afterScreenshot,
+      });
+  const screenshotsEnabled = it.screenshotsEnabled === true || subKpiRequiresScreenshots(completionMode);
   const startDate = normalizeOptionalSubKpiYmd(it.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(it.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(it.actualDate);
@@ -812,10 +837,10 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
     done: Boolean(it.done),
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(completionMode !== "checkbox" ? { completionMode } : {}),
     ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
-    ...(location ? { location } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
@@ -867,10 +892,12 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
   const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
   const screenshotsEnabled = typeof input === "string" ? false : input.screenshotsEnabled === true;
+  const completionMode: SubKpiCompletionMode = screenshotsEnabled ? "both" : "checkbox";
   return {
     id: crypto.randomUUID(),
     title,
     done: false,
+    ...(completionMode !== "checkbox" ? { completionMode } : {}),
     ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
@@ -1022,6 +1049,7 @@ export type UpdateSubKpiItemInput = {
   title?: string;
   startDate?: string | null;
   dueDate?: string | null;
+  completionMode?: SubKpiCompletionMode;
 };
 
 /** Update Sub Task title and/or schedule fields (preserves other item metadata). */
@@ -1049,6 +1077,12 @@ export function updateSubKpiItem(
     input.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.startDate) ?? null;
   const dueDate =
     input.dueDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.dueDate) ?? null;
+  const completionMode =
+    input.completionMode === undefined
+      ? undefined
+      : isSubKpiCompletionMode(input.completionMode)
+        ? input.completionMode
+        : undefined;
 
   const touch = (item: SubKpiItem): SubKpiItem => {
     if (item.id !== id) return item;
@@ -1061,6 +1095,9 @@ export function updateSubKpiItem(
     if (dueDate !== undefined) {
       if (dueDate) next = { ...next, dueDate };
       else delete (next as { dueDate?: string }).dueDate;
+    }
+    if (completionMode !== undefined) {
+      next = applySubKpiCompletionMode(next, completionMode);
     }
     return next;
   };
@@ -1131,4 +1168,16 @@ export function stripSubKpiStartDates(raw: unknown): Prisma.InputJsonValue {
     return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   return wrapForPersistWithExistingMeta({ segmented: false, flat: n.flat.map(strip) }, raw);
+}
+
+/** Screenshot-only sub-tasks auto-complete when both before and after images exist. */
+export function syncScreenshotOnlySubKpiDone(raw: unknown, subKpiId: string): Prisma.InputJsonValue {
+  const n = normalizeSubKpis(raw);
+  const items = n.segmented ? n.segments.flatMap((seg) => seg.items) : n.flat;
+  const item = items.find((row) => row.id === subKpiId);
+  if (!item) return raw as Prisma.InputJsonValue;
+  if (resolveSubKpiCompletionMode(item) !== "screenshots") return raw as Prisma.InputJsonValue;
+  const shouldBeDone = hasBeforeAndAfterScreenshots(item);
+  if (Boolean(item.done) === shouldBeDone) return raw as Prisma.InputJsonValue;
+  return setSubKpiItemDone(raw, subKpiId, shouldBeDone);
 }

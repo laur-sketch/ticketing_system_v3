@@ -6,51 +6,24 @@ import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
 import { cn } from "@/lib/cn";
 import { BRAND_TITLE } from "@/lib/brand";
 import type { PersonnelRosterRow } from "@/lib/personnel-accounts-data";
+import {
+  ALL_SBUS_VALUE,
+  NO_COMPANY_FILTER,
+  PORTAL_REGISTRY_PAGE_SIZE,
+  accountStatusClass,
+  matchesRegistryCompanyFilter,
+  matchesRegistryRoleFilter,
+  portalRegistryRoleLabel,
+  type PortalAccountRow,
+  type RosterCompany,
+} from "@/lib/portal-account-registry";
+import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
+import { RegistryFiltersBar } from "@/components/admin/RegistryFiltersBar";
 import { StaffAssignmentColorSelect } from "@/components/admin/StaffAssignmentColorSelect";
 import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
 
-function portalRegistryRoleLabel(role: (typeof PORTAL_ROLES)[number]) {
-  if (role === "SuperAdmin") return "Super Admin (platform)";
-  return role;
-}
-
 type Team = { id: string; name: string };
-type PortalAccountRow = {
-  id: string;
-  username: string | null;
-  passwordHash: string;
-  email: string;
-  name: string;
-  role: string;
-  headPrivileges?: boolean;
-  accountStatus?: string;
-  staffDesignatedCompanyId?: string | null;
-  staffDesignatedCompany?: { id: string; name: string } | null;
-  staffAssignmentColor?: string | null;
-  createdAt: string;
-  agentId: string | null;
-  onPersonnelRoster: boolean;
-};
-type RosterCompany = { id: string; name: string };
-const ALL_SBUS_VALUE = "__ALL_SBUS__";
-const NO_COMPANY_FILTER = "__NO_COMPANY__";
-const PERSONNEL_REGISTRY_PAGE_SIZE = 10;
-
-function matchesRegistryRoleFilter(role: string, filter: string): boolean {
-  if (!filter) return true;
-  return (normalizePortalRole(role) ?? role) === filter;
-}
-
-function matchesRegistryCompanyFilter(
-  companyId: string | null | undefined,
-  filter: string,
-): boolean {
-  if (!filter) return true;
-  if (filter === NO_COMPANY_FILTER) return !companyId;
-  return companyId === filter;
-}
 
 type PendingAccountRequestRow = {
   id: string;
@@ -60,77 +33,6 @@ type PendingAccountRequestRow = {
   createdAt: string;
   portalAccount: { id: string; name: string; email: string; role: string };
 };
-
-const registryFilterSelectClass = cn(
-  authInputClass,
-  "min-w-[10rem] py-1.5 text-xs sm:min-w-[11rem]",
-);
-
-function RegistryFiltersBar({
-  showCompanyFilter,
-  totalCount,
-  filteredCount,
-  registryRoleFilter,
-  onRegistryRoleFilterChange,
-  registryCompanyFilter,
-  onRegistryCompanyFilterChange,
-  rosterCompanies,
-  registryFiltersActive,
-}: {
-  showCompanyFilter: boolean;
-  totalCount: number;
-  filteredCount: number;
-  registryRoleFilter: string;
-  onRegistryRoleFilterChange: (value: string) => void;
-  registryCompanyFilter: string;
-  onRegistryCompanyFilterChange: (value: string) => void;
-  rosterCompanies: RosterCompany[];
-  registryFiltersActive: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800/90 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-end">
-      <label className="flex min-w-[10rem] flex-col gap-1">
-        <span className={authLabelClass}>Filter by role</span>
-        <select
-          value={registryRoleFilter}
-          onChange={(e) => onRegistryRoleFilterChange(e.target.value)}
-          className={registryFilterSelectClass}
-        >
-          <option value="">All roles</option>
-          {PORTAL_ROLES.map((r) => (
-            <option key={r} value={r}>
-              {portalRegistryRoleLabel(r)}
-            </option>
-          ))}
-        </select>
-      </label>
-      {showCompanyFilter ? (
-        <label className="flex min-w-[10rem] flex-col gap-1">
-          <span className={authLabelClass}>Filter by company</span>
-          <select
-            value={registryCompanyFilter}
-            onChange={(e) => onRegistryCompanyFilterChange(e.target.value)}
-            disabled={rosterCompanies.length === 0 && !registryCompanyFilter}
-            className={registryFilterSelectClass}
-          >
-            <option value="">All companies</option>
-            <option value={NO_COMPANY_FILTER}>No company assigned</option>
-            {rosterCompanies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
-        {registryFiltersActive
-          ? `Showing ${filteredCount} of ${totalCount} user${totalCount === 1 ? "" : "s"}`
-          : `${totalCount} user${totalCount === 1 ? "" : "s"}`}
-      </p>
-    </div>
-  );
-}
 
 export function PersonnelClient({
   initialTeams,
@@ -149,7 +51,6 @@ export function PersonnelClient({
   const [, setTeams] = useState<Team[]>(initialTeams);
   const [personnel, setPersonnel] = useState<PersonnelRosterRow[]>(initialPersonnel);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"cards" | "table">("table");
   const [portalAccounts, setPortalAccounts] = useState<PortalAccountRow[]>([]);
   const [rosterCompanies, setRosterCompanies] = useState<RosterCompany[]>([]);
   const [roleBusyId, setRoleBusyId] = useState<string | null>(null);
@@ -158,6 +59,7 @@ export function PersonnelClient({
   const [requestReviewBusyId, setRequestReviewBusyId] = useState<string | null>(null);
 
   const [createBusy, setCreateBusy] = useState(false);
+  const [createAccountModalOpen, setCreateAccountModalOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createOk, setCreateOk] = useState<string | null>(null);
   const [createUsername, setCreateUsername] = useState("");
@@ -286,6 +188,7 @@ export function PersonnelClient({
       setCreatePassword("");
       setCreateRole("Personnel");
       setCreateCompanyId("");
+      setCreateAccountModalOpen(false);
       await loadRoles();
       await load();
     } finally {
@@ -438,37 +341,30 @@ export function PersonnelClient({
     return n === "Admin" || n === "Personnel" || n === "Customer";
   }
 
-  const accountStatusClass = (statusRaw: string | undefined) => {
-    const status = (statusRaw ?? "ACTIVE").toUpperCase();
-    if (status === "SUSPENDED") return "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300";
-    if (status === "DELETED") return "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300";
-    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  };
-
   const personnelRegistryPageCount = Math.max(
     1,
-    Math.ceil(filteredPersonnel.length / PERSONNEL_REGISTRY_PAGE_SIZE),
+    Math.ceil(filteredPersonnel.length / PORTAL_REGISTRY_PAGE_SIZE),
   );
   const personnelRegistryPageClamped = Math.min(
     Math.max(1, personnelRegistryPage),
     personnelRegistryPageCount,
   );
   const paginatedPersonnel = useMemo(() => {
-    const start = (personnelRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
-    return filteredPersonnel.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
+    const start = (personnelRegistryPageClamped - 1) * PORTAL_REGISTRY_PAGE_SIZE;
+    return filteredPersonnel.slice(start, start + PORTAL_REGISTRY_PAGE_SIZE);
   }, [filteredPersonnel, personnelRegistryPageClamped]);
 
   const portalRegistryPageCount = Math.max(
     1,
-    Math.ceil(filteredPortalAccounts.length / PERSONNEL_REGISTRY_PAGE_SIZE),
+    Math.ceil(filteredPortalAccounts.length / PORTAL_REGISTRY_PAGE_SIZE),
   );
   const portalRegistryPageClamped = Math.min(
     Math.max(1, portalRegistryPage),
     portalRegistryPageCount,
   );
   const paginatedPortalAccounts = useMemo(() => {
-    const start = (portalRegistryPageClamped - 1) * PERSONNEL_REGISTRY_PAGE_SIZE;
-    return filteredPortalAccounts.slice(start, start + PERSONNEL_REGISTRY_PAGE_SIZE);
+    const start = (portalRegistryPageClamped - 1) * PORTAL_REGISTRY_PAGE_SIZE;
+    return filteredPortalAccounts.slice(start, start + PORTAL_REGISTRY_PAGE_SIZE);
   }, [filteredPortalAccounts, portalRegistryPageClamped]);
 
   return (
@@ -480,6 +376,19 @@ export function PersonnelClient({
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Personnel registry</h1>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+            {canManagePortalAccounts && !isAdminCompanyView ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateError(null);
+                  setCreateOk(null);
+                  setCreateAccountModalOpen(true);
+                }}
+                className="shrink-0 rounded-lg bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-orange-500"
+              >
+                Add staff account
+              </button>
+            ) : null}
             {!isAdminCompanyView ? (
               <button
                 type="button"
@@ -493,108 +402,124 @@ export function PersonnelClient({
           </div>
         </header>
 
-        {canManagePortalAccounts && !isAdminCompanyView ? (
-          <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800/90 dark:bg-[#12161c] md:p-5">
-            <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-700 dark:text-zinc-400">
-              Add staff portal account
-            </h2>
-            {createOk ? (
-              <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100/90">
-                {createOk}
-              </p>
-            ) : null}
-            {createError ? (
-              <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-xs text-red-800 dark:text-red-200/90">
-                {createError}
-              </p>
-            ) : null}
-            <form onSubmit={(e) => void createStaffAccount(e)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <label className="flex flex-col gap-1 sm:col-span-1">
-                <span className={authLabelClass}>Username</span>
-                <input
-                  required
-                  value={createUsername}
-                  onChange={(e) => setCreateUsername(e.target.value)}
-                  autoComplete="off"
-                  placeholder="jdoe"
-                  className={authInputClass}
-                />
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-1">
-                <span className={authLabelClass}>Work email</span>
-                <input
-                  type="email"
-                  required
-                  value={createEmail}
-                  onChange={(e) => setCreateEmail(e.target.value)}
-                  autoComplete="off"
-                  placeholder="jdoe@company.com"
-                  className={authInputClass}
-                />
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-1">
-                <span className={authLabelClass}>Display name</span>
-                <input
-                  required
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  autoComplete="off"
-                  placeholder="Jane Doe"
-                  className={authInputClass}
-                />
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-1">
-                <span className={authLabelClass}>Initial password</span>
-                <input
-                  type="password"
-                  required
-                  value={createPassword}
-                  onChange={(e) => setCreatePassword(e.target.value)}
-                  autoComplete="new-password"
-                  placeholder="••••••••"
-                  className={authInputClass}
-                />
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-1">
-                <span className={authLabelClass}>Portal role</span>
-                <select
-                  value={createRole}
-                  onChange={(e) => setCreateRole(e.target.value as "Admin" | "Personnel")}
-                  className={authInputClass}
-                >
-                  <option value="Personnel">Personnel</option>
-                  <option value="Admin">Admin</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-1">
-                <span className={authLabelClass}>Designated company queue</span>
-                <select
-                  required
-                  value={createCompanyId}
-                  onChange={(e) => setCreateCompanyId(e.target.value)}
-                  disabled={rosterCompanies.length === 0}
-                  className={authInputClass}
-                >
-                  <option value="">Select company…</option>
-                  {rosterCompanies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex items-end sm:col-span-2 lg:col-span-3">
-                <button
-                  type="submit"
-                  disabled={createBusy || rosterCompanies.length === 0}
-                  className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {createBusy ? "Creating…" : "Create staff account"}
-                </button>
-              </div>
-            </form>
-          </section>
+        {createOk ? (
+          <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100/90">
+            {createOk}
+          </p>
         ) : null}
+
+        <TaskBoardPopup
+          open={createAccountModalOpen}
+          title="Add staff portal account"
+          onClose={() => {
+            if (createBusy) return;
+            setCreateAccountModalOpen(false);
+            setCreateError(null);
+          }}
+          size="xl"
+        >
+          {createError ? (
+            <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-xs text-red-800 dark:text-red-200/90">
+              {createError}
+            </p>
+          ) : null}
+          <form onSubmit={(e) => void createStaffAccount(e)} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="flex flex-col gap-1 sm:col-span-1">
+              <span className={authLabelClass}>Username</span>
+              <input
+                required
+                value={createUsername}
+                onChange={(e) => setCreateUsername(e.target.value)}
+                autoComplete="off"
+                placeholder="jdoe"
+                className={authInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-1">
+              <span className={authLabelClass}>Work email</span>
+              <input
+                type="email"
+                required
+                value={createEmail}
+                onChange={(e) => setCreateEmail(e.target.value)}
+                autoComplete="off"
+                placeholder="jdoe@company.com"
+                className={authInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-1">
+              <span className={authLabelClass}>Display name</span>
+              <input
+                required
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                autoComplete="off"
+                placeholder="Jane Doe"
+                className={authInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-1">
+              <span className={authLabelClass}>Initial password</span>
+              <input
+                type="password"
+                required
+                value={createPassword}
+                onChange={(e) => setCreatePassword(e.target.value)}
+                autoComplete="new-password"
+                placeholder="••••••••"
+                className={authInputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-1">
+              <span className={authLabelClass}>Portal role</span>
+              <select
+                value={createRole}
+                onChange={(e) => setCreateRole(e.target.value as "Admin" | "Personnel")}
+                className={authInputClass}
+              >
+                <option value="Personnel">Personnel</option>
+                <option value="Admin">Admin</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 sm:col-span-2 lg:col-span-1">
+              <span className={authLabelClass}>Designated company queue</span>
+              <select
+                required
+                value={createCompanyId}
+                onChange={(e) => setCreateCompanyId(e.target.value)}
+                disabled={rosterCompanies.length === 0}
+                className={authInputClass}
+              >
+                <option value="">Select company…</option>
+                {rosterCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-3">
+              <button
+                type="submit"
+                disabled={createBusy || rosterCompanies.length === 0}
+                className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {createBusy ? "Creating…" : "Create staff account"}
+              </button>
+              <button
+                type="button"
+                disabled={createBusy}
+                onClick={() => {
+                  setCreateAccountModalOpen(false);
+                  setCreateError(null);
+                }}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </TaskBoardPopup>
 
         {error ? (
           <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
@@ -757,7 +682,7 @@ export function PersonnelClient({
                 </div>
                 <SimplePaginationBar
                   page={personnelRegistryPageClamped}
-                  pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
+                  pageSize={PORTAL_REGISTRY_PAGE_SIZE}
                   total={filteredPersonnel.length}
                   onPageChange={setPersonnelRegistryPage}
                   itemLabel="users"
@@ -770,27 +695,9 @@ export function PersonnelClient({
           <>
             {canManagePortalAccounts ? (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                    Portal accounts · one row per account · SuperAdmin roles & designated company
-                  </p>
-                  <Tabs
-                    value={view}
-                    onValueChange={(value) => {
-                      setView(value as typeof view);
-                      setPortalRegistryPage(1);
-                    }}
-                  >
-                    <TabsList className="rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-[11px] font-semibold dark:border-zinc-700 dark:bg-zinc-900/80">
-                      <TabsTrigger value="cards" className="rounded-md px-3 py-1 text-[11px] font-semibold data-[state=active]:bg-white data-[state=active]:text-zinc-900 dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900">
-                        Cards
-                      </TabsTrigger>
-                      <TabsTrigger value="table" className="rounded-md px-3 py-1 text-[11px] font-semibold data-[state=active]:bg-white data-[state=active]:text-zinc-900 dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900">
-                        Table
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
+                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                  Portal accounts · one row per account · SuperAdmin roles & designated company
+                </p>
 
                 <RegistryFiltersBar
                   showCompanyFilter
@@ -804,142 +711,7 @@ export function PersonnelClient({
                   registryFiltersActive={registryFiltersActive}
                 />
 
-                {view === "cards" ? (
-                  <>
-                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                    {filteredPortalAccounts.length === 0 ? (
-                      <article className="col-span-full rounded-xl border border-dashed border-zinc-300 bg-zinc-100 px-4 py-6 text-center text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/20 dark:text-zinc-500">
-                        {portalAccounts.length === 0
-                          ? "No portal accounts loaded."
-                          : "No accounts match the selected filters. Choose All roles and All companies to see all portal users."}
-                      </article>
-                    ) : (
-                      paginatedPortalAccounts.map((a) => (
-                        <article
-                          key={a.id}
-                          className="flex flex-col rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#12161c]"
-                        >
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="min-w-0">
-                              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">Name</p>
-                              <p className="mt-0.5 truncate text-sm font-semibold text-zinc-900 dark:text-white" title={a.name}>
-                                {a.name}
-                              </p>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">User</p>
-                              <p className="mt-0.5 truncate text-xs font-medium text-zinc-800 dark:text-zinc-200" title={a.username ?? ""}>
-                                {a.username?.trim() ? a.username : "—"}
-                              </p>
-                            </div>
-                            <div className="col-span-2 min-w-0">
-                              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">Email</p>
-                              <p className="mt-0.5 truncate text-xs text-zinc-600 dark:text-slate-400" title={a.email}>
-                                {a.email}
-                              </p>
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">Status</p>
-                              <span
-                                className={cn(
-                                  "mt-0.5 inline-flex rounded border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide",
-                                  accountStatusClass(a.accountStatus),
-                                )}
-                              >
-                                {a.accountStatus ?? "ACTIVE"}
-                              </span>
-                            </div>
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                Roles
-                              </span>
-                              <select
-                                disabled={roleBusyId === a.id}
-                                value={(normalizePortalRole(a.role) ?? "Customer") as (typeof PORTAL_ROLES)[number]}
-                                onChange={(e) => void updateAccountPortalRole(a.id, e.target.value)}
-                                className={teamSelectClass}
-                              >
-                                {PORTAL_ROLES.map((r) => (
-                                  <option key={r} value={r}>
-                                    {portalRegistryRoleLabel(r)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                Company
-                              </span>
-                              {showStaffDesignatedCompany(a.role) ? (
-                                <select
-                                  value={a.staffDesignatedCompanyId ?? ""}
-                                  disabled={roleBusyId === a.id || rosterCompanies.length === 0}
-                                  onChange={(e) =>
-                                    void updateStaffDesignated(
-                                      a.id,
-                                      e.target.value === ALL_SBUS_VALUE ? "" : e.target.value,
-                                    )
-                                  }
-                                  className={teamSelectClass}
-                                >
-                                  <option value="">-</option>
-                                  <option value={ALL_SBUS_VALUE}>ALL SBUs</option>
-                                  {rosterCompanies.map((c) => (
-                                    <option key={c.id} value={c.id}>
-                                      {c.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="mt-0.5 text-xs text-zinc-500">—</span>
-                              )}
-                            </label>
-                            <label className="flex min-w-0 flex-col gap-0.5">
-                              <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                                Color
-                              </span>
-                              {isStaffPortalRole(a.role) ? (
-                                <StaffAssignmentColorSelect
-                                  value={a.staffAssignmentColor ?? ""}
-                                  disabled={roleBusyId === a.id}
-                                  onChange={(next) => void updateStaffAssignmentColor(a.id, next)}
-                                  selectClassName={assignmentSelectClass}
-                                />
-                              ) : (
-                                <span className="mt-0.5 text-xs text-zinc-500">—</span>
-                              )}
-                            </label>
-                          </div>
-                          <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-700/80">
-                            <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">Act.</p>
-                            {a.agentId ? (
-                              <button
-                                type="button"
-                                disabled={roleBusyId === a.id}
-                                onClick={() => void removeFromRoster(a.id, a.agentId)}
-                                className="mt-1.5 inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-transparent py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-500 dark:text-zinc-200 dark:hover:border-zinc-400 dark:hover:bg-zinc-800/50"
-                              >
-                                Remove
-                              </button>
-                            ) : (
-                              <p className="mt-1 text-xs text-zinc-500">—</p>
-                            )}
-                          </div>
-                        </article>
-                      ))
-                    )}
-                  </section>
-                  <SimplePaginationBar
-                    page={portalRegistryPageClamped}
-                    pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
-                    total={filteredPortalAccounts.length}
-                    onPageChange={setPortalRegistryPage}
-                    itemLabel="users"
-                    className="mt-2 rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]"
-                  />
-                </>
-                ) : (
-                  <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
+                <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
                     <table className="w-full table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
                       <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
                         <tr>
@@ -1057,13 +829,12 @@ export function PersonnelClient({
                     </table>
                     <SimplePaginationBar
                       page={portalRegistryPageClamped}
-                      pageSize={PERSONNEL_REGISTRY_PAGE_SIZE}
+                      pageSize={PORTAL_REGISTRY_PAGE_SIZE}
                       total={filteredPortalAccounts.length}
                       onPageChange={setPortalRegistryPage}
                       itemLabel="users"
                     />
                   </section>
-                )}
               </>
             ) : null}
           </>

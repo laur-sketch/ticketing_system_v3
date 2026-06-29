@@ -17,6 +17,7 @@ import {
   hasSubKpiAssignedTo,
   pillarScreenshotsEnabled,
   type NormalizedSubKpis,
+  type SubKpiItem,
   markEverySubKpiDone,
   normalizeSubKpis,
   removePillarScreenshot,
@@ -28,6 +29,7 @@ import {
   setSubKpiItemScreenshots,
   setSubKpiItemWorkMeta,
   setTaskPriority,
+  syncScreenshotOnlySubKpiDone,
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
   appendSubKpiItem,
@@ -60,9 +62,21 @@ import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
-import { persistTaskScreenshot, validateTaskScreenshotFile, deleteTaskScreenshotsDir } from "@/lib/task-screenshots";
+import {
+  hasBeforeAndAfterScreenshots,
+  resolveSubKpiCompletionMode,
+  subKpiRequiresCheckbox,
+  subKpiRequiresScreenshots,
+  isSubKpiCompletionMode,
+  type SubKpiCompletionMode,
+} from "@/lib/sub-kpi-completion-mode";
 import { MAX_TASK_SCREENSHOTS_PER_SLOT } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
+import {
+  deleteTaskScreenshotsDir,
+  persistTaskScreenshot,
+  validateTaskScreenshotFile,
+} from "@/lib/task-screenshots";
 
 const allowedFrequencies = new Set(Object.values(KpiFrequency));
 
@@ -74,16 +88,10 @@ function checklistFullyComplete(subKpis: unknown): boolean {
   return items.every((x) => x.done);
 }
 
-function taskScreenshotsEnabled(item: { screenshotsEnabled?: boolean; beforeScreenshot?: unknown[]; afterScreenshot?: unknown[] }): boolean {
-  return (
-    item.screenshotsEnabled === true ||
-    (item.beforeScreenshot?.length ?? 0) > 0 ||
-    (item.afterScreenshot?.length ?? 0) > 0
-  );
-}
-
-function hasBeforeAndAfterScreenshots(item: { beforeScreenshot?: unknown[]; afterScreenshot?: unknown[] }): boolean {
-  return (item.beforeScreenshot?.length ?? 0) > 0 && (item.afterScreenshot?.length ?? 0) > 0;
+function subKpiScreenshotsRequired(
+  item: Pick<SubKpiItem, "completionMode" | "screenshotsEnabled" | "beforeScreenshot" | "afterScreenshot">,
+): boolean {
+  return subKpiRequiresScreenshots(resolveSubKpiCompletionMode(item));
 }
 
 export async function GET(req: Request) {
@@ -559,7 +567,6 @@ export async function PATCH(req: Request) {
       startDate?: string | null;
       dueDate?: string | null;
       actualDate?: string | null;
-      location?: string | null;
       projectPriority?: string | null;
     };
     subKpiProjectMeta?: {
@@ -598,6 +605,7 @@ export async function PATCH(req: Request) {
       title?: string;
       startDate?: string | null;
       dueDate?: string | null;
+      completionMode?: SubKpiCompletionMode;
     };
     removeSubKpi?: {
       subKpiId?: string;
@@ -713,10 +721,12 @@ export async function PATCH(req: Request) {
   const canCompleteSubKpi = (subKpiId: string) => {
     const item = subKpiItems.find((it) => it.id === subKpiId);
     if (!item) return false;
+    const mode = resolveSubKpiCompletionMode(item);
+    if (mode === "screenshots") return false;
     if (!canEditSubKpi(subKpiId)) {
-      return Boolean(perms.canAssignWork && taskScreenshotsEnabled(item) && hasBeforeAndAfterScreenshots(item));
+      return Boolean(perms.canAssignWork && subKpiRequiresScreenshots(mode) && hasBeforeAndAfterScreenshots(item));
     }
-    if (taskScreenshotsEnabled(item) && !hasBeforeAndAfterScreenshots(item)) return false;
+    if (mode === "both" && !hasBeforeAndAfterScreenshots(item)) return false;
     return true;
   };
 
@@ -810,7 +820,6 @@ export async function PATCH(req: Request) {
       startDate: meta.startDate,
       dueDate: recurring ? undefined : meta.dueDate,
       actualDate: recurring ? undefined : meta.actualDate,
-      location: meta.location,
       projectPriority: meta.projectPriority,
     });
     const prevComplete = checklistFullyComplete(kpiRow.subKpis);
@@ -1060,9 +1069,9 @@ export async function PATCH(req: Request) {
     if (!target) {
       return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
     }
-    if (!taskScreenshotsEnabled(target)) {
+    if (!subKpiScreenshotsRequired(target)) {
       return NextResponse.json(
-        { error: "Before/after screenshots were not enabled when this task was created." },
+        { error: "Before/after screenshots are not required for this sub-task." },
         { status: 400 },
       );
     }
@@ -1083,14 +1092,25 @@ export async function PATCH(req: Request) {
       }
     }
     const uploaded = await Promise.all(screenshotFiles.map((file) => persistTaskScreenshot(kpiRow.id, file)));
-    const updatedJson = setSubKpiItemScreenshots(kpiRow.subKpis, subKpiIdShot, slot, [
+    let updatedJson = setSubKpiItemScreenshots(kpiRow.subKpis, subKpiIdShot, slot, [
       ...existingScreenshots,
       ...uploaded,
     ]);
+    updatedJson = syncScreenshotOnlySubKpiDone(updatedJson, subKpiIdShot);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(updatedJson);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
-      data: { subKpis: updatedJson },
+      data: {
+        subKpis: updatedJson,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
     });
+    await captureCurrentPeriodSnapshot(updatedJson);
     return NextResponse.json(updated);
   }
 
@@ -1127,11 +1147,22 @@ export async function PATCH(req: Request) {
     if (!existingScreenshots.some((item) => item.storedFileName === storedFileName)) {
       return NextResponse.json({ error: "Screenshot not found." }, { status: 404 });
     }
-    const updatedJson = removeSubKpiItemScreenshot(kpiRow.subKpis, subKpiIdShot, slot, storedFileName);
+    let updatedJson = removeSubKpiItemScreenshot(kpiRow.subKpis, subKpiIdShot, slot, storedFileName);
+    updatedJson = syncScreenshotOnlySubKpiDone(updatedJson, subKpiIdShot);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
+    const nextComplete = checklistFullyComplete(updatedJson);
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
-      data: { subKpis: updatedJson },
+      data: {
+        subKpis: updatedJson,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
     });
+    await captureCurrentPeriodSnapshot(updatedJson);
     return NextResponse.json(updated);
   }
 
@@ -1237,16 +1268,24 @@ export async function PATCH(req: Request) {
     const hasTitle = body.updateSubKpi.title !== undefined;
     const hasStartDate = body.updateSubKpi.startDate !== undefined;
     const hasDueDate = body.updateSubKpi.dueDate !== undefined;
-    if (!hasTitle && !hasStartDate && !hasDueDate) {
+    const hasCompletionMode = body.updateSubKpi.completionMode !== undefined;
+    if (!hasTitle && !hasStartDate && !hasDueDate && !hasCompletionMode) {
       return NextResponse.json(
-        { error: "Provide title, startDate, and/or dueDate to update a Sub Task." },
+        { error: "Provide title, startDate, dueDate, and/or completionMode to update a Sub Task." },
         { status: 400 },
       );
+    }
+    if (
+      hasCompletionMode &&
+      !isSubKpiCompletionMode(body.updateSubKpi.completionMode)
+    ) {
+      return NextResponse.json({ error: "Invalid completionMode." }, { status: 400 });
     }
     const result = updateSubKpiItem(kpiRow.subKpis, subKpiIdUpdate, {
       ...(hasTitle ? { title: body.updateSubKpi.title } : {}),
       ...(hasStartDate ? { startDate: body.updateSubKpi.startDate } : {}),
       ...(hasDueDate ? { dueDate: body.updateSubKpi.dueDate } : {}),
+      ...(hasCompletionMode ? { completionMode: body.updateSubKpi.completionMode as SubKpiCompletionMode } : {}),
     });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
@@ -1491,11 +1530,20 @@ export async function PATCH(req: Request) {
   }
   if (!isItProjectImplementationPillar(kpiRow.title) && subKpiId && body.done === true) {
     const target = subKpiItems.find((it) => it.id === subKpiId);
-    if (target && taskScreenshotsEnabled(target) && !hasBeforeAndAfterScreenshots(target)) {
-      return NextResponse.json(
-        { error: "Upload both before and after screenshots before marking this sub-task done." },
-        { status: 400 },
-      );
+    if (target) {
+      const mode = resolveSubKpiCompletionMode(target);
+      if (mode === "screenshots") {
+        return NextResponse.json(
+          { error: "This sub-task completes when before and after screenshots are uploaded." },
+          { status: 400 },
+        );
+      }
+      if (mode === "both" && !hasBeforeAndAfterScreenshots(target)) {
+        return NextResponse.json(
+          { error: "Upload both before and after screenshots before marking this sub-task done." },
+          { status: 400 },
+        );
+      }
     }
   }
 
