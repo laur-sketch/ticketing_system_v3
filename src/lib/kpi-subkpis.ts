@@ -10,11 +10,17 @@ import {
 import { normalizeTimeZone } from "./kpi-recurrence";
 import {
   applySubKpiCompletionMode,
+  applySubKpiCompletionRequirements,
+  completionRequirementsFromLegacyMode,
   hasBeforeAndAfterScreenshots,
   isSubKpiCompletionMode,
+  normalizeCompletionRequirements,
   resolveSubKpiCompletionMode,
-  subKpiRequiresScreenshots,
+  resolveSubKpiCompletionRequirements,
+  subKpiRequirementsMet,
+  subKpiRequiresScreenshotsFromMode,
   type SubKpiCompletionMode,
+  type SubKpiCompletionRequirements,
 } from "@/lib/sub-kpi-completion-mode";
 
 /** Optional schedule fields are calendar days `YYYY-MM-DD` (IT Project Implementation sub-tasks). */
@@ -26,8 +32,9 @@ export type SubKpiItem = {
   assignedAgentName?: string | null;
   projectPriority?: "High" | "Medium" | "Low" | null;
   projectStatus?: "Pending" | "On Going" | "Finalizing" | "Done" | null;
-  /** How assignees complete this sub-task (checkbox, screenshots, or both). */
+  /** How assignees complete this sub-task (checkbox, screenshots, numerical, or combinations). */
   completionMode?: SubKpiCompletionMode;
+  completionRequirements?: SubKpiCompletionRequirements;
   screenshotsEnabled?: boolean;
   beforeScreenshot?: TaskScreenshotMetaItem[];
   afterScreenshot?: TaskScreenshotMetaItem[];
@@ -36,6 +43,7 @@ export type SubKpiItem = {
   /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
   actualDate?: string | null;
+  numericalValue?: number | null;
 };
 
 const SUB_KPI_PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
@@ -69,6 +77,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
       : null;
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
+  const completionRequirements = normalizeCompletionRequirements(r?.completionRequirements);
   const completionMode = isSubKpiCompletionMode(r?.completionMode)
     ? r.completionMode
     : resolveSubKpiCompletionMode({
@@ -77,11 +86,16 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
         beforeScreenshot,
         afterScreenshot,
       });
+  const resolvedRequirements =
+    completionRequirements ?? completionRequirementsFromLegacyMode(completionMode);
   const screenshotsEnabled =
-    r?.screenshotsEnabled === true || subKpiRequiresScreenshots(completionMode);
+    r?.screenshotsEnabled === true || subKpiRequiresScreenshotsFromMode(completionMode);
   const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(r?.actualDate);
+  const numericalRaw = r?.numericalValue;
+  const numericalValue =
+    typeof numericalRaw === "number" && Number.isFinite(numericalRaw) ? numericalRaw : null;
   return {
     id,
     title,
@@ -90,13 +104,15 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(assignedAgentName ? { assignedAgentName } : {}),
     ...(projectPriority ? { projectPriority } : {}),
     ...(projectStatus ? { projectStatus } : {}),
-    ...(completionMode !== "checkbox" ? { completionMode } : {}),
+    ...(completionRequirements ? { completionRequirements: resolvedRequirements } : {}),
+    ...(completionMode !== "checkbox" && !completionRequirements ? { completionMode } : {}),
     ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
+    ...(numericalValue != null ? { numericalValue } : {}),
   };
 }
 
@@ -745,6 +761,7 @@ export function setSubKpiItemWorkMeta(
     actualDate?: string | null;
     location?: string | null;
     projectPriority?: string | null;
+    numericalValue?: number | null;
   },
 ): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
@@ -784,6 +801,13 @@ export function setSubKpiItemWorkMeta(
     if (projectPriority !== undefined) {
       if (projectPriority) next = { ...next, projectPriority };
       else delete (next as { projectPriority?: SubKpiItem["projectPriority"] }).projectPriority;
+    }
+    if (meta.numericalValue !== undefined) {
+      if (meta.numericalValue != null && Number.isFinite(meta.numericalValue)) {
+        next = { ...next, numericalValue: meta.numericalValue };
+      } else {
+        delete (next as { numericalValue?: number }).numericalValue;
+      }
     }
     return next;
   };
@@ -827,7 +851,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
         beforeScreenshot,
         afterScreenshot,
       });
-  const screenshotsEnabled = it.screenshotsEnabled === true || subKpiRequiresScreenshots(completionMode);
+  const screenshotsEnabled = it.screenshotsEnabled === true || subKpiRequiresScreenshotsFromMode(completionMode);
   const startDate = normalizeOptionalSubKpiYmd(it.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(it.dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(it.actualDate);
@@ -883,6 +907,7 @@ type SubKpiCreateDraft = string | {
   dueDate?: string | null;
   endDate?: string | null;
   screenshotsEnabled?: boolean | null;
+  completionRequirements?: SubKpiCompletionRequirements | null;
 };
 
 function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
@@ -891,17 +916,21 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   if (!title) return null;
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
   const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
-  const screenshotsEnabled = typeof input === "string" ? false : input.screenshotsEnabled === true;
-  const completionMode: SubKpiCompletionMode = screenshotsEnabled ? "both" : "checkbox";
-  return {
+  let item: SubKpiItem = {
     id: crypto.randomUUID(),
     title,
     done: false,
-    ...(completionMode !== "checkbox" ? { completionMode } : {}),
-    ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
   };
+  if (typeof input !== "string" && input.completionRequirements) {
+    return applySubKpiCompletionRequirements(item, input.completionRequirements);
+  }
+  const screenshotsEnabled = typeof input === "string" ? false : input.screenshotsEnabled === true;
+  return applySubKpiCompletionRequirements(
+    item,
+    completionRequirementsFromLegacyMode(screenshotsEnabled ? "both" : "checkbox"),
+  );
 }
 
 export function validateSegmentStructureForPersist(
@@ -1170,14 +1199,22 @@ export function stripSubKpiStartDates(raw: unknown): Prisma.InputJsonValue {
   return wrapForPersistWithExistingMeta({ segmented: false, flat: n.flat.map(strip) }, raw);
 }
 
-/** Screenshot-only sub-tasks auto-complete when both before and after images exist. */
-export function syncScreenshotOnlySubKpiDone(raw: unknown, subKpiId: string): Prisma.InputJsonValue {
+/** Sub-tasks without a checkbox requirement auto-complete when other requirements are met. */
+export function syncSubKpiDoneFromRequirements(raw: unknown, subKpiId: string): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
   const items = n.segmented ? n.segments.flatMap((seg) => seg.items) : n.flat;
   const item = items.find((row) => row.id === subKpiId);
   if (!item) return raw as Prisma.InputJsonValue;
-  if (resolveSubKpiCompletionMode(item) !== "screenshots") return raw as Prisma.InputJsonValue;
-  const shouldBeDone = hasBeforeAndAfterScreenshots(item);
+  const req = resolveSubKpiCompletionRequirements(item);
+  if (req.checkbox) {
+    if (resolveSubKpiCompletionMode(item) !== "screenshots") return raw as Prisma.InputJsonValue;
+  }
+  const shouldBeDone = subKpiRequirementsMet(item);
   if (Boolean(item.done) === shouldBeDone) return raw as Prisma.InputJsonValue;
   return setSubKpiItemDone(raw, subKpiId, shouldBeDone);
+}
+
+/** @deprecated use syncSubKpiDoneFromRequirements */
+export function syncScreenshotOnlySubKpiDone(raw: unknown, subKpiId: string): Prisma.InputJsonValue {
+  return syncSubKpiDoneFromRequirements(raw, subKpiId);
 }

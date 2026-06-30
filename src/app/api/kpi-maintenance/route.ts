@@ -30,6 +30,7 @@ import {
   setSubKpiItemWorkMeta,
   setTaskPriority,
   syncScreenshotOnlySubKpiDone,
+  syncSubKpiDoneFromRequirements,
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
   appendSubKpiItem,
@@ -58,17 +59,22 @@ import {
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
+import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import {
   hasBeforeAndAfterScreenshots,
+  hasNumericalRecord,
+  normalizeCompletionRequirements,
   resolveSubKpiCompletionMode,
+  resolveSubKpiCompletionRequirements,
   subKpiRequiresCheckbox,
   subKpiRequiresScreenshots,
   isSubKpiCompletionMode,
   type SubKpiCompletionMode,
+  type SubKpiCompletionRequirements,
 } from "@/lib/sub-kpi-completion-mode";
 import { MAX_TASK_SCREENSHOTS_PER_SLOT } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
@@ -89,9 +95,9 @@ function checklistFullyComplete(subKpis: unknown): boolean {
 }
 
 function subKpiScreenshotsRequired(
-  item: Pick<SubKpiItem, "completionMode" | "screenshotsEnabled" | "beforeScreenshot" | "afterScreenshot">,
+  item: Pick<SubKpiItem, "completionRequirements" | "completionMode" | "screenshotsEnabled" | "beforeScreenshot" | "afterScreenshot">,
 ): boolean {
-  return subKpiRequiresScreenshots(resolveSubKpiCompletionMode(item));
+  return subKpiRequiresScreenshots(resolveSubKpiCompletionRequirements(item));
 }
 
 export async function GET(req: Request) {
@@ -119,15 +125,15 @@ export async function GET(req: Request) {
           })
         : [];
     const agentIds = agentsInSbu.map((a) => a.id);
+    const companyScopeOr: Prisma.KpiMaintenanceWhereInput[] = [
+      { assignedAgentId: null, scopedCompanyTeamId: companyTeamId },
+    ];
     if (agentIds.length > 0) {
-      where = {
-        AND: [where, { assignedAgentId: { in: agentIds } }],
-      };
-    } else {
-      where = {
-        AND: [where, { assignedAgentId: "__none__" }],
-      };
+      companyScopeOr.unshift({ assignedAgentId: { in: agentIds } });
     }
+    where = {
+      AND: [where, { OR: companyScopeOr }],
+    };
   }
 
   const assignedFilterId = searchParams.get("assigned")?.trim();
@@ -289,6 +295,13 @@ export async function GET(req: Request) {
     canCompleteUnassignedWork: session.user.role === "SuperAdmin",
     operatorAgentId: perms.operator?.id ?? null,
     operatorAgentName: perms.operator?.name ?? null,
+    rosterCompanies: perms.canAssignWork
+      ? await prisma.team.findMany({
+          where: rosterTeamNameFilter(),
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        })
+      : [],
   });
 }
 
@@ -333,6 +346,8 @@ export async function POST(req: Request) {
     itProjectPhase?: string;
     itProjectPhases?: Array<{ name?: string; items?: Array<{ title?: string; dueDate?: string }> }>;
     itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
+    scopedCompanyTeamId?: string | null;
+    completionRequirements?: SubKpiCompletionRequirements;
   };
   const title = body.title?.trim() ?? "";
   const isItProject = isItProjectImplementationPillar(title);
@@ -352,7 +367,7 @@ export async function POST(req: Request) {
 
   let recurrenceWeekday: number | null = null;
   let recurrenceMonthDay: number | null = null;
-  if (isRecurring && frequency === "WEEKLY") {
+  if (!isItProject && isRecurring && frequency === "WEEKLY") {
     const wd = body.recurrenceWeekday;
     if (typeof wd !== "number" || wd < 0 || wd > 6 || !Number.isInteger(wd)) {
       return NextResponse.json(
@@ -362,7 +377,7 @@ export async function POST(req: Request) {
     }
     recurrenceWeekday = wd;
   }
-  if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY")) {
+  if (!isItProject && isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY")) {
     const dom = body.recurrenceMonthDay;
     if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
       return NextResponse.json(
@@ -371,30 +386,6 @@ export async function POST(req: Request) {
       );
     }
     recurrenceMonthDay = dom;
-  }
-  if (!isRecurring && !isItProject) {
-    const startIso = body.nonRecurringStartAt?.trim() ?? "";
-    const endIso = body.nonRecurringEndAt?.trim() ?? "";
-    if (!startIso || !endIso) {
-      return NextResponse.json(
-        { error: "nonRecurringStartAt and nonRecurringEndAt are required when task is not recurring." },
-        { status: 400 },
-      );
-    }
-    const parsedStart = new Date(startIso);
-    const parsedEnd = new Date(endIso);
-    if (
-      !Number.isFinite(parsedStart.getTime()) ||
-      !Number.isFinite(parsedEnd.getTime()) ||
-      parsedEnd.getTime() <= parsedStart.getTime()
-    ) {
-      return NextResponse.json(
-        { error: "For non-recurring tasks, end date/time must be after start date/time." },
-        { status: 400 },
-      );
-    }
-    nonRecurringStartAt = parsedStart;
-    nonRecurringEndAt = parsedEnd;
   }
 
   const assigneeId = body.assignedAgentId?.trim() ?? "";
@@ -407,6 +398,26 @@ export async function POST(req: Request) {
   if (assigneeId && !assignee) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
   }
+
+  const scopedCompanyTeamIdRaw = body.scopedCompanyTeamId?.trim() ?? "";
+  let scopedCompanyTeamId: string | null = null;
+  if (scopedCompanyTeamIdRaw) {
+    const companyTeam = await prisma.team.findFirst({
+      where: { id: scopedCompanyTeamIdRaw, ...rosterTeamNameFilter() },
+      select: { id: true },
+    });
+    if (!companyTeam) {
+      return NextResponse.json({ error: "Company not found." }, { status: 404 });
+    }
+    scopedCompanyTeamId = companyTeam.id;
+  }
+
+  const taskCompletionRequirements =
+    normalizeCompletionRequirements(body.completionRequirements) ?? {
+      checkbox: true,
+      screenshots: false,
+      numerical: false,
+    };
 
   let built: { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string };
 
@@ -433,17 +444,24 @@ export async function POST(req: Request) {
     itProjectPhaseLabel = itProjectActivePhase(projectBuilt.data).name;
     built = { ok: true, norm: { segmented: false, flat: [] } };
   } else {
-    const subTaskScreenshots = body.screenshotAttachmentScope !== "pillar";
+    const subTaskScreenshots =
+      body.screenshotAttachmentScope !== "pillar" && taskCompletionRequirements.screenshots;
+    const mapDraftItem = (s: {
+      title?: string;
+      startDate?: string;
+      dueDate?: string;
+      endDate?: string;
+      screenshotsEnabled?: boolean;
+    }) => ({
+      title: (s.title ?? "").trim(),
+      startDate: (s.startDate ?? "").trim(),
+      dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
+      completionRequirements: taskCompletionRequirements,
+      screenshotsEnabled: subTaskScreenshots,
+    });
     const flatItems =
       Array.isArray(body.subKpis) && !body.subKpisSegmented
-        ? body.subKpis
-            .map((s) => ({
-              title: (s.title ?? "").trim(),
-              startDate: (s.startDate ?? "").trim(),
-              dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
-              screenshotsEnabled: subTaskScreenshots && s.screenshotsEnabled === true,
-            }))
-            .filter((s) => s.title.length > 0)
+        ? body.subKpis.map(mapDraftItem).filter((s) => s.title.length > 0)
         : [];
 
     const segmentsInput =
@@ -451,14 +469,7 @@ export async function POST(req: Request) {
         ? body.segments.map((seg) => ({
             label: (seg.label ?? "").trim(),
             items: Array.isArray(seg.items)
-              ? seg.items
-                  .map((i) => ({
-                    title: (i.title ?? "").trim(),
-                    startDate: (i.startDate ?? "").trim(),
-                    dueDate: isRecurring ? "" : (i.dueDate ?? i.endDate ?? "").trim(),
-                    screenshotsEnabled: subTaskScreenshots && i.screenshotsEnabled === true,
-                  }))
-                  .filter((i) => i.title.length > 0)
+              ? seg.items.map(mapDraftItem).filter((i) => i.title.length > 0)
               : [],
           }))
         : undefined;
@@ -475,7 +486,7 @@ export async function POST(req: Request) {
   }
 
   let subKpisPersist = (itProjectPersist ?? wrapForPersist(built.norm)) as Prisma.InputJsonValue;
-  if (!isItProject && body.screenshotAttachmentScope === "pillar") {
+  if (!isItProject && body.screenshotAttachmentScope === "pillar" && taskCompletionRequirements.screenshots) {
     subKpisPersist = enablePillarScreenshots(subKpisPersist);
   }
 
@@ -513,6 +524,7 @@ export async function POST(req: Request) {
         frequency,
         subKpis: subKpisPersist,
         assignedAgentId: assignee?.id ?? null,
+        scopedCompanyTeamId,
         recurrenceWeekday,
         recurrenceMonthDay,
         nonRecurringStartAt,
@@ -577,6 +589,7 @@ export async function PATCH(req: Request) {
       dueDate?: string | null;
       actualDate?: string | null;
       projectPriority?: string | null;
+      numericalValue?: number | null;
     };
     subKpiProjectMeta?: {
       subKpiId?: string;
@@ -730,12 +743,13 @@ export async function PATCH(req: Request) {
   const canCompleteSubKpi = (subKpiId: string) => {
     const item = subKpiItems.find((it) => it.id === subKpiId);
     if (!item) return false;
-    const mode = resolveSubKpiCompletionMode(item);
-    if (mode === "screenshots") return false;
+    const req = resolveSubKpiCompletionRequirements(item);
+    if (!req.checkbox) return false;
     if (!canEditSubKpi(subKpiId)) {
-      return Boolean(perms.canAssignWork && subKpiRequiresScreenshots(mode) && hasBeforeAndAfterScreenshots(item));
+      return Boolean(perms.canAssignWork && req.screenshots && hasBeforeAndAfterScreenshots(item));
     }
-    if (mode === "both" && !hasBeforeAndAfterScreenshots(item)) return false;
+    if (req.screenshots && !hasBeforeAndAfterScreenshots(item)) return false;
+    if (req.numerical && !hasNumericalRecord(item)) return false;
     return true;
   };
 
@@ -825,12 +839,14 @@ export async function PATCH(req: Request) {
     }
     const meta = body.subKpiWorkMeta;
     const recurring = kpiRow.isRecurring !== false;
-    const updatedJson = setSubKpiItemWorkMeta(kpiRow.subKpis, subKpiIdMeta, {
+    let updatedJson = setSubKpiItemWorkMeta(kpiRow.subKpis, subKpiIdMeta, {
       startDate: meta.startDate,
       dueDate: recurring ? undefined : meta.dueDate,
       actualDate: recurring ? undefined : meta.actualDate,
       projectPriority: meta.projectPriority,
+      numericalValue: meta.numericalValue,
     });
+    updatedJson = syncSubKpiDoneFromRequirements(updatedJson, subKpiIdMeta);
     const prevComplete = checklistFullyComplete(kpiRow.subKpis);
     const nextComplete = checklistFullyComplete(updatedJson);
     let lastFullCompletionAt: Date | null | undefined;
@@ -1394,33 +1410,6 @@ export async function PATCH(req: Request) {
       recurrenceMonthDay = dom;
     }
 
-    let nonRecurringStartAt: Date | null = null;
-    let nonRecurringEndAt: Date | null = null;
-    if (!isRecurring) {
-      const startIso = schedule.nonRecurringStartAt?.trim() ?? "";
-      const endIso = schedule.nonRecurringEndAt?.trim() ?? "";
-      if (!startIso || !endIso) {
-        return NextResponse.json(
-          { error: "nonRecurringStartAt and nonRecurringEndAt are required when task is not recurring." },
-          { status: 400 },
-        );
-      }
-      const parsedStart = new Date(startIso);
-      const parsedEnd = new Date(endIso);
-      if (
-        !Number.isFinite(parsedStart.getTime()) ||
-        !Number.isFinite(parsedEnd.getTime()) ||
-        parsedEnd.getTime() <= parsedStart.getTime()
-      ) {
-        return NextResponse.json(
-          { error: "For non-recurring tasks, end date/time must be after start date/time." },
-          { status: 400 },
-        );
-      }
-      nonRecurringStartAt = parsedStart;
-      nonRecurringEndAt = parsedEnd;
-    }
-
     if (kpiRow.isRecurring) {
       await captureCurrentPeriodSnapshot(kpiRow.subKpis);
     }
@@ -1453,8 +1442,8 @@ export async function PATCH(req: Request) {
       data.periodKey = computePeriodKey(freqCode, recurrenceWeekday, recurrenceMonthDay, now, patchTz);
       data.rolledOverIncomplete = false;
     } else {
-      data.nonRecurringStartAt = nonRecurringStartAt;
-      data.nonRecurringEndAt = nonRecurringEndAt;
+      data.nonRecurringStartAt = null;
+      data.nonRecurringEndAt = null;
       data.recurrenceWeekday = null;
       data.recurrenceMonthDay = null;
       data.periodCycleStartAt = null;

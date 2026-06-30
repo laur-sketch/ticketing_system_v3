@@ -22,11 +22,19 @@ export type PersonnelCombinedMetricCard = {
   } | null;
   tasks: {
     closed: number;
-    assigned: number;
+    pending: number;
     efficiency: number;
     pillarsContributed: number;
   } | null;
 };
+
+export function combinedPersonnelEfficiency(row: PersonnelCombinedMetricCard): number | null {
+  const values = [row.tickets?.efficiency, row.tasks?.efficiency].filter(
+    (value): value is number => value != null,
+  );
+  if (values.length === 0) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
 
 /** @deprecated Use PersonnelCombinedMetricCard */
 export type PersonnelTaskMetricCard = {
@@ -54,21 +62,22 @@ export type PersonnelTicketMetricCard = {
 /** @deprecated Use PersonnelCombinedMetricCard */
 export type PersonnelMetricCardRow = PersonnelTaskMetricCard | PersonnelTicketMetricCard;
 
-function personnelTaskEfficiency(closed: number, assigned: number): number {
-  if (assigned <= 0) return closed > 0 ? 100 : 0;
-  return Math.min(100, Math.round((closed / assigned) * 100));
+function personnelTaskEfficiency(done: number, pending: number): number {
+  if (pending <= 0) return done > 0 ? 100 : 0;
+  return Math.min(100, Math.round((done / pending) * 100));
 }
 
 export function normalizePersonnelTaskTotals(
   assigned: number,
   closed: number,
-): { assigned: number; closed: number; efficiency: number } {
-  const safeAssigned = Math.max(0, assigned);
-  const safeClosed = Math.min(Math.max(0, closed), safeAssigned);
+): { pending: number; closed: number; efficiency: number } {
+  const total = Math.max(0, assigned);
+  const done = Math.min(Math.max(0, closed), total);
+  const pending = Math.max(0, total - done);
   return {
-    assigned: safeAssigned,
-    closed: safeClosed,
-    efficiency: personnelTaskEfficiency(safeClosed, safeAssigned),
+    pending,
+    closed: done,
+    efficiency: personnelTaskEfficiency(done, pending),
   };
 }
 
@@ -184,7 +193,6 @@ export function aggregatePersonnelTaskMetrics(
     .map((row) => {
       const total = row.total;
       const done = Math.min(row.done, total);
-      const remaining = Math.max(0, total - done);
       const roles = [...row.roles].sort();
       const role =
         roles.includes("Assignee") && roles.includes("Sub-assignee") ? "Assignee" : roles.join(" / ");
@@ -193,9 +201,9 @@ export function aggregatePersonnelTaskMetrics(
         id: row.id,
         name: row.name,
         role,
-        total: normalized.assigned,
+        total: normalized.pending + normalized.closed,
         done: normalized.closed,
-        remaining,
+        remaining: normalized.pending,
         percent: normalized.efficiency,
         pillarsContributed: row.pillars.size,
       };

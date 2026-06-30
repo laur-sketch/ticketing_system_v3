@@ -27,7 +27,10 @@ import type {
   TaskMetricsHelpdeskTickets,
   TaskMetricsUserSupportTickets,
 } from "@/lib/kpis";
-import type { PersonnelCombinedMetricCard } from "@/lib/task-personnel-metrics";
+import {
+  combinedPersonnelEfficiency,
+  type PersonnelCombinedMetricCard,
+} from "@/lib/task-personnel-metrics";
 import {
   KPI_DONUT_COLORS,
   KINETIC_PALETTE,
@@ -521,16 +524,30 @@ export function ContributorPersonalKpiCard({
 }: {
   row: PersonnelCombinedMetricCard;
 }) {
+  const averageEfficiency = combinedPersonnelEfficiency(row);
+
   return (
     <article className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50/90 p-3.5 dark:border-zinc-800 dark:from-zinc-900/80 dark:to-zinc-950/60">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className="min-w-0 justify-self-start">
           <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">{row.name}</p>
           <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
             {row.role}
           </p>
         </div>
-        <div className="rounded-full border border-orange-500/25 bg-orange-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+        {averageEfficiency != null ? (
+          <div className="justify-self-center text-center">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-300/80">
+              Avg efficiency
+            </p>
+            <p className="mt-0.5 text-lg font-black tabular-nums leading-none text-teal-800 dark:text-teal-200">
+              {averageEfficiency}%
+            </p>
+          </div>
+        ) : (
+          <div />
+        )}
+        <div className="justify-self-end rounded-full border border-orange-500/25 bg-orange-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
           Personal KPI
         </div>
       </div>
@@ -573,32 +590,18 @@ export function ContributorPersonalKpiCard({
                 tone="green"
               />
               <PersonnelMetricStatBox
-                label="Assigned"
-                value={row.tasks.assigned}
-                subLabel="total tasks"
+                label="Pending"
+                value={row.tasks.pending}
+                subLabel="tasks pending"
                 tone="neutral"
               />
               <PersonnelMetricStatBox
                 label="Efficiency"
                 value={`${row.tasks.efficiency}%`}
-                subLabel="completion rate"
+                subLabel="done / pending"
                 tone="teal"
               />
             </PersonnelMetricSection>
-            <div className="mt-2">
-              <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
-                <span className="font-semibold text-zinc-600 dark:text-zinc-400">Completion rate</span>
-                <span className="font-mono font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
-                  {row.tasks.efficiency}%
-                </span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                <div
-                  className="h-full rounded-full bg-[var(--accent-teal)] transition-[width]"
-                  style={{ width: `${Math.min(100, Math.max(0, row.tasks.efficiency))}%` }}
-                />
-              </div>
-            </div>
           </>
         ) : null}
       </div>

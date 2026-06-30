@@ -247,6 +247,8 @@ model KpiMaintenance {
   itProjectName       String?
   /// IT Project Implementation only: current phase label.
   itProjectPhase      String?
+  /// When set, unassigned tasks appear only on that company's assignment board (admins still see all).
+  scopedCompanyTeamId String?
   createdBy           String
   createdByRole       String
   createdAt           DateTime     @default(now())
@@ -254,6 +256,7 @@ model KpiMaintenance {
   periodSnapshots     KpiMaintenancePeriodSnapshot[]
 
   @@index([assignedAgentId, frequency])
+  @@index([scopedCompanyTeamId])
   @@index([createdAt])
 }
 

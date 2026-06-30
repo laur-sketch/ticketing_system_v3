@@ -39,10 +39,14 @@ import {
 } from "@/lib/kpi-subkpis";
 import {
   hasBeforeAndAfterScreenshots,
+  hasNumericalRecord,
   resolveSubKpiCompletionMode,
+  resolveSubKpiCompletionRequirements,
   SUB_KPI_COMPLETION_MODE_OPTIONS,
   subKpiRequiresCheckbox,
+  subKpiRequiresNumerical,
   subKpiRequiresScreenshots,
+  subKpiRequirementsMet,
   type SubKpiCompletionMode,
 } from "@/lib/sub-kpi-completion-mode";
 import { hasValidActualDate } from "@/lib/us-date-format";
@@ -448,12 +452,13 @@ export function AgentKpiKanbanFlow({
   }
 
   function canCompleteSubKpi(r: KpiRecord, s: SubKpiItem) {
-    const mode = resolveSubKpiCompletionMode(s);
-    if (mode === "screenshots") return false;
+    const req = resolveSubKpiCompletionRequirements(s);
+    if (!req.checkbox) return false;
     if (!canEditSubKpi(r, s)) {
-      return canAssignWork && subKpiRequiresScreenshots(mode) && hasBeforeAndAfterScreenshots(s);
+      return canAssignWork && req.screenshots && hasBeforeAndAfterScreenshots(s);
     }
-    if (mode === "both" && !hasBeforeAndAfterScreenshots(s)) return false;
+    if (req.screenshots && !hasBeforeAndAfterScreenshots(s)) return false;
+    if (req.numerical && !hasNumericalRecord(s)) return false;
     return true;
   }
 
@@ -780,6 +785,7 @@ export function AgentKpiKanbanFlow({
       dueDate?: string | null;
       actualDate?: string | null;
       projectPriority?: string | null;
+      numericalValue?: number | null;
     },
   ) {
     setBusyId(recordId);
@@ -1018,24 +1024,6 @@ export function AgentKpiKanbanFlow({
     }
     if (draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY")) {
       taskSchedule.recurrenceMonthDay = draft.recurrenceMonthDay;
-    }
-    if (!draft.isRecurring) {
-      if (!draft.nonRecurringStartDate || !draft.nonRecurringEndDate) {
-        setError("Choose start and end dates for this one-off task.");
-        return;
-      }
-      const startAt = new Date(`${draft.nonRecurringStartDate}T00:00:00`);
-      const endAt = new Date(`${draft.nonRecurringEndDate}T23:59:59`);
-      if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) {
-        setError("Invalid start or end date.");
-        return;
-      }
-      if (endAt.getTime() <= startAt.getTime()) {
-        setError("End date must be after start date.");
-        return;
-      }
-      taskSchedule.nonRecurringStartAt = startAt.toISOString();
-      taskSchedule.nonRecurringEndAt = endAt.toISOString();
     }
 
     setBusyId(r.id);
@@ -1297,7 +1285,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderTaskScreenshotFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
-    if (!subKpiRequiresScreenshots(resolveSubKpiCompletionMode(s))) return null;
+    if (!subKpiRequiresScreenshots(resolveSubKpiCompletionRequirements(s))) return null;
     return (
       <div className="mt-2">
         <p className="mb-1 text-[10px] text-zinc-500 dark:text-zinc-500">
@@ -1311,18 +1299,45 @@ export function AgentKpiKanbanFlow({
     );
   }
 
+  function renderNumericalRecordField(r: KpiRecord, s: SubKpiItem, editable: boolean) {
+    if (!subKpiRequiresNumerical(resolveSubKpiCompletionRequirements(s))) return null;
+    return (
+      <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+        Numerical record
+        <input
+          type="number"
+          step="any"
+          value={s.numericalValue ?? ""}
+          disabled={!editable || busyId === r.id}
+          onChange={(e) => {
+            const raw = e.target.value.trim();
+            void patchSubKpiWorkMeta(r.id, s.id, {
+              numericalValue: raw === "" ? null : Number(raw),
+            });
+          }}
+          className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          aria-label={`Numerical record for ${s.title}`}
+        />
+      </label>
+    );
+  }
+
   function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem, showPriority = true) {
     const subEditable = canEditSubKpi(r, s);
     const subCompletable = canCompleteSubKpi(r, s);
     const canManageSubTasks = showAdminTaskManagement;
     const completionMode = resolveSubKpiCompletionMode(s);
+    const completionRequirements = resolveSubKpiCompletionRequirements(s);
     const needsScreenshotsForCheckbox =
-      completionMode === "both" && !hasBeforeAndAfterScreenshots(s);
+      completionRequirements.screenshots && !hasBeforeAndAfterScreenshots(s);
+    const needsNumericalForCheckbox =
+      completionRequirements.numerical && !hasNumericalRecord(s);
     const canEditWorkDetails = subEditable || canAssignWork || canManageSubTasks;
     const recurring = r.isRecurring !== false;
     const dailyRecurring = recurring && r.frequency === "DAILY";
-    const finished = Boolean(s.done);
-    const showCheckbox = subEditable && busyId !== r.id && subKpiRequiresCheckbox(completionMode);
+    const finished = subKpiRequirementsMet(s);
+    const showCheckbox =
+      subEditable && busyId !== r.id && subKpiRequiresCheckbox(completionRequirements);
     const progressMismatchWarning =
       showCheckbox &&
       subKpiProgressMismatchWarning(s, r.assignedAgent, {
@@ -1408,9 +1423,19 @@ export function AgentKpiKanbanFlow({
             Upload both before and after screenshots before marking this sub-task done.
           </p>
         ) : null}
-        {completionMode === "screenshots" && !finished ? (
+        {needsNumericalForCheckbox ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Enter a numerical record before marking this sub-task done.
+          </p>
+        ) : null}
+        {!completionRequirements.checkbox && completionRequirements.screenshots && !finished ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
             Upload before and after screenshots to complete this sub-task.
+          </p>
+        ) : null}
+        {!completionRequirements.checkbox && completionRequirements.numerical && !finished ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Enter a numerical record to complete this sub-task.
           </p>
         ) : null}
         {progressMismatchWarning ? (
@@ -1523,6 +1548,7 @@ export function AgentKpiKanbanFlow({
           ) : null}
         </div>
         {renderTaskScreenshotFields(r, s, subEditable)}
+        {renderNumericalRecordField(r, s, subEditable)}
       </div>
     );
   }
@@ -2073,43 +2099,11 @@ export function AgentKpiKanbanFlow({
           />
           Recurring task
         </label>
-        {!draft.isRecurring ? (
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-              Start date
-              <DatePickerField
-                value={draft.nonRecurringStartDate}
-                disabled={busyId === r.id}
-                onChange={(e) =>
-                  setScheduleDraft((prev) =>
-                    prev ? { ...prev, nonRecurringStartDate: e.target.value } : prev,
-                  )
-                }
-                wrapperClassName="mt-1"
-                aria-label="One-off task start date"
-              />
-            </label>
-            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-              End date
-              <DatePickerField
-                value={draft.nonRecurringEndDate}
-                disabled={busyId === r.id}
-                onChange={(e) =>
-                  setScheduleDraft((prev) =>
-                    prev ? { ...prev, nonRecurringEndDate: e.target.value } : prev,
-                  )
-                }
-                wrapperClassName="mt-1"
-                aria-label="One-off task end date"
-              />
-            </label>
-          </div>
-        ) : null}
         <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
           Frequency
           <select
             value={draft.frequency}
-            disabled={!draft.isRecurring || busyId === r.id}
+            disabled={busyId === r.id}
             onChange={(e) =>
               setScheduleDraft((prev) =>
                 prev ? { ...prev, frequency: e.target.value as KpiFrequencyCode } : prev,
@@ -2264,9 +2258,7 @@ export function AgentKpiKanbanFlow({
                   <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Cycle</dt>
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">
                     {activeTask.isRecurring === false || !end
-                      ? activeTask.nonRecurringStartAt && activeTask.nonRecurringEndAt
-                        ? `${new Date(activeTask.nonRecurringStartAt).toLocaleDateString()} - ${new Date(activeTask.nonRecurringEndAt).toLocaleDateString()}`
-                        : "Non-recurring"
+                      ? `Non-recurring · ${activeTask.frequency.toLowerCase()}`
                       : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}`}
                   </dd>
                 </div>
@@ -2542,7 +2534,7 @@ export function AgentKpiKanbanFlow({
                               {itProject
                                 ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
                                 : r.isRecurring === false || !end
-                                  ? `Non-recurring task${r.nonRecurringStartAt && r.nonRecurringEndAt ? ` (${new Date(r.nonRecurringStartAt).toLocaleDateString()} - ${new Date(r.nonRecurringEndAt).toLocaleDateString()})` : ""}`
+                                  ? `Non-recurring · ${r.frequency.toLowerCase()}`
                                   : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`}
                             </p>
                             {itProject && incLate > 0 ? (

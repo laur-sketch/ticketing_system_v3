@@ -5,6 +5,7 @@ import {
 } from "@/lib/kpi-period-snapshots";
 import {
   aggregatePersonnelTaskMetrics,
+  combinedPersonnelEfficiency,
   mergePersonnelMetricCards,
   normalizePersonnelTaskTotals,
 } from "@/lib/task-personnel-metrics";
@@ -153,7 +154,7 @@ describe("aggregatePersonnelTaskMetrics", () => {
       name: "Alex",
       done: 3,
       remaining: 1,
-      percent: 75,
+      percent: 100,
       pillarsContributed: 1,
     });
   });
@@ -162,10 +163,37 @@ describe("aggregatePersonnelTaskMetrics", () => {
 describe("normalizePersonnelTaskTotals", () => {
   it("caps closed and efficiency when historical completions exceed current assigned work", () => {
     expect(normalizePersonnelTaskTotals(26, 1606)).toEqual({
-      assigned: 26,
+      pending: 0,
       closed: 26,
       efficiency: 100,
     });
+  });
+
+  it("computes efficiency as done divided by pending", () => {
+    expect(normalizePersonnelTaskTotals(4, 3)).toEqual({
+      pending: 1,
+      closed: 3,
+      efficiency: 100,
+    });
+    expect(normalizePersonnelTaskTotals(10, 3)).toEqual({
+      pending: 7,
+      closed: 3,
+      efficiency: 43,
+    });
+  });
+});
+
+describe("combinedPersonnelEfficiency", () => {
+  it("averages ticket and task efficiency when both are present", () => {
+    expect(
+      combinedPersonnelEfficiency({
+        id: "a1",
+        name: "Alex",
+        role: "Assignee",
+        tickets: { closed: 5, pending: 2, efficiency: 71 },
+        tasks: { closed: 3, pending: 1, efficiency: 100, pillarsContributed: 1 },
+      }),
+    ).toBe(86);
   });
 });
 
@@ -190,7 +218,7 @@ describe("mergePersonnelMetricCards", () => {
     expect(rows[0]).toMatchObject({
       name: "Alex",
       tickets: { closed: 5, pending: 2, efficiency: 71 },
-      tasks: { closed: 3, assigned: 4, efficiency: 75, pillarsContributed: 1 },
+      tasks: { closed: 3, pending: 1, efficiency: 100, pillarsContributed: 1 },
     });
   });
 });

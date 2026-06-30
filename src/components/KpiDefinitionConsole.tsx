@@ -14,6 +14,7 @@ import {
   MIN_SEGMENTED_SUBKPIS_FOR_CREATE,
   type SubKpiItem as SubKpi,
 } from "@/lib/kpi-subkpis";
+import type { SubKpiCompletionRequirements } from "@/lib/sub-kpi-completion-mode";
 
 const MIN_SUB_FOR_SEGMENT_OPTION = 3;
 const INSIGHTS_VIEW_ONLY = false;
@@ -70,8 +71,6 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [useItProjectImplementation, setUseItProjectImplementation] = useState(false);
   const [titleSuggestions, setTitleSuggestions] = useState<string[]>([...TASK_TITLE_SUGGESTIONS]);
   const [maintenanceIsRecurring, setMaintenanceIsRecurring] = useState(true);
-  const [nonRecurringStartDate, setNonRecurringStartDate] = useState("");
-  const [nonRecurringEndDate, setNonRecurringEndDate] = useState("");
   const [maintenanceFrequency, setMaintenanceFrequency] = useState<MaintenanceFrequency>("Daily");
   const [recurrenceWeekday, setRecurrenceWeekday] = useState(1);
   const [recurrenceMonthDay, setRecurrenceMonthDay] = useState(1);
@@ -80,9 +79,14 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [subKpiTargetDate, setSubKpiTargetDate] = useState("");
   const [subKpisDraft, setSubKpisDraft] = useState<SubKpi[]>([]);
   const [draftUseSegments, setDraftUseSegments] = useState(false);
-  const [enableTaskScreenshots, setEnableTaskScreenshots] = useState(false);
+  const [completionCheckbox, setCompletionCheckbox] = useState(true);
+  const [completionScreenshots, setCompletionScreenshots] = useState(false);
+  const [completionNumerical, setCompletionNumerical] = useState(false);
   const [screenshotAttachmentScope, setScreenshotAttachmentScope] = useState<"subtask" | "pillar">("subtask");
   const [draftSegments, setDraftSegments] = useState<DraftSegmentRow[]>([]);
+  const [newPillarDraft, setNewPillarDraft] = useState("");
+  const [scopedCompanyTeamId, setScopedCompanyTeamId] = useState("");
+  const [rosterCompanies, setRosterCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [segItemDraft, setSegItemDraft] = useState<Record<string, string>>({});
   const [segItemScheduleDate, setSegItemScheduleDate] = useState<Record<string, string>>({});
   const [segItemTargetDate, setSegItemTargetDate] = useState<Record<string, string>>({});
@@ -127,8 +131,10 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       const payload = (await kpiRes.json()) as {
         canAssignWork?: boolean;
         rows?: KpiDefinitionMaintenanceRecord[];
+        rosterCompanies?: Array<{ id: string; name: string }>;
       };
       setKpiMaintenanceAssignWork(Boolean(payload.canAssignWork));
+      setRosterCompanies(payload.rosterCompanies ?? []);
       const builtIn = new Set(TASK_TITLE_SUGGESTIONS.map((title) => title.toLowerCase()));
       const dbTitles = Array.from(
         new Set(
@@ -158,6 +164,31 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const hideSubTaskScheduleDate = !isItProject && maintenanceIsRecurring && maintenanceFrequency === "Daily";
   const showSegmentedCreateOption =
     !isItProject && (draftUseSegments || draftSubKpiTotal >= MIN_SUB_FOR_SEGMENT_OPTION);
+
+  const completionRequirements = useMemo<SubKpiCompletionRequirements>(
+    () => ({
+      checkbox: completionCheckbox,
+      screenshots: completionScreenshots,
+      numerical: completionNumerical,
+    }),
+    [completionCheckbox, completionScreenshots, completionNumerical],
+  );
+
+  function addCustomPillar() {
+    const normalized = normalizeTaskTitle(newPillarDraft);
+    if (!normalized || isItProjectImplementationPillar(normalized)) {
+      setLocalError("Enter a valid pillar name.");
+      return;
+    }
+    setTitleSuggestions((prev) => {
+      if (prev.some((title) => title.toLowerCase() === normalized.toLowerCase())) return prev;
+      return [...prev, normalized];
+    });
+    setMaintenanceTitle(normalized);
+    selectMaintenanceTitle(normalized);
+    setNewPillarDraft("");
+    setLocalError(null);
+  }
 
   const snapshotCurrentItProjectPhase = useCallback(
     (phases: ItProjectPhaseDraft[]): ItProjectPhaseDraft[] => {
@@ -355,12 +386,12 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setLocalError(null);
     if (isItProjectImplementationPillar(title)) {
       setMaintenanceIsRecurring(false);
-      setEnableTaskScreenshots(false);
+      setCompletionCheckbox(true);
+      setCompletionScreenshots(false);
+      setCompletionNumerical(false);
       setScreenshotAttachmentScope("subtask");
       setDraftUseSegments(false);
       setDraftSegments([]);
-      setNonRecurringStartDate("");
-      setNonRecurringEndDate("");
     } else {
       setItProjectNameDraft("");
       setItProjectPhases([]);
@@ -440,11 +471,25 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       return;
     }
 
+    if (
+      !isItProject &&
+      !completionRequirements.checkbox &&
+      !completionRequirements.screenshots &&
+      !completionRequirements.numerical
+    ) {
+      setLocalError("Select at least one completion condition.");
+      return;
+    }
+
     const body: Record<string, unknown> = {
       title,
       frequency: freqUpper,
       isRecurring: isItProject ? false : maintenanceIsRecurring,
     };
+    if (!isItProject) {
+      body.completionRequirements = completionRequirements;
+      if (scopedCompanyTeamId) body.scopedCompanyTeamId = scopedCompanyTeamId;
+    }
     if (isItProject) {
       const phasesForSubmit = snapshotCurrentItProjectPhase(itProjectPhases).filter((p) => p.items.length > 0);
       body.itProjectPhases = phasesForSubmit.map((p) => ({
@@ -459,7 +504,6 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
           title: it.title.trim(),
           startDate: hideSubTaskScheduleDate ? "" : it.startDate ?? "",
           dueDate: maintenanceIsRecurring ? "" : it.dueDate ?? "",
-          screenshotsEnabled: enableTaskScreenshots && screenshotAttachmentScope === "subtask",
         })),
       }));
     } else {
@@ -467,36 +511,21 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         title: s.title,
         startDate: hideSubTaskScheduleDate ? "" : s.startDate ?? "",
         dueDate: maintenanceIsRecurring ? "" : s.dueDate ?? "",
-        screenshotsEnabled: enableTaskScreenshots && screenshotAttachmentScope === "subtask",
       }));
     }
-    if (!isItProject && enableTaskScreenshots) {
+    if (!isItProject && completionRequirements.screenshots) {
       body.screenshotAttachmentScope = screenshotAttachmentScope;
     }
 
     if (!isItProject && maintenanceIsRecurring && freqUpper === "WEEKLY") {
       body.recurrenceWeekday = recurrenceWeekday;
     }
-    if (!isItProject && maintenanceIsRecurring && (freqUpper === "MONTHLY" || freqUpper === "QUARTERLY")) {
+    if (
+      !isItProject &&
+      maintenanceIsRecurring &&
+      (freqUpper === "MONTHLY" || freqUpper === "QUARTERLY")
+    ) {
       body.recurrenceMonthDay = recurrenceMonthDay;
-    }
-    if (!isItProject && !maintenanceIsRecurring) {
-      if (!nonRecurringStartDate || !nonRecurringEndDate) {
-        setLocalError("Choose start and end dates for this one-off task.");
-        return;
-      }
-      const startAt = new Date(`${nonRecurringStartDate}T00:00:00`);
-      const endAt = new Date(`${nonRecurringEndDate}T23:59:59`);
-      if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())) {
-        setLocalError("Invalid start or end date.");
-        return;
-      }
-      if (endAt.getTime() <= startAt.getTime()) {
-        setLocalError("End date must be after start date.");
-        return;
-      }
-      body.nonRecurringStartAt = startAt.toISOString();
-      body.nonRecurringEndAt = endAt.toISOString();
     }
     body.timeZone = recurrenceTz;
 
@@ -534,8 +563,6 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setUseItProjectImplementation(false);
     setMaintenanceTitle("");
     setMaintenanceIsRecurring(true);
-    setNonRecurringStartDate("");
-    setNonRecurringEndDate("");
     setMaintenanceFrequency("Daily");
     setRecurrenceWeekday(1);
     setRecurrenceMonthDay(1);
@@ -544,8 +571,12 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setSubKpiScheduleDate("");
     setSubKpiTargetDate("");
     setDraftUseSegments(false);
-    setEnableTaskScreenshots(false);
+    setCompletionCheckbox(true);
+    setCompletionScreenshots(false);
+    setCompletionNumerical(false);
     setScreenshotAttachmentScope("subtask");
+    setScopedCompanyTeamId("");
+    setNewPillarDraft("");
     setDraftSegments([]);
     setSegItemDraft({});
     setSegItemScheduleDate({});
@@ -592,25 +623,69 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         </label>
         {!useItProjectImplementation ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
-            Task title
-            <input
-              type="text"
+            Pillar
+            <select
               value={maintenanceTitle}
               onChange={(e) => {
-                setMaintenanceTitle(e.target.value);
+                const next = e.target.value;
+                setMaintenanceTitle(next);
+                selectMaintenanceTitle(next);
                 setLocalError(null);
               }}
-              onBlur={handleMaintenanceTitleBlur}
-              list="task-title-suggestions"
               required
-              placeholder="Enter task or pillar name"
               className={TASK_TITLE_INPUT_CLASS}
-            />
-            <datalist id="task-title-suggestions">
+            >
+              <option value="">Select pillar…</option>
               {titleSuggestions.map((title) => (
-                <option key={title} value={title} />
+                <option key={title} value={title}>
+                  {title}
+                </option>
               ))}
-            </datalist>
+            </select>
+          </label>
+        ) : null}
+        {!useItProjectImplementation && kpiMaintenanceAssignWork ? (
+          <div className="flex flex-wrap items-end gap-2 md:col-span-2">
+            <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              Add pillar
+              <input
+                type="text"
+                value={newPillarDraft}
+                onChange={(e) => setNewPillarDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addCustomPillar();
+                  }
+                }}
+                placeholder="New pillar name"
+                className={TASK_TITLE_INPUT_CLASS}
+              />
+            </label>
+            <Button type="button" variant="outline" onClick={addCustomPillar} className="rounded-xl px-4">
+              Add pillar
+            </Button>
+          </div>
+        ) : null}
+        {kpiMaintenanceAssignWork && !isItProject ? (
+          <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
+            Company assignment (optional)
+            <select
+              value={scopedCompanyTeamId}
+              onChange={(e) => setScopedCompanyTeamId(e.target.value)}
+              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              <option value="">All companies (general board)</option>
+              {rosterCompanies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
+              Unassigned tasks with a company selected appear only on that company&apos;s board. Admins still see all
+              tasks in the general view.
+            </span>
           </label>
         ) : null}
         {isItProject ? (
@@ -671,26 +746,6 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
             </label>
           </div>
         ) : null}
-        {!isItProject && !maintenanceIsRecurring ? (
-          <>
-            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              Start date
-              <DatePickerField
-                value={nonRecurringStartDate}
-                onChange={(e) => setNonRecurringStartDate(e.target.value)}
-                inputClassName="font-normal normal-case tracking-normal"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              End date
-              <DatePickerField
-                value={nonRecurringEndDate}
-                onChange={(e) => setNonRecurringEndDate(e.target.value)}
-                inputClassName="font-normal normal-case tracking-normal"
-              />
-            </label>
-          </>
-        ) : null}
         {!isItProject ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Frequency
@@ -721,7 +776,6 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
                   );
                 }
               }}
-              disabled={!maintenanceIsRecurring}
               className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             >
               <option value="Daily">Daily</option>
@@ -771,27 +825,53 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
           {isItProject
             ? "IT Project tasks are not recurring. Add phases and set a due date on each sub-task. Assignees enter actual dates (MM/DD/YYYY) when work is done."
-            : "Add task rows with schedule and target dates. By default, assignees complete work with the checklist checkbox on the Task Board."}
+            : maintenanceIsRecurring
+              ? "Add task rows with schedule and target dates. By default, assignees complete work with the checklist checkbox on the Task Board."
+              : "One-off tasks use frequency and per sub-task schedule/target dates (no task-level start or end date)."}
         </div>
       </div>
 
       {!isItProject ? (
         <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-300">
-          <label className="flex cursor-pointer items-start gap-2">
-            <input
-              type="checkbox"
-              checked={enableTaskScreenshots}
-              onChange={(e) => {
-                setEnableTaskScreenshots(e.target.checked);
-                if (!e.target.checked) setScreenshotAttachmentScope("subtask");
-              }}
-              className="mt-1"
-            />
-            <span>
-              Add before/after screenshot uploads for this task. Leave this off to use the default checkbox-only completion.
-            </span>
-          </label>
-          {enableTaskScreenshots ? (
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+            Completion conditions
+          </p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Select one or more ways assignees can complete sub-tasks on the Task Board.
+          </p>
+          <div className="mt-3 space-y-2">
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={completionCheckbox}
+                onChange={(e) => setCompletionCheckbox(e.target.checked)}
+                className="mt-1"
+              />
+              <span>Checklist checkbox (default)</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={completionScreenshots}
+                onChange={(e) => {
+                  setCompletionScreenshots(e.target.checked);
+                  if (!e.target.checked) setScreenshotAttachmentScope("subtask");
+                }}
+                className="mt-1"
+              />
+              <span>Before/after screenshot uploads</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={completionNumerical}
+                onChange={(e) => setCompletionNumerical(e.target.checked)}
+                className="mt-1"
+              />
+              <span>Numerical record (assignees enter a number when completing work)</span>
+            </label>
+          </div>
+          {completionScreenshots ? (
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
                 <input
