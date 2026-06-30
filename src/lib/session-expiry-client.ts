@@ -8,6 +8,7 @@ export { isAuthRequiredPath } from "@/lib/session-expiry";
 
 /** Where users land after an automatic session timeout logout. */
 export const SESSION_TIMEOUT_SIGNIN_URL = "/signin?reason=session-expired";
+export const SESSION_MIDNIGHT_SIGNIN_URL = "/signin?reason=session-expired-midnight";
 
 export function isSessionExpired(session: Session | null | undefined): boolean {
   if (!session) return false;
@@ -29,8 +30,10 @@ export function sessionExpiresAtMs(session: Session | null | undefined): number 
 }
 
 /** Clear the session and send the user to sign-in (standard NextAuth logout). */
-export function logoutExpiredSession() {
-  void signOut({ callbackUrl: SESSION_TIMEOUT_SIGNIN_URL });
+export function logoutExpiredSession(reason: "idle" | "midnight" = "idle") {
+  void signOut({
+    callbackUrl: reason === "midnight" ? SESSION_MIDNIGHT_SIGNIN_URL : SESSION_TIMEOUT_SIGNIN_URL,
+  });
 }
 
 /** Unauthenticated visit to a protected route — sign-in with a safe return path. */

@@ -51,16 +51,20 @@ function SignInForm() {
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const registered = searchParams.get("registered") === "1";
-  const sessionExpired = searchParams.get("reason") === "session-expired";
+  const sessionExpiredReason = searchParams.get("reason");
+  const sessionExpiredMidnight = sessionExpiredReason === "session-expired-midnight";
+  const sessionExpiredIdle = sessionExpiredReason === "session-expired";
   const callbackUrl = sanitizeCallbackUrl(searchParams.get("callbackUrl"));
   const oauthError = oauthErrorMessage(searchParams.get("error"));
   const wantsGoogle = searchParams.get("google") === "1";
   const googleRedirectStarted = useRef(false);
   const banner = registered
     ? "Account created. Sign in with your username and password."
-    : sessionExpired
-      ? "Your session ended after 30 minutes. Please sign in again."
-      : oauthError;
+    : sessionExpiredMidnight
+      ? "Your session ended at midnight. Please sign in again."
+      : sessionExpiredIdle
+        ? "Your session ended after 30 minutes. Please sign in again."
+        : oauthError;
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

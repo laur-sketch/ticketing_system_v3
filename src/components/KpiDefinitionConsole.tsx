@@ -1,11 +1,11 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { cn } from "@/lib/cn";
 import {
+  IT_PROJECT_IMPLEMENTATION_TITLE,
   IT_TASK_PILLAR_SELECT_OPTIONS,
   isItProjectImplementationPillar,
 } from "@/lib/it-task-pillar-titles";
@@ -17,6 +17,17 @@ import {
 
 const MIN_SUB_FOR_SEGMENT_OPTION = 3;
 const INSIGHTS_VIEW_ONLY = false;
+
+function normalizeTaskTitle(value: string) {
+  return value.trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+const TASK_TITLE_INPUT_CLASS =
+  "rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-semibold tracking-tight text-zinc-900 outline-none ring-orange-500/30 placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
+
+const TASK_TITLE_SUGGESTIONS = (IT_TASK_PILLAR_SELECT_OPTIONS as readonly string[]).filter(
+  (title) => title !== IT_PROJECT_IMPLEMENTATION_TITLE,
+);
 
 type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly" | "Quarterly";
 type DraftSegmentRow = { id: string; label: string; items: SubKpi[] };
@@ -54,12 +65,10 @@ type Props = {
 };
 
 export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = false }: Props) {
-  const { data: session } = useSession();
   const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
   const [maintenanceTitle, setMaintenanceTitle] = useState("");
-  const [customPillarTitles, setCustomPillarTitles] = useState<string[]>([]);
-  const [showCustomPillarInput, setShowCustomPillarInput] = useState(false);
-  const [customPillarDraft, setCustomPillarDraft] = useState("");
+  const [useItProjectImplementation, setUseItProjectImplementation] = useState(false);
+  const [titleSuggestions, setTitleSuggestions] = useState<string[]>([...TASK_TITLE_SUGGESTIONS]);
   const [maintenanceIsRecurring, setMaintenanceIsRecurring] = useState(true);
   const [nonRecurringStartDate, setNonRecurringStartDate] = useState("");
   const [nonRecurringEndDate, setNonRecurringEndDate] = useState("");
@@ -87,18 +96,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [itProjectSubTitle, setItProjectSubTitle] = useState("");
   const [itProjectSubDue, setItProjectSubDue] = useState("");
 
-  const isItProject = isItProjectImplementationPillar(maintenanceTitle);
-  const canAddPillar =
-    session?.user?.role === "Admin" || session?.user?.role === "SuperAdmin";
-  const taskTitleOptions = useMemo(() => {
-    const seen = new Set<string>();
-    return [...IT_TASK_PILLAR_SELECT_OPTIONS, ...customPillarTitles].filter((title) => {
-      const key = title.trim().toLowerCase();
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [customPillarTitles]);
+  const isItProject = useItProjectImplementation;
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -131,23 +129,20 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         rows?: KpiDefinitionMaintenanceRecord[];
       };
       setKpiMaintenanceAssignWork(Boolean(payload.canAssignWork));
-      const builtIn = new Set((IT_TASK_PILLAR_SELECT_OPTIONS as readonly string[]).map((title) => title.toLowerCase()));
-      const dbCustomTitles = Array.from(
+      const builtIn = new Set(TASK_TITLE_SUGGESTIONS.map((title) => title.toLowerCase()));
+      const dbTitles = Array.from(
         new Set(
           (payload.rows ?? [])
-            .map((row) => row.title.trim())
-            .filter((title) => title && !builtIn.has(title.toLowerCase())),
+            .map((row) => normalizeTaskTitle(row.title))
+            .filter(
+              (title) =>
+                title &&
+                !isItProjectImplementationPillar(title) &&
+                !builtIn.has(title.toLowerCase()),
+            ),
         ),
       );
-      setCustomPillarTitles((current) => {
-        const seen = new Set<string>();
-        return [...current, ...dbCustomTitles].filter((title) => {
-          const key = title.toLowerCase();
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      });
+      setTitleSuggestions([...TASK_TITLE_SUGGESTIONS, ...dbTitles]);
     }
   }, [kpiMaintenanceSearch]);
 
@@ -377,27 +372,41 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     }
   }
 
-  function addCustomPillar() {
-    const title = customPillarDraft.trim().replace(/\s+/g, " ").toUpperCase();
-    if (!title) {
-      setLocalError("Enter a pillar name before adding it.");
+  function handleItProjectImplementationChange(enabled: boolean) {
+    setUseItProjectImplementation(enabled);
+    setLocalError(null);
+    if (enabled) {
+      setMaintenanceTitle("");
+      selectMaintenanceTitle(IT_PROJECT_IMPLEMENTATION_TITLE);
+    } else {
+      selectMaintenanceTitle("");
+    }
+  }
+
+  function handleMaintenanceTitleBlur() {
+    const normalized = normalizeTaskTitle(maintenanceTitle);
+    if (isItProjectImplementationPillar(normalized)) {
+      handleItProjectImplementationChange(true);
       return;
     }
-    setCustomPillarTitles((current) => {
-      if (taskTitleOptions.some((option) => option.toLowerCase() === title.toLowerCase())) return current;
-      return [...current, title];
-    });
-    selectMaintenanceTitle(title);
-    setCustomPillarDraft("");
-    setShowCustomPillarInput(false);
+    if (normalized !== maintenanceTitle) {
+      setMaintenanceTitle(normalized);
+    }
+    selectMaintenanceTitle(normalized);
   }
 
   async function createMaintenanceRecord() {
     if (INSIGHTS_VIEW_ONLY) return;
-    const title = maintenanceTitle.trim();
+    const title = useItProjectImplementation
+      ? IT_PROJECT_IMPLEMENTATION_TITLE
+      : normalizeTaskTitle(maintenanceTitle);
     if (!title) {
-      setLocalError("Choose or add a task title.");
+      setLocalError("Enter a task title.");
       return;
+    }
+    if (!useItProjectImplementation && title !== maintenanceTitle) {
+      setMaintenanceTitle(title);
+      selectMaintenanceTitle(title);
     }
     const freqUpper = maintenanceFrequency.toUpperCase() as KpiFrequencyCode;
 
@@ -522,6 +531,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       return;
     }
     setLocalError(null);
+    setUseItProjectImplementation(false);
     setMaintenanceTitle("");
     setMaintenanceIsRecurring(true);
     setNonRecurringStartDate("");
@@ -570,64 +580,38 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       ) : null}
 
       <div className={cn("grid gap-3 md:grid-cols-2", embedded ? "mt-0" : "mt-5")}>
-        <label
-          className={cn(
-            "flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500",
-            !canAddPillar && "md:col-span-2",
-          )}
-        >
-          Task title
-          <select
-            value={maintenanceTitle}
-            onChange={(e) => selectMaintenanceTitle(e.target.value)}
-            required
-            className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-semibold tracking-tight text-zinc-900 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-          >
-            <option value="">Select pillar…</option>
-            {taskTitleOptions.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
+        <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 md:col-span-2">
+          <input
+            type="checkbox"
+            checked={useItProjectImplementation}
+            onChange={(e) => handleItProjectImplementationChange(e.target.checked)}
+          />
+          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+            {IT_PROJECT_IMPLEMENTATION_TITLE}
+          </span>
         </label>
-        {canAddPillar ? (
-          <div className="flex flex-col gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-3 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-500">
-            <div className="flex items-center justify-between gap-2">
-              <span>Add custom pillar</span>
-              <Button
-                type="button"
-                variant="outline"
-                className="px-3 py-1.5 text-xs"
-                onClick={() => {
-                  setShowCustomPillarInput((current) => !current);
-                  setLocalError(null);
-                }}
-              >
-                Add Pillar
-              </Button>
-            </div>
-            {showCustomPillarInput ? (
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                <input
-                  type="text"
-                  value={customPillarDraft}
-                  onChange={(e) => setCustomPillarDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addCustomPillar();
-                    }
-                  }}
-                  placeholder="Enter new pillar name"
-                  className="rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-semibold normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                />
-                <Button type="button" onClick={addCustomPillar}>
-                  Save
-                </Button>
-              </div>
-            ) : null}
-          </div>
+        {!useItProjectImplementation ? (
+          <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
+            Task title
+            <input
+              type="text"
+              value={maintenanceTitle}
+              onChange={(e) => {
+                setMaintenanceTitle(e.target.value);
+                setLocalError(null);
+              }}
+              onBlur={handleMaintenanceTitleBlur}
+              list="task-title-suggestions"
+              required
+              placeholder="Enter task or pillar name"
+              className={TASK_TITLE_INPUT_CLASS}
+            />
+            <datalist id="task-title-suggestions">
+              {titleSuggestions.map((title) => (
+                <option key={title} value={title} />
+              ))}
+            </datalist>
+          </label>
         ) : null}
         {isItProject ? (
           <>

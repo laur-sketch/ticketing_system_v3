@@ -12,6 +12,10 @@ import {
 import { normalizePortalRole } from "@/lib/staff-role";
 import { compactSessionPicture } from "@/lib/session-profile-image";
 import { sanitizeCallbackUrl } from "@/lib/session-expiry";
+import {
+  SESSION_JWT_MAX_AGE_SECONDS,
+  computeSessionExpiresAt,
+} from "@/lib/session-expiry-policy";
 
 export type UserRole = "SuperAdmin" | "Admin" | "Personnel" | "Customer";
 
@@ -96,23 +100,15 @@ function extractRoleFromProfile(
 
 const googleReady = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
-const SESSION_MAX_AGE_SECONDS = 30 * 60;
-
-function sessionExpiresAtFromToken(token: JWT, now: number): number {
-  if (typeof token.sessionExpiresAt === "number") return token.sessionExpiresAt;
-  const iat = typeof token.iat === "number" ? token.iat : now;
-  return iat + SESSION_MAX_AGE_SECONDS;
-}
-
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: SESSION_JWT_MAX_AGE_SECONDS,
     /** Ignored for JWT strategy in NextAuth v4; kept for parity with session.maxAge. */
     updateAge: 60,
   },
   jwt: {
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: SESSION_JWT_MAX_AGE_SECONDS,
   },
   logger: {
     error(code, metadata) {
@@ -227,6 +223,7 @@ export const authOptions: NextAuthOptions = {
     },
     async jwt({ token, profile, user, account }) {
       const now = Math.floor(Date.now() / 1000);
+      const isNewLogin = Boolean(user);
 
       if (token.error === "SessionExpired") {
         return token;
@@ -241,17 +238,9 @@ export const authOptions: NextAuthOptions = {
         return { ...token, error: "SessionExpired", exp: now - 1 };
       }
 
-      if (user) {
-        token.sessionExpiresAt = now + SESSION_MAX_AGE_SECONDS;
+      if (isNewLogin) {
         delete token.error;
       }
-
-      const expiresAt = sessionExpiresAtFromToken(token, now);
-      if (now >= expiresAt) {
-        return { ...token, error: "SessionExpired", exp: now - 1 };
-      }
-      token.sessionExpiresAt = expiresAt;
-      token.exp = expiresAt;
 
       if (account?.provider) {
         token.authProvider = account.provider;
@@ -312,6 +301,22 @@ export const authOptions: NextAuthOptions = {
         if (compact) token.picture = compact;
         else delete token.picture;
       }
+
+      const finalRole =
+        roleFromJwt(token) ?? roleFromEmail(typeof token.email === "string" ? token.email : null);
+      const expiresAt = computeSessionExpiresAt({
+        role: finalRole,
+        nowUnixSeconds: now,
+        existingSessionExpiresAt:
+          typeof token.sessionExpiresAt === "number" ? token.sessionExpiresAt : undefined,
+        isNewLogin,
+      });
+      if (now >= expiresAt) {
+        return { ...token, error: "SessionExpired", exp: now - 1 };
+      }
+      token.sessionExpiresAt = expiresAt;
+      token.exp = expiresAt;
+
       return token;
     },
     async session({ session, token }) {
