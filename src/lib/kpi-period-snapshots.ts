@@ -13,6 +13,7 @@ import {
 } from "@/lib/kpi-recurrence";
 import {
   collectAllSubKpiItems,
+  incidentMetricPercents,
   isInvertedChecklistPillar,
   kpiChecklistMetricView,
   kpiChecklistProgress,
@@ -262,6 +263,9 @@ export type TaskChecklistPillarMetric = KpiChecklistProgress & {
   periodsCounted: number;
   periodsInRange: number;
   csvRows?: string[][];
+  /** Extended-view CSV columns derived from live Task Board sub-tasks. */
+  subtaskCsvColumns?: string[];
+  subtaskCsvRows?: string[][];
   dailyProgressRows?: TaskChecklistDailyProgress[];
   assigneeProgress?: TaskAssigneeProgress[];
   /** Sum of contributor tasks across every counted period (personnel monthly rollup). */
@@ -787,6 +791,257 @@ function contributorProgressForKpiPeriod(
   return [];
 }
 
+type KpiForSubtaskCsv = {
+  id: string;
+  frequency: KpiFrequency;
+  subKpis: unknown;
+  recurrenceWeekday: number | null;
+  recurrenceMonthDay: number | null;
+  periodKey: string | null;
+};
+
+function collectSubtaskColumnTitles(pillarKpis: KpiForSubtaskCsv[]): string[] {
+  const seen = new Set<string>();
+  const titles: string[] = [];
+  for (const kpi of pillarKpis) {
+    for (const item of collectAllSubKpiItems(normalizeSubKpis(kpi.subKpis))) {
+      const title = item.title.trim();
+      if (!title) continue;
+      const key = title.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      titles.push(title);
+    }
+  }
+  return titles;
+}
+
+function subtaskChecksFromSubKpis(subKpis: unknown, columns: readonly string[]): Record<string, boolean> {
+  const byTitle = new Map<string, boolean>();
+  for (const item of collectAllSubKpiItems(normalizeSubKpis(subKpis))) {
+    const title = item.title.trim();
+    if (!title) continue;
+    byTitle.set(title.toLowerCase(), Boolean(item.done));
+  }
+  return Object.fromEntries(columns.map((title) => [title, byTitle.get(title.toLowerCase()) === true]));
+}
+
+function formatSubtaskCsvDateLabel(ymd: string, zone: string): string {
+  const dt = DateTime.fromISO(ymd, { zone: normalizeTimeZone(zone) });
+  if (!dt.isValid) return ymd;
+  return dt.toFormat("cccc, MMMM d, yyyy", { locale: "en" });
+}
+
+function formatMonthlySubtaskCsvDateLabel(year: number, month: number, zone: string): string {
+  const dt = DateTime.fromObject({ year, month, day: 1 }, { zone: normalizeTimeZone(zone) });
+  if (!dt.isValid) return `${month}/${year}`;
+  return dt.toFormat("LLL. yyyy", { locale: "en" });
+}
+
+function formatSubtaskCsvEffCell(progress: KpiChecklistProgress, invert: boolean): string {
+  if (progress.total <= 0) return "—";
+  if (invert) {
+    const { effPercent } = incidentMetricPercents(progress);
+    return effPercent == null ? "—" : `${effPercent}%`;
+  }
+  return `${progress.percent}%`;
+}
+
+function formatSubtaskCsvCheckCell(done: boolean | undefined): string {
+  if (done === undefined) return "";
+  return done ? "TRUE" : "FALSE";
+}
+
+function primaryYearFromRange(fromYmd: string, toYmd: string, zone: string): number {
+  const to = DateTime.fromISO(toYmd, { zone: normalizeTimeZone(zone) });
+  if (to.isValid) return to.year;
+  const from = DateTime.fromISO(fromYmd, { zone: normalizeTimeZone(zone) });
+  return from.isValid ? from.year : DateTime.now().year;
+}
+
+function progressForKpiPeriod(args: {
+  kpi: KpiForSubtaskCsv;
+  periodKey: string;
+  nowPeriodKey: string;
+  snapshotByKpiPeriod: Map<string, { total: number; done: number; missing: number; percent: number }>;
+}): { progress: KpiChecklistProgress; subKpis: unknown | null } | null {
+  const snap = args.snapshotByKpiPeriod.get(`${args.kpi.id}:${args.periodKey}`);
+  if (snap) {
+    return { progress: snapshotToProgress(snap), subKpis: null };
+  }
+  if (args.periodKey === args.nowPeriodKey) {
+    return { progress: kpiChecklistProgress(args.kpi.subKpis), subKpis: args.kpi.subKpis };
+  }
+  return null;
+}
+
+function mergePeriodProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress {
+  if (rows.length === 0) return { total: 0, done: 0, missing: 0, percent: 0 };
+  if (rows.length === 1) return rows[0]!;
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const done = rows.reduce((sum, row) => sum + row.done, 0);
+  const missing = Math.max(0, total - done);
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+  return { total, done, missing, percent };
+}
+
+function mergeSubtaskChecks(
+  checksList: Array<Record<string, boolean>>,
+  columns: readonly string[],
+): Record<string, boolean | undefined> {
+  const out: Record<string, boolean | undefined> = {};
+  for (const title of columns) {
+    const values = checksList.map((checks) => checks[title]).filter((value) => value !== undefined);
+    if (values.length === 0) {
+      out[title] = undefined;
+      continue;
+    }
+    out[title] = values.some(Boolean);
+  }
+  return out;
+}
+
+function buildDailySubtaskCsvRows(args: {
+  pillarKpis: KpiForSubtaskCsv[];
+  columns: readonly string[];
+  fromYmd: string;
+  toYmd: string;
+  zone: string;
+  invert: boolean;
+  snapshotByKpiPeriod: Map<string, { total: number; done: number; missing: number; percent: number }>;
+  currentPeriodKeyFor: (kpi: KpiForSubtaskCsv) => string;
+}): string[][] {
+  const rows: string[][] = [];
+  for (const ymd of enumerateYmdDaysInRange(args.fromYmd, args.toYmd, args.zone)) {
+    const progressRows: KpiChecklistProgress[] = [];
+    const checksList: Array<Record<string, boolean>> = [];
+    for (const kpi of args.pillarKpis) {
+      if ((kpi.frequency as KpiFrequencyCode) !== "DAILY") continue;
+      const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, ymd, ymd, args.zone);
+      for (const key of periodKeys) {
+        const resolved = progressForKpiPeriod({
+          kpi,
+          periodKey: key,
+          nowPeriodKey: args.currentPeriodKeyFor(kpi),
+          snapshotByKpiPeriod: args.snapshotByKpiPeriod,
+        });
+        if (!resolved) continue;
+        progressRows.push(resolved.progress);
+        if (resolved.subKpis) {
+          checksList.push(subtaskChecksFromSubKpis(resolved.subKpis, args.columns));
+        }
+      }
+    }
+    if (progressRows.length === 0) continue;
+    const mergedChecks = mergeSubtaskChecks(checksList, args.columns);
+    const progress = mergePeriodProgress(progressRows);
+    rows.push([
+      formatSubtaskCsvDateLabel(ymd, args.zone),
+      ...args.columns.map((title) => formatSubtaskCsvCheckCell(mergedChecks[title])),
+      formatSubtaskCsvEffCell(progress, args.invert),
+    ]);
+  }
+  return rows;
+}
+
+function buildMonthlySubtaskCsvRows(args: {
+  pillarKpis: KpiForSubtaskCsv[];
+  columns: readonly string[];
+  year: number;
+  zone: string;
+  invert: boolean;
+  snapshotByKpiPeriod: Map<string, { total: number; done: number; missing: number; percent: number }>;
+  currentPeriodKeyFor: (kpi: KpiForSubtaskCsv) => string;
+}): string[][] {
+  const rows: string[][] = [];
+  for (let month = 1; month <= 12; month++) {
+    const monthStart = DateTime.fromObject({ year: args.year, month, day: 1 }, { zone: args.zone });
+    if (!monthStart.isValid) continue;
+    const monthEnd = monthStart.endOf("month");
+    const fromYmd = monthStart.toISODate();
+    const toYmd = monthEnd.toISODate();
+    if (!fromYmd || !toYmd) continue;
+
+    const progressRows: KpiChecklistProgress[] = [];
+    const checksList: Array<Record<string, boolean>> = [];
+    for (const kpi of args.pillarKpis) {
+      const freq = kpi.frequency as KpiFrequencyCode;
+      if (freq !== "MONTHLY" && freq !== "QUARTERLY") continue;
+      const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, args.zone);
+      for (const key of periodKeys) {
+        const resolved = progressForKpiPeriod({
+          kpi,
+          periodKey: key,
+          nowPeriodKey: args.currentPeriodKeyFor(kpi),
+          snapshotByKpiPeriod: args.snapshotByKpiPeriod,
+        });
+        if (!resolved) continue;
+        progressRows.push(resolved.progress);
+        if (resolved.subKpis) {
+          checksList.push(subtaskChecksFromSubKpis(resolved.subKpis, args.columns));
+        }
+      }
+    }
+
+    const mergedChecks = mergeSubtaskChecks(checksList, args.columns);
+    const progress = mergePeriodProgress(progressRows);
+    rows.push([
+      formatMonthlySubtaskCsvDateLabel(args.year, month, args.zone),
+      ...args.columns.map((title) => formatSubtaskCsvCheckCell(mergedChecks[title])),
+      progress.total > 0 ? formatSubtaskCsvEffCell(progress, args.invert) : "—",
+    ]);
+  }
+  return rows;
+}
+
+export function buildSubtaskCsvPreviewForPillar(args: {
+  pillar: ItTaskPillarTitle;
+  pillarKpis: KpiForSubtaskCsv[];
+  metricsCadence: KpiFrequencyCode;
+  fromYmd: string;
+  toYmd: string;
+  zone: string;
+  snapshotByKpiPeriod: Map<string, { total: number; done: number; missing: number; percent: number }>;
+  currentPeriodKeyFor: (kpi: KpiForSubtaskCsv) => string;
+}): { columns: string[]; rows: string[][] } | null {
+  if (args.pillar === "HELPDESK SUPPORT" || args.pillar === "USER SUPPORT") return null;
+  const subtaskColumns = collectSubtaskColumnTitles(args.pillarKpis);
+  if (subtaskColumns.length === 0) return null;
+
+  const invert = isInvertedChecklistPillar(args.pillar);
+  const csvColumns = ["DATE", ...subtaskColumns, "EFF %"];
+  const useMonthlyLayout =
+    args.metricsCadence === "MONTHLY" &&
+    args.pillarKpis.some((kpi) => {
+      const freq = kpi.frequency as KpiFrequencyCode;
+      return freq === "MONTHLY" || freq === "QUARTERLY";
+    });
+
+  const rows = useMonthlyLayout
+    ? buildMonthlySubtaskCsvRows({
+        pillarKpis: args.pillarKpis,
+        columns: subtaskColumns,
+        year: primaryYearFromRange(args.fromYmd, args.toYmd, args.zone),
+        zone: args.zone,
+        invert,
+        snapshotByKpiPeriod: args.snapshotByKpiPeriod,
+        currentPeriodKeyFor: args.currentPeriodKeyFor,
+      })
+    : buildDailySubtaskCsvRows({
+        pillarKpis: args.pillarKpis,
+        columns: subtaskColumns,
+        fromYmd: args.fromYmd,
+        toYmd: args.toYmd,
+        zone: args.zone,
+        invert,
+        snapshotByKpiPeriod: args.snapshotByKpiPeriod,
+        currentPeriodKeyFor: args.currentPeriodKeyFor,
+      });
+
+  if (rows.length === 0) return null;
+  return { columns: csvColumns, rows };
+}
+
 export async function computeTaskChecklistPillarMetrics(args: {
   metricsCadence: KpiFrequencyCode;
   fromYmd: string;
@@ -988,11 +1243,25 @@ export async function computeTaskChecklistPillarMetrics(args: {
       invert,
     );
 
+    const subtaskCsv = buildSubtaskCsvPreviewForPillar({
+      pillar,
+      pillarKpis,
+      metricsCadence,
+      fromYmd,
+      toYmd,
+      zone,
+      snapshotByKpiPeriod,
+      currentPeriodKeyFor: (kpi) => currentPeriodKeyFor(kpi as (typeof kpis)[number]),
+    });
+
     result[pillar] = {
       ...pillarAgg,
       dailyProgressRows,
       assigneeProgress,
       assigneeProgressAccumulated,
+      ...(subtaskCsv
+        ? { subtaskCsvColumns: subtaskCsv.columns, subtaskCsvRows: subtaskCsv.rows }
+        : {}),
     };
   }
 

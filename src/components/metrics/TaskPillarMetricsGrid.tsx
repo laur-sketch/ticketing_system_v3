@@ -763,16 +763,22 @@ function sourceDetailsForPillar(args: {
   const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
   const cadenceLabel = metricsCadence.toLowerCase();
   const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const subtaskCsvColumns = agg?.subtaskCsvColumns;
+  const subtaskCsvRows = agg?.subtaskCsvRows;
+  const hasSubtaskCsvPreview = Boolean(subtaskCsvColumns?.length && subtaskCsvRows?.length);
   const dailyCsvRows = (agg?.dailyProgressRows ?? []).map((row) =>
     dailyProgressCsvRow(row, invert),
   );
-  const sourceCsvRows =
-    dailyCsvRows.length > 0
+  const sourceCsvRows = hasSubtaskCsvPreview
+    ? subtaskCsvRows!
+    : dailyCsvRows.length > 0
       ? dailyCsvRows
       : agg?.csvRows && agg.csvRows.length > 0
         ? agg.csvRows
         : csvLayoutRowsForPillar(args);
-  const csvColumns = dailyProgressCsvColumnsForPillar(pillar, dailyCsvRows.length > 0);
+  const csvColumns = hasSubtaskCsvPreview
+    ? subtaskCsvColumns!
+    : dailyProgressCsvColumnsForPillar(pillar, dailyCsvRows.length > 0);
   const view = kpiChecklistMetricView(
     {
       total: agg?.total ?? 0,
@@ -787,7 +793,9 @@ function sourceDetailsForPillar(args: {
     rows: [
       {
         label: "Collected from",
-        value: dailyCsvRows.length
+        value: hasSubtaskCsvPreview
+          ? "Live Task Board sub-tasks for this pillar (snapshots for past periods, live checkboxes for the active period)"
+          : dailyCsvRows.length
           ? "Daily KPI maintenance period snapshots for this reporting range"
           : agg?.csvRows?.length
           ? "Imported IT SALF CSV rows for the selected reporting range"
@@ -825,7 +833,11 @@ function sourceDetailsForPillar(args: {
     csvRows: sourceCsvRows,
     showCsvPreview: true,
     notes: [
-      dailyCsvRows.length
+      hasSubtaskCsvPreview
+        ? metricsCadence === "MONTHLY"
+          ? "CSV preview lists Jan.–Dec. rows for the report year with one column per current sub-task (TRUE/FALSE) plus EFF %."
+          : "CSV preview lists one row per working day with sub-task columns from the current Task Board definition (TRUE/FALSE) plus EFF %."
+        : dailyCsvRows.length
         ? invert
           ? "CSV preview lists daily SAFE / BREACHED percentages from snapshots (unchecked = safe, checked = breached). EFF % is 0% only when BREACHED is 100; days without snapshot data are omitted."
           : "CSV preview lists daily progress rows from the same snapshots used by this metric."
