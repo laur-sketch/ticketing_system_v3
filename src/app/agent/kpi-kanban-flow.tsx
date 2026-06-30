@@ -208,12 +208,15 @@ function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
 
 export function AgentKpiKanbanFlow({
   companyFilterTeamId = null,
+  assignedAgentFilterId = null,
   companyFilterOptions = [],
   currentCompanyFilter = "ALL",
   showAdminTaskManagement = false,
 }: {
   /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
   companyFilterTeamId?: string | null;
+  /** When set, narrows the task board to this main assignee. */
+  assignedAgentFilterId?: string | null;
   /** Company choices shown inside the Task Assignment Board. */
   companyFilterOptions?: CompanyFilterOption[];
   /** Current company query value. */
@@ -268,9 +271,16 @@ export function AgentKpiKanbanFlow({
     companyFilterTeamId && companyFilterTeamId !== "ALL"
       ? `&company=${encodeURIComponent(companyFilterTeamId)}`
       : "";
+  const assignedQs =
+    assignedAgentFilterId && assignedAgentFilterId !== "ALL"
+      ? `&assigned=${encodeURIComponent(assignedAgentFilterId)}`
+      : "";
 
   async function load() {
-    const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}${companyQs}`, { cache: "no-store" });
+    const res = await fetch(
+      `/api/kpi-maintenance?tz=${encodeURIComponent(tz)}${companyQs}${assignedQs}`,
+      { cache: "no-store" },
+    );
     if (!res.ok) return;
     const payload = (await res.json()) as {
       rows?: KpiRecord[];
@@ -330,7 +340,7 @@ export function AgentKpiKanbanFlow({
       void loadContext();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tz, companyFilterTeamId]);
+  }, [tz, companyFilterTeamId, assignedAgentFilterId]);
 
   useEffect(() => {
     const mainIds = [...new Set(rows.map((row) => row.assignedAgent?.id).filter(Boolean))] as string[];
@@ -1050,7 +1060,18 @@ export function AgentKpiKanbanFlow({
     }
   }
 
-  const hasRows = useMemo(() => rows.length > 0, [rows.length]);
+  const boardRows = useMemo(() => {
+    let list = rows;
+    if (companyFilterTeamId && companyFilterTeamId !== "ALL") {
+      list = list.filter((row) => Boolean(row.assignedAgent?.id));
+      list = list.filter((row) => {
+        const status = statusOf(row);
+        return status === "CURRENT" || status === "DELAYED";
+      });
+    }
+    return list;
+  }, [rows, companyFilterTeamId, nowMs, tz]);
+  const hasBoardRows = boardRows.length > 0;
   const unassignedRows = useMemo(() => rows.filter((r) => !r.assignedAgent?.id), [rows]);
   const assignedCountByAgent = useMemo(
     () =>
@@ -2363,14 +2384,18 @@ export function AgentKpiKanbanFlow({
           {error}
         </p>
       ) : null}
-      {!hasRows ? (
+      {!hasBoardRows ? (
         <div className="mt-4 rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-          No task cards available.
+          {companyFilterTeamId
+            ? assignedAgentFilterId
+              ? "No running tasks assigned to this person."
+              : "No running tasks assigned to personnel in this company."
+            : "No task cards available."}
         </div>
       ) : (
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           {(["CURRENT", "DONE", "DELAYED"] as const).map((col) => {
-            const list = rows
+            const list = boardRows
               .filter((r) => statusOf(r) === col)
               .sort((a, b) => {
                 if (col !== "DELAYED") return 0;

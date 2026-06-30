@@ -119,12 +119,21 @@ export async function GET(req: Request) {
           })
         : [];
     const agentIds = agentsInSbu.map((a) => a.id);
-    const scopedOr: Prisma.KpiMaintenanceWhereInput[] = [{ assignedAgentId: null }];
     if (agentIds.length > 0) {
-      scopedOr.push({ assignedAgentId: { in: agentIds } });
+      where = {
+        AND: [where, { assignedAgentId: { in: agentIds } }],
+      };
+    } else {
+      where = {
+        AND: [where, { assignedAgentId: "__none__" }],
+      };
     }
+  }
+
+  const assignedFilterId = searchParams.get("assigned")?.trim();
+  if (perms.canAssignWork && assignedFilterId && assignedFilterId !== "ALL") {
     where = {
-      AND: [where, { OR: scopedOr }],
+      AND: [where, { assignedAgentId: assignedFilterId }],
     };
   }
 

@@ -157,9 +157,12 @@ export default async function AgentHome({
       session.user.role === "Admin" ||
       companyCoordinator);
   const showTopTicketFilters = boardTab !== "kpi";
+  const showKpiTaskFilters = showKpiCompanyFilter;
   const ticketCompanySelected = boardTab === "ticket" && selectedCompany !== "ALL";
+  const kpiCompanySelected = boardTab === "kpi" && selectedCompany !== "ALL";
   const ticketAssignedFilterActive =
     boardTab === "ticket" && session.user.role !== "Personnel" && ticketCompanySelected;
+  const kpiAssignedFilterActive = showKpiTaskFilters && kpiCompanySelected;
 
   const adminScopedCompanyId =
     (isCompanyBoard || showKpiCompanyFilter) &&
@@ -219,26 +222,32 @@ export default async function AgentHome({
 
   const fetchTicketPipeline = !isCompanyBoard && boardTab !== "kpi";
 
+  async function loadAgentsForCompanyFilter(companyTeamId: string) {
+    const portals = await prisma.portalAccount.findMany({
+      where: {
+        role: { in: ["Admin", "Personnel"] },
+        accountStatus: "ACTIVE",
+        staffDesignatedCompanyId: companyTeamId,
+      },
+      select: { email: true },
+    });
+    const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
+    if (emails.length === 0) return [];
+    return prisma.agent.findMany({
+      where: { email: { in: emails } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    });
+  }
+
   const agentsForTicketAssigneeFilter =
     ticketCompanySelected && fetchTicketPipeline
-      ? await (async () => {
-          const portals = await prisma.portalAccount.findMany({
-            where: {
-              role: { in: ["Admin", "Personnel"] },
-              accountStatus: "ACTIVE",
-              staffDesignatedCompanyId: selectedCompany,
-            },
-            select: { email: true },
-          });
-          const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
-          if (emails.length === 0) return [];
-          return prisma.agent.findMany({
-            where: { email: { in: emails } },
-            orderBy: { name: "asc" },
-            select: { id: true, name: true },
-          });
-        })()
+      ? await loadAgentsForCompanyFilter(selectedCompany)
       : [];
+
+  const agentsForKpiAssigneeFilter = kpiAssignedFilterActive
+    ? await loadAgentsForCompanyFilter(selectedCompany)
+    : [];
 
   const effectiveAssigned =
     ticketAssignedFilterActive &&
@@ -247,6 +256,15 @@ export default async function AgentHome({
     !agentsForTicketAssigneeFilter.some((a) => a.id === selectedAssigned)
       ? "ALL"
       : ticketAssignedFilterActive
+        ? selectedAssigned
+        : "ALL";
+
+  const effectiveKpiAssigned =
+    kpiAssignedFilterActive &&
+    selectedAssigned !== "ALL" &&
+    !agentsForKpiAssigneeFilter.some((a) => a.id === selectedAssigned)
+      ? "ALL"
+      : kpiAssignedFilterActive
         ? selectedAssigned
         : "ALL";
 
@@ -441,6 +459,9 @@ export default async function AgentHome({
     if (viewMode === "table") qs.set("view", "table");
     if (ticketAssignedFilterActive && effectiveAssigned !== "ALL") {
       qs.set("assigned", effectiveAssigned);
+    }
+    if (kpiAssignedFilterActive && effectiveKpiAssigned !== "ALL") {
+      qs.set("assigned", effectiveKpiAssigned);
     }
     if (!isBoard) {
       if (selectedStatus !== "ALL") qs.set("status", selectedStatus);
@@ -893,16 +914,61 @@ export default async function AgentHome({
                 )}
               </>
             ) : isBoard && boardTab === "kpi" ? (
-              <AgentKpiKanbanFlow
-                companyFilterTeamId={
-                  showKpiCompanyFilter && selectedCompany !== "ALL" ? selectedCompany : null
-                }
-                companyFilterOptions={showKpiCompanyFilter ? rosterTeamsForKpiFilter : []}
-                currentCompanyFilter={selectedCompany}
-                showAdminTaskManagement={
-                  session.user.role === "SuperAdmin" || session.user.role === "Admin"
-                }
-              />
+              <>
+                {showKpiTaskFilters ? (
+                  <AutoSubmitForm className="mb-3 flex flex-col gap-2 sm:mb-4" method="get">
+                    <input type="hidden" name="board" value="kpi" />
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                      <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 sm:min-w-[240px]">
+                        <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
+                        <TicketBoardCompanySelect
+                          defaultValue={selectedCompany}
+                          options={rosterTeamsForKpiFilter}
+                          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                        />
+                      </label>
+                      {kpiAssignedFilterActive ? (
+                        <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 sm:min-w-[220px]">
+                          <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
+                          <select
+                            name="assigned"
+                            key={`kpi-assigned-${selectedCompany}-${effectiveKpiAssigned}`}
+                            defaultValue={effectiveKpiAssigned}
+                            className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
+                          >
+                            <option value="ALL">All personnel</option>
+                            {agentsForKpiAssigneeFilter.map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                    </div>
+                    <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                      {kpiCompanySelected
+                        ? effectiveKpiAssigned !== "ALL"
+                          ? "Showing running tasks assigned to the selected person."
+                          : "Showing running tasks assigned to personnel in this company."
+                        : "Select a company to view running tasks by assignee."}
+                    </p>
+                  </AutoSubmitForm>
+                ) : null}
+                <AgentKpiKanbanFlow
+                  companyFilterTeamId={
+                    showKpiCompanyFilter && selectedCompany !== "ALL" ? selectedCompany : null
+                  }
+                  assignedAgentFilterId={
+                    kpiAssignedFilterActive && effectiveKpiAssigned !== "ALL" ? effectiveKpiAssigned : null
+                  }
+                  companyFilterOptions={showKpiCompanyFilter ? rosterTeamsForKpiFilter : []}
+                  currentCompanyFilter={selectedCompany}
+                  showAdminTaskManagement={
+                    session.user.role === "SuperAdmin" || session.user.role === "Admin"
+                  }
+                />
+              </>
             ) : (
               <>
                 <div className="w-full overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
