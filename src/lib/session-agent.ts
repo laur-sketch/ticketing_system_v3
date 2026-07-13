@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client/primary";
 import { pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import { prisma } from "@/lib/prisma";
 

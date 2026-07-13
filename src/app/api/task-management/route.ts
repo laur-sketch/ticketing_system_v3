@@ -1,4 +1,4 @@
-import { TaskStatus } from "@prisma/client";
+import { TaskStatus } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
@@ -41,21 +41,26 @@ export async function POST(req: Request) {
     assignedAgentId?: string;
     dueAt?: string;
     priority?: string;
+    companyId?: string | null;
   };
   const title = body.title?.trim() ?? "";
   if (!title || !body.assignedAgentId) {
     return NextResponse.json({ error: "title and assignedAgentId are required." }, { status: 400 });
   }
-  const assignee = await prisma.agent.findUnique({ where: { id: body.assignedAgentId }, select: { id: true } });
+  const assignee = await prisma.agent.findUnique({ where: { id: body.assignedAgentId }, select: { id: true, team: { select: { id: true } } } });
   if (!assignee) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
   }
+  const assignedAgentCompanyId = assignee.team?.id;
+  const taskCompanyId = body.companyId?.trim() || assignedAgentCompanyId || null;
+
   const dueAt = body.dueAt ? new Date(body.dueAt) : null;
   const created = await prisma.taskItem.create({
     data: {
       title,
       description: body.description?.trim() || null,
       assignedAgentId: assignee.id,
+      teamId: taskCompanyId,
       dueAt: dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt : null,
       priority: body.priority?.trim() || null,
       createdBy: session.user.email ?? session.user.name ?? "unknown",

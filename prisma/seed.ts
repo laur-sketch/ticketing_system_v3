@@ -1,23 +1,23 @@
 import {
-  PrismaClient,
   TicketCategory,
   TicketPriority,
   TicketStatus,
-} from "@prisma/client";
+  PrismaClient as PrismaClientPrimary,
+} from "@prisma/client/primary";
 
 /** Keep in sync with `src/lib/department-roster.ts` */
 const DEPARTMENT_ROSTER = ["ACI", "HR", "Gen. Services", "AUDIT", "IT"] as const;
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClientPrimary();
 
 async function main() {
+  // Clean primary (PostgreSQL) tables before reseeding
   await prisma.escalationTrigger.deleteMany();
   await prisma.slaPolicy.deleteMany();
   await prisma.ticketFeedback.deleteMany();
   await prisma.ticketMessage.deleteMany();
   await prisma.ticketActivity.deleteMany();
   await prisma.ticket.deleteMany();
-  await prisma.kpiMaintenance.deleteMany();
   await prisma.agent.deleteMany();
   await prisma.team.deleteMany();
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CheckCircle2, Circle, Headphones, LineChart } from "lucide-react";
 import { BrandLockup } from "@/components/BrandLockup";
+import { PhilippineTimeClock } from "@/components/PhilippineTimeClock";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 /** StoicOps brand accent */
@@ -47,7 +48,7 @@ export function AuthShell({
       />
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-surface/90 px-5 py-3.5 backdrop-blur-md sm:px-10">
         <BrandLockup variant="auth-header" href="/" />
-        <nav className="flex flex-wrap items-center justify-end gap-x-6 gap-y-2 text-[13px]">
+        <nav className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 text-[13px] sm:gap-x-6">
           <ThemeToggle />
           <Link href="/process" className="text-muted transition hover:text-foreground">
             Support
@@ -69,6 +70,7 @@ export function AuthShell({
           <div className="absolute inset-0 bg-surface-muted/50" aria-hidden />
           <div className="relative flex min-h-[min(100vh,880px)] flex-col justify-center px-10 py-16 xl:px-16 xl:py-20">
             <div className="max-w-[26rem]">
+              <PhilippineTimeClock variant="terminal" className="mb-8" />
               <h1 className="text-[2rem] font-bold leading-[1.12] tracking-tight text-foreground xl:text-[2.35rem] xl:leading-[1.1]">
                 The command center for modern support.
               </h1>
@@ -97,7 +99,8 @@ export function AuthShell({
         <div className="relative flex flex-col justify-center bg-transparent px-4 py-8 sm:px-8 lg:px-10 lg:py-12">
           <div className="mb-6 lg:hidden">
             <BrandLockup variant="auth-mobile" />
-            <h2 className="mt-2 text-xl font-bold leading-snug tracking-tight text-foreground">
+            <PhilippineTimeClock variant="terminal" className="mt-4" />
+            <h2 className="mt-4 text-xl font-bold leading-snug tracking-tight text-foreground">
               The command center for modern support.
             </h2>
           </div>

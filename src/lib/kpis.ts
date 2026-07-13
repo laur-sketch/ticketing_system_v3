@@ -1,4 +1,4 @@
-import type { Prisma, TicketStatus } from "@prisma/client";
+import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { DateTime } from "luxon";
 import {
   computeTaskChecklistPillarMetrics,
@@ -7,7 +7,12 @@ import {
   snapshotTimeZoneForTaskMetrics,
   type TaskChecklistPillarMetrics,
 } from "@/lib/kpi-period-snapshots";
-import { normalizeTimeZone } from "@/lib/kpi-recurrence";
+import { normalizeTimeZone, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import {
+  mergePenaltyDeductionMaps,
+  penaltyDeductionsForKpi,
+} from "@/lib/task-delay-penalty";
+import type { PersonnelDelayPenaltyRow } from "@/lib/task-personnel-metrics";
 import {
   combineHelpdeskCountsByBlend,
   loadHelpdeskCsvTaskMetricCounts,
@@ -443,6 +448,7 @@ export type TaskMetricsPayload = {
   taskMetricsUserSupport: TaskMetricsUserSupportTickets;
   taskChecklistPillars: TaskChecklistPillarMetrics;
   personnelTicketMetrics: PersonnelTicketMetric[];
+  personnelDelayPenalties: PersonnelDelayPenaltyRow[];
 };
 
 /** Task metrics tab: helpdesk ratio + user support (scoped reporting range). */
@@ -541,13 +547,57 @@ export async function computeTaskMetrics(
       ? await loadPersonnelTicketMetrics(scoped, workingDays)
       : [];
 
+  const personnelDelayPenalties = await loadPersonnelDelayPenalties(
+    kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
+    helpdeskTz,
+  );
+
   return {
     range,
     taskMetricsHelpdesk,
     taskMetricsUserSupport,
     taskChecklistPillars,
     personnelTicketMetrics,
+    personnelDelayPenalties,
   };
+}
+
+async function loadPersonnelDelayPenalties(
+  kpiWhere: Prisma.KpiMaintenanceWhereInput,
+  timeZone: string,
+): Promise<PersonnelDelayPenaltyRow[]> {
+  const nowMs = Date.now();
+  const rows = await prisma.kpiMaintenance.findMany({
+    where: kpiWhere,
+    select: {
+      subKpis: true,
+      frequency: true,
+      isRecurring: true,
+      title: true,
+      assignedAgent: { select: { id: true, name: true } },
+    },
+  });
+  const merged = mergePenaltyDeductionMaps(
+    rows.map((row) =>
+      penaltyDeductionsForKpi(
+        {
+          subKpis: row.subKpis,
+          frequency: row.frequency as KpiFrequencyCode,
+          isRecurring: row.isRecurring,
+          title: row.title,
+          assignedAgent: row.assignedAgent,
+        },
+        { nowMs, timeZone },
+      ),
+    ),
+  );
+  return [...merged.values()]
+    .filter((row) => row.deduction > 0)
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      deduction: Math.round(row.deduction * 100) / 100,
+    }));
 }
 
 async function loadPersonnelTicketMetrics(

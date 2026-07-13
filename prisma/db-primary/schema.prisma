@@ -1,0 +1,361 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/@prisma/client/primary"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_PRIMARY")
+}
+
+enum TicketCategory {
+  IT
+  HR
+  FINANCE
+  OPERATIONS
+  GENERAL
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+  UNSET
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_INFO
+  ESCALATED
+  FOR_CONFIRMATION
+  RESOLVED
+  CLOSED
+}
+
+enum EscalationType {
+  FUNCTIONAL
+  HIERARCHICAL
+}
+
+enum ActivityActor {
+  SYSTEM
+  AGENT
+  USER
+}
+
+enum KpiFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+}
+
+enum TaskStatus {
+  CURRENT
+  DONE
+  DELAYED
+}
+
+model PortalAccount {
+  id                        String                 @id @default(cuid())
+  username                  String?                @unique @map("username")
+  email                     String                 @unique @map("email")
+  name                      String                 @map("name")
+  // Deprecated: credentials live in Auth DB / merged_users. Kept for migration only.
+  passwordHash              String?                @map("password_hash")
+  // Source-of-truth link to Auth DB User.id (logical cross-database reference).
+  authUserId                String?                @unique @map("auth_user_id")
+  // Deprecated: OAuth linkage now stored on auth_accounts. Kept for migration only.
+  oauthProvider             String?                @map("oauth_provider")
+  oauthSubject              String?                @map("oauth_subject")
+  emailVerifiedAt           DateTime?              @map("email_verified_at")
+  // Logical FK to merged_users.source_user_id (HRIS).
+  mergedSourceUserId        BigInt?                @unique @map("merged_source_user_id")
+  role                      String                 @default("Customer") @map("role")
+  headPrivileges            Boolean                @default(false) @map("head_privileges")
+  companyId                 String?                @map("company_id")
+  company                   Team?                  @relation("PortalCustomerCompany", fields: [companyId], references: [id], onDelete: SetNull)
+  staffDesignatedCompanyId  String?                @map("staff_designated_company_id")
+  staffDesignatedCompany    Team?                  @relation("PortalStaffDesignatedCompany", fields: [staffDesignatedCompanyId], references: [id], onDelete: SetNull)
+  staffAssignmentColor      String?                @map("staff_assignment_color")
+  customerOrgRole           String?                @map("customer_org_role")
+  accountStatus             String                 @default("ACTIVE") @map("account_status")
+  profileImage              String?                @map("profile_image")
+  profileImageZoom          Float                  @default(1) @map("profile_image_zoom")
+  profileImagePosX          Int                    @default(50) @map("profile_image_pos_x")
+  profileImagePosY          Int                    @default(50) @map("profile_image_pos_y")
+  profileSyncedAt           DateTime?              @map("profile_synced_at")
+  createdAt                 DateTime               @default(now()) @map("created_at")
+  actionRequests            AccountActionRequest[]
+
+  @@index([authUserId])
+  @@map("portal_accounts")
+}
+
+model Team {
+  id                            String         @id @default(cuid())
+  name                          String         @map("name")
+  description                   String?        @map("description")
+  createdAt                     DateTime       @default(now()) @map("created_at")
+  agents                        Agent[]
+  tickets                       Ticket[]
+  customerPortalAccounts        PortalAccount[] @relation("PortalCustomerCompany")
+  staffDesignatedPortalAccounts PortalAccount[] @relation("PortalStaffDesignatedCompany")
+
+  @@map("teams")
+}
+
+model Agent {
+  id        String   @id @default(cuid())
+  name      String   @map("name")
+  email     String   @unique @map("email")
+  teamId    String   @map("team_id")
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  tickets   Ticket[] @relation("AssignedAgent")
+  kpis      KpiMaintenance[] @relation("AssignedKpi")
+  tasks     TaskItem[]       @relation("AssignedTask")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([teamId, name])
+  @@map("agents")
+}
+
+model SlaPolicy {
+  id                 String         @id @default(cuid())
+  priority           TicketPriority @unique @map("priority")
+  firstResponseHours Float          @map("first_response_hours")
+  resolutionHours    Float          @map("resolution_hours")
+
+  @@map("sla_policies")
+}
+
+model EscalationTrigger {
+  id           String         @id @default(cuid())
+  priority     TicketPriority @unique @map("priority")
+  enabled      Boolean        @default(false) @map("enabled")
+  notifyAdmin  Boolean        @default(false) @map("notify_admin")
+  notifyTarget String         @default("NONE") @map("notify_target")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  @@map("escalation_triggers")
+}
+
+model Ticket {
+  id                  String           @id @default(cuid())
+  ticketNumber        String           @unique @map("ticket_number")
+  title               String           @map("title")
+  description         String           @map("description")
+  category            TicketCategory   @map("category")
+  priority            TicketPriority   @default(UNSET) @map("priority")
+  status              TicketStatus     @default(OPEN) @map("status")
+  contactName         String           @map("contact_name")
+  contactEmail        String           @map("contact_email")
+  requestorEmail      String?          @map("requestor_email")
+  contactPhone        String?          @map("contact_phone")
+  teamId              String?          @map("team_id")
+  team                Team?            @relation(fields: [teamId], references: [id])
+  assignedAgentId     String?          @map("assigned_agent_id")
+  assignedAgent       Agent?           @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
+  firstResponseDueAt  DateTime         @map("first_response_due_at")
+  resolutionDueAt     DateTime         @map("resolution_due_at")
+  firstResponseAt     DateTime?        @map("first_response_at")
+  resolvedAt          DateTime?        @map("resolved_at")
+  closedAt            DateTime?        @map("closed_at")
+  escalationType      EscalationType?  @map("escalation_type")
+  escalatedAt         DateTime?        @map("escalated_at")
+  reopenCount         Int              @default(0) @map("reopen_count")
+  resolutionNotes     String?          @map("resolution_notes")
+  intakeScreenshotMeta Json?           @map("intake_screenshot_meta")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+  activities          TicketActivity[]
+  messages            TicketMessage[]
+  feedback            TicketFeedback?
+
+  @@index([status, updatedAt])
+  @@index([status, createdAt])
+  @@index([contactEmail, updatedAt])
+  @@index([contactEmail, createdAt])
+  @@index([requestorEmail, updatedAt])
+  @@index([requestorEmail, createdAt])
+  @@index([assignedAgentId, status])
+  @@index([assignedAgentId, createdAt])
+  @@index([assignedAgentId, updatedAt])
+  @@index([teamId, status])
+  @@index([teamId, createdAt])
+  @@index([resolutionDueAt, status])
+  @@index([resolvedAt])
+  @@index([closedAt])
+  @@index([closedAt, assignedAgentId])
+  @@index([createdAt])
+  @@index([priority, status])
+  @@index([status, priority, updatedAt])
+  @@map("tickets")
+}
+
+model TicketActivity {
+  id        String         @id @default(cuid())
+  ticketId  String         @map("ticket_id")
+  ticket    Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor     ActivityActor  @map("actor")
+  summary   String         @map("summary")
+  detail    String?        @map("detail")
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@index([ticketId, createdAt])
+  @@index([summary, createdAt])
+  @@index([ticketId, summary, createdAt])
+  @@map("ticket_activities")
+}
+
+model TicketMessage {
+  id        String         @id @default(cuid())
+  ticketId  String         @map("ticket_id")
+  ticket    Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor     ActivityActor  @map("actor")
+  author    String         @map("author")
+  body      String         @map("body")
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+model TicketFeedback {
+  id        String   @id @default(cuid())
+  ticketId  String   @unique @map("ticket_id")
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  csat      Int      @map("csat")
+  nps       Int?     @map("nps")
+  ces       Int?     @map("ces")
+  comment   String?  @map("comment")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("ticket_feedbacks")
+}
+
+model KpiMaintenance {
+  id                   String       @id @default(cuid())
+  title                String       @map("title")
+  mainTask             String?      @map("main_task")
+  isRecurring          Boolean      @default(true) @map("is_recurring")
+  nonRecurringStartAt  DateTime?    @map("non_recurring_start_at")
+  nonRecurringEndAt    DateTime?    @map("non_recurring_end_at")
+  frequency            KpiFrequency @map("frequency")
+  subKpis              Json         @map("sub_kpis")
+  assignedAgentId      String?      @map("assigned_agent_id")
+  assignedAgent        Agent?       @relation("AssignedKpi", fields: [assignedAgentId], references: [id])
+  assignedRole         String?      @map("assigned_role")
+  recurrenceWeekday    Int?         @map("recurrence_weekday")
+  recurrenceMonthDay   Int?         @map("recurrence_month_day")
+  periodCycleStartAt   DateTime?    @map("period_cycle_start_at")
+  lastFullCompletionAt DateTime?    @map("last_full_completion_at")
+  periodKey            String?      @map("period_key")
+  rolledOverIncomplete Boolean      @default(false) @map("rolled_over_incomplete")
+  itProjectName        String?      @map("it_project_name")
+  itProjectPhase       String?      @map("it_project_phase")
+  scopedCompanyTeamId  String?      @map("scoped_company_team_id")
+  createdBy            String       @map("created_by")
+  createdByRole        String       @map("created_by_role")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+  periodSnapshots      KpiMaintenancePeriodSnapshot[]
+
+  @@index([assignedAgentId, frequency])
+  @@index([scopedCompanyTeamId])
+  @@index([createdAt])
+  @@unique([title, mainTask])
+  @@map("kpi_maintenance")
+}
+
+model KpiMaintenancePeriodSnapshot {
+  id               String         @id @default(cuid())
+  kpiMaintenanceId String         @map("kpi_maintenance_id")
+  kpiMaintenance   KpiMaintenance @relation(fields: [kpiMaintenanceId], references: [id], onDelete: Cascade)
+  periodKey        String         @map("period_key")
+  frequency        KpiFrequency   @map("frequency")
+  timeZone         String         @map("time_zone")
+  total            Int            @map("total")
+  done             Int            @map("done")
+  missing          Int            @map("missing")
+  percent          Int            @map("percent")
+  fullyComplete    Boolean        @default(false) @map("fully_complete")
+  contributorProgress Json?       @map("contributor_progress")
+  capturedAt       DateTime       @default(now()) @map("captured_at")
+
+  @@unique([kpiMaintenanceId, periodKey])
+  @@index([periodKey])
+  @@index([kpiMaintenanceId, capturedAt])
+  @@map("kpi_maintenance_period_snapshots")
+}
+
+model HelpdeskCsvTicket {
+  id               String    @id @default(cuid())
+  sheetRowId       String    @unique @map("sheet_row_id")
+  reportedAt       DateTime  @map("reported_at")
+  resolvedAt       DateTime? @map("resolved_at")
+  statusRaw        String    @map("status_raw")
+  normalizedBucket String    @map("normalized_bucket")
+  userEmail        String?   @map("user_email")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([reportedAt])
+  @@index([resolvedAt])
+  @@index([normalizedBucket, reportedAt])
+  @@map("helpdesk_csv_tickets")
+}
+
+model TaskItem {
+  id              String      @id @default(cuid())
+  title           String      @map("title")
+  description     String?     @map("description")
+  status          TaskStatus  @default(CURRENT) @map("status")
+  assignedAgentId String?     @map("assigned_agent_id")
+  assignedAgent   Agent?      @relation("AssignedTask", fields: [assignedAgentId], references: [id])
+  priority        String?     @map("priority")
+  dueAt           DateTime?   @map("due_at")
+  createdBy       String      @map("created_by")
+  createdByRole   String      @map("created_by_role")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  activities      TaskActivity[]
+
+  @@index([assignedAgentId, status])
+  @@index([status, dueAt])
+  @@index([createdAt])
+  @@map("task_items")
+}
+
+model TaskActivity {
+  id        String   @id @default(cuid())
+  taskId    String   @map("task_id")
+  task      TaskItem @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    String   @map("author")
+  action    String   @map("action")
+  detail    String?  @map("detail")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([taskId, createdAt])
+  @@map("task_activities")
+}
+
+model AccountActionRequest {
+  id              String   @id @default(cuid())
+  portalAccountId String   @map("portal_account_id")
+  portalAccount   PortalAccount @relation(fields: [portalAccountId], references: [id], onDelete: Cascade)
+  requestType     String   @map("request_type")
+  reason          String?  @map("reason")
+  status          String   @default("PENDING") @map("status")
+  reviewedBy      String?  @map("reviewed_by")
+  reviewedAt      DateTime? @map("reviewed_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([portalAccountId, createdAt])
+  @@index([status, createdAt])
+  @@map("account_action_requests")
+}

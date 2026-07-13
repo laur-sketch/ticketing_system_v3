@@ -1,4 +1,4 @@
-import type { Prisma, TicketStatus } from "@prisma/client";
+import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";

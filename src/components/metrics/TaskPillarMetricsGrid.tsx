@@ -29,6 +29,7 @@ import type {
 } from "@/lib/kpis";
 import {
   combinedPersonnelEfficiency,
+  personnelEfficiencyBracket,
   type PersonnelCombinedMetricCard,
 } from "@/lib/task-personnel-metrics";
 import {
@@ -306,8 +307,7 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
   CYBERSECURITY: {
     positiveLabel: "Safe",
     negativeLabel: "Breached",
-    metricName: "safe",
-    invertChecklist: true,
+    metricName: "done",
   },
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
@@ -321,8 +321,7 @@ const CHECKLIST_PILLAR_CONFIG: Partial<
   "NETWORK PERFORMANCE": {
     positiveLabel: "Uptime",
     negativeLabel: "Downtime",
-    metricName: "uptime",
-    invertChecklist: true,
+    metricName: "done",
   },
 };
 
@@ -374,16 +373,6 @@ function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
     { key: "closed", label: closedLabel, value: closed, color: SEG_COLORS_HELPDESK.closed },
     { key: "open", label: openLabel, value: open, color: SEG_COLORS_HELPDESK.remainder },
   ];
-}
-
-function incidentDaysLabel(
-  agg: { dailyProgressRows?: Array<KpiChecklistProgress & { date: string }>; periodsCounted?: number },
-  metricName: string,
-): string {
-  const rowsWithData = (agg.dailyProgressRows ?? []).filter((row) => row.total > 0);
-  const incidentDays = rowsWithData.filter((row) => row.done > 0).length;
-  const daysCounted = rowsWithData.length || agg.periodsCounted || 0;
-  return `${metricName} days: ${incidentDays} of ${daysCounted}`;
 }
 
 function countedPeriodsLabel(agg: { periodsCounted?: number; periodsInRange?: number }): string {
@@ -468,7 +457,7 @@ function PersonnelMetricStatBox({
   label: string;
   value: string | number;
   subLabel: string;
-  tone: "green" | "neutral" | "amber" | "teal";
+  tone: "green" | "neutral" | "amber" | "teal" | "rose";
 }) {
   const toneClass =
     tone === "green"
@@ -477,7 +466,9 @@ function PersonnelMetricStatBox({
         ? "border-amber-500/20 bg-amber-500/8 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
         : tone === "teal"
           ? "border-teal-500/25 bg-teal-500/8 dark:bg-teal-500/10 text-teal-700 dark:text-teal-300"
-          : "border-zinc-300/80 bg-white/80 dark:border-zinc-700 dark:bg-zinc-900/50 text-zinc-500 dark:text-zinc-400";
+          : tone === "rose"
+            ? "border-rose-500/25 bg-rose-500/8 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300"
+            : "border-zinc-300/80 bg-white/80 dark:border-zinc-700 dark:bg-zinc-900/50 text-zinc-500 dark:text-zinc-400";
   const valueClass =
     tone === "green"
       ? "text-emerald-900 dark:text-emerald-100"
@@ -485,7 +476,9 @@ function PersonnelMetricStatBox({
         ? "text-amber-900 dark:text-amber-100"
         : tone === "teal"
           ? "text-teal-900 dark:text-teal-100"
-          : "text-zinc-900 dark:text-zinc-100";
+          : tone === "rose"
+            ? "text-rose-900 dark:text-rose-100"
+            : "text-zinc-900 dark:text-zinc-100";
   const subClass =
     tone === "green"
       ? "text-emerald-700/80 dark:text-emerald-300/80"
@@ -493,7 +486,9 @@ function PersonnelMetricStatBox({
         ? "text-amber-700/80 dark:text-amber-300/80"
         : tone === "teal"
           ? "text-teal-700/80 dark:text-teal-300/80"
-          : "text-zinc-500 dark:text-zinc-400";
+          : tone === "rose"
+            ? "text-rose-700/80 dark:text-rose-300/80"
+            : "text-zinc-500 dark:text-zinc-400";
 
   return (
     <div className={cn("rounded-lg border px-2.5 py-2", toneClass)}>
@@ -525,6 +520,8 @@ export function ContributorPersonalKpiCard({
   row: PersonnelCombinedMetricCard;
 }) {
   const averageEfficiency = combinedPersonnelEfficiency(row);
+  const efficiencyBracket =
+    averageEfficiency != null ? personnelEfficiencyBracket(averageEfficiency) : null;
 
   return (
     <article className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50/90 p-3.5 dark:border-zinc-800 dark:from-zinc-900/80 dark:to-zinc-950/60">
@@ -535,13 +532,26 @@ export function ContributorPersonalKpiCard({
             {row.role}
           </p>
         </div>
-        {averageEfficiency != null ? (
+        {averageEfficiency != null && efficiencyBracket ? (
           <div className="justify-self-center text-center">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-300/80">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Avg efficiency
             </p>
-            <p className="mt-0.5 text-lg font-black tabular-nums leading-none text-teal-800 dark:text-teal-200">
+            <p
+              className={cn(
+                "mt-0.5 text-lg font-black tabular-nums leading-none",
+                efficiencyBracket.valueClassName,
+              )}
+            >
               {averageEfficiency}%
+            </p>
+            <p
+              className={cn(
+                "mt-1 inline-block rounded-md border px-2 py-0.5 text-[10px] font-bold tracking-wide",
+                efficiencyBracket.badgeClassName,
+              )}
+            >
+              [{efficiencyBracket.label}]
             </p>
           </div>
         ) : (
@@ -598,10 +608,24 @@ export function ContributorPersonalKpiCard({
               <PersonnelMetricStatBox
                 label="Efficiency"
                 value={`${row.tasks.efficiency}%`}
-                subLabel="done / pending"
+                subLabel={
+                  row.tasks.penaltyDeduction != null && row.tasks.penaltyDeduction > 0
+                    ? "net after penalties"
+                    : "done / pending"
+                }
                 tone="teal"
               />
             </PersonnelMetricSection>
+            {row.tasks.penaltyDeduction != null && row.tasks.penaltyDeduction > 0 ? (
+              <p className="text-[11px] text-rose-700 dark:text-rose-300">
+                {row.tasks.efficiencyBeforePenalty != null &&
+                row.tasks.efficiencyBeforePenalty !== row.tasks.efficiency
+                  ? `${row.tasks.efficiencyBeforePenalty}% before deductions · `
+                  : null}
+                {row.tasks.penaltyDeduction} penalty point
+                {row.tasks.penaltyDeduction === 1 ? "" : "s"} from delayed work (minimum efficiency 50%).
+              </p>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -955,10 +979,6 @@ export function TaskPillarMetricsGrid({
           const invert =
             cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
           const view = kpiChecklistMetricView(agg, invert);
-          const isNetworkPerformance = pillar === "NETWORK PERFORMANCE";
-          const isCybersecurity = pillar === "CYBERSECURITY";
-          const incidentOnly = isNetworkPerformance || isCybersecurity;
-          const incidentMetricName = isCybersecurity ? "Breached" : "Downtime";
           const showCountedPeriods =
             pillar === "SYSTEM AVAILABILITY" ||
             pillar === "DATA BACKUP" ||
@@ -966,16 +986,13 @@ export function TaskPillarMetricsGrid({
           const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
             hideZeroNegative: invert,
           });
-          const headline = incidentOnly
-            ? `${view.percent}% efficiency`
-            : agg.total === 0
+          const headline =
+            agg.total === 0
               ? "—"
               : `${view.percent}% ${cfg.metricName}`;
-          const subLabel = incidentOnly
-            ? incidentDaysLabel(agg, incidentMetricName)
-            : showCountedPeriods
-              ? countedPeriodsLabel(agg)
-              : undefined;
+          const subLabel = showCountedPeriods
+            ? countedPeriodsLabel(agg)
+            : undefined;
           return (
             <PillarDonutCard
               key={pillar}

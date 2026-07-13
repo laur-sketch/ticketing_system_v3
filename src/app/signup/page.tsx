@@ -3,12 +3,14 @@
 import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import {
   AuthShell,
   authInputClass,
   authLabelClass,
   authPrimaryButtonClass,
 } from "@/components/auth/AuthShell";
+import { AuthDivider, GoogleAuthButton } from "@/components/auth/GoogleAuthButton";
 
 type CompanyOption = { id: string; name: string };
 
@@ -36,6 +38,31 @@ function SignUpForm() {
   const [customerOrgRole, setCustomerOrgRole] = useState<"Admin" | "Personnel">("Personnel");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "email_mismatch") {
+      setError(
+        "The Google email does not match the work email on your signup form. Use the same address or start again.",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProviders() {
+      const res = await fetch("/api/auth/providers", { cache: "no-store" });
+      if (!res.ok || cancelled) return;
+      const providers = (await res.json()) as Record<string, unknown>;
+      if (!cancelled) setGoogleEnabled(!!providers.google);
+    }
+    void loadProviders();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const applyCompanyList = useCallback((list: CompanyOption[] | null) => {
     if (list === null) {
@@ -67,6 +94,18 @@ function SignUpForm() {
   const selectedCompanyId =
     companyId && companies.some((c) => c.id === companyId) ? companyId : "";
 
+  const signupPayload = useMemo(
+    () => ({
+      username,
+      name: displayName,
+      email,
+      role: "Customer",
+      companyId,
+      customerOrgRole,
+    }),
+    [username, displayName, email, companyId, customerOrgRole],
+  );
+
   const bottomBanner = useMemo(
     () => (
       <div className="mt-6 space-y-3 border-t border-zinc-200 pt-6 dark:border-zinc-800/60">
@@ -94,37 +133,33 @@ function SignUpForm() {
     [],
   );
 
+  function validateCompanySelection(): boolean {
+    if (companiesStatus !== "ready" || companies.length === 0) {
+      setError("Company list is still loading or unavailable. Try again in a moment.");
+      return false;
+    }
+    if (!companyId) {
+      setError("Select the company you belong to.");
+      return false;
+    }
+    return true;
+  }
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    if (!validateCompanySelection()) return;
     if (password.length === 0) {
       setError("Enter a password.");
       return;
     }
-    if (companiesStatus !== "ready" || companies.length === 0) {
-      setError("Company list is still loading or unavailable. Try again in a moment.");
-      return;
-    }
-    if (!companyId) {
-      setError("Select the company you belong to.");
-      return;
-    }
+
     setBusy(true);
     try {
-      const body = {
-        username,
-        name: displayName,
-        email,
-        password,
-        role: "Customer",
-        companyId,
-        customerOrgRole,
-      };
-
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...signupPayload, password, mode: "password" }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
@@ -139,11 +174,42 @@ function SignUpForm() {
     }
   }
 
+  async function onGoogleSignup() {
+    setError(null);
+    if (!googleEnabled) {
+      setError("Google sign-in is not configured. Contact your administrator.");
+      return;
+    }
+    if (!validateCompanySelection()) return;
+
+    setGoogleBusy(true);
+    try {
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...signupPayload, mode: "google" }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not start Google signup.");
+        return;
+      }
+      await signIn("google", { callbackUrl: "/" });
+    } catch {
+      setError("Network error. Try again.");
+    } finally {
+      setGoogleBusy(false);
+    }
+  }
+
   return (
     <AuthShell mode="signup" bottomBanner={bottomBanner}>
       <h1 className="text-[1.5rem] font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-[1.65rem]">
         Create company account
       </h1>
+      <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        Register with a username and password, or continue with Google.
+      </p>
 
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <label className="flex flex-col gap-1.5">
@@ -173,7 +239,9 @@ function SignUpForm() {
         <label className="flex flex-col gap-1.5">
           <span className={authLabelClass}>Company</span>
           {companiesStatus === "loading" ? (
-            <p className={`${authInputClass} flex items-center text-xs text-zinc-500`}>Loading companies…</p>
+            <p className={`${authInputClass} flex items-center text-xs text-zinc-500`}>
+              Loading companies…
+            </p>
           ) : companiesStatus === "error" ? (
             <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-3 text-xs text-amber-900 dark:text-amber-100/90">
               <p>Could not load the company list.</p>
@@ -194,7 +262,11 @@ function SignUpForm() {
             >
               <option value="">Select company…</option>
               {companies.map((c) => (
-                <option key={c.id} value={c.id} className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
+                <option
+                  key={c.id}
+                  value={c.id}
+                  className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100"
+                >
                   {c.name}
                 </option>
               ))}
@@ -217,6 +289,7 @@ function SignUpForm() {
             </option>
           </select>
         </label>
+
         <label className="flex flex-col gap-1.5">
           <span className={authLabelClass}>Work email</span>
           <input
@@ -256,6 +329,21 @@ function SignUpForm() {
         >
           {busy ? "Creating account…" : "Create company account"}
         </button>
+
+        {googleEnabled ? (
+          <>
+            <AuthDivider />
+            <GoogleAuthButton
+              variant="secondary"
+              disabled={googleBusy || companiesStatus !== "ready" || companies.length === 0}
+              label={googleBusy ? "Redirecting to Google…" : "Continue with Google"}
+              onClick={() => void onGoogleSignup()}
+            />
+            <p className="text-center text-[11px] text-zinc-500">
+              For Google signup, your work email must match your Google account.
+            </p>
+          </>
+        ) : null}
       </form>
 
       <p className="mt-6 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">

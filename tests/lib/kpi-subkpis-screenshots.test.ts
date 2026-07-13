@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  getArchivedNumericalRecords,
   getArchivedTaskScreenshots,
   getPillarScreenshots,
   normalizeSubKpis,
+  pillarScreenshotUploadEnabled,
   removePillarScreenshot,
   removeSubKpiItemScreenshot,
   resetAllSubKpiDone,
+  setSubKpiItemScreenshots,
+  setPillarScreenshotUploads,
 } from "@/lib/kpi-subkpis";
 
 const screenshot = {
@@ -50,6 +54,60 @@ describe("KPI task screenshots", () => {
     expect(archive?.pillarBeforeScreenshot?.[0]?.storedFileName).toBe("proof-1.png");
   });
 
+  it("archives numerical records and clears target and actual when recurring tasks reset", () => {
+    const reset = resetAllSubKpiDone({
+      segmented: false,
+      items: [
+        {
+          id: "sub-1",
+          title: "Sales count",
+          done: true,
+          completionRequirements: { checkbox: true, screenshots: false, numerical: true },
+          numericalTarget: 100,
+          numericalValue: 85,
+        },
+      ],
+    });
+
+    const normalized = normalizeSubKpis(reset);
+    if (normalized.segmented) throw new Error("Expected flat sub-task list");
+    const [item] = normalized.flat;
+
+    expect(item.done).toBe(false);
+    expect(item.numericalTarget).toBeUndefined();
+    expect(item.numericalValue).toBeUndefined();
+
+    const archives = getArchivedNumericalRecords(reset);
+    expect(archives).toHaveLength(1);
+    expect(archives[0]?.subTasks[0]).toMatchObject({
+      id: "sub-1",
+      numericalTarget: 100,
+      numericalValue: 85,
+    });
+  });
+
+  it("stores generic screenshot uploads on sub-tasks", () => {
+    const updated = setSubKpiItemScreenshots(
+      {
+        segmented: false,
+        items: [
+          {
+            id: "sub-1",
+            title: "Proof row",
+            completionRequirements: { checkbox: true, screenshots: false, screenshotUpload: true, numerical: false },
+          },
+        ],
+      },
+      "sub-1",
+      "general",
+      [screenshot],
+    );
+
+    const normalized = normalizeSubKpis(updated);
+    const item = normalized.segmented ? null : normalized.flat[0];
+    expect(item?.uploadScreenshot?.[0]?.storedFileName).toBe("proof-1.png");
+  });
+
   it("removes a selected sub-task screenshot without clearing the other slot", () => {
     const updated = removeSubKpiItemScreenshot(
       {
@@ -89,5 +147,13 @@ describe("KPI task screenshots", () => {
     );
 
     expect(getPillarScreenshots(updated, "before").map((m) => m.storedFileName)).toEqual(["proof-keep.png"]);
+  });
+
+  it("stores generic pillar screenshot uploads separately from before/after", () => {
+    const updated = setPillarScreenshotUploads({ segmented: false, items: [] }, [screenshot]);
+
+    expect(pillarScreenshotUploadEnabled(updated)).toBe(true);
+    expect(getPillarScreenshots(updated, "general")).toEqual([screenshot]);
+    expect(getPillarScreenshots(updated, "before")).toEqual([]);
   });
 });

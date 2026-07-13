@@ -54,6 +54,7 @@ export function PersonnelClient({
   const [portalAccounts, setPortalAccounts] = useState<PortalAccountRow[]>([]);
   const [rosterCompanies, setRosterCompanies] = useState<RosterCompany[]>([]);
   const [roleBusyId, setRoleBusyId] = useState<string | null>(null);
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   const [reconcileBusy, setReconcileBusy] = useState(false);
   const [pendingAccountRequests, setPendingAccountRequests] = useState<PendingAccountRequestRow[]>([]);
   const [requestReviewBusyId, setRequestReviewBusyId] = useState<string | null>(null);
@@ -205,6 +206,24 @@ export function PersonnelClient({
     };
     setTeams(data.teams ?? []);
     setPersonnel(data.personnel ?? []);
+  }
+
+  async function deletePortalAccount(portalAccountId: string) {
+    if (!window.confirm("Permanently delete this user and all associated data? This cannot be undone.")) return;
+    setError(null);
+    setDeleteBusyId(portalAccountId);
+    try {
+      const res = await fetch(`/api/admin/portal-accounts/${portalAccountId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? "Could not delete portal account.");
+        return;
+      }
+      await loadRoles();
+      await load();
+    } finally {
+      setDeleteBusyId(null);
+    }
   }
 
   async function removeFromRoster(portalAccountId: string, agentId: string | null) {
@@ -809,18 +828,28 @@ export function PersonnelClient({
                                 )}
                               </td>
                               <td className="px-2 py-1 text-right">
-                                {a.agentId ? (
-                                  <button
-                                    type="button"
-                                    disabled={roleBusyId === a.id}
-                                    onClick={() => void removeFromRoster(a.id, a.agentId)}
-                                    className="rounded-md border border-zinc-300 bg-transparent px-2 py-0.5 text-[10px] font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-500 dark:text-zinc-200 dark:hover:border-zinc-400 dark:hover:bg-zinc-800/50"
-                                  >
-                                    Remove
-                                  </button>
-                                ) : (
-                                  <span className="text-[10px] text-zinc-500">—</span>
-                                )}
+                                <div className="flex items-center justify-end gap-1">
+                                  {a.agentId ? (
+                                    <button
+                                      type="button"
+                                      disabled={roleBusyId === a.id || deleteBusyId === a.id}
+                                      onClick={() => void removeFromRoster(a.id, a.agentId)}
+                                      className="rounded-md border border-zinc-300 bg-transparent px-2 py-0.5 text-[10px] font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-500 dark:text-zinc-200 dark:hover:border-zinc-400 dark:hover:bg-zinc-800/50"
+                                    >
+                                      Remove
+                                    </button>
+                                  ) : null}
+                                  {canManagePortalAccounts ? (
+                                    <button
+                                      type="button"
+                                      disabled={deleteBusyId === a.id}
+                                      onClick={() => void deletePortalAccount(a.id)}
+                                      className="rounded-md border border-red-300 bg-transparent px-2 py-0.5 text-[10px] font-medium text-red-700 transition hover:border-red-400 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/50 dark:text-red-300 dark:hover:border-red-400 dark:hover:bg-red-950/30"
+                                    >
+                                      {deleteBusyId === a.id ? "…" : "Delete"}
+                                    </button>
+                                  ) : null}
+                                </div>
                               </td>
                             </tr>
                           ))

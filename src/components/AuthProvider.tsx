@@ -6,6 +6,7 @@ import type { Session } from "next-auth";
 import { SessionProvider, signOut, useSession } from "next-auth/react";
 import { PendingConfirmationLoginModal } from "@/components/portal/PendingConfirmationLoginModal";
 import { SessionExpiryGuard } from "@/components/SessionExpiryGuard";
+import { UsernameSetupDialog } from "@/components/UsernameSetupDialog";
 
 const DEV_SESSION_RESET_ENABLED = false;
 
@@ -65,6 +66,7 @@ export function AuthProvider({
       </Suspense>
       <DevSessionReset />
       <PendingConfirmationLoginModal />
+      <UsernameSetupDialog />
       {children}
     </SessionProvider>
   );

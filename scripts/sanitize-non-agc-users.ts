@@ -9,7 +9,7 @@
  *   npx tsx scripts/sanitize-non-agc-users.ts --confirm
  */
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 

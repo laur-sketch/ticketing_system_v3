@@ -1,6 +1,6 @@
 "use client";
 
-import type { Ticket, TicketFeedback } from "@prisma/client";
+import type { Ticket, TicketFeedback } from "@prisma/client/primary";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";

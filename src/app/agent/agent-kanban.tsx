@@ -7,7 +7,7 @@ import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
-import type { TicketStatus } from "@prisma/client";
+import type { TicketStatus } from "@prisma/client/primary";
 import { cn } from "@/lib/cn";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";

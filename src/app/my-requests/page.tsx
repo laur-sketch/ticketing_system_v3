@@ -1,4 +1,4 @@
-import type { TicketPriority, TicketStatus } from "@prisma/client";
+import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Plus, Search } from "lucide-react";

@@ -1,10 +1,8 @@
-import type { Agent, Team } from "@prisma/client";
+import type { Agent, Team } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
+import { normalizePersonName } from "@/lib/person-name";
 
-/** Normalize display name for loose matching (same as personnel screens). */
-export function normalizePersonName(v: string) {
-  return v.trim().toLowerCase().replace(/\s+/g, " ");
-}
+export { normalizePersonName };
 
 /** Same identity check as pickCanonicalAgentForPortal (email first, then normalized name). */
 export function agentMatchesPortalStaff<

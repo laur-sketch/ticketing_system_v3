@@ -8,6 +8,7 @@ import {
   combinedPersonnelEfficiency,
   mergePersonnelMetricCards,
   normalizePersonnelTaskTotals,
+  personnelEfficiencyBracket,
 } from "@/lib/task-personnel-metrics";
 import type { TaskChecklistPillarMetrics } from "@/lib/kpis";
 
@@ -195,6 +196,18 @@ describe("combinedPersonnelEfficiency", () => {
       }),
     ).toBe(86);
   });
+
+  it("never returns an average below the 50% floor", () => {
+    expect(
+      combinedPersonnelEfficiency({
+        id: "a1",
+        name: "Alex",
+        role: "Assignee",
+        tickets: { closed: 1, pending: 9, efficiency: 10 },
+        tasks: { closed: 0, pending: 5, efficiency: 0, pillarsContributed: 1 },
+      }),
+    ).toBe(50);
+  });
 });
 
 describe("mergePersonnelMetricCards", () => {
@@ -220,5 +233,18 @@ describe("mergePersonnelMetricCards", () => {
       tickets: { closed: 5, pending: 2, efficiency: 71 },
       tasks: { closed: 3, pending: 1, efficiency: 100, pillarsContributed: 1 },
     });
+  });
+});
+
+describe("personnelEfficiencyBracket", () => {
+  it("maps average efficiency to color-coded bracket labels", () => {
+    expect(personnelEfficiencyBracket(95).label).toBe("Outstanding");
+    expect(personnelEfficiencyBracket(100).label).toBe("Outstanding");
+    expect(personnelEfficiencyBracket(94).label).toBe("Good");
+    expect(personnelEfficiencyBracket(88).label).toBe("Good");
+    expect(personnelEfficiencyBracket(87).label).toBe("Satisfactory");
+    expect(personnelEfficiencyBracket(75).label).toBe("Satisfactory");
+    expect(personnelEfficiencyBracket(74).label).toBe("Needs Improvement");
+    expect(personnelEfficiencyBracket(0).label).toBe("Needs Improvement");
   });
 });

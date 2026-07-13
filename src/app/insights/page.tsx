@@ -2,8 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardList } from "lucide-react";
-import { KINETIC_PALETTE, pieChartColor } from "@/lib/kinetic-palette";
+
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/cn";
@@ -19,7 +18,8 @@ import {
 } from "@/components/metrics/MetricsCharts";
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { PersonnelTaskMetricsGrid } from "@/components/metrics/PersonnelTaskMetricsGrid";
-import { aggregatePersonnelTaskMetrics, mergePersonnelMetricCards } from "@/lib/task-personnel-metrics";
+import { aggregatePersonnelTaskMetrics, applyDelayPenaltiesToPersonnelTasks, mergePersonnelMetricCards } from "@/lib/task-personnel-metrics";
+import type { PersonnelDelayPenaltyRow } from "@/lib/task-personnel-metrics";
 import type { PersonnelTicketMetric } from "@/lib/kpis";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 import { DEFAULT_TIME_ZONE, type KpiFrequencyCode, isKpiMetricsWorkingYmd } from "@/lib/kpi-recurrence";
@@ -74,30 +74,9 @@ type KpiPayload = {
   };
 };
 
-type TaskProjectTrackerOptions = {
-  projects: Array<{ name: string }>;
-  companies: Array<{ id: string; name: string }>;
-  tasks: Array<{
-    id: string;
-    rowType: "task" | "project";
-    taskId: string;
-    projectName: string;
-    companyId: string | null;
-    companyName: string;
-    taskDescription: string;
-    assigneeName: string | null;
-    priority: "High" | "Medium" | "Low";
-    status: "Pending" | "On Going" | "Finalizing" | "Done";
-    startDate: string | null;
-    dueDate: string | null;
-    completion: number;
-    hours: number | null;
-  }>;
-};
-
 type TaskMetricsViewMode = "company" | "personnel";
 
-type InsightsTab = "ticket-metrics" | "task-metrics" | "task-project-tracker" | "kpi-mgmt";
+type InsightsTab = "ticket-metrics" | "task-metrics" | "kpi-mgmt";
 
 function formatDuration(ms: number | null) {
   if (ms === null) return "—";
@@ -109,29 +88,6 @@ function formatDuration(ms: number | null) {
 function pct(n: number | null) {
   if (n === null) return "—";
   return `${Math.round(n * 1000) / 10}%`;
-}
-
-function formatTrackerHours(hours: number | null | undefined) {
-  if (typeof hours !== "number" || !Number.isFinite(hours)) return "—";
-  return `${hours.toFixed(1)}h`;
-}
-
-function formatMonthNameDate(value: string | Date | null | undefined) {
-  if (!value) return "—";
-  const timeZone = value instanceof Date ? DEFAULT_TIME_ZONE : "UTC";
-  const date =
-    value instanceof Date
-      ? value
-      : /^\d{4}-\d{2}-\d{2}$/.test(value)
-        ? new Date(`${value}T12:00:00Z`)
-        : new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone,
-  });
 }
 
 export default function InsightsPage() {
@@ -178,11 +134,12 @@ export default function InsightsPage() {
   const [taskMetricsUserSupport, setTaskMetricsUserSupport] = useState<TaskMetricsUserSupportTickets | null>(
     null,
   );
-  const [taskMetricCompanies, setTaskMetricCompanies] = useState<TaskProjectTrackerOptions["companies"]>([]);
+  const [taskMetricCompanies, setTaskMetricCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedTaskMetricCompany, setSelectedTaskMetricCompany] = useState("");
   const [selectedTicketMetricCompany, setSelectedTicketMetricCompany] = useState("");
   const [taskChecklistPillars, setTaskChecklistPillars] = useState<TaskChecklistPillarMetrics | null>(null);
   const [personnelTicketMetrics, setPersonnelTicketMetrics] = useState<PersonnelTicketMetric[]>([]);
+  const [personnelDelayPenalties, setPersonnelDelayPenalties] = useState<PersonnelDelayPenaltyRow[]>([]);
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
   const [taskMetricsViewMode, setTaskMetricsViewMode] = useState<TaskMetricsViewMode>("company");
@@ -233,6 +190,7 @@ export default function InsightsPage() {
         setTaskMetricsUserSupport(null);
         setTaskChecklistPillars(null);
         setPersonnelTicketMetrics([]);
+        setPersonnelDelayPenalties([]);
         return;
       }
       const json = (await res.json()) as {
@@ -240,11 +198,13 @@ export default function InsightsPage() {
         taskMetricsUserSupport: TaskMetricsUserSupportTickets;
         taskChecklistPillars: TaskChecklistPillarMetrics;
         personnelTicketMetrics: PersonnelTicketMetric[];
+        personnelDelayPenalties?: PersonnelDelayPenaltyRow[];
       };
       setTaskMetricsHelpdesk(json.taskMetricsHelpdesk);
       setTaskMetricsUserSupport(json.taskMetricsUserSupport);
       setTaskChecklistPillars(json.taskChecklistPillars);
       setPersonnelTicketMetrics(json.personnelTicketMetrics ?? []);
+      setPersonnelDelayPenalties(json.personnelDelayPenalties ?? []);
     } finally {
       setTaskMetricsLoading(false);
     }
@@ -284,7 +244,7 @@ export default function InsightsPage() {
   }, [activeTab, loadKpis]);
 
   useEffect(() => {
-    if (activeTab !== "task-metrics" && activeTab !== "task-project-tracker") {
+    if (activeTab !== "task-metrics") {
       return;
     }
     queueMicrotask(() => void loadTaskMetrics());
@@ -296,7 +256,7 @@ export default function InsightsPage() {
     async function loadTaskMetricCompanies() {
       const res = await fetch("/api/kpis/task-project-tracker-options", { cache: "no-store" });
       if (!res.ok) return;
-      const json = (await res.json()) as TaskProjectTrackerOptions;
+      const json = (await res.json()) as { companies: Array<{ id: string; name: string }> };
       if (cancelled) return;
       setTaskMetricCompanies(json.companies ?? []);
       setSelectedTaskMetricCompany((current) => {
@@ -320,7 +280,7 @@ export default function InsightsPage() {
     function onVisibility() {
       if (
         document.visibilityState === "visible" &&
-        (activeTab === "task-metrics" || activeTab === "task-project-tracker")
+        activeTab === "task-metrics"
       ) {
         void loadTaskMetrics();
       }
@@ -330,7 +290,7 @@ export default function InsightsPage() {
   }, [activeTab, loadTaskMetrics]);
 
   useEffect(() => {
-    if (activeTab !== "task-metrics" && activeTab !== "task-project-tracker") {
+    if (activeTab !== "task-metrics") {
       return;
     }
     const id = setInterval(() => void loadTaskMetrics(), 15_000);
@@ -341,7 +301,7 @@ export default function InsightsPage() {
     if (!showKpiTasksTab && activeTab === "kpi-mgmt") {
       queueMicrotask(() => setActiveTab("ticket-metrics"));
     }
-    if (!showTaskReportingTabs && (activeTab === "task-metrics" || activeTab === "task-project-tracker")) {
+    if (!showTaskReportingTabs && activeTab === "task-metrics") {
       queueMicrotask(() => setActiveTab("ticket-metrics"));
     }
   }, [showKpiTasksTab, showTaskReportingTabs, activeTab]);
@@ -402,14 +362,9 @@ export default function InsightsPage() {
               {isPersonnel ? "My Ticket Metrics and Reports" : "Ticket Metrics and Reports"}
             </TabsTrigger>
             {showTaskReportingTabs ? (
-              <>
-                <TabsTrigger value="task-project-tracker" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                  Task &amp; Project Tracker
-                </TabsTrigger>
-                <TabsTrigger value="task-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                  Task Metrics
-                </TabsTrigger>
-              </>
+              <TabsTrigger value="task-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+                Task Metrics
+              </TabsTrigger>
             ) : null}
             {showKpiTasksTab ? (
               <TabsTrigger value="kpi-mgmt" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
@@ -435,6 +390,7 @@ export default function InsightsPage() {
           <TaskMetricsPanel
             checklistPillars={taskChecklistPillars}
             personnelTicketMetrics={personnelTicketMetrics}
+            personnelDelayPenalties={personnelDelayPenalties}
             helpdeskTickets={taskMetricsHelpdesk}
             userSupportTickets={taskMetricsUserSupport}
             loading={taskMetricsLoading}
@@ -454,18 +410,10 @@ export default function InsightsPage() {
             lockCompanySelection={isCompanyScopedAdmin}
             metricsViewMode={taskMetricsViewMode}
             onMetricsViewModeChange={setTaskMetricsViewMode}
-            allowAllCompaniesInPersonnel={!isCompanyScopedAdmin}
+            allowAllCompaniesInPersonnel={true}
           />
         </div>
-      ) : activeTab === "task-project-tracker" && showTaskReportingTabs ? (
-        <TaskProjectTrackerPanel
-          loading={taskMetricsLoading}
-          taskMetricsCadence={taskMetricsCadence}
-          dailyDate={taskMetricsDailyDate}
-          rangeFrom={taskMetricsFrom}
-          rangeTo={taskMetricsTo}
-          lockCompanySelection={isCompanyScopedAdmin}
-        />
+      
       ) : (
         <div className="space-y-8">
           {!data ? (
@@ -723,455 +671,12 @@ function CompanyValueLabel({
   );
 }
 
-function TaskProjectTrackerPanel({
-  loading,
-  taskMetricsCadence,
-  dailyDate,
-  rangeFrom,
-  rangeTo,
-  lockCompanySelection,
-}: {
-  loading: boolean;
-  taskMetricsCadence: KpiFrequencyCode;
-  dailyDate: string;
-  rangeFrom: string;
-  rangeTo: string;
-  lockCompanySelection: boolean;
-}) {
-  const reportingPeriodLabel = formatTaskMetricsPeriodLabel(taskMetricsCadence, {
-    dailyDate,
-    rangeFrom,
-    rangeTo,
-  });
-  const [trackerOptions, setTrackerOptions] = useState<TaskProjectTrackerOptions>({
-    projects: [{ name: "IT PROJECT IMPLEMENTATION" }],
-    companies: [],
-    tasks: [],
-  });
-  const allProjectsValue = "ALL";
-  const [selectedProject, setSelectedProject] = useState(allProjectsValue);
-  const [selectedCompany, setSelectedCompany] = useState("");
-  const [detailsView, setDetailsView] = useState<"task" | "project">("task");
-  const [currentDate, setCurrentDate] = useState(() => new Date());
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadOptions() {
-      const res = await fetch("/api/kpis/task-project-tracker-options", { cache: "no-store" });
-      if (!res.ok) return;
-      const json = (await res.json()) as TaskProjectTrackerOptions;
-      if (cancelled) return;
-      setTrackerOptions(json);
-      setSelectedProject((current) => {
-        if (current === allProjectsValue) return current;
-        if (json.projects.some((project) => project.name === current)) return current;
-        return allProjectsValue;
-      });
-      setSelectedCompany((current) => {
-        if (json.companies.some((company) => company.id === current)) return current;
-        return json.companies[0]?.id ?? "";
-      });
-    }
-    void loadOptions();
-    const id = window.setInterval(() => void loadOptions(), 15_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setCurrentDate(new Date()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
-
-  const projectTableRows = trackerOptions.tasks.filter((task) => {
-    if (selectedProject !== allProjectsValue && task.projectName !== selectedProject) return false;
-    if (selectedCompany && task.companyId !== selectedCompany) return false;
-    return true;
-  });
-  const detailTableRows = projectTableRows.filter((task) => task.rowType === detailsView);
-  const detailTotal = detailTableRows.length;
-  const detailDone = detailTableRows.filter((task) => task.completion === 100).length;
-  const detailMissing = Math.max(0, detailTotal - detailDone);
-  const detailPercent =
-    detailTotal > 0 ? Math.round(detailTableRows.reduce((sum, task) => sum + task.completion, 0) / detailTotal) : 0;
-  const titleColumnLabel = detailsView === "project" ? "Project Title" : "Task Title";
-  const projectTotal = projectTableRows.length;
-  const projectDone = projectTableRows.filter((task) => task.completion === 100).length;
-  const projectInProgress = projectTableRows.filter((task) => task.completion === 50 || task.completion === 75).length;
-  const projectNotStarted = projectTableRows.filter((task) => task.completion < 50).length;
-  const projectMissing = Math.max(0, projectTotal - projectDone);
-  const projectSegments = [
-    { label: "Project completed", value: projectDone, color: KINETIC_PALETTE.accentTealBright },
-    { label: "In progress", value: projectInProgress, color: KINETIC_PALETTE.brand },
-    { label: "Pending", value: projectNotStarted, color: KINETIC_PALETTE.brandSoft },
-  ].filter((segment) => segment.value > 0);
-  const employeeCompletionRows = Array.from(
-    projectTableRows.reduce((map, task) => {
-      const key = task.assigneeName?.trim() || "Unassigned";
-      const current = map.get(key) ?? { totalCompletion: 0, count: 0 };
-      map.set(key, {
-        totalCompletion: current.totalCompletion + task.completion,
-        count: current.count + 1,
-      });
-      return map;
-    }, new Map<string, { totalCompletion: number; count: number }>()),
-  )
-    .map(([label, value]) => ({
-      label,
-      value: value.count > 0 ? Math.round(value.totalCompletion / value.count) : 0,
-      taskCount: value.count,
-    }))
-    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-  const companyTaskSegments = Array.from(
-    projectTableRows.reduce((map, task) => {
-      const key = task.companyName || "Unassigned company";
-      map.set(key, (map.get(key) ?? 0) + 1);
-      return map;
-    }, new Map<string, number>()),
-  ).map(([label, value], index) => ({
-    label,
-    value,
-    color: pieChartColor(index),
-  }));
-
-  return (
-    <section className="space-y-5 rounded-[1.75rem] border border-zinc-200 bg-zinc-50 p-3 shadow-[0_18px_60px_rgba(15,23,42,0.10)] dark:border-zinc-800 dark:bg-[#070707] sm:p-4 xl:p-5">
-      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#090909]">
-        <div className="border-b border-zinc-200 bg-white px-4 py-3 text-zinc-900 dark:border-zinc-800 dark:bg-[#0d0d0d] dark:text-zinc-100 sm:px-5">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/25 dark:bg-orange-500/10 dark:text-orange-300">
-                <ClipboardList className="size-5" aria-hidden />
-              </span>
-              <div className="min-w-0">
-                <p className="text-xl font-black uppercase tracking-tight sm:text-2xl">Task &amp; Project Tracker</p>
-                <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
-                  {loading ? "Refreshing" : reportingPeriodLabel}
-                </p>
-              </div>
-            </div>
-            <div className="grid gap-2 text-xs sm:grid-cols-3 xl:min-w-[34rem]">
-              <label className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
-                Select Task/Project
-                <select
-                  value={selectedProject}
-                  onChange={(e) => setSelectedProject(e.target.value)}
-                  className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
-                >
-                  <option value={allProjectsValue}>All Tasks/Projects</option>
-                  {trackerOptions.projects.map((project) => (
-                    <option key={project.name} value={project.name}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {lockCompanySelection ? (
-                <CompanyValueLabel
-                  label="Company"
-                  value={
-                    trackerOptions.companies.find((company) => company.id === selectedCompany)?.name ??
-                    "No assigned company"
-                  }
-                  className="rounded-lg border border-zinc-200 bg-zinc-50 p-2 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70"
-                  valueClassName="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-950"
-                />
-              ) : (
-                <label className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
-                  Select Company
-                  <select
-                    value={selectedCompany}
-                    onChange={(e) => setSelectedCompany(e.target.value)}
-                    className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 outline-none focus:border-orange-400/70 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50"
-                  >
-                    {trackerOptions.companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <div className="flex flex-col rounded-lg border border-zinc-200 bg-zinc-50 p-2 font-bold tracking-[0.08em] text-zinc-600 shadow-inner dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-400">
-                Today&apos;s date
-                <span className="mt-1 rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50">
-                  {formatMonthNameDate(currentDate)}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-3 bg-zinc-50 p-4 sm:grid-cols-2 xl:grid-cols-4 xl:p-5 dark:bg-[#0d0d0d]">
-          <EfficiencyStatCard
-            label="Total tasks"
-            value={String(projectTotal)}
-            tone="neutral"
-          />
-          <EfficiencyStatCard
-            label="Completed tasks"
-            value={String(projectDone)}
-            tone="green"
-          />
-          <EfficiencyStatCard
-            label="In progress"
-            value={String(projectInProgress)}
-            tone="orange"
-          />
-          <EfficiencyStatCard
-            label="Pending tasks"
-            value={String(projectMissing)}
-            tone="amber"
-          />
-        </div>
-      </div>
-
-      <div className={cn("grid items-start gap-4 xl:grid-cols-[1fr_1.18fr_1fr]", loading && "opacity-60")}>
-        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
-          <MetricsPieChart
-            title="Task status breakdown"
-            itemsLabel={(n) => `${n} task item${n === 1 ? "" : "s"}`}
-            emptyDescription="No task work found for this period."
-            showPercentages
-            donut
-            pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
-            segments={projectSegments}
-          />
-        </section>
-
-        <section className="min-w-0 rounded-2xl border border-orange-200/70 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-orange-500/20 dark:bg-[#0a0a0a]">
-          <EmployeeCompletionProgressChart
-            title="Completion % by employee"
-            emptyDescription="Assign IT project tasks to personnel to show employee completion."
-            rows={employeeCompletionRows}
-          />
-        </section>
-
-        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-[#0a0a0a]">
-          <MetricsPieChart
-            title="Task by company"
-            itemsLabel={(n) => `${n} task${n === 1 ? "" : "s"}`}
-            emptyDescription="No company-scoped IT project tasks in this filter."
-            showPercentages
-            donut
-            pieClassName="h-40 w-40 2xl:h-48 2xl:w-48"
-            segments={companyTaskSegments}
-          />
-        </section>
-      </div>
-
-      <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_12px_36px_rgba(15,23,42,0.08)] dark:border-zinc-800 dark:bg-[#080808]">
-        <div className="flex flex-col gap-3 border-b border-zinc-200 bg-zinc-50 px-4 py-4 sm:flex-row sm:items-end sm:justify-between dark:border-zinc-800 dark:bg-zinc-950/70">
-          <div>
-            <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-              Task/project details
-            </h3>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
-            <Tabs value={detailsView} onValueChange={(value) => setDetailsView(value as typeof detailsView)}>
-              <TabsList className="mr-1 rounded-full border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-zinc-950">
-                <TabsTrigger value="task" className="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                  Tasks
-                </TabsTrigger>
-                <TabsTrigger value="project" className="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                  Project Tasks
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">
-              {detailPercent}% complete
-            </span>
-            <span className="rounded-full bg-orange-100 px-3 py-1 text-orange-800 dark:bg-orange-500/15 dark:text-orange-200">
-              {detailMissing} pending
-            </span>
-          </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1280px] table-fixed divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800 xl:text-xs">
-            <colgroup>
-              <col className="w-[6%]" />
-              <col className="w-[16%]" />
-              <col className="w-[8%]" />
-              <col className="w-[11%]" />
-              <col className="w-[18%]" />
-              <col className="w-[7%]" />
-              <col className="w-[8%]" />
-              <col className="w-[7%]" />
-              <col className="w-[7%]" />
-              <col className="w-[7%]" />
-              <col className="w-[5%]" />
-            </colgroup>
-            <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-[0.1em] text-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-500">
-              <tr>
-                <th className="px-2.5 py-3">Task ID</th>
-                <th className="px-2.5 py-3">{titleColumnLabel}</th>
-                <th className="px-2.5 py-3">Company</th>
-                <th className="px-2.5 py-3">Assignee</th>
-                <th className="px-2.5 py-3">Task description</th>
-                <th className="px-2.5 py-3">Priority</th>
-                <th className="px-2.5 py-3">Status</th>
-                <th className="px-2.5 py-3">Start date</th>
-                <th className="px-2.5 py-3">Due date</th>
-                <th className="px-2.5 py-3">Completion</th>
-                <th className="px-2.5 py-3 text-center">Hours</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
-              {detailTotal > 0 ? (
-                detailTableRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                    <td className="break-words px-2.5 py-3 font-mono font-bold text-zinc-700 dark:text-zinc-300">{row.taskId}</td>
-                    <td className="whitespace-normal break-normal px-2.5 py-3 font-semibold text-zinc-900 dark:text-zinc-100">{row.projectName}</td>
-                    <td className="break-words px-2.5 py-3 text-zinc-600 dark:text-zinc-400">{row.companyName}</td>
-                    <td className="break-words px-2.5 py-3 font-semibold text-zinc-700 dark:text-zinc-300">{row.assigneeName ?? "Unassigned"}</td>
-                    <td className="break-words px-2.5 py-3 text-zinc-700 dark:text-zinc-300">{row.taskDescription}</td>
-                    <td className="px-2.5 py-3">
-                      <span
-                        className={cn(
-                          "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase",
-                          row.priority === "High"
-                            ? "bg-blue-500/10 text-blue-500 dark:bg-blue-500/20 dark:text-blue-300"
-                            : row.priority === "Low"
-                              ? "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
-                              : "bg-orange-500/10 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
-                        )}
-                      >
-                        {row.priority}
-                      </span>
-                    </td>
-                    <td className="break-words px-2.5 py-3 text-zinc-600 dark:text-zinc-400">{row.status}</td>
-                    <td className="break-words px-2.5 py-3 font-mono text-zinc-600 dark:text-zinc-400">{formatMonthNameDate(row.startDate)}</td>
-                    <td className="break-words px-2.5 py-3 font-mono text-zinc-600 dark:text-zinc-400">{formatMonthNameDate(row.dueDate)}</td>
-                    <td className="px-2.5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                          <div className="h-full rounded-full bg-orange-500" style={{ width: `${row.completion}%` }} />
-                        </div>
-                        <span className="font-mono text-xs font-bold text-orange-700 dark:text-orange-300">{row.completion}%</span>
-                      </div>
-                    </td>
-                    <td className="px-2.5 py-3 text-center font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{formatTrackerHours(row.hours)}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td className="px-4 py-14 text-center text-sm text-zinc-600 dark:text-zinc-500 sm:px-6" colSpan={11}>
-                    {detailsView === "project"
-                      ? "No IT Project Implementation rows available for this filter yet."
-                      : "No task rows available for this filter yet."}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </section>
-  );
-}
-
-function EmployeeCompletionProgressChart({
-  title,
-  rows,
-  emptyDescription,
-}: {
-  title: string;
-  rows: { label: string; value: number; taskCount: number }[];
-  emptyDescription: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="min-w-0">
-        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-500">{title}</p>
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="mt-6 rounded-xl border border-dashed border-zinc-300 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-          {emptyDescription}
-        </p>
-      ) : (
-        <div className="mt-5 space-y-3">
-          {rows.map((row) => {
-            const percent = Math.max(0, Math.min(100, row.value));
-            return (
-              <div
-                key={row.label}
-                className="grid grid-cols-[minmax(8rem,0.9fr)_minmax(9rem,1.4fr)_3.5rem] items-center gap-3 text-xs"
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-zinc-900 dark:text-zinc-100" title={row.label}>
-                    {row.label}
-                  </p>
-                  <p className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    {row.taskCount} task{row.taskCount === 1 ? "" : "s"}
-                  </p>
-                </div>
-                <div
-                  className="relative h-3 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
-                  aria-label={`${row.label} completion ${percent}%`}
-                >
-                  {percent === 0 ? <span className="absolute left-0 top-0 h-full w-1.5 rounded-full bg-orange-500/70" /> : null}
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-[width]",
-                      percent === 100
-                        ? "bg-gradient-to-r from-emerald-500 to-emerald-400"
-                        : "bg-gradient-to-r from-orange-700 to-orange-500",
-                    )}
-                    style={{ width: `${percent}%` }}
-                  />
-                </div>
-                <span className="text-right font-mono font-bold tabular-nums text-orange-700 dark:text-orange-300">
-                  {percent}%
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EfficiencyStatCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "neutral" | "green" | "amber" | "orange";
-}) {
-  const accentClass =
-    tone === "green"
-      ? "from-emerald-500 to-emerald-400"
-      : tone === "amber"
-        ? "from-amber-500 to-orange-400"
-        : tone === "orange"
-          ? "from-orange-500 to-orange-300"
-          : "from-zinc-500 to-zinc-300";
-  const valueClass =
-    tone === "green"
-      ? "text-emerald-700 dark:text-emerald-300"
-      : tone === "amber"
-        ? "text-amber-700 dark:text-amber-300"
-        : tone === "orange"
-          ? "text-orange-700 dark:text-orange-300"
-          : "text-zinc-900 dark:text-zinc-50";
-  return (
-    <article className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#111111]">
-      <span className={cn("absolute inset-x-0 top-0 h-1 bg-gradient-to-r", accentClass)} aria-hidden />
-      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">{label}</p>
-      <p className={cn("mt-2 text-3xl font-black tabular-nums", valueClass)}>{value}</p>
-    </article>
-  );
-}
 
 function TaskMetricsPanel({
   checklistPillars,
   personnelTicketMetrics,
+  personnelDelayPenalties,
   helpdeskTickets,
   userSupportTickets,
   loading,
@@ -1195,6 +700,7 @@ function TaskMetricsPanel({
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   personnelTicketMetrics: PersonnelTicketMetric[];
+  personnelDelayPenalties: PersonnelDelayPenaltyRow[];
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
   loading: boolean;
@@ -1208,7 +714,7 @@ function TaskMetricsPanel({
   onRangeFromChange: (v: string) => void;
   onRangeToChange: (v: string) => void;
   reportingTimeZone: string;
-  companies: TaskProjectTrackerOptions["companies"];
+  companies: Array<{ id: string; name: string }>;
   selectedCompany: string;
   onSelectedCompanyChange: (v: string) => void;
   lockCompanySelection: boolean;
@@ -1231,10 +737,13 @@ function TaskMetricsPanel({
   const personnelRows = useMemo(
     () =>
       mergePersonnelMetricCards(
-        aggregatePersonnelTaskMetrics(checklistPillars),
+        applyDelayPenaltiesToPersonnelTasks(
+          aggregatePersonnelTaskMetrics(checklistPillars),
+          personnelDelayPenalties,
+        ),
         personnelTicketMetrics,
       ),
-    [checklistPillars, personnelTicketMetrics],
+    [checklistPillars, personnelTicketMetrics, personnelDelayPenalties],
   );
   const selectedCompanyName =
     selectedCompany === ""

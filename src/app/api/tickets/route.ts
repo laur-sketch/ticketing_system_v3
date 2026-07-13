@@ -1,5 +1,5 @@
-import type { Prisma } from "@prisma/client";
-import { TicketCategory, TicketPriority } from "@prisma/client";
+import type { Prisma } from "@prisma/client/primary";
+import { TicketCategory, TicketPriority } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {

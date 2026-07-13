@@ -1,5 +1,5 @@
-import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
+import { verifyPortalPassword } from "@/lib/auth/portal-password";
 import { prisma } from "@/lib/prisma";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -13,8 +13,8 @@ export async function PATCH(req: Request) {
   const newEmail = body.newEmail?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
 
-  if (!newEmail || !password || !newEmail.includes("@")) {
-    return NextResponse.json({ error: "New email and current password are required." }, { status: 400 });
+  if (!newEmail || !newEmail.includes("@")) {
+    return NextResponse.json({ error: "New email is required." }, { status: 400 });
   }
 
   const currentEmail = session.user.email.toLowerCase();
@@ -30,9 +30,12 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Portal account not found." }, { status: 404 });
   }
 
-  const passwordOk = await bcrypt.compare(password, portal.passwordHash);
-  if (!passwordOk) {
-    return NextResponse.json({ error: "Incorrect password." }, { status: 403 });
+  const auth = await verifyPortalPassword(portal.passwordHash, password);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: auth.reason === "PASSWORD_REQUIRED" ? "Current password is required." : "Incorrect password." },
+      { status: 403 },
+    );
   }
 
   const existing = await prisma.portalAccount.findUnique({

@@ -6,7 +6,7 @@ import { LandingHeroVisual } from "@/components/landing/LandingHeroVisual";
 import { LandingWorkflowVisual } from "@/components/landing/LandingWorkflowVisual";
 import { LandingGallery } from "@/components/landing/LandingGallery";
 import { TaskCommandLanding } from "@/components/landing/TaskCommandLanding";
-import type { TicketPriority, TicketStatus } from "@prisma/client";
+import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import { BrandLockup } from "@/components/BrandLockup";

@@ -19,6 +19,9 @@ import { IT_PROJECT_IMPLEMENTATION_TITLE } from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { isStaffPortalRole } from "@/lib/staff-role";
+import { TaskStatus } from "@prisma/client/primary";
+
+const TASK_ITEM_PREFIX = "TSK";
 
 function taskPrefixForTitle(title: string) {
   if (title === IT_PROJECT_IMPLEMENTATION_TITLE) return "ITP";
@@ -174,7 +177,7 @@ export async function GET() {
   const restrictToAssignedCompany = session.user.role === "Admin";
   const scopedCompanyId = session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;
 
-  const [taskRows, staffCompanyRows, agents] = await Promise.all([
+  const [taskRows, taskItemRows, staffCompanyRows, agents] = await Promise.all([
     prisma.kpiMaintenance.findMany({
       select: {
         id: true,
@@ -193,6 +196,12 @@ export async function GET() {
         assignedAgent: { select: { id: true, name: true, email: true } },
       },
       orderBy: { createdAt: "desc" },
+    }),
+    prisma.taskItem.findMany({
+      orderBy: { updatedAt: "desc" },
+      include: {
+        assignedAgent: { select: { id: true, name: true, email: true } },
+      },
     }),
     prisma.portalAccount.findMany({
       where: { staffDesignatedCompanyId: { not: null } },
@@ -217,6 +226,7 @@ export async function GET() {
 
   const assigneeEmails = [
     ...taskRows.map((row) => row.assignedAgent?.email?.trim().toLowerCase()),
+    ...taskItemRows.map((row) => row.assignedAgent?.email?.trim().toLowerCase()),
     ...agents.map((agent) => agent.email.trim().toLowerCase()),
   ]
     .filter((email): email is string => Boolean(email));
@@ -242,7 +252,63 @@ export async function GET() {
 
   const prefixCounts = new Map<string, number>();
   const now = new Date();
-  const tasks = taskRows.flatMap<TaskProjectTrackerRow>((row) => {
+
+  function ymdFromDate(date: Date | null | undefined) {
+    if (!date) return null;
+    try { return DateTime.fromJSDate(date).toISODate(); } catch { return null; }
+  }
+
+  function taskItemStatus(status: TaskStatus): string {
+    switch (status) {
+      case "DONE": return "Done";
+      case "DELAYED": return "Delayed";
+      default: return "On Going";
+    }
+  }
+
+  function taskItemCompletion(status: TaskStatus): number {
+    switch (status) {
+      case "DONE": return 100;
+      case "DELAYED": return 25;
+      default: return 50;
+    }
+  }
+
+  function taskItemPriority(priority: string | null): TrackerPriority {
+    if (priority === "High" || priority === "Low") return priority;
+    return "Medium";
+  }
+
+  const taskItemRowsMapped: TaskProjectTrackerRow[] = taskItemRows.map((item) => {
+    const assigneeEmail = item.assignedAgent?.email?.trim().toLowerCase();
+    const company = assigneeEmail ? companyByEmail.get(assigneeEmail) : null;
+    const nextIndex = (prefixCounts.get(TASK_ITEM_PREFIX) ?? 0) + 1;
+    prefixCounts.set(TASK_ITEM_PREFIX, nextIndex);
+    const status = taskItemStatus(item.status as TaskStatus);
+    return {
+      id: `taskitem:${item.id}`,
+      rowType: "task" as const,
+      recordId: item.id,
+      subTaskId: null,
+      taskId: `${TASK_ITEM_PREFIX}-${String(nextIndex).padStart(3, "0")}`,
+      projectName: item.title,
+      companyId: company?.id ?? null,
+      companyName: company?.name ?? "Unassigned company",
+      taskDescription: item.description ?? item.title,
+      assigneeName: item.assignedAgent?.name ?? null,
+      priority: taskItemPriority(item.priority),
+      status,
+      startDate: ymdFromDate(item.createdAt),
+      dueDate: ymdFromDate(item.dueAt),
+      completion: taskItemCompletion(item.status as TaskStatus),
+      hours: null,
+      phaseName: item.title,
+    };
+  });
+
+  const tasks = [
+    ...taskItemRowsMapped,
+    ...taskRows.flatMap<TaskProjectTrackerRow>((row) => {
     const isItProject = row.title === IT_PROJECT_IMPLEMENTATION_TITLE;
     const projectName = isItProject ? row.itProjectName?.trim() || "IT Project Implementation" : row.title.trim();
     const prefix = taskPrefixForTitle(row.title);
@@ -332,7 +398,7 @@ export async function GET() {
         };
       }),
     );
-  });
+  }),];
 
   const scopedTasks = restrictToAssignedCompany ? tasks.filter((task) => task.companyId === scopedCompanyId) : tasks;
   const seenProjects = new Set<string>();
@@ -347,5 +413,6 @@ export async function GET() {
     projects: projects.length > 0 ? projects : [{ name: "IT Project Implementation" }],
     companies,
     tasks: scopedTasks,
+    _debug: { kpiCount: taskRows.length, taskItemCount: taskItemRows.length, taskItemMappedCount: taskItemRowsMapped.length, scopedCount: scopedTasks.length },
   });
 }

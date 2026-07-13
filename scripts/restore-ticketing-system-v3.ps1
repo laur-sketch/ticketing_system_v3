@@ -1,19 +1,40 @@
-# Restores a PostgreSQL CUSTOM-format dump into database ticketing_system_v3.
+# Restores a PostgreSQL dump into an existing database (or recreates the DB if asked).
 # Reads DATABASE_URL from (in order): .env.restore, then .env (app folder).
-# Prerequisites: PostgreSQL client tools (pg_restore/psql), ideally same major as the dump (18).
+# Detects dump format automatically:
+#   - PGDMP header  => pg_restore (pgAdmin "Custom" backup, even if extension is .sql)
+#   - plain text    => psql -f
+# Prerequisites: PostgreSQL client tools (pg_restore/psql), ideally same major as dump (18).
 # Optional: set PG_BIN to your bin folder, e.g. C:\Program Files\PostgreSQL\18\bin
-# Use -RecreateDatabase to DROP (WITH FORCE) + CREATE an empty DB first (avoids "already exists" on re-restore).
+#
+# Examples:
+#   # Full restore into empty DB (or use -RecreateDatabase for a clean slate)
+#   .\scripts\restore-ticketing-system-v3.ps1 -DumpPath "C:\path\ticket_system_v3.sql"
+#
+#   # Merge data into current DB (keeps database; replaces row data in public tables)
+#   .\scripts\restore-ticketing-system-v3.ps1 -DumpPath "C:\path\ticket_system_v3.sql" -MergeDataOnly -TruncatePublicTablesBeforeImport
 
 param(
-  [string]$DumpPath = "c:\Users\tk\Desktop\work\ticket_system_v3.sql",
-  [string]$TargetDatabase = "ticketing_system_v3",
-  [switch]$RecreateDatabase
+  [string]$DumpPath = "C:\Users\jlsms\OneDrive\Desktop\work\ticket_system_v3.sql",
+  [string]$TargetDatabase = "",
+  [switch]$RecreateDatabase,
+  [switch]$MergeDataOnly,
+  [switch]$TruncatePublicTablesBeforeImport
 )
 
 $ErrorActionPreference = "Stop"
 
-if ($TargetDatabase -notmatch '^[a-zA-Z_][a-zA-Z0-9_]*$') {
-  Write-Error "TargetDatabase must be a simple SQL identifier."
+function Get-DumpFormat {
+  param([string]$Path)
+  $bytes = Get-Content -Path $Path -Encoding Byte -TotalCount 5
+  if ($bytes.Count -ge 5 -and [System.Text.Encoding]::ASCII.GetString($bytes) -eq "PGDMP") {
+    return "custom"
+  }
+  return "plain"
+}
+
+function Quote-DbIdentifier {
+  param([string]$Name)
+  return '"' + ($Name -replace '"', '""') + '"'
 }
 
 $AppRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -56,6 +77,13 @@ if ($dbHost -eq 'localhost') {
   $dbHost = '127.0.0.1'
 }
 $dbPort = if ($u.Port -gt 0) { $u.Port.ToString() } else { '5432' }
+if (-not $TargetDatabase) {
+  $dbPath = $u.AbsolutePath.Trim('/')
+  if (-not $dbPath) {
+    Write-Error "DATABASE_URL must include a database name in the path."
+  }
+  $TargetDatabase = [Uri]::UnescapeDataString($dbPath)
+}
 
 $pgBin = $env:PG_BIN
 if (-not $pgBin) {
@@ -76,34 +104,86 @@ if (-not (Test-Path $DumpPath)) {
   Write-Error "Dump file not found: $DumpPath"
 }
 
+$dumpFormat = Get-DumpFormat -Path $DumpPath
+Write-Host ("Dump format detected: {0}" -f $dumpFormat)
+if ($dumpFormat -eq "plain" -and $MergeDataOnly) {
+  Write-Warning "MergeDataOnly is intended for custom-format dumps. Plain SQL may still fail on duplicate keys."
+}
+
+$quotedDb = Quote-DbIdentifier $TargetDatabase
 $env:PGPASSWORD = $dbPass
 try {
-  Write-Host ("Checking database '{0}' (user={1} host={2} port={3})..." -f $TargetDatabase, $dbUser, $dbHost, $dbPort)
+  Write-Host ("Target database '{0}' (user={1} host={2} port={3})..." -f $TargetDatabase, $dbUser, $dbHost, $dbPort)
 
   if ($RecreateDatabase) {
-    Write-Host ("RecreateDatabase: dropping '{0}' if it exists (terminates connections)..." -f $TargetDatabase)
-    $dropOut = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS `"$TargetDatabase`" WITH (FORCE);" 2>&1
+    if ($MergeDataOnly) {
+      Write-Error "Use either -RecreateDatabase or -MergeDataOnly, not both."
+    }
+    Write-Host ("RecreateDatabase: dropping {0} if it exists (terminates connections)..." -f $quotedDb)
+    $dropOut = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $quotedDb WITH (FORCE);" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "DROP DATABASE failed (need superuser): $dropOut" }
-    $out = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE `"$TargetDatabase`" ENCODING 'UTF8';" 2>&1
+    $out = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $quotedDb ENCODING 'UTF8';" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "CREATE DATABASE failed: $out" }
-    Write-Host ("Created fresh database '{0}'." -f $TargetDatabase)
+    Write-Host ("Created fresh database {0}." -f $quotedDb)
   } else {
-    $checkSql = "SELECT 1 FROM pg_database WHERE datname = '$TargetDatabase';"
+    $checkSql = "SELECT 1 FROM pg_database WHERE datname = '$($TargetDatabase -replace "'", "''")';"
     $exists = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -tAc $checkSql 2>&1
     if ($LASTEXITCODE -ne 0) { throw "psql failed: $exists" }
     if ($exists -match "^\s*1\s*$") {
-      Write-Host ("Database '{0}' already exists (use -RecreateDatabase to drop and reload)." -f $TargetDatabase)
+      Write-Host ("Database {0} already exists - keeping it." -f $quotedDb)
     } else {
-      $out = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE `"$TargetDatabase`" ENCODING 'UTF8';" 2>&1
+      $out = & $psql -h $dbHost -p $dbPort -U $dbUser -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $quotedDb ENCODING 'UTF8';" 2>&1
       if ($LASTEXITCODE -ne 0) { throw "CREATE DATABASE failed (need superuser or CREATEDB): $out" }
-      Write-Host ("Created database '{0}'." -f $TargetDatabase)
+      Write-Host ("Created database {0}." -f $quotedDb)
     }
   }
 
-  Write-Host "Running pg_restore (this may take a minute)..."
-  & $pg_restore -h $dbHost -p $dbPort -U $dbUser -d $TargetDatabase --no-owner --no-acl --verbose $DumpPath
-  if ($LASTEXITCODE -ne 0) { throw "pg_restore exited with code $LASTEXITCODE" }
-  Write-Host "Done. Point DATABASE_URL at this database, e.g.:"
+  if ($TruncatePublicTablesBeforeImport) {
+    if (-not $MergeDataOnly) {
+      Write-Error "-TruncatePublicTablesBeforeImport requires -MergeDataOnly."
+    }
+    Write-Host "Truncating all public tables (CASCADE) before data import..."
+    $truncateFile = Join-Path $PSScriptRoot "truncate-public-tables.sql"
+    $truncateOut = & $psql -h $dbHost -p $dbPort -U $dbUser -d $TargetDatabase -v ON_ERROR_STOP=1 -f $truncateFile 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "TRUNCATE failed: $truncateOut" }
+  }
+
+  if ($dumpFormat -eq "custom") {
+    $restoreArgs = @(
+      "-h", $dbHost,
+      "-p", $dbPort,
+      "-U", $dbUser,
+      "-d", $TargetDatabase,
+      "--no-owner",
+      "--no-acl",
+      "--verbose"
+    )
+    if ($MergeDataOnly) {
+      $restoreArgs += @("--data-only", "--disable-triggers")
+      Write-Host "Running pg_restore (data only into existing tables)..."
+    } else {
+      Write-Host "Running pg_restore (schema + data)..."
+      Write-Host "If tables already exist, use -MergeDataOnly -TruncatePublicTablesBeforeImport or -RecreateDatabase."
+    }
+    & $pg_restore @restoreArgs $DumpPath
+    if ($LASTEXITCODE -ne 0) {
+      if ($MergeDataOnly) {
+        Write-Warning "pg_restore finished with errors (often duplicate keys if -TruncatePublicTablesBeforeImport was not used)."
+      } else {
+        throw "pg_restore exited with code $LASTEXITCODE"
+      }
+    }
+  } else {
+    Write-Host "Running psql for plain SQL dump..."
+  if ($MergeDataOnly) {
+      Write-Warning "Plain SQL full dumps usually include CREATE TABLE and fail on existing databases. Prefer re-exporting as Custom format, or restore to an empty DB."
+    }
+    & $psql -h $dbHost -p $dbPort -U $dbUser -d $TargetDatabase -v ON_ERROR_STOP=1 -f $DumpPath
+    if ($LASTEXITCODE -ne 0) { throw "psql exited with code $LASTEXITCODE" }
+  }
+
+  Write-Host "Done."
+  Write-Host "DATABASE_URL:"
   Write-Host "  postgresql://${dbUser}:***@${dbHost}:${dbPort}/${TargetDatabase}?schema=public"
 }
 finally {

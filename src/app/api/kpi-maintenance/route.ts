@@ -1,4 +1,4 @@
-import { KpiFrequency, Prisma } from "@prisma/client";
+import { KpiFrequency, Prisma } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { nextRolloverEligibleAtUtc } from "@/lib/kpi-cycle-state";
@@ -11,10 +11,13 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import {
+  applyPillarOnlyTaskCreate,
   collectAllSubKpiItems,
-  enablePillarScreenshots,
+  collectChecklistProgressItems,
   getPillarScreenshots,
   hasSubKpiAssignedTo,
+  isPillarOnlyTask,
+  pillarScreenshotUploadEnabled,
   pillarScreenshotsEnabled,
   type NormalizedSubKpis,
   type SubKpiItem,
@@ -28,9 +31,12 @@ import {
   setSubKpiItemDone,
   setSubKpiItemScreenshots,
   setSubKpiItemWorkMeta,
+  setTaskCount,
+  setTaskDailyPenaltyAmount,
   setTaskPriority,
   syncScreenshotOnlySubKpiDone,
   syncSubKpiDoneFromRequirements,
+  syncPillarDoneFromRequirements,
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
   appendSubKpiItem,
@@ -58,6 +64,7 @@ import {
   type ItProjectData,
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { prisma } from "@/lib/prisma";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
@@ -67,17 +74,23 @@ import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import {
   hasBeforeAndAfterScreenshots,
   hasNumericalRecord,
+  hasScreenshotUpload,
   normalizeCompletionRequirements,
+  numericalRecordProgressPercent,
   resolveSubKpiCompletionMode,
   resolveSubKpiCompletionRequirements,
   subKpiRequiresCheckbox,
+  subKpiRequiresNumerical,
   subKpiRequiresScreenshots,
+  subKpiRequiresScreenshotUpload,
+  subKpiRequirementsMet,
+  subKpiStoredCompletionRequirements,
   isSubKpiCompletionMode,
   type SubKpiCompletionMode,
   type SubKpiCompletionRequirements,
 } from "@/lib/sub-kpi-completion-mode";
 import { MAX_TASK_SCREENSHOTS_PER_SLOT } from "@/lib/task-screenshot-constants";
-import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
+import type { TaskScreenshotMetaItem, TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 import {
   deleteTaskScreenshotsDir,
   persistTaskScreenshot,
@@ -86,18 +99,30 @@ import {
 
 const allowedFrequencies = new Set(Object.values(KpiFrequency));
 
-function checklistFullyComplete(subKpis: unknown): boolean {
+function checklistFullyComplete(subKpis: unknown, taskTitle?: string): boolean {
   const items = isItProjectEnvelope(subKpis)
     ? itProjectAllItems(parseItProjectSubKpis(subKpis))
-    : collectAllSubKpiItems(normalizeSubKpis(subKpis));
+    : collectChecklistProgressItems(subKpis, taskTitle);
   if (items.length === 0) return false;
-  return items.every((x) => x.done);
+  return items.every((x) => subKpiRequirementsMet(x));
 }
 
 function subKpiScreenshotsRequired(
   item: Pick<SubKpiItem, "completionRequirements" | "completionMode" | "screenshotsEnabled" | "beforeScreenshot" | "afterScreenshot">,
 ): boolean {
   return subKpiRequiresScreenshots(resolveSubKpiCompletionRequirements(item));
+}
+
+function subKpiScreenshotUploadRequired(
+  item: Pick<SubKpiItem, "completionRequirements" | "completionMode" | "screenshotsEnabled" | "beforeScreenshot" | "afterScreenshot">,
+): boolean {
+  return subKpiRequiresScreenshotUpload(resolveSubKpiCompletionRequirements(item));
+}
+
+function subKpiScreenshotList(item: SubKpiItem, slot: TaskScreenshotSlot): TaskScreenshotMetaItem[] {
+  if (slot === "before") return item.beforeScreenshot ?? [];
+  if (slot === "after") return item.afterScreenshot ?? [];
+  return item.uploadScreenshot ?? [];
 }
 
 export async function GET(req: Request) {
@@ -152,7 +177,7 @@ export async function GET(req: Request) {
   });
   if (!perms.canAssignWork) {
     const operatorId = perms.operator?.id ?? null;
-    rows = rows.filter((row) => row.assignedAgentId === operatorId || hasSubKpiAssignedTo(row.subKpis, operatorId));
+    rows = rows.filter((row) => row.assignedAgentId === operatorId);
   }
 
   const now = new Date();
@@ -193,7 +218,7 @@ export async function GET(req: Request) {
       patch.rolledOverIncomplete = false;
     }
 
-    const complete = checklistFullyComplete(row.subKpis);
+    const complete = checklistFullyComplete(row.subKpis, kpiMainTaskLabel(row));
     const staleCycle = currentCycleStart.getTime() > anchor.getTime();
     if (staleCycle) {
       const snapshotPeriodKey =
@@ -284,8 +309,43 @@ export async function GET(req: Request) {
     });
     if (!perms.canAssignWork) {
       const operatorId = perms.operator?.id ?? null;
-      rows = rows.filter((row) => row.assignedAgentId === operatorId || hasSubKpiAssignedTo(row.subKpis, operatorId));
+      rows = rows.filter((row) => row.assignedAgentId === operatorId);
     }
+  }
+
+  // Archive completed non-recurring tasks when the next calendar day has passed
+  const archivedRowIds = new Set<string>();
+  for (const row of rows) {
+    if (row.isRecurring !== false || isItProjectImplementationPillar(row.title)) continue;
+    if (!row.assignedAgentId) continue;
+    if (!row.lastFullCompletionAt) continue;
+    const complete = checklistFullyComplete(row.subKpis, kpiMainTaskLabel(row));
+    if (!complete) continue;
+    const eligible = nextRolloverEligibleAtUtc(row.lastFullCompletionAt, timeZone);
+    if (!eligible || now.getTime() < eligible.getTime()) continue;
+    // Take a period snapshot to archive the completed state
+    await upsertKpiPeriodSnapshot(
+      {
+        id: row.id,
+        title: row.title,
+        frequency: row.frequency,
+        subKpis: row.subKpis,
+        periodKey: row.periodKey,
+        recurrenceWeekday: row.recurrenceWeekday,
+        recurrenceMonthDay: row.recurrenceMonthDay,
+        periodCycleStartAt: row.periodCycleStartAt,
+        isRecurring: false,
+        assignedAgent: row.assignedAgent
+          ? { id: row.assignedAgent.id, name: row.assignedAgent.name }
+          : null,
+      },
+      timeZone,
+      row.lastFullCompletionAt,
+    );
+    archivedRowIds.add(row.id);
+  }
+  if (archivedRowIds.size > 0) {
+    rows = rows.filter((r) => !archivedRowIds.has(r.id));
   }
 
   return NextResponse.json({
@@ -335,7 +395,6 @@ export async function POST(req: Request) {
       }>;
     }>;
     assignedAgentId?: string;
-    screenshotAttachmentScope?: "subtask" | "pillar";
     recurrenceWeekday?: number;
     recurrenceMonthDay?: number;
     timeZone?: string;
@@ -348,12 +407,20 @@ export async function POST(req: Request) {
     itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
     scopedCompanyTeamId?: string | null;
     completionRequirements?: SubKpiCompletionRequirements;
+    numericalTarget?: number;
+    mainTask?: string;
+    pillarDueDate?: string;
+    taskDailyPenaltyAmount?: number | null;
   };
   const title = body.title?.trim() ?? "";
+  const mainTaskRaw = body.mainTask?.trim() ?? "";
   const isItProject = isItProjectImplementationPillar(title);
   const frequency = (body.frequency?.toUpperCase() ?? "DAILY") as KpiFrequency;
   if (!title || !allowedFrequencies.has(frequency)) {
     return NextResponse.json({ error: "title and frequency are required." }, { status: 400 });
+  }
+  if (!isItProject && !mainTaskRaw) {
+    return NextResponse.json({ error: "mainTask is required." }, { status: 400 });
   }
   if (isItProject && body.subKpisSegmented === true) {
     return NextResponse.json(
@@ -416,8 +483,30 @@ export async function POST(req: Request) {
     normalizeCompletionRequirements(body.completionRequirements) ?? {
       checkbox: true,
       screenshots: false,
+      screenshotUpload: false,
       numerical: false,
     };
+  const subTaskCompletionRequirements = subKpiStoredCompletionRequirements(taskCompletionRequirements);
+
+  let numericalTarget: number | null = null;
+  const willBePillarOnly =
+    !isItProject &&
+    body.subKpisSegmented !== true &&
+    (!Array.isArray(body.subKpis) ||
+      body.subKpis.map((s) => (s.title ?? "").trim()).filter(Boolean).length === 0);
+  if (!isItProject && taskCompletionRequirements.numerical) {
+    const rawTarget = body.numericalTarget;
+    if (willBePillarOnly && isRecurring && rawTarget == null) {
+      numericalTarget = null;
+    } else if (typeof rawTarget !== "number" || !Number.isFinite(rawTarget)) {
+      return NextResponse.json(
+        { error: "numericalTarget is required when numerical record completion is enabled." },
+        { status: 400 },
+      );
+    } else {
+      numericalTarget = rawTarget;
+    }
+  }
 
   let built: { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string };
 
@@ -444,20 +533,22 @@ export async function POST(req: Request) {
     itProjectPhaseLabel = itProjectActivePhase(projectBuilt.data).name;
     built = { ok: true, norm: { segmented: false, flat: [] } };
   } else {
-    const subTaskScreenshots =
-      body.screenshotAttachmentScope !== "pillar" && taskCompletionRequirements.screenshots;
+    const subTaskScreenshots = subTaskCompletionRequirements.screenshots;
     const mapDraftItem = (s: {
       title?: string;
       startDate?: string;
       dueDate?: string;
       endDate?: string;
+      actualDate?: string;
       screenshotsEnabled?: boolean;
     }) => ({
       title: (s.title ?? "").trim(),
-      startDate: (s.startDate ?? "").trim(),
+      startDate: "",
       dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
-      completionRequirements: taskCompletionRequirements,
+      actualDate: isRecurring ? "" : (s.actualDate ?? "").trim(),
+      completionRequirements: subTaskCompletionRequirements,
       screenshotsEnabled: subTaskScreenshots,
+      ...(numericalTarget != null ? { numericalTarget } : {}),
     });
     const flatItems =
       Array.isArray(body.subKpis) && !body.subKpisSegmented
@@ -478,6 +569,15 @@ export async function POST(req: Request) {
       body.subKpisSegmented === true,
       flatItems,
       segmentsInput,
+      {
+        allowPillarOnly:
+          flatItems.length === 0 &&
+          body.subKpisSegmented !== true &&
+          (taskCompletionRequirements.checkbox ||
+            taskCompletionRequirements.screenshots ||
+            taskCompletionRequirements.screenshotUpload ||
+            taskCompletionRequirements.numerical),
+      },
     );
   }
 
@@ -486,8 +586,24 @@ export async function POST(req: Request) {
   }
 
   let subKpisPersist = (itProjectPersist ?? wrapForPersist(built.norm)) as Prisma.InputJsonValue;
-  if (!isItProject && body.screenshotAttachmentScope === "pillar" && taskCompletionRequirements.screenshots) {
-    subKpisPersist = enablePillarScreenshots(subKpisPersist);
+  if (!isItProject && built.norm.segmented === false && built.norm.flat.length === 0) {
+    subKpisPersist = applyPillarOnlyTaskCreate(subKpisPersist, taskCompletionRequirements, {
+      numericalTarget,
+      dueDate: !isRecurring ? (body.pillarDueDate?.trim() ?? "") : null,
+    });
+  }
+  if (!isItProject && body.taskDailyPenaltyAmount !== undefined) {
+    if (isRecurring) {
+      return NextResponse.json(
+        { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
+        { status: 400 },
+      );
+    }
+    const rawPenalty = body.taskDailyPenaltyAmount;
+    subKpisPersist = setTaskDailyPenaltyAmount(
+      subKpisPersist,
+      typeof rawPenalty === "number" && Number.isFinite(rawPenalty) ? Math.max(0, rawPenalty) : null,
+    );
   }
 
   const timeZone = normalizeTimeZone(body.timeZone);
@@ -515,14 +631,69 @@ export async function POST(req: Request) {
       ? body.itProjectPhase.trim() || null
       : null;
 
+  // Check for existing task group by title — deduplicate by name
+  const existingTaskGroup = title
+    ? await prisma.kpiMaintenance.findFirst({
+        where: { title },
+        select: { id: true, title: true, mainTask: true, subKpis: true, isRecurring: true, frequency: true, lastFullCompletionAt: true },
+      })
+    : null;
+
+  if (existingTaskGroup && !isItProject) {
+    // Merge new subKpi items into the existing group's subKpis
+    const existingNorm = normalizeSubKpis(existingTaskGroup.subKpis);
+    const newNorm = normalizeSubKpis(subKpisPersist);
+    const mergedItems = [
+      ...collectAllSubKpiItems(existingNorm),
+      ...collectAllSubKpiItems(newNorm),
+    ];
+    const taskCount = mergedItems.length;
+    const rawWithCount = setTaskCount(existingTaskGroup.subKpis, taskCount);
+    const mergedSubKpis = wrapForPersistWithExistingMeta(
+      { segmented: false, flat: mergedItems },
+      rawWithCount,
+    );
+
+    // Reset lastFullCompletionAt so the group goes back to CURRENT when new tasks are added
+    const updateData: Prisma.KpiMaintenanceUpdateInput = { subKpis: mergedSubKpis };
+    if (existingTaskGroup.lastFullCompletionAt) {
+      updateData.lastFullCompletionAt = null;
+    }
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id: existingTaskGroup.id },
+      data: updateData,
+    });
+    return NextResponse.json(
+      {
+        message: `Task added to group '${updated.title}' (now ${taskCount} task${taskCount !== 1 ? "s" : ""} total).`,
+        taskGroup: updated,
+      },
+      { status: 200 },
+    );
+  }
+
+  if (existingTaskGroup && isItProject) {
+    return NextResponse.json(
+      { error: `Task group '${title}' already exists. IT Project tasks cannot be merged into an existing group.` },
+      { status: 409 },
+    );
+  }
+
   let created;
   try {
+    // Set initial taskCount on the subKpis envelope
+    const newNorm = normalizeSubKpis(subKpisPersist);
+    const newItemCount = collectAllSubKpiItems(newNorm).length;
+    const initialJson = setTaskCount(subKpisPersist, newItemCount);
+
     created = await prisma.kpiMaintenance.create({
       data: {
         title,
+        mainTask: isItProject ? null : mainTaskRaw,
         isRecurring,
         frequency,
-        subKpis: subKpisPersist,
+        subKpis: initialJson,
         assignedAgentId: assignee?.id ?? null,
         scopedCompanyTeamId,
         recurrenceWeekday,
@@ -547,10 +718,7 @@ export async function POST(req: Request) {
     if (e instanceof Prisma.PrismaClientKnownRequestError) {
       if (e.code === "P2002") {
         return NextResponse.json(
-          {
-            error:
-              "A task with this title already exists. Remove the duplicate KPI or choose a different pillar title.",
-          },
+          { error: `Task group '${title}' already exists. Task inserted into the group.` },
           { status: 409 },
         );
       }
@@ -558,7 +726,14 @@ export async function POST(req: Request) {
     const msg = e instanceof Error ? e.message : "Could not create KPI.";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-  return NextResponse.json(created, { status: 201 });
+  const createdDate = new Date(created.createdAt).toISOString().slice(0, 10);
+  return NextResponse.json(
+    {
+      message: `New task group '${created.title}' created on ${createdDate}.`,
+      taskGroup: created,
+    },
+    { status: 201 },
+  );
 }
 
 export async function PATCH(req: Request) {
@@ -577,6 +752,7 @@ export async function PATCH(req: Request) {
     itProjectName?: string | null;
     itProjectPhase?: string | null;
     taskPriority?: string | null;
+    taskDailyPenaltyAmount?: number | null;
     itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
     subKpiSchedule?: {
       subKpiId?: string;
@@ -590,6 +766,7 @@ export async function PATCH(req: Request) {
       actualDate?: string | null;
       projectPriority?: string | null;
       numericalValue?: number | null;
+      numericalTarget?: number | null;
     };
     subKpiProjectMeta?: {
       subKpiId?: string;
@@ -628,6 +805,8 @@ export async function PATCH(req: Request) {
       startDate?: string | null;
       dueDate?: string | null;
       completionMode?: SubKpiCompletionMode;
+      numericalTarget?: number | null;
+      dailyPenaltyAmount?: number | null;
     };
     removeSubKpi?: {
       subKpiId?: string;
@@ -724,7 +903,7 @@ export async function PATCH(req: Request) {
   const isAssignee = !!perms.operator && perms.operator.id === kpiRow.assignedAgentId;
   const subKpiItems = isItProjectImplementationPillar(kpiRow.title)
     ? itProjectAllItems(parseItProjectSubKpis(kpiRow.subKpis, kpiRow.itProjectPhase))
-    : collectAllSubKpiItems(normalizeSubKpis(kpiRow.subKpis));
+    : collectChecklistProgressItems(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
   const canEditSubKpi = (subKpiId: string) => {
     if (isAssignee) return true;
     const item = subKpiItems.find((it) => it.id === subKpiId);
@@ -749,7 +928,12 @@ export async function PATCH(req: Request) {
       return Boolean(perms.canAssignWork && req.screenshots && hasBeforeAndAfterScreenshots(item));
     }
     if (req.screenshots && !hasBeforeAndAfterScreenshots(item)) return false;
+    if (req.screenshotUpload && !hasScreenshotUpload(item)) return false;
     if (req.numerical && !hasNumericalRecord(item)) return false;
+    if (req.numerical) {
+      const pct = numericalRecordProgressPercent(item.numericalValue, item.numericalTarget);
+      if (pct != null && pct < 100) return false;
+    }
     return true;
   };
 
@@ -819,6 +1003,34 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.taskDailyPenaltyAmount !== undefined) {
+    if (isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Task daily penalty applies only to regular checklist tasks." },
+        { status: 400 },
+      );
+    }
+    if (kpiRow.isRecurring) {
+      return NextResponse.json(
+        { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
+        { status: 400 },
+      );
+    }
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const rawPenalty = body.taskDailyPenaltyAmount;
+    const updatedJson = setTaskDailyPenaltyAmount(
+      kpiRow.subKpis,
+      typeof rawPenalty === "number" && Number.isFinite(rawPenalty) ? Math.max(0, rawPenalty) : null,
+    );
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiWorkMeta != null && typeof body.subKpiWorkMeta === "object") {
     if (isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
@@ -839,16 +1051,56 @@ export async function PATCH(req: Request) {
     }
     const meta = body.subKpiWorkMeta;
     const recurring = kpiRow.isRecurring !== false;
+    if (meta.numericalTarget !== undefined) {
+      const req = resolveSubKpiCompletionRequirements(target);
+      if (!subKpiRequiresNumerical(req)) {
+        return NextResponse.json({ error: "This sub-task does not use numerical records." }, { status: 400 });
+      }
+      if (!recurring) {
+        return NextResponse.json(
+          { error: "Assignees set cycle targets only on recurring tasks. Use task management to edit one-off targets." },
+          { status: 400 },
+        );
+      }
+      const assigneeMaySetTarget =
+        canEditSubKpi(subKpiIdMeta) &&
+        (target.numericalTarget == null || target.numericalValue == null);
+      if (!perms.isAdminRole && !assigneeMaySetTarget) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (
+        meta.numericalTarget != null &&
+        (!Number.isFinite(meta.numericalTarget) || meta.numericalTarget <= 0)
+      ) {
+        return NextResponse.json({ error: "numericalTarget must be a positive number." }, { status: 400 });
+      }
+    }
+    if (
+      meta.numericalValue !== undefined &&
+      meta.numericalValue != null &&
+      target.numericalTarget == null
+    ) {
+      return NextResponse.json(
+        { error: "Set a target number for this cycle before entering the actual record." },
+        { status: 400 },
+      );
+    }
+    if (meta.startDate !== undefined) {
+      return NextResponse.json(
+        { error: "Sub-task schedule dates are not used for maintenance tasks." },
+        { status: 400 },
+      );
+    }
     let updatedJson = setSubKpiItemWorkMeta(kpiRow.subKpis, subKpiIdMeta, {
-      startDate: meta.startDate,
       dueDate: recurring ? undefined : meta.dueDate,
       actualDate: recurring ? undefined : meta.actualDate,
       projectPriority: meta.projectPriority,
       numericalValue: meta.numericalValue,
+      numericalTarget: meta.numericalTarget,
     });
     updatedJson = syncSubKpiDoneFromRequirements(updatedJson, subKpiIdMeta);
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(updatedJson);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -881,8 +1133,8 @@ export async function PATCH(req: Request) {
       dueDate: sched.dueDate,
       actualDate: sched.actualDate,
     });
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(updatedJson);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -915,8 +1167,8 @@ export async function PATCH(req: Request) {
     });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
 
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(result.json);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(result.json, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -996,21 +1248,28 @@ export async function PATCH(req: Request) {
 
   if (body.pillarScreenshot != null && typeof body.pillarScreenshot === "object") {
     const slot = body.pillarScreenshot.slot;
-    if (slot !== "before" && slot !== "after") {
-      return NextResponse.json({ error: "Screenshot slot (before/after) is required." }, { status: 400 });
+    if (slot !== "before" && slot !== "after" && slot !== "general") {
+      return NextResponse.json({ error: "Screenshot slot (before/after/general) is required." }, { status: 400 });
     }
     if (isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
-        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { error: "Pillar screenshots are not available for IT Project Implementation tasks." },
         { status: 400 },
       );
     }
     if (!perms.canAssignWork && !isAssignee) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (!pillarScreenshotsEnabled(kpiRow.subKpis)) {
+    if (slot === "general") {
+      if (!pillarScreenshotUploadEnabled(kpiRow.subKpis)) {
+        return NextResponse.json(
+          { error: "Pillar screenshot uploads were not enabled when this task was created." },
+          { status: 400 },
+        );
+      }
+    } else if (!pillarScreenshotsEnabled(kpiRow.subKpis)) {
       return NextResponse.json(
-        { error: "Pillar screenshots were not enabled when this task was created." },
+        { error: "Pillar before/after screenshots were not enabled for this task." },
         { status: 400 },
       );
     }
@@ -1031,13 +1290,24 @@ export async function PATCH(req: Request) {
       }
     }
     const uploaded = await Promise.all(screenshotFiles.map((file) => persistTaskScreenshot(kpiRow.id, file)));
-    const updatedJson = setPillarScreenshots(kpiRow.subKpis, slot, [
+    let updatedJson = setPillarScreenshots(kpiRow.subKpis, slot, [
       ...existingScreenshots,
       ...uploaded,
     ]);
+    if (isPillarOnlyTask(updatedJson)) {
+      updatedJson = syncPillarDoneFromRequirements(updatedJson);
+    }
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
-      data: { subKpis: updatedJson },
+      data: {
+        subKpis: updatedJson,
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
     });
     return NextResponse.json(updated);
   }
@@ -1045,22 +1315,22 @@ export async function PATCH(req: Request) {
   if (body.pillarScreenshotDelete != null && typeof body.pillarScreenshotDelete === "object") {
     const slot = body.pillarScreenshotDelete.slot;
     const storedFileName = String(body.pillarScreenshotDelete.storedFileName ?? "").trim();
-    if (slot !== "before" && slot !== "after") {
-      return NextResponse.json({ error: "Screenshot slot (before/after) is required." }, { status: 400 });
+    if (slot !== "before" && slot !== "after" && slot !== "general") {
+      return NextResponse.json({ error: "Screenshot slot (before/after/general) is required." }, { status: 400 });
     }
     if (!storedFileName) {
       return NextResponse.json({ error: "storedFileName is required." }, { status: 400 });
     }
     if (isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
-        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { error: "Pillar screenshots are not available for IT Project Implementation tasks." },
         { status: 400 },
       );
     }
     if (!perms.canAssignWork && !isAssignee) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (checklistFullyComplete(kpiRow.subKpis)) {
+    if (checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow))) {
       return NextResponse.json({ error: "Screenshots cannot be removed after the task card reaches Done." }, { status: 400 });
     }
     const existingScreenshots = getPillarScreenshots(kpiRow.subKpis, slot);
@@ -1068,9 +1338,12 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Screenshot not found." }, { status: 404 });
     }
     const updatedJson = removePillarScreenshot(kpiRow.subKpis, slot, storedFileName);
+    let syncedJson = isPillarOnlyTask(updatedJson)
+      ? syncPillarDoneFromRequirements(updatedJson)
+      : updatedJson;
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
-      data: { subKpis: updatedJson },
+      data: { subKpis: syncedJson },
     });
     return NextResponse.json(updated);
   }
@@ -1078,12 +1351,15 @@ export async function PATCH(req: Request) {
   if (body.subKpiScreenshot != null && typeof body.subKpiScreenshot === "object") {
     const subKpiIdShot = String(body.subKpiScreenshot.subKpiId ?? "").trim();
     const slot = body.subKpiScreenshot.slot;
-    if (!subKpiIdShot || (slot !== "before" && slot !== "after")) {
-      return NextResponse.json({ error: "subKpiId and screenshot slot (before/after) are required." }, { status: 400 });
+    if (!subKpiIdShot || (slot !== "before" && slot !== "after" && slot !== "general")) {
+      return NextResponse.json(
+        { error: "subKpiId and screenshot slot (before/after/general) are required." },
+        { status: 400 },
+      );
     }
     if (isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
-        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { error: "Screenshots are not available for IT Project Implementation tasks." },
         { status: 400 },
       );
     }
@@ -1094,7 +1370,14 @@ export async function PATCH(req: Request) {
     if (!target) {
       return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
     }
-    if (!subKpiScreenshotsRequired(target)) {
+    if (slot === "general") {
+      if (!subKpiScreenshotUploadRequired(target)) {
+        return NextResponse.json(
+          { error: "Screenshot upload is not enabled for this sub-task." },
+          { status: 400 },
+        );
+      }
+    } else if (!subKpiScreenshotsRequired(target)) {
       return NextResponse.json(
         { error: "Before/after screenshots are not required for this sub-task." },
         { status: 400 },
@@ -1103,7 +1386,7 @@ export async function PATCH(req: Request) {
     if (screenshotFiles.length === 0) {
       return NextResponse.json({ error: "Screenshot file is required." }, { status: 400 });
     }
-    const existingScreenshots = slot === "before" ? target.beforeScreenshot ?? [] : target.afterScreenshot ?? [];
+    const existingScreenshots = subKpiScreenshotList(target, slot);
     if (existingScreenshots.length + screenshotFiles.length > MAX_TASK_SCREENSHOTS_PER_SLOT) {
       return NextResponse.json(
         { error: `You can upload up to ${MAX_TASK_SCREENSHOTS_PER_SLOT} ${slot} screenshots per sub-task.` },
@@ -1122,8 +1405,8 @@ export async function PATCH(req: Request) {
       ...uploaded,
     ]);
     updatedJson = syncScreenshotOnlySubKpiDone(updatedJson, subKpiIdShot);
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(updatedJson);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -1143,22 +1426,25 @@ export async function PATCH(req: Request) {
     const subKpiIdShot = String(body.subKpiScreenshotDelete.subKpiId ?? "").trim();
     const slot = body.subKpiScreenshotDelete.slot;
     const storedFileName = String(body.subKpiScreenshotDelete.storedFileName ?? "").trim();
-    if (!subKpiIdShot || (slot !== "before" && slot !== "after")) {
-      return NextResponse.json({ error: "subKpiId and screenshot slot (before/after) are required." }, { status: 400 });
+    if (!subKpiIdShot || (slot !== "before" && slot !== "after" && slot !== "general")) {
+      return NextResponse.json(
+        { error: "subKpiId and screenshot slot (before/after/general) are required." },
+        { status: 400 },
+      );
     }
     if (!storedFileName) {
       return NextResponse.json({ error: "storedFileName is required." }, { status: 400 });
     }
     if (isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
-        { error: "Before/after screenshots are not available for IT Project Implementation tasks." },
+        { error: "Screenshots are not available for IT Project Implementation tasks." },
         { status: 400 },
       );
     }
     if (!perms.canAssignWork && !canEditSubKpi(subKpiIdShot)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (checklistFullyComplete(kpiRow.subKpis)) {
+    if (checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow))) {
       return NextResponse.json({ error: "Screenshots cannot be removed after the task card reaches Done." }, { status: 400 });
     }
     const target = subKpiItems.find((it) => it.id === subKpiIdShot);
@@ -1168,14 +1454,14 @@ export async function PATCH(req: Request) {
     if (target.done) {
       return NextResponse.json({ error: "Screenshots cannot be removed after the sub-task is done." }, { status: 400 });
     }
-    const existingScreenshots = slot === "before" ? target.beforeScreenshot ?? [] : target.afterScreenshot ?? [];
+    const existingScreenshots = subKpiScreenshotList(target, slot);
     if (!existingScreenshots.some((item) => item.storedFileName === storedFileName)) {
       return NextResponse.json({ error: "Screenshot not found." }, { status: 404 });
     }
     let updatedJson = removeSubKpiItemScreenshot(kpiRow.subKpis, subKpiIdShot, slot, storedFileName);
     updatedJson = syncScreenshotOnlySubKpiDone(updatedJson, subKpiIdShot);
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(updatedJson);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -1258,8 +1544,8 @@ export async function PATCH(req: Request) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(result.json);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(result.json, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -1294,9 +1580,23 @@ export async function PATCH(req: Request) {
     const hasStartDate = body.updateSubKpi.startDate !== undefined;
     const hasDueDate = body.updateSubKpi.dueDate !== undefined;
     const hasCompletionMode = body.updateSubKpi.completionMode !== undefined;
-    if (!hasTitle && !hasStartDate && !hasDueDate && !hasCompletionMode) {
+    const hasNumericalTarget = body.updateSubKpi.numericalTarget !== undefined;
+    const hasDailyPenalty = body.updateSubKpi.dailyPenaltyAmount !== undefined;
+    if (!hasTitle && !hasStartDate && !hasDueDate && !hasCompletionMode && !hasNumericalTarget && !hasDailyPenalty) {
       return NextResponse.json(
-        { error: "Provide title, startDate, dueDate, and/or completionMode to update a Sub Task." },
+        { error: "Provide title, startDate, dueDate, completionMode, numericalTarget, and/or dailyPenaltyAmount to update a Sub Task." },
+        { status: 400 },
+      );
+    }
+    if (hasDailyPenalty && kpiRow.isRecurring) {
+      return NextResponse.json(
+        { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
+        { status: 400 },
+      );
+    }
+    if (hasStartDate && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Sub-task schedule dates are not used for maintenance tasks." },
         { status: 400 },
       );
     }
@@ -1311,12 +1611,14 @@ export async function PATCH(req: Request) {
       ...(hasStartDate ? { startDate: body.updateSubKpi.startDate } : {}),
       ...(hasDueDate ? { dueDate: body.updateSubKpi.dueDate } : {}),
       ...(hasCompletionMode ? { completionMode: body.updateSubKpi.completionMode as SubKpiCompletionMode } : {}),
+      ...(hasNumericalTarget ? { numericalTarget: body.updateSubKpi.numericalTarget ?? null } : {}),
+      ...(hasDailyPenalty ? { dailyPenaltyAmount: body.updateSubKpi.dailyPenaltyAmount ?? null } : {}),
     });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(result.json);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(result.json, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -1351,8 +1653,8 @@ export async function PATCH(req: Request) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(result.json);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(result.json, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -1493,8 +1795,8 @@ export async function PATCH(req: Request) {
       );
     }
     const wrapped = wrapForPersistWithExistingMeta(validated.norm, kpiRow.subKpis);
-    const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-    const nextComplete = checklistFullyComplete(wrapped);
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(wrapped, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
@@ -1565,8 +1867,8 @@ export async function PATCH(req: Request) {
         : setSubKpiItemDone(kpiRow.subKpis, subKpiId, body.done!);
   }
 
-  const prevComplete = checklistFullyComplete(kpiRow.subKpis);
-  const nextComplete = checklistFullyComplete(updatedJson);
+  const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+  const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
   let lastFullCompletionAt: Date | null | undefined;
   if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
   else if (prevComplete && !nextComplete) lastFullCompletionAt = null;

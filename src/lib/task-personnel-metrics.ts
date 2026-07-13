@@ -9,6 +9,7 @@ export type PersonnelAccumulatedTaskMetric = {
   remaining: number;
   percent: number;
   pillarsContributed: number;
+  penaltyDeduction?: number;
 };
 
 export type PersonnelCombinedMetricCard = {
@@ -25,15 +26,78 @@ export type PersonnelCombinedMetricCard = {
     pending: number;
     efficiency: number;
     pillarsContributed: number;
+    penaltyDeduction?: number;
+    /** Raw task efficiency before delay penalty points are applied. */
+    efficiencyBeforePenalty?: number;
   } | null;
 };
+
+export const PERSONNEL_AVERAGE_EFFICIENCY_FLOOR = 50;
+
+export function applyPenaltyToTaskEfficiency(efficiency: number, penaltyDeduction: number): number {
+  if (penaltyDeduction <= 0) return efficiency;
+  const adjusted = efficiency - Math.min(efficiency, penaltyDeduction);
+  return Math.max(PERSONNEL_AVERAGE_EFFICIENCY_FLOOR, Math.round(adjusted));
+}
+
+export function applyPersonnelAverageEfficiencyFloor(efficiency: number): number {
+  return Math.max(PERSONNEL_AVERAGE_EFFICIENCY_FLOOR, Math.round(efficiency));
+}
 
 export function combinedPersonnelEfficiency(row: PersonnelCombinedMetricCard): number | null {
   const values = [row.tickets?.efficiency, row.tasks?.efficiency].filter(
     (value): value is number => value != null,
   );
   if (values.length === 0) return null;
-  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return applyPersonnelAverageEfficiencyFloor(average);
+}
+
+export type PersonnelEfficiencyBracketLabel =
+  | "Outstanding"
+  | "Good"
+  | "Satisfactory"
+  | "Needs Improvement";
+
+export type PersonnelEfficiencyBracket = {
+  label: PersonnelEfficiencyBracketLabel;
+  badgeClassName: string;
+  valueClassName: string;
+};
+
+/** Color-coded bracket for combined ticket/task average efficiency. */
+export function personnelEfficiencyBracket(efficiency: number): PersonnelEfficiencyBracket {
+  const value = Math.round(efficiency);
+  if (value >= 95) {
+    return {
+      label: "Outstanding",
+      badgeClassName:
+        "border-emerald-500/45 bg-emerald-500/12 text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+      valueClassName: "text-emerald-800 dark:text-emerald-200",
+    };
+  }
+  if (value >= 88) {
+    return {
+      label: "Good",
+      badgeClassName:
+        "border-teal-500/45 bg-teal-500/12 text-teal-900 dark:border-teal-400/40 dark:bg-teal-500/10 dark:text-teal-200",
+      valueClassName: "text-teal-800 dark:text-teal-200",
+    };
+  }
+  if (value >= 75) {
+    return {
+      label: "Satisfactory",
+      badgeClassName:
+        "border-amber-500/45 bg-amber-500/12 text-amber-950 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-200",
+      valueClassName: "text-amber-900 dark:text-amber-200",
+    };
+  }
+  return {
+    label: "Needs Improvement",
+    badgeClassName:
+      "border-rose-500/45 bg-rose-500/12 text-rose-900 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200",
+    valueClassName: "text-rose-800 dark:text-rose-200",
+  };
 }
 
 /** @deprecated Use PersonnelCombinedMetricCard */
@@ -97,6 +161,30 @@ function mergeRoles(existing: string, incoming: string): string {
   return sorted.join(" / ") || "Assignee";
 }
 
+export type PersonnelDelayPenaltyRow = {
+  id: string;
+  name: string;
+  deduction: number;
+};
+
+export function applyDelayPenaltiesToPersonnelTasks(
+  tasks: PersonnelAccumulatedTaskMetric[],
+  penalties: PersonnelDelayPenaltyRow[],
+): PersonnelAccumulatedTaskMetric[] {
+  if (penalties.length === 0) return tasks;
+  const byId = new Map(penalties.map((row) => [row.id, row.deduction]));
+  const byName = new Map(penalties.map((row) => [row.name.trim().toLowerCase(), row.deduction]));
+  return tasks.map((task) => {
+    const deduction = byId.get(task.id) ?? byName.get(task.name.trim().toLowerCase()) ?? 0;
+    if (deduction <= 0) return task;
+    return {
+      ...task,
+      penaltyDeduction: Math.round(deduction * 100) / 100,
+      percent: applyPenaltyToTaskEfficiency(task.percent, deduction),
+    };
+  });
+}
+
 export function mergePersonnelMetricCards(
   tasks: PersonnelAccumulatedTaskMetric[],
   tickets: PersonnelTicketMetric[],
@@ -132,9 +220,21 @@ export function mergePersonnelMetricCards(
       tickets: null,
       tasks: null,
     };
+    const normalized = normalizePersonnelTaskTotals(task.total, task.done);
+    const penaltyDeduction = task.penaltyDeduction ?? 0;
+    const efficiencyBeforePenalty = normalized.efficiency;
+    const efficiency =
+      penaltyDeduction > 0
+        ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
+        : efficiencyBeforePenalty;
     current.tasks = {
-      ...normalizePersonnelTaskTotals(task.total, task.done),
+      pending: normalized.pending,
+      closed: normalized.closed,
+      efficiency,
       pillarsContributed: task.pillarsContributed,
+      ...(penaltyDeduction > 0
+        ? { penaltyDeduction, efficiencyBeforePenalty }
+        : {}),
     };
     current.role = mergeRoles(current.role, task.role);
     if (task.id && task.id !== "__unassigned__") current.id = task.id;

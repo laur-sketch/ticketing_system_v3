@@ -1,4 +1,4 @@
-import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
+import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { customerCanAccessTicket, requireSession } from "@/lib/access";
 import { sendResolutionEmail } from "@/lib/email";

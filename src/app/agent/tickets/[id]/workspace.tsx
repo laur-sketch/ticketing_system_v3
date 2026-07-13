@@ -1,7 +1,7 @@
 "use client";
 
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
-import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client";
+import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client/primary";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";

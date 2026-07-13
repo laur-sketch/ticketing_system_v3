@@ -1,4 +1,4 @@
-import type { ActivityActor, Ticket } from "@prisma/client";
+import type { ActivityActor, Ticket } from "@prisma/client/primary";
 import { prisma } from "./prisma";
 
 export async function logActivity(

@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/@prisma/client/auth"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL_AUTH")
+}
+
+/// OAuth identity store (Auth.js / NextAuth compatible).
+/// Source of truth for user identity, OAuth links, HRIS role mapping, and company membership.
+model User {
+  id              String    @id @default(cuid())
+  portalAccountId String?   @unique @map("portal_account_id")
+  username        String?   @unique @map("username")
+  name            String?
+  email           String    @unique
+  emailVerified   DateTime? @map("email_verified")
+  image           String?
+  // Logical FK to merged_users.source_user_id (HRIS).
+  hrisSourceUserId BigInt?  @unique @map("hris_source_user_id")
+  hrisRole        String?   @map("hris_role")
+  portalRole      String    @default("Customer") @map("portal_role")
+  headPrivileges  Boolean   @default(false) @map("head_privileges")
+  companyId       String?   @map("company_id")
+  company         Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  accounts Account[]
+
+  @@index([companyId])
+  @@map("auth_users")
+}
+
+/// Canonical company/org from HRIS (synced from merged_users.company_name).
+model Company {
+  id         String   @id @default(cuid())
+  externalId BigInt?  @unique @map("external_id")
+  name       String   @unique @map("name")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("auth_companies")
+}
+
+/// Configurable HRIS role → portal role mapping (seeded defaults + admin-editable).
+model RoleMapping {
+  id             String   @id @default(cuid())
+  hrisRole       String   @unique @map("hris_role")
+  portalRole     String   @map("portal_role")
+  headPrivileges Boolean  @default(false) @map("head_privileges")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("auth_role_mappings")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("auth_accounts")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("auth_verification_tokens")
+}

@@ -1,4 +1,4 @@
-import type { TicketPriority } from "@prisma/client";
+import type { TicketPriority } from "@prisma/client/primary";
 
 /** Human-readable label for ticket priority (UI only). */
 export function formatTicketPriorityLabel(priority: TicketPriority | string): string {

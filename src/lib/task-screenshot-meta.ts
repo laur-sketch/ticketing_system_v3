@@ -1,4 +1,4 @@
-export type TaskScreenshotSlot = "before" | "after";
+export type TaskScreenshotSlot = "before" | "after" | "general";
 
 export type TaskScreenshotMetaItem = {
   storedFileName: string;

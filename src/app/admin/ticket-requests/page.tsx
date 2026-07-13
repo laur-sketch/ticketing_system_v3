@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, ClipboardList, LayoutGrid, PlusCircle, Users } from "lucide-react";
-import type { TicketStatus } from "@prisma/client";
+import type { TicketStatus } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";

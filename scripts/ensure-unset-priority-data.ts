@@ -2,7 +2,7 @@
  * After `prisma db push`, SLA/Escalation rows for UNSET are not auto-seeded.
  * Run: npx tsx scripts/ensure-unset-priority-data.ts
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 

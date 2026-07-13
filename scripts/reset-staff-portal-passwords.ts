@@ -6,7 +6,7 @@
  *   npx tsx scripts/reset-staff-portal-passwords.ts --confirm
  */
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 import { DEFAULT_PASSWORD_RESET } from "../src/lib/default-reset-password";
 import { normalizePortalRole } from "../src/lib/staff-role";
 

@@ -1,15 +1,19 @@
 import "@/lib/auth-env";
 import type { NextAuthOptions } from "next-auth";
 import type { JWT } from "next-auth/jwt";
-import bcrypt from "bcryptjs";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
+import bcrypt from "bcryptjs";
+import { findPortalByEmailOnly, findPortalByLogin } from "@/lib/portal-account";
 import {
-  findPortalByEmailOnly,
-  findPortalByLogin,
-  upsertPortalOAuthAccount,
-} from "@/lib/portal-account";
+  findMergedUserByLogin,
+  verifyMergedPassword,
+} from "@/lib/auth/merged-credentials";
+import { ensurePortalFromMergedUser } from "@/lib/auth/ensure-portal-from-merged";
 import { normalizePortalRole } from "@/lib/staff-role";
+import { applyOAuthSignupIntent, readOAuthSignupIntentFromCookies, clearOAuthSignupIntentCookie } from "@/lib/auth/oauth-signup-intent";
+import { syncOAuthUser } from "@/lib/auth/sync-oauth-user";
+import { findMergedUserByEmail } from "@/lib/auth/merged-credentials";
 import { compactSessionPicture } from "@/lib/session-profile-image";
 import { sanitizeCallbackUrl } from "@/lib/session-expiry";
 import {
@@ -25,7 +29,6 @@ function normalizeRole(role: string | undefined | null): UserRole | null {
   if (v === "superadmin" || v === "super_admin" || v === "super-admin") return "SuperAdmin";
   if (v === "admin") return "Admin";
   if (v === "agent") return "Personnel";
-  /** Legacy JWT / stored session values */
   if (v === "head") return "Admin";
   const portal = normalizePortalRole(role);
   if (portal === "SuperAdmin") return "SuperAdmin";
@@ -100,11 +103,16 @@ function extractRoleFromProfile(
 
 const googleReady = !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
+if (!googleReady) {
+  console.warn(
+    "[auth] GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set — OAuth sign-in disabled.",
+  );
+}
+
 export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
     maxAge: SESSION_JWT_MAX_AGE_SECONDS,
-    /** Ignored for JWT strategy in NextAuth v4; kept for parity with session.maxAge. */
     updateAge: 60,
   },
   jwt: {
@@ -119,6 +127,73 @@ export const authOptions: NextAuthOptions = {
     },
   },
   providers: [
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        username: { label: "Username", type: "text" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        const loginId = credentials?.username?.trim() ?? "";
+        const password = credentials?.password ?? "";
+        if (!loginId || !password) return null;
+
+        // 1) mergeddatabase-dev.merged_users (HRIS username/password ETL)
+        const merged = await findMergedUserByLogin(loginId);
+        if (merged?.passwordHash) {
+          const mergedOk = await verifyMergedPassword(merged.passwordHash, password);
+          if (mergedOk) {
+            try {
+              const portal = await ensurePortalFromMergedUser(merged);
+              return {
+                id: portal.id,
+                email: portal.email,
+                name: portal.name,
+                role: portal.role,
+                companyId: portal.companyId,
+                companyName: portal.company?.name ?? null,
+                customerOrgRole: portal.customerOrgRole,
+                staffRoleLabel: normalizePortalRole(portal.role),
+              };
+            } catch (e) {
+              console.error("ensurePortalFromMergedUser failed", e);
+              const portalFallback = await findPortalByLogin(loginId);
+              if (portalFallback) {
+                return {
+                  id: portalFallback.id,
+                  email: portalFallback.email,
+                  name: portalFallback.name,
+                  role: portalFallback.role,
+                  companyId: portalFallback.companyId,
+                  companyName: portalFallback.companyName,
+                  customerOrgRole: portalFallback.customerOrgRole,
+                  staffRoleLabel: normalizePortalRole(portalFallback.role),
+                };
+              }
+              return null;
+            }
+          }
+        }
+
+        // 2) Fallback: portal_accounts (legacy portal-only accounts not superseded by merged_users)
+        const portal = await findPortalByLogin(loginId);
+        if (!portal?.passwordHash || portal.accountStatus === "LEGACY_CONFLICT") return null;
+
+        const passwordOk = await bcrypt.compare(password, portal.passwordHash);
+        if (!passwordOk) return null;
+
+        return {
+          id: portal.id,
+          email: portal.email,
+          name: portal.name,
+          role: portal.role,
+          companyId: portal.companyId,
+          companyName: portal.companyName,
+          customerOrgRole: portal.customerOrgRole,
+          staffRoleLabel: normalizePortalRole(portal.role),
+        };
+      },
+    }),
     ...(googleReady
       ? [
           GoogleProvider({
@@ -127,68 +202,8 @@ export const authOptions: NextAuthOptions = {
           }),
         ]
       : []),
-    CredentialsProvider({
-      name: "Local login",
-      credentials: {
-        username: { label: "Username", type: "text" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        const loginId = credentials?.username?.toString().trim() ?? "";
-        if (!loginId) return null;
-        const password = credentials?.password?.toString() ?? "";
-
-        try {
-          const portal = await findPortalByLogin(loginId);
-          if (portal) {
-            const match = await bcrypt.compare(password, portal.passwordHash);
-            if (!match) return null;
-            const baseRole = normalizeRole(portal.role) ?? "Customer";
-            /**
-             * Customer accounts created via self-signup are allowed to sign in
-             * with username/password. Google sign-in continues to work in
-             * parallel for the same account (email match).
-             */
-            const role = elevateRoleByEmail(portal.email, baseRole);
-            return {
-              id: portal.id,
-              email: portal.email,
-              name: portal.name,
-              role,
-              staffRoleLabel: normalizePortalRole(portal.role),
-              companyId: portal.companyId,
-              companyName: portal.companyName,
-              customerOrgRole: portal.customerOrgRole,
-            };
-          }
-        } catch (e) {
-          console.error("Portal lookup failed", e);
-        }
-
-        /**
-         * Allow env-listed admin/agent emails to authenticate without a
-         * portal record (rescue path); everyone else must have a portal account.
-         */
-        if (loginId.includes("@")) {
-          const emailRole = roleFromEmail(loginId);
-          if (emailRole === "SuperAdmin" || emailRole === "Personnel") {
-            return {
-              id: loginId,
-              email: loginId.toLowerCase(),
-              name: loginId.split("@")[0] || "User",
-              role: emailRole,
-            };
-          }
-        }
-        return null;
-      },
-    }),
   ],
   callbacks: {
-    /**
-     * Same rules as NextAuth default (`new URL(url).origin === baseUrl`), plus reject
-     * `//host` paths that start with "/" but are not same-site relative URLs.
-     */
     async redirect({ url, baseUrl }) {
       let path = url;
       if (url.startsWith("/") && !url.startsWith("//")) {
@@ -205,19 +220,36 @@ export const authOptions: NextAuthOptions = {
       return `${baseUrl}${safe}`;
     },
     async signIn({ user, account }) {
-      if (!account || account.provider === "credentials") return true;
+      if (!account) return false;
+      if (account.provider === "credentials") return true;
+      if (account.provider !== "google") return false;
       const email = (user.email ?? "").trim().toLowerCase();
-      if (!email) return true;
+      if (!email) return false;
+      if (!account.providerAccountId) return false;
       try {
+        const signupIntent = await readOAuthSignupIntentFromCookies();
+        if (signupIntent && signupIntent.email.trim().toLowerCase() !== email) {
+          await clearOAuthSignupIntentCookie();
+          return "/signup?error=email_mismatch";
+        }
+
         const portal = await findPortalByEmailOnly(email);
-        await upsertPortalOAuthAccount({
+        const { portal: synced } = await syncOAuthUser({
           email,
-          name: user.name ?? portal?.name ?? email.split("@")[0] ?? "User",
-          role: portal?.role ?? normalizeRole(String(user.role ?? "")) ?? "Customer",
-          profileImage: typeof user.image === "string" ? user.image : null,
+          name: user.name,
+          image: typeof user.image === "string" ? user.image : null,
+          provider: account.provider,
+          providerAccountId: account.providerAccountId,
+          roleHint: portal?.role ?? null,
         });
+        const mergedByEmail = await findMergedUserByEmail(email);
+        if (mergedByEmail) {
+          await ensurePortalFromMergedUser(mergedByEmail);
+        }
+        await applyOAuthSignupIntent(email, synced.id);
       } catch (e) {
-        console.error("upsertPortalOAuthAccount failed", e);
+        console.error("syncOAuthUser failed", e);
+        return false;
       }
       return true;
     },
@@ -272,14 +304,12 @@ export const authOptions: NextAuthOptions = {
         }
       }
       if (!token.role) token.role = roleFromEmail(token.email);
-      /**
-       * Always reconcile the JWT with the portal record (when an email is known) so
-       * stale Customer roles or missing company metadata self-heal on the next refresh.
-       */
+
       if (typeof token.email === "string" && token.email.length > 0) {
         const priorRole = roleFromJwt(token);
         const portal = await findPortalByEmailOnly(token.email);
         if (portal) {
+          token.sub = portal.id;
           token.name = portal.name;
           token.picture =
             compactSessionPicture(portal.profileImage) ??
@@ -289,6 +319,12 @@ export const authOptions: NextAuthOptions = {
           token.customerOrgRole = portal.customerOrgRole;
           token.staffRoleLabel = normalizePortalRole(portal.role);
           token.role = resolvePortalJwtRole(portal.email, portal.role, priorRole);
+          token.username = portal.username;
+          if (!portal.username) {
+            token.needsUsername = true;
+          } else {
+            delete token.needsUsername;
+          }
         } else if (token.companyId === undefined) {
           token.companyId = null;
           token.companyName = null;
@@ -335,6 +371,9 @@ export const authOptions: NextAuthOptions = {
       if (!session.user.email && typeof token.email === "string") {
         session.user.email = token.email;
       }
+      if (typeof token.sub === "string") {
+        session.user.id = token.sub;
+      }
       if (typeof token.name === "string") {
         session.user.name = token.name;
       }
@@ -352,6 +391,9 @@ export const authOptions: NextAuthOptions = {
         typeof token.customerOrgRole === "string" ? token.customerOrgRole : null;
       session.user.staffRoleLabel =
         typeof token.staffRoleLabel === "string" ? token.staffRoleLabel : null;
+      session.user.username =
+        typeof token.username === "string" ? token.username : null;
+      session.needsUsername = token.needsUsername === true;
       return session;
     },
   },

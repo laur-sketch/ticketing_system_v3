@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, GripVertical, Maximize2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { normalizePersonName } from "@/lib/admin-roster";
+import { normalizePersonName } from "@/lib/person-name";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import {
   incompletePastDeadlineDelayMs,
   nonRecurringDeadline,
+  nonRecurringTaskDelayDeadline,
   recurringDeadlineExclusive,
   taskKanbanDerivedStatus,
 } from "@/lib/kpi-cycle-state";
@@ -22,30 +23,46 @@ import {
   itProjectPhaseProgressFromItems,
   parseItProjectSubKpis,
 } from "@/lib/it-project-subkpis";
+import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   kpiChecklistMetricView,
   kpiChecklistProgress,
+  archivedNumericalEntriesForSubKpi,
   collectAllSubKpiItems,
+  collectChecklistProgressItems,
   getPillarScreenshots,
   getTaskPriority,
+  isPillarOnlyTask,
   normalizeSubKpis,
+  pillarVirtualSubKpiItem,
+  pillarScreenshotUploadEnabled,
   pillarScreenshotsEnabled,
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
   subKpiProgressMismatchWarning,
+  taskDailyPenaltyAmountFromSubKpis,
   SUB_KPI_PROGRESS_MISMATCH_WARNING,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import {
+  subKpiAccruedPenalty,
+  subKpiPenaltyDays,
+  resolveSubKpiDailyPenaltyAmount,
+  type SubKpiPenaltyContext,
+} from "@/lib/task-delay-penalty";
+import {
   hasBeforeAndAfterScreenshots,
   hasNumericalRecord,
+  hasScreenshotUpload,
+  numericalRecordProgressPercent,
   resolveSubKpiCompletionMode,
   resolveSubKpiCompletionRequirements,
   SUB_KPI_COMPLETION_MODE_OPTIONS,
   subKpiRequiresCheckbox,
   subKpiRequiresNumerical,
   subKpiRequiresScreenshots,
+  subKpiRequiresScreenshotUpload,
   subKpiRequirementsMet,
   type SubKpiCompletionMode,
 } from "@/lib/sub-kpi-completion-mode";
@@ -91,6 +108,7 @@ function ChecklistProgressBar({
 type KpiRecord = {
   id: string;
   title: string;
+  mainTask?: string | null;
   isRecurring?: boolean;
   nonRecurringStartAt?: string | null;
   nonRecurringEndAt?: string | null;
@@ -102,6 +120,7 @@ type KpiRecord = {
   recurrenceMonthDay?: number | null;
   /** Active cycle anchor (UTC); backlog rows may be null until first GET normalizes */
   periodCycleStartAt?: string | null;
+  lastFullCompletionAt?: string | null;
   assignedAgent?: { id: string; name: string; team?: { id?: string | null; name?: string | null } | null } | null;
   itProjectName?: string | null;
   itProjectPhase?: string | null;
@@ -285,7 +304,12 @@ export function AgentKpiKanbanFlow({
       `/api/kpi-maintenance?tz=${encodeURIComponent(tz)}${companyQs}${assignedQs}`,
       { cache: "no-store" },
     );
-    if (!res.ok) return;
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(body.error ?? "Could not load task board.");
+      return;
+    }
+    setError(null);
     const payload = (await res.json()) as {
       rows?: KpiRecord[];
       canAssignWork?: boolean;
@@ -379,10 +403,14 @@ export function AgentKpiKanbanFlow({
     setScheduleDraft(null);
   }
 
+  function taskLabel(r: KpiRecord) {
+    return kpiMainTaskLabel(r);
+  }
+
   function progress(r: KpiRecord) {
     const p = isItProjectImplementationPillar(r.title)
       ? itProjectChecklistProgressFromRaw(r.subKpis)
-      : kpiChecklistProgress(r.subKpis);
+      : kpiChecklistProgress(r.subKpis, taskLabel(r));
     const view = kpiChecklistMetricView(p, false);
     return {
       total: view.total,
@@ -396,7 +424,9 @@ export function AgentKpiKanbanFlow({
   }
 
   function periodEnd(r: KpiRecord) {
-    if (r.isRecurring === false) return nonRecurringDeadline(r);
+    if (r.isRecurring === false) {
+      return nonRecurringTaskDelayDeadline(r.subKpis, tz) ?? nonRecurringDeadline(r);
+    }
     return recurringDeadlineExclusive(r, tz);
   }
 
@@ -458,7 +488,12 @@ export function AgentKpiKanbanFlow({
       return canAssignWork && req.screenshots && hasBeforeAndAfterScreenshots(s);
     }
     if (req.screenshots && !hasBeforeAndAfterScreenshots(s)) return false;
+    if (req.screenshotUpload && !hasScreenshotUpload(s)) return false;
     if (req.numerical && !hasNumericalRecord(s)) return false;
+    if (req.numerical) {
+      const pct = numericalRecordProgressPercent(s.numericalValue, s.numericalTarget);
+      if (pct != null && pct < 100) return false;
+    }
     return true;
   }
 
@@ -471,7 +506,7 @@ export function AgentKpiKanbanFlow({
     if (currentlyDone) return false;
     const items = isItProjectImplementationPillar(r.title)
       ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase).phases.flatMap((phase) => phase.items)
-      : collectAllSubKpiItems(normalizeSubKpis(r.subKpis));
+      : collectChecklistProgressItems(r.subKpis, taskLabel(r));
     if (items.length === 0) return false;
     return items.every((item) => (item.id === subKpiId ? true : item.done));
   }
@@ -786,6 +821,7 @@ export function AgentKpiKanbanFlow({
       actualDate?: string | null;
       projectPriority?: string | null;
       numericalValue?: number | null;
+      numericalTarget?: number | null;
     },
   ) {
     setBusyId(recordId);
@@ -826,6 +862,46 @@ export function AgentKpiKanbanFlow({
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function patchTaskDailyPenalty(recordId: string, amount: number | null) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: recordId, taskDailyPenaltyAmount: amount }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update daily delay penalty.");
+        return;
+      }
+      const updated = (await res.json()) as KpiRecord;
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function penaltyContextForRecord(r: KpiRecord): SubKpiPenaltyContext {
+    return {
+      nowMs: Date.now(),
+      timeZone: tz,
+      frequency: r.frequency,
+      isRecurring: r.isRecurring !== false,
+      title: r.title,
+      taskDailyPenaltyAmount: taskDailyPenaltyAmountFromSubKpis(r.subKpis),
+    };
+  }
+
+  function accruedPenaltyForRecord(r: KpiRecord): number {
+    const ctx = penaltyContextForRecord(r);
+    return collectAllSubKpiItems(normalizeSubKpis(r.subKpis)).reduce(
+      (sum, item) => sum + subKpiAccruedPenalty(item, ctx),
+      0,
+    );
   }
 
   async function toggleSubKpi(recordId: string, subKpiId: string, done: boolean) {
@@ -934,6 +1010,8 @@ export function AgentKpiKanbanFlow({
       startDate?: string | null;
       dueDate?: string | null;
       completionMode?: SubKpiCompletionMode;
+      numericalTarget?: number | null;
+      dailyPenaltyAmount?: number | null;
     },
   ) {
     if (!showAdminTaskManagement) return;
@@ -984,7 +1062,7 @@ export function AgentKpiKanbanFlow({
 
   async function removeTask(r: KpiRecord) {
     if (!showAdminTaskManagement) return;
-    const label = r.title.trim() || "this task";
+    const label = taskLabel(r).trim() || "this task";
     if (
       !window.confirm(
         `Remove task "${label}" from the board? This permanently deletes the task and cannot be undone.`,
@@ -1017,8 +1095,10 @@ export function AgentKpiKanbanFlow({
     if (!showAdminTaskManagement) return;
     const taskSchedule: Record<string, unknown> = {
       isRecurring: draft.isRecurring,
-      frequency: draft.frequency,
     };
+    if (draft.isRecurring) {
+      taskSchedule.frequency = draft.frequency;
+    }
     if (draft.isRecurring && draft.frequency === "WEEKLY") {
       taskSchedule.recurrenceWeekday = draft.recurrenceWeekday;
     }
@@ -1128,7 +1208,8 @@ export function AgentKpiKanbanFlow({
 
   function renderPillarScreenshotField(r: KpiRecord, slot: TaskScreenshotSlot, editable: boolean) {
     const screenshots = getPillarScreenshots(r.subKpis, slot);
-    const label = slot === "before" ? "Before screenshot" : "After screenshot";
+    const label =
+      slot === "before" ? "Before screenshot" : slot === "after" ? "After screenshot" : "Screenshot";
     const canUpload = editable || canAssignWork;
     const canRemove = canUpload && !taskCardDone(r);
     const remainingSlots = Math.max(0, MAX_TASK_SCREENSHOTS_PER_SLOT - screenshots.length);
@@ -1187,15 +1268,46 @@ export function AgentKpiKanbanFlow({
               void uploadPillarScreenshots(r.id, slot, files, screenshots.length);
             }}
             className="sr-only"
-            aria-label={`Upload 1 to ${remainingSlots} ${label.toLowerCase()} images for ${r.title}`}
+            aria-label={`Upload 1 to ${remainingSlots} ${label.toLowerCase()} images for ${taskLabel(r)}`}
           />
         </label>
       </div>
     );
   }
 
+  function taskUsesSubKpiScreenshotUpload(r: KpiRecord): boolean {
+    if (isPillarOnlyTask(r.subKpis)) return false;
+    return collectAllSubKpiItems(normalizeSubKpis(r.subKpis)).some((item) =>
+      subKpiRequiresScreenshotUpload(resolveSubKpiCompletionRequirements(item)),
+    );
+  }
+
   function renderPillarScreenshotFields(r: KpiRecord, editable: boolean) {
-    if (!pillarScreenshotsEnabled(r.subKpis)) return null;
+    if (taskUsesSubKpiScreenshotUpload(r)) return null;
+    const genericEnabled = pillarScreenshotUploadEnabled(r.subKpis);
+    const legacyBeforeAfter = pillarScreenshotsEnabled(r.subKpis) && !genericEnabled;
+    if (!genericEnabled && !legacyBeforeAfter) return null;
+
+    if (genericEnabled) {
+      return (
+        <div className="mt-3 rounded-lg border border-orange-300/60 bg-orange-50/60 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+              Pillar screenshots
+            </p>
+            <p className="text-[10px] text-orange-700 dark:text-orange-300">
+              {isPillarOnlyTask(r.subKpis)
+                ? r.isRecurring !== false
+                  ? "Upload proof on the task card to complete this cycle."
+                  : "Upload proof on the task card to complete this item."
+                : "Cached for recurring cycles; checkbox completion is unchanged."}
+            </p>
+          </div>
+          <div className="mt-2">{renderPillarScreenshotField(r, "general", editable)}</div>
+        </div>
+      );
+    }
+
     return (
       <div className="mt-3 rounded-lg border border-orange-300/60 bg-orange-50/60 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1203,7 +1315,11 @@ export function AgentKpiKanbanFlow({
             Pillar screenshots
           </p>
           <p className="text-[10px] text-orange-700 dark:text-orange-300">
-            Cached for recurring cycles; remove before Done if the proof is wrong.
+            {isPillarOnlyTask(r.subKpis)
+              ? r.isRecurring !== false
+                ? "Upload proof on the task card to complete this cycle. Screenshots archive when the task recurs."
+                : "Upload proof on the task card to complete this item."
+              : "Cached for recurring cycles; remove before Done if the proof is wrong."}
           </p>
         </div>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -1215,8 +1331,18 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderScreenshotField(r: KpiRecord, s: SubKpiItem, slot: TaskScreenshotSlot, editable: boolean) {
-    const screenshots = slot === "before" ? s.beforeScreenshot ?? [] : s.afterScreenshot ?? [];
-    const label = slot === "before" ? "Before screenshot" : "After screenshot";
+    const screenshots =
+      slot === "before"
+        ? s.beforeScreenshot ?? []
+        : slot === "after"
+          ? s.afterScreenshot ?? []
+          : s.uploadScreenshot ?? [];
+    const label =
+      slot === "before"
+        ? "Before screenshot"
+        : slot === "after"
+          ? "After screenshot"
+          : "Screenshot upload";
     const canUpload = editable || canAssignWork;
     const canRemove = canUpload && !s.done && !taskCardDone(r);
     const remainingSlots = Math.max(0, MAX_TASK_SCREENSHOTS_PER_SLOT - screenshots.length);
@@ -1284,6 +1410,21 @@ export function AgentKpiKanbanFlow({
     );
   }
 
+  function renderSubKpiScreenshotUploadFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
+    if (!subKpiRequiresScreenshotUpload(resolveSubKpiCompletionRequirements(s))) return null;
+    const recurring = r.isRecurring !== false;
+    return (
+      <div className="mt-2">
+        <p className="mb-1 text-[10px] text-zinc-500 dark:text-zinc-500">
+          {recurring
+            ? "Uploads are cached for recurring cycles. Remove before marking this sub-task done if needed."
+            : "Attach proof images for this sub-task."}
+        </p>
+        {renderScreenshotField(r, s, "general", editable)}
+      </div>
+    );
+  }
+
   function renderTaskScreenshotFields(r: KpiRecord, s: SubKpiItem, editable: boolean) {
     if (!subKpiRequiresScreenshots(resolveSubKpiCompletionRequirements(s))) return null;
     return (
@@ -1299,30 +1440,185 @@ export function AgentKpiKanbanFlow({
     );
   }
 
-  function renderNumericalRecordField(r: KpiRecord, s: SubKpiItem, editable: boolean) {
+  function renderNumericalRecordField(
+    r: KpiRecord,
+    s: SubKpiItem,
+    editable: boolean,
+    canManageSubTasks: boolean,
+    pillarOnlyMode = false,
+  ) {
     if (!subKpiRequiresNumerical(resolveSubKpiCompletionRequirements(s))) return null;
+    const recurring = r.isRecurring !== false;
+    const target = s.numericalTarget;
+    const actual = s.numericalValue;
+    const progressPercent = numericalRecordProgressPercent(actual, target);
+    const targetMet = progressPercent != null && progressPercent >= 100;
+    const assigneeSetsTarget = recurring && editable && (target == null || actual == null);
+    const canEditTarget = canManageSubTasks || assigneeSetsTarget;
+    const archivedEntries = archivedNumericalEntriesForSubKpi(r.subKpis, s.id);
     return (
-      <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-        Numerical record
-        <input
-          type="number"
-          step="any"
-          value={s.numericalValue ?? ""}
-          disabled={!editable || busyId === r.id}
-          onChange={(e) => {
-            const raw = e.target.value.trim();
-            void patchSubKpiWorkMeta(r.id, s.id, {
-              numericalValue: raw === "" ? null : Number(raw),
-            });
-          }}
-          className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-          aria-label={`Numerical record for ${s.title}`}
-        />
-      </label>
+      <div className="mt-2 space-y-2">
+        {recurring ? (
+          <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
+            {target == null
+              ? "Enter a target number for this cycle before recording the actual value."
+              : "Previous cycle records are archived when the task recurs."}
+          </p>
+        ) : null}
+        {archivedEntries.length > 0 ? (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/80 p-2 dark:border-zinc-700 dark:bg-zinc-950/50">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+              Previous cycles
+            </p>
+            <ul className="mt-1 space-y-1 text-[11px] text-zinc-700 dark:text-zinc-300">
+              {archivedEntries.slice(-3).map((entry) => (
+                <li key={entry.archivedAt} className="tabular-nums">
+                  {new Date(entry.archivedAt).toLocaleDateString(undefined, { timeZone: tz })} · target{" "}
+                  {entry.numericalTarget ?? "—"} · actual {entry.numericalValue ?? "—"}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <div className="grid gap-2 sm:grid-cols-2">
+          {canEditTarget ? (
+            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              {assigneeSetsTarget && !canManageSubTasks ? "Target number (this cycle)" : "Target number"}
+              <input
+                type="number"
+                step="any"
+                min={0}
+                value={target ?? ""}
+                disabled={busyId === r.id}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  const nextTarget = raw === "" ? null : Number(raw);
+                  if (canManageSubTasks && !pillarOnlyMode) {
+                    void updateSubTask(r.id, s.id, { numericalTarget: nextTarget });
+                    return;
+                  }
+                  void patchSubKpiWorkMeta(r.id, s.id, { numericalTarget: nextTarget });
+                }}
+                className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                aria-label={`Target number for ${s.title}`}
+              />
+            </label>
+          ) : target != null ? (
+            <div className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Target number
+              <span className="mt-1 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-2 text-xs font-semibold tabular-nums text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
+                {target}
+              </span>
+            </div>
+          ) : null}
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Actual record
+            <input
+              type="number"
+              step="any"
+              value={actual ?? ""}
+              disabled={!editable || busyId === r.id || target == null}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                void patchSubKpiWorkMeta(r.id, s.id, {
+                  numericalValue: raw === "" ? null : Number(raw),
+                });
+              }}
+              className={cn(
+                "mt-1 rounded-lg border px-2 py-2 text-xs font-semibold tabular-nums dark:bg-zinc-900 dark:text-zinc-100",
+                target != null && actual != null
+                  ? targetMet
+                    ? "border-emerald-400 bg-emerald-50 text-emerald-900 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-200"
+                    : "border-amber-400 bg-amber-50 text-amber-950 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-200"
+                  : "border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700",
+              )}
+              aria-label={`Actual record for ${s.title}`}
+            />
+          </label>
+        </div>
+      </div>
     );
   }
 
-  function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem, showPriority = true) {
+  function renderDailyPenaltyField(
+    r: KpiRecord,
+    s: SubKpiItem,
+    canManageSubTasks: boolean,
+  ) {
+    if (!canManageSubTasks || r.isRecurring !== false) return null;
+    const ctx = penaltyContextForRecord(r);
+    const accrued = subKpiAccruedPenalty(s, ctx);
+    return (
+      <div className="mt-2 space-y-1">
+        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          Daily delay penalty
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={s.dailyPenaltyAmount ?? ""}
+            disabled={busyId === r.id}
+            placeholder={
+              taskDailyPenaltyAmountFromSubKpis(r.subKpis) != null
+                ? String(taskDailyPenaltyAmountFromSubKpis(r.subKpis))
+                : "Task default"
+            }
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              void updateSubTask(r.id, s.id, {
+                dailyPenaltyAmount: raw === "" ? null : Number(raw),
+              });
+            }}
+            className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            aria-label={`Daily delay penalty for ${s.title}`}
+          />
+        </label>
+        {accrued > 0 ? (
+          <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+            Accrued penalty: {accrued} · {subKpiPenaltyDays(s, ctx)} day
+            {subKpiPenaltyDays(s, ctx) === 1 ? "" : "s"} ×{" "}
+            {resolveSubKpiDailyPenaltyAmount(s, ctx)}/day
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderTaskLevelDailyPenaltyField(r: KpiRecord) {
+    const virtual = pillarVirtualSubKpiItem(r.subKpis, taskLabel(r));
+    if (!virtual) return null;
+    const ctx = penaltyContextForRecord(r);
+    const accrued = subKpiAccruedPenalty(virtual, ctx);
+    return (
+      <div className="mt-2 space-y-1">
+        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          Daily delay penalty (main task)
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={taskDailyPenaltyAmountFromSubKpis(r.subKpis) ?? ""}
+            disabled={busyId === r.id}
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              void patchTaskDailyPenalty(r.id, raw === "" ? null : Math.max(0, Number(raw)));
+            }}
+            className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            aria-label={`Daily delay penalty for ${taskLabel(r)}`}
+          />
+        </label>
+        {accrued > 0 ? (
+          <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+            Accrued penalty: {accrued} · {subKpiPenaltyDays(virtual, ctx)} day
+            {subKpiPenaltyDays(virtual, ctx) === 1 ? "" : "s"} ×{" "}
+            {resolveSubKpiDailyPenaltyAmount(virtual, ctx)}/day
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem, showPriority = true, pillarOnlyMode = false) {
     const subEditable = canEditSubKpi(r, s);
     const subCompletable = canCompleteSubKpi(r, s);
     const canManageSubTasks = showAdminTaskManagement;
@@ -1330,11 +1626,13 @@ export function AgentKpiKanbanFlow({
     const completionRequirements = resolveSubKpiCompletionRequirements(s);
     const needsScreenshotsForCheckbox =
       completionRequirements.screenshots && !hasBeforeAndAfterScreenshots(s);
+    const needsScreenshotUploadForCheckbox =
+      completionRequirements.screenshotUpload && !hasScreenshotUpload(s);
     const needsNumericalForCheckbox =
-      completionRequirements.numerical && !hasNumericalRecord(s);
+      completionRequirements.numerical &&
+      (numericalRecordProgressPercent(s.numericalValue, s.numericalTarget) ?? 0) < 100;
     const canEditWorkDetails = subEditable || canAssignWork || canManageSubTasks;
     const recurring = r.isRecurring !== false;
-    const dailyRecurring = recurring && r.frequency === "DAILY";
     const finished = subKpiRequirementsMet(s);
     const showCheckbox =
       subEditable && busyId !== r.id && subKpiRequiresCheckbox(completionRequirements);
@@ -1361,10 +1659,10 @@ export function AgentKpiKanbanFlow({
                 checked={finished}
                 disabled={!subCompletable}
                 onChange={() => void toggleSubKpi(r.id, s.id, finished)}
-                aria-label={`Mark ${s.title} as ${finished ? "pending" : "done"}`}
+                aria-label={`Mark ${pillarOnlyMode ? taskLabel(r) : s.title} as ${finished ? "pending" : "done"}`}
               />
             ) : null}
-            {canManageSubTasks ? (
+            {canManageSubTasks && !pillarOnlyMode ? (
               <input
                 key={`subtask-title-${r.id}-${s.id}-${s.title}`}
                 type="text"
@@ -1388,11 +1686,19 @@ export function AgentKpiKanbanFlow({
                 )}
               />
             ) : (
-              <span className={cn("min-w-0", finished && "line-through opacity-70")}>{s.title}</span>
+              <span
+                className={cn(
+                  "min-w-0",
+                  finished && "line-through opacity-70",
+                  pillarOnlyMode && !kpiHasDistinctMainTask(r) && "sr-only",
+                )}
+              >
+                {pillarOnlyMode ? taskLabel(r) : s.title}
+              </span>
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-            {canManageSubTasks ? (
+            {canManageSubTasks && !pillarOnlyMode ? (
               <button
                 type="button"
                 disabled={busyId === r.id}
@@ -1425,12 +1731,22 @@ export function AgentKpiKanbanFlow({
         ) : null}
         {needsNumericalForCheckbox ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-            Enter a numerical record before marking this sub-task done.
+            Reach 100% progress (actual ÷ target) before marking this sub-task done.
           </p>
         ) : null}
         {!completionRequirements.checkbox && completionRequirements.screenshots && !finished ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
             Upload before and after screenshots to complete this sub-task.
+          </p>
+        ) : null}
+        {needsScreenshotUploadForCheckbox ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Upload at least one screenshot before marking this sub-task done.
+          </p>
+        ) : null}
+        {!completionRequirements.checkbox && completionRequirements.screenshotUpload && !finished ? (
+          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+            Upload at least one screenshot to complete this sub-task.
           </p>
         ) : null}
         {!completionRequirements.checkbox && completionRequirements.numerical && !finished ? (
@@ -1446,8 +1762,8 @@ export function AgentKpiKanbanFlow({
             {SUB_KPI_PROGRESS_MISMATCH_WARNING}
           </p>
         ) : null}
-        {renderSubKpiAssignmentControl(r, s)}
-        {canManageSubTasks ? (
+        {pillarOnlyMode ? null : renderSubKpiAssignmentControl(r, s)}
+        {canManageSubTasks && !pillarOnlyMode ? (
           <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             Assignee completion
             <select
@@ -1492,25 +1808,6 @@ export function AgentKpiKanbanFlow({
               </select>
             </label>
           ) : null}
-          {!dailyRecurring ? (
-            <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-              Schedule date
-              <DatePickerField
-                value={s.startDate ?? ""}
-                disabled={!canEditWorkDetails || busyId === r.id}
-                onChange={(e) => {
-                  const value = e.target.value || null;
-                  if (canManageSubTasks) {
-                    void updateSubTask(r.id, s.id, { startDate: value });
-                    return;
-                  }
-                  void patchSubKpiWorkMeta(r.id, s.id, { startDate: value });
-                }}
-                wrapperClassName="mt-1"
-                aria-label={`Schedule date for ${s.title}`}
-              />
-            </label>
-          ) : null}
           {!recurring ? (
             <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
               Target date
@@ -1519,7 +1816,7 @@ export function AgentKpiKanbanFlow({
                 disabled={!canEditWorkDetails || busyId === r.id}
                 onChange={(e) => {
                   const value = e.target.value || null;
-                  if (canManageSubTasks) {
+                  if (canManageSubTasks && !pillarOnlyMode) {
                     void updateSubTask(r.id, s.id, { dueDate: value });
                     return;
                   }
@@ -1547,8 +1844,13 @@ export function AgentKpiKanbanFlow({
             </label>
           ) : null}
         </div>
-        {renderTaskScreenshotFields(r, s, subEditable)}
-        {renderNumericalRecordField(r, s, subEditable)}
+        {!pillarOnlyMode ? renderTaskScreenshotFields(r, s, subEditable) : null}
+        {!pillarOnlyMode ? renderSubKpiScreenshotUploadFields(r, s, subEditable) : null}
+        {renderNumericalRecordField(r, s, subEditable, canManageSubTasks, pillarOnlyMode)}
+        {!pillarOnlyMode ? renderDailyPenaltyField(r, s, canManageSubTasks) : null}
+        {pillarOnlyMode && !recurring && canManageSubTasks
+          ? renderTaskLevelDailyPenaltyField(r)
+          : null}
       </div>
     );
   }
@@ -1673,7 +1975,9 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderAddSubTaskPanel(r: KpiRecord) {
-    if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title)) return null;
+    if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title) || isPillarOnlyTask(r.subKpis)) {
+      return null;
+    }
     const normalized = normalizeSubKpis(r.subKpis);
     const draft = addSubTaskDraftFor(r);
     const hideSchedule = hideAddSubTaskScheduleDate(r);
@@ -1748,6 +2052,10 @@ export function AgentKpiKanbanFlow({
     const itProject = isItProjectImplementationPillar(r.title);
     const normalized = normalizeSubKpis(r.subKpis);
     const itProjectData = itProject ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase) : null;
+    if (!itProject && isPillarOnlyTask(r.subKpis)) {
+      const virtual = pillarVirtualSubKpiItem(r.subKpis, taskLabel(r));
+      if (virtual) return renderNonItSubKpiCard(r, virtual, false, true);
+    }
     const checklistItems = collectAllSubKpiItems(normalized);
     const editable = canEditChecklist(r);
     const showSubtaskPriority = itProject || checklistItems.length <= 1;
@@ -1938,7 +2246,7 @@ export function AgentKpiKanbanFlow({
               {unassignedRows.map((r) => (
                 <div
                   key={`unassigned-${r.id}`}
-                  {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => r.title })}
+                  {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => taskLabel(r) })}
                   className={cn(
                     "touch-pan-y select-none rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-950/40 sm:py-2",
                     assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
@@ -1947,7 +2255,20 @@ export function AgentKpiKanbanFlow({
                 >
                   <div className="flex items-start gap-1.5">
                     <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
-                    <p className="line-clamp-2 min-w-0 leading-snug">{r.title}</p>
+                    <div className="min-w-0 flex-1">
+                      {kpiHasDistinctMainTask(r) ? (
+                        <>
+                          <p className="line-clamp-1 text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+                            {kpiPillarLabel(r)}
+                          </p>
+                          {!isPillarOnlyTask(r.subKpis) ? (
+                            <p className="line-clamp-2 leading-snug">{taskLabel(r)}</p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <p className="line-clamp-2 leading-snug">{taskLabel(r)}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2099,24 +2420,30 @@ export function AgentKpiKanbanFlow({
           />
           Recurring task
         </label>
-        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          Frequency
-          <select
-            value={draft.frequency}
-            disabled={busyId === r.id}
-            onChange={(e) =>
-              setScheduleDraft((prev) =>
-                prev ? { ...prev, frequency: e.target.value as KpiFrequencyCode } : prev,
-              )
-            }
-            className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-          >
-            <option value="DAILY">Daily</option>
-            <option value="WEEKLY">Weekly</option>
-            <option value="MONTHLY">Monthly</option>
-            <option value="QUARTERLY">Quarterly</option>
-          </select>
-        </label>
+        {draft.isRecurring ? (
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Frequency
+            <select
+              value={draft.frequency}
+              disabled={busyId === r.id}
+              onChange={(e) =>
+                setScheduleDraft((prev) =>
+                  prev ? { ...prev, frequency: e.target.value as KpiFrequencyCode } : prev,
+                )
+              }
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            >
+              <option value="DAILY">Daily</option>
+              <option value="WEEKLY">Weekly</option>
+              <option value="MONTHLY">Monthly</option>
+              <option value="QUARTERLY">Quarterly</option>
+            </select>
+          </label>
+        ) : (
+          <p className="text-xs font-normal normal-case tracking-normal text-zinc-600 dark:text-zinc-400">
+            One-off task — delay is based on each sub-task target and actual dates.
+          </p>
+        )}
         {draft.isRecurring && draft.frequency === "WEEKLY" ? (
           <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             Week starts on ({tz})
@@ -2180,7 +2507,10 @@ export function AgentKpiKanbanFlow({
     const end = periodEnd(activeTask);
     const itProject = isItProjectImplementationPillar(activeTask.title);
     const normalized = normalizeSubKpis(activeTask.subKpis);
-    const checklistItems = collectAllSubKpiItems(normalized);
+    const pillarOnly = !itProject && isPillarOnlyTask(activeTask.subKpis);
+    const checklistItems = pillarOnly
+      ? collectChecklistProgressItems(activeTask.subKpis, taskLabel(activeTask))
+      : collectAllSubKpiItems(normalized);
     const usesTaskPriority = !itProject && checklistItems.length > 1;
     const itProjectProgress = itProject
       ? itProjectAggregatedProgressFromRaw(activeTask.subKpis, activeTask.itProjectPhase)
@@ -2194,7 +2524,7 @@ export function AgentKpiKanbanFlow({
         onClick={() => closeActiveTask()}
         role="dialog"
         aria-modal="true"
-        aria-label={`${activeTask.title} full task details`}
+        aria-label={`${taskLabel(activeTask)} full task details`}
       >
         <div
           className="max-h-[calc(100dvh-3rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-800 dark:bg-surface sm:p-5"
@@ -2205,9 +2535,26 @@ export function AgentKpiKanbanFlow({
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
                 Full Task Details
               </p>
-              <h3 className="mt-1 truncate text-xl font-bold text-zinc-950 dark:text-zinc-50">{activeTask.title}</h3>
+              <h3 className="mt-1 truncate text-xl font-bold text-zinc-950 dark:text-zinc-50">
+                {pillarOnly ? (
+                  <>
+                    <span className="block truncate text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
+                      {kpiPillarLabel(activeTask)}
+                    </span>
+                  </>
+                ) : kpiHasDistinctMainTask(activeTask) ? (
+                  <>
+                    <span className="block truncate text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
+                      {kpiPillarLabel(activeTask)}
+                    </span>
+                    <span className="mt-1 block truncate">{taskLabel(activeTask)}</span>
+                  </>
+                ) : (
+                  taskLabel(activeTask)
+                )}
+              </h3>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"} · {itProject ? "Project" : activeTask.frequency}
+                Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"} · {itProject ? "Project" : activeTask.isRecurring === false ? "One-off" : activeTask.frequency}
               </p>
             </div>
             <div className="flex shrink-0 items-start gap-2">
@@ -2257,9 +2604,21 @@ export function AgentKpiKanbanFlow({
                 <div>
                   <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Cycle</dt>
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">
-                    {activeTask.isRecurring === false || !end
-                      ? `Non-recurring · ${activeTask.frequency.toLowerCase()}`
-                      : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}`}
+                    {pillarOnly
+                      ? activeTask.isRecurring !== false
+                        ? end
+                          ? `Complete the main task this cycle. Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}.`
+                          : "Complete the main task for this recurring cycle."
+                        : end
+                          ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
+                          : "One-off — based on main task target and actual dates"
+                      : activeTask.isRecurring === false
+                        ? end
+                          ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
+                          : "One-off — based on main task target and actual dates"
+                        : end
+                          ? `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}`
+                          : ""}
                   </dd>
                 </div>
                 {!itProject && normalized.segmented ? (
@@ -2285,6 +2644,31 @@ export function AgentKpiKanbanFlow({
                       </option>
                     ))}
                   </select>
+                </label>
+              ) : null}
+              {showAdminTaskManagement && !itProject && activeTask.isRecurring === false ? (
+                <label className="block rounded-lg border border-zinc-200 bg-white p-3 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-500">
+                  Daily delay penalty (task default)
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={taskDailyPenaltyAmountFromSubKpis(activeTask.subKpis) ?? ""}
+                    disabled={busyId === activeTask.id}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      void patchTaskDailyPenalty(
+                        activeTask.id,
+                        raw === "" ? null : Math.max(0, Number(raw)),
+                      );
+                    }}
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                  {accruedPenaltyForRecord(activeTask) > 0 ? (
+                    <span className="mt-1 block text-[11px] font-semibold normal-case tracking-normal text-rose-700 dark:text-rose-300">
+                      Total accrued on this task: {accruedPenaltyForRecord(activeTask)}
+                    </span>
+                  ) : null}
                 </label>
               ) : null}
               {itProject ? (
@@ -2316,7 +2700,9 @@ export function AgentKpiKanbanFlow({
 
             <section className="min-w-0">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Sub Tasks</h4>
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                  {pillarOnly ? "Main task completion" : "Sub Tasks"}
+                </h4>
                 <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
                   {p.total} item{p.total === 1 ? "" : "s"}
                 </span>
@@ -2364,8 +2750,10 @@ export function AgentKpiKanbanFlow({
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             Hold and slide a task to <strong>Done</strong> or <strong>Current</strong> (touch or mouse).{" "}
             <span className="text-zinc-500 dark:text-zinc-500">
-              The <strong>Delayed</strong> column applies only to <strong>IT Project Implementation</strong> tasks
-              (sub-task past due or actual date after due date). Fully complete but late tasks stay in{" "}
+              The <strong>Delayed</strong> column applies to <strong>IT Project Implementation</strong> tasks
+              (sub-task past due or actual after due), and to <strong>one-off</strong> tasks the day after each
+              sub-task target date if still incomplete (or when the actual date is on or after that boundary).
+              Fully complete but late tasks stay in{" "}
               <strong>Delayed</strong>, not Done.
             </span>
           </p>
@@ -2390,6 +2778,11 @@ export function AgentKpiKanbanFlow({
             const list = boardRows
               .filter((r) => statusOf(r) === col)
               .sort((a, b) => {
+                if (col === "DONE") {
+                  const aTime = a.lastFullCompletionAt ? new Date(a.lastFullCompletionAt).getTime() : 0;
+                  const bTime = b.lastFullCompletionAt ? new Date(b.lastFullCompletionAt).getTime() : 0;
+                  return bTime - aTime;
+                }
                 if (col !== "DELAYED") return 0;
                 return incompleteOverdueMs(b) - incompleteOverdueMs(a);
               });
@@ -2435,7 +2828,10 @@ export function AgentKpiKanbanFlow({
                         itProject && itProjectData
                           ? itProjectAggregatedProgressFromRaw(r.subKpis, r.itProjectPhase)
                           : null;
-                      const checklistItems = collectAllSubKpiItems(normalized);
+                      const checklistItems = isPillarOnlyTask(r.subKpis)
+                        ? collectChecklistProgressItems(r.subKpis, taskLabel(r))
+                        : collectAllSubKpiItems(normalized);
+                      const pillarOnly = !itProject && isPillarOnlyTask(r.subKpis);
                       const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
                       const mainBarClass =
                         col === "DONE"
@@ -2446,12 +2842,13 @@ export function AgentKpiKanbanFlow({
                               ? "bg-orange-500"
                               : "bg-blue-500";
                       const drawerAllowed = canOpenSubtaskDrawer(r, checklistItems);
+                      const showSubtaskDrawerToggle = drawerAllowed && !pillarOnly;
                       const drawerOpen = openSubtaskDrawers.has(r.id);
                       return (
                         <div
                           key={r.id}
                           {...(editable
-                            ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => r.title })
+                            ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => taskLabel(r) })
                             : {})}
                           className={cn(
                             "rounded-lg border bg-white/75 p-3 shadow-sm transition hover:border-orange-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-950/30 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60",
@@ -2479,13 +2876,40 @@ export function AgentKpiKanbanFlow({
                             <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{r.title}</p>
-                              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                                Assigned: {r.assignedAgent?.name ?? "Unassigned"}
-                              </p>
+                              {pillarOnly ? (
+                                <>
+                                  <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+                                    {kpiPillarLabel(r)}
+                                  </p>
+                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
+                                  </p>
+                                </>
+                              ) : kpiHasDistinctMainTask(r) ? (
+                                <>
+                                  <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
+                                    {kpiPillarLabel(r)}
+                                  </p>
+                                  <p className="mt-0.5 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                    {taskLabel(r)}
+                                  </p>
+                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
+                                  </p>
+                                </>
+                              ) : (
+                                <>
+                                  <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                    {taskLabel(r)}
+                                  </p>
+                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
+                                  </p>
+                                </>
+                              )}
                             </div>
                             <span className="rounded-full border border-zinc-200 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-200">
-                              {itProject ? "Project" : r.frequency}
+                              {itProject ? "Project" : r.isRecurring === false ? "One-off" : r.frequency}
                             </span>
                           </div>
                           {!itProject && normalized.segmented ? (
@@ -2493,7 +2917,7 @@ export function AgentKpiKanbanFlow({
                               Segmented
                             </span>
                           ) : null}
-                          {canAssignWork ? (
+                          {canAssignWork && !pillarOnly ? (
                             <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-400">
                               Reassign the card through lanes above, or assign individual sub-tasks below.
                             </p>
@@ -2533,15 +2957,33 @@ export function AgentKpiKanbanFlow({
                             <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
                               {itProject
                                 ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
-                                : r.isRecurring === false || !end
-                                  ? `Non-recurring · ${r.frequency.toLowerCase()}`
-                                  : `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`}
+                                : pillarOnly
+                                  ? r.isRecurring !== false
+                                    ? end
+                                      ? `Complete the main task this cycle. Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz}).`
+                                      : "Complete the main task for this recurring cycle."
+                                    : end
+                                      ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
+                                      : "One-off — based on main task target and actual dates"
+                                  : r.isRecurring === false
+                                    ? end
+                                      ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
+                                      : "One-off — based on main task target and actual dates"
+                                    : end
+                                      ? `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`
+                                      : ""}
                             </p>
                             {itProject && incLate > 0 ? (
                               <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
                                 {p.done === p.total
                                   ? `All sub-tasks complete · delayed by ${fmtDelay(incLate)}`
                                   : `Delayed by ${fmtDelay(incLate)}`}
+                              </p>
+                            ) : statusOf(r) === "DELAYED" &&
+                              r.isRecurring === false &&
+                              accruedPenaltyForRecord(r) > 0 ? (
+                              <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
+                                Delay penalty accrued: {accruedPenaltyForRecord(r)}
                               </p>
                             ) : p.inverted
                               ? p.negative > 0 && p.positive < p.total ? (
@@ -2551,12 +2993,24 @@ export function AgentKpiKanbanFlow({
                                 ) : null
                               : p.missing > 0 && p.done < p.total ? (
                                   <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                                    {p.missing} pending task{p.missing === 1 ? "" : "s"}
+                                    {pillarOnly
+                                      ? "Main task pending"
+                                      : `${p.missing} pending task${p.missing === 1 ? "" : "s"}`}
                                   </p>
                                 ) : null}
                           </div>
+                          {pillarOnly ? (
+                            <div
+                              className="mt-3 space-y-2"
+                              onClick={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              {renderTaskSubtaskContent(r)}
+                              {renderPillarScreenshotFields(r, editable)}
+                            </div>
+                          ) : null}
                           <div className="mt-3 flex flex-wrap items-center gap-2">
-                            {drawerAllowed ? (
+                            {showSubtaskDrawerToggle ? (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2598,8 +3052,8 @@ export function AgentKpiKanbanFlow({
                               Full details
                             </button>
                           </div>
-                          {drawerOpen && !itProject ? renderPillarScreenshotFields(r, editable) : null}
-                          {drawerOpen ? (
+                          {!pillarOnly && drawerOpen && !itProject ? renderPillarScreenshotFields(r, editable) : null}
+                          {!pillarOnly && drawerOpen ? (
                             <div className="mt-3 space-y-2">
                               {renderTaskSubtaskContent(r)}
                               {renderAddSubTaskPanel(r)}

@@ -1,5 +1,5 @@
-import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
+import { verifyPortalPassword } from "@/lib/auth/portal-password";
 import { prisma } from "@/lib/prisma";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -17,8 +17,8 @@ export async function PATCH(req: Request) {
   const displayName = normalizeDisplayName(body.displayName);
   const password = body.password ?? "";
 
-  if (!displayName || !password) {
-    return NextResponse.json({ error: "Display name and current password are required." }, { status: 400 });
+  if (!displayName) {
+    return NextResponse.json({ error: "Display name is required." }, { status: 400 });
   }
   if (displayName.length < 2 || displayName.length > 80) {
     return NextResponse.json({ error: "Display name must be 2-80 characters." }, { status: 400 });
@@ -36,9 +36,12 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Display name must be different." }, { status: 400 });
   }
 
-  const passwordOk = await bcrypt.compare(password, portal.passwordHash);
-  if (!passwordOk) {
-    return NextResponse.json({ error: "Incorrect password." }, { status: 403 });
+  const auth = await verifyPortalPassword(portal.passwordHash, password);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: auth.reason === "PASSWORD_REQUIRED" ? "Current password is required." : "Incorrect password." },
+      { status: 403 },
+    );
   }
 
   await prisma.$transaction(async (tx) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ActivityActor, TicketPriority, TicketStatus } from "@prisma/client";
+import type { ActivityActor, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { cn } from "@/lib/cn";

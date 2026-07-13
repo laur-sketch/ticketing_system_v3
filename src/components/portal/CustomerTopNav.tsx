@@ -8,6 +8,7 @@ import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/cn";
 import { BrandLockup } from "@/components/BrandLockup";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { PhilippineTimeClock } from "@/components/PhilippineTimeClock";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMER_PORTAL_NAV_ITEMS, customerPortalNavItemActive } from "@/components/portal/customer-portal-nav";
@@ -232,6 +233,7 @@ export function CustomerTopNav() {
             <Plus className="size-4" />
             New
           </Link>
+          <PhilippineTimeClock compact className="shrink-0" />
           <div className="relative">
             <button
               type="button"

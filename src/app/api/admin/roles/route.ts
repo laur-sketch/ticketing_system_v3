@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { ensureAgentRowForPortalStaff, pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import { rosterTeamNameFilter, sortByRosterOrder, COMPANY_ROSTER } from "@/lib/company-roster";

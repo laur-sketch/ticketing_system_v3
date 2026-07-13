@@ -6,7 +6,7 @@
  *   npx tsx scripts/reset-all-portal-passwords.ts --confirm "your-new-password"
  */
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 

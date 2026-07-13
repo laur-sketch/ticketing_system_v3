@@ -1,4 +1,4 @@
-import { TicketPriority } from "@prisma/client";
+import { TicketPriority } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";

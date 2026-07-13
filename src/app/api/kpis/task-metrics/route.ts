@@ -24,13 +24,13 @@ export async function GET(req: Request) {
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
   const assignedAgentId = session?.user?.role === "Personnel" ? operator?.id ?? "__none__" : undefined;
-  const companyId =
+    const companyId =
     session?.user?.role === "Admin"
       ? (await resolveStaffCompanyTeamId(session.user.email)) ?? "__none__"
       : session?.user?.role === "SuperAdmin"
         ? searchParams.get("companyId")?.trim() || null
         : null;
-  const assignedAgentIds = companyId && companyId !== "ALL" ? await agentIdsForCompany(companyId) : undefined;
+  const assignedAgentIds = companyId && companyId !== "ALL" && session?.user?.role !== "SuperAdmin" ? await agentIdsForCompany(companyId) : undefined;
 
   const timeZone = normalizeTimeZone(searchParams.get("tz"));
   const payload = await computeTaskMetrics(

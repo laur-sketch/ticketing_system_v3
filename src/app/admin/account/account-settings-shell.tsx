@@ -109,6 +109,9 @@ export function AccountSettingsShell() {
   const email = user?.email ?? "";
   const role = user?.role ?? "";
   const displayName = details?.displayName ?? name;
+  const oauthOnly =
+    typeof user?.authProvider === "string" &&
+    user.authProvider.trim().toLowerCase() === "google";
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -307,13 +310,13 @@ export function AccountSettingsShell() {
   }
 
   async function submitEmailChange() {
-    if (!newEmail.trim() || !emailPassword) return;
+    if (!newEmail.trim() || (!oauthOnly && !emailPassword)) return;
     setEmailBusy(true);
     setEmailMessage(null);
     const res = await fetch("/api/me/security/email", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ newEmail, password: emailPassword }),
+      body: JSON.stringify({ newEmail, ...(oauthOnly ? {} : { password: emailPassword }) }),
     });
     const payload = (await res.json().catch(() => ({}))) as { error?: string };
     setEmailBusy(false);
@@ -327,8 +330,10 @@ export function AccountSettingsShell() {
 
   async function submitDisplayNameChange() {
     const nextDisplayName = newDisplayName.trim().replace(/\s+/g, " ");
-    if (!nextDisplayName || !displayNamePassword) {
-      setDisplayNameMessage("Display name and current password are required.");
+    if (!nextDisplayName || (!oauthOnly && !displayNamePassword)) {
+      setDisplayNameMessage(
+        oauthOnly ? "Display name is required." : "Display name and current password are required.",
+      );
       return;
     }
     setDisplayNameBusy(true);
@@ -336,7 +341,10 @@ export function AccountSettingsShell() {
     const res = await fetch("/api/me/security/display-name", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ displayName: nextDisplayName, password: displayNamePassword }),
+      body: JSON.stringify({
+        displayName: nextDisplayName,
+        ...(oauthOnly ? {} : { password: displayNamePassword }),
+      }),
     });
     const payload = (await res.json().catch(() => ({}))) as { error?: string; displayName?: string };
     setDisplayNameBusy(false);
@@ -353,13 +361,16 @@ export function AccountSettingsShell() {
   }
 
   async function submitUsernameChange() {
-    if (!newUsername.trim() || !usernamePassword) return;
+    if (!newUsername.trim() || (!oauthOnly && !usernamePassword)) return;
     setUsernameBusy(true);
     setUsernameMessage(null);
     const res = await fetch("/api/me/security/username", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ newUsername, password: usernamePassword }),
+      body: JSON.stringify({
+        newUsername,
+        ...(oauthOnly ? {} : { password: usernamePassword }),
+      }),
     });
     const payload = (await res.json().catch(() => ({}))) as { error?: string };
     setUsernameBusy(false);
@@ -372,7 +383,7 @@ export function AccountSettingsShell() {
   }
 
   async function submitAccountRequest() {
-    if (!requestPassword) return;
+    if (!oauthOnly && !requestPassword) return;
     setRequestBusy(true);
     setRequestMessage(null);
     const res = await fetch("/api/me/security/account-requests", {
@@ -381,7 +392,7 @@ export function AccountSettingsShell() {
       body: JSON.stringify({
         requestType,
         reason: requestReason,
-        password: requestPassword,
+        ...(oauthOnly ? {} : { password: requestPassword }),
       }),
     });
     const payload = (await res.json().catch(() => ({}))) as { error?: string };
@@ -631,8 +642,8 @@ export function AccountSettingsShell() {
                       className="mt-1 cursor-not-allowed opacity-90"
                     />
                     <span className="mt-1.5 block text-xs text-zinc-500">
-                      To change your username, use <strong className="font-medium text-zinc-700 dark:text-zinc-400">Security</strong>{" "}
-                      (current password required).
+                      To change your username, use <strong className="font-medium text-zinc-700 dark:text-zinc-400">Security</strong>
+                      {!oauthOnly ? " (current password required)." : "."}
                     </span>
                   </label>
                 </div>
@@ -751,6 +762,12 @@ export function AccountSettingsShell() {
               <h1 className="text-2xl font-bold tracking-tight text-zinc-900 md:text-3xl dark:text-white">Security settings</h1>
             </header>
 
+            {oauthOnly ? (
+              <p className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+                You sign in with Google. Password changes and password reset requests are not available.
+              </p>
+            ) : null}
+
             <article className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0c]">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Change display name
@@ -768,6 +785,7 @@ export function AccountSettingsShell() {
                   />
                   <span className="mt-1 block text-[11px] text-zinc-500">2-80 characters.</span>
                 </label>
+                {!oauthOnly ? (
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   Current password
                   <Input
@@ -778,6 +796,7 @@ export function AccountSettingsShell() {
                     className="mt-1"
                   />
                 </label>
+                ) : null}
               </div>
               <div className="mt-4">
                 <Button type="button" onClick={() => void submitDisplayNameChange()} disabled={displayNameBusy}>
@@ -807,6 +826,7 @@ export function AccountSettingsShell() {
                     3-32 chars: letters, numbers, dot, underscore, dash.
                   </span>
                 </label>
+                {!oauthOnly ? (
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   Current password
                   <Input
@@ -817,6 +837,7 @@ export function AccountSettingsShell() {
                     className="mt-1"
                   />
                 </label>
+                ) : null}
               </div>
               <div className="mt-4">
                 <Button type="button" onClick={() => void submitUsernameChange()} disabled={usernameBusy}>
@@ -841,6 +862,7 @@ export function AccountSettingsShell() {
                     className="mt-1"
                   />
                 </label>
+                {!oauthOnly ? (
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   Current password
                   <Input
@@ -851,6 +873,7 @@ export function AccountSettingsShell() {
                     className="mt-1"
                   />
                 </label>
+                ) : null}
               </div>
               <div className="mt-4">
                 <Button type="button" onClick={() => void submitEmailChange()} disabled={emailBusy}>
@@ -860,6 +883,7 @@ export function AccountSettingsShell() {
               </div>
             </article>
 
+            {!oauthOnly ? (
             <article className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0c]">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Change password
@@ -903,15 +927,18 @@ export function AccountSettingsShell() {
                 {passwordMessage ? <p className="mt-3 text-sm text-zinc-600 dark:text-zinc-400">{passwordMessage}</p> : null}
               </div>
             </article>
+            ) : null}
 
             <article className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0c0c0c]">
               <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-zinc-800 dark:text-zinc-300">
                 Account requests
               </h2>
+              {!oauthOnly ? (
               <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
                 If a <strong className="font-medium text-zinc-700 dark:text-zinc-300">password reset</strong> is approved,
                 your portal password is set to: <code className="rounded bg-zinc-200 px-1 text-[11px] dark:bg-zinc-800">{DEFAULT_PASSWORD_RESET}</code>
               </p>
+              ) : null}
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   Request type
@@ -924,9 +951,10 @@ export function AccountSettingsShell() {
                   >
                     <option value="SUSPENSION">Account suspension</option>
                     <option value="DELETION">Account deletion</option>
-                    <option value="PASSWORD_RESET">Password reset</option>
+                    {!oauthOnly ? <option value="PASSWORD_RESET">Password reset</option> : null}
                   </select>
                 </label>
+                {!oauthOnly ? (
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                   Confirm password
                   <Input
@@ -937,6 +965,7 @@ export function AccountSettingsShell() {
                     className="mt-1"
                   />
                 </label>
+                ) : null}
               </div>
               <label className="mt-4 block text-sm font-medium text-zinc-800 dark:text-zinc-300">
                 Reason (optional)

@@ -2,7 +2,7 @@
  * Verify portal accounts resolve to Agent rows (operatorAgentId for Task Board).
  * Usage: npx tsx scripts/verify-portal-agent-linkage.ts
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 import { pickCanonicalAgentForPortal } from "../src/lib/admin-roster";
 import { isStaffPortalRole } from "../src/lib/staff-role";
 

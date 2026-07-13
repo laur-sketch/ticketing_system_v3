@@ -48,13 +48,23 @@ export async function GET(
     ? itProjectAllItems(parseItProjectSubKpis(row.subKpis))
     : collectAllSubKpiItems(normalizeSubKpis(row.subKpis));
   const meta = items
-    .flatMap((it) => [...(it.beforeScreenshot ?? []), ...(it.afterScreenshot ?? [])])
+    .flatMap((it) => [
+      ...(it.beforeScreenshot ?? []),
+      ...(it.afterScreenshot ?? []),
+      ...(it.uploadScreenshot ?? []),
+    ])
     .concat(getPillarScreenshots(row.subKpis, "before"), getPillarScreenshots(row.subKpis, "after"))
+    .concat(getPillarScreenshots(row.subKpis, "general"))
     .concat(
       getArchivedTaskScreenshots(row.subKpis).flatMap((archive) => [
         ...(archive.pillarBeforeScreenshot ?? []),
         ...(archive.pillarAfterScreenshot ?? []),
-        ...archive.subTasks.flatMap((it) => [...(it.beforeScreenshot ?? []), ...(it.afterScreenshot ?? [])]),
+        ...(archive.pillarScreenshot ?? []),
+        ...archive.subTasks.flatMap((it) => [
+          ...(it.beforeScreenshot ?? []),
+          ...(it.afterScreenshot ?? []),
+          ...(it.uploadScreenshot ?? []),
+        ]),
       ]),
     )
     .find((m) => m?.storedFileName === storedFileName);

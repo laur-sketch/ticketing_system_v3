@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import type { KpiFrequency, Prisma } from "@prisma/client";
+import type { KpiFrequency, Prisma } from "@prisma/client/primary";
 import {
   DEFAULT_TIME_ZONE,
   computePeriodKey,
@@ -13,11 +13,14 @@ import {
 } from "@/lib/kpi-recurrence";
 import {
   collectAllSubKpiItems,
+  collectChecklistProgressItems,
   incidentMetricPercents,
   isInvertedChecklistPillar,
+  isPillarOnlyTask,
   kpiChecklistMetricView,
   kpiChecklistProgress,
   normalizeSubKpis,
+  pillarVirtualSubKpiItem,
   subKpiProgressOwner,
   type KpiChecklistProgress,
   type SubKpiItem,
@@ -29,11 +32,13 @@ import {
   type ItTaskPillarTitle,
 } from "@/lib/it-task-pillar-titles";
 import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
+import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { prisma } from "@/lib/prisma";
 
 export type KpiRowForSnapshot = {
   id: string;
   title: string;
+  mainTask?: string | null;
   frequency: KpiFrequency;
   subKpis: unknown;
   periodKey: string | null;
@@ -93,19 +98,66 @@ export async function upsertKpiPeriodSnapshot(
   at: Date = new Date(),
   periodKeyOverride?: string,
 ): Promise<void> {
-  if (!row.isRecurring) return;
   const zone = normalizeTimeZone(timeZone);
   const atDt = DateTime.fromMillis(at.getTime(), { zone });
+  if (!row.isRecurring) {
+    // Non-recurring: snapshot uses computePeriodKey for metrics compatibility
+    const periodKey = computePeriodKey(
+      row.frequency as KpiFrequencyCode,
+      row.recurrenceWeekday,
+      row.recurrenceMonthDay,
+      at,
+      zone,
+    );
+    const progress = kpiChecklistProgress(row.subKpis, kpiMainTaskLabel(row));
+    const fullyComplete = progress.total > 0 && progress.missing === 0;
+    const contributorProgress = assigneeProgressToStored(
+      assigneeProgressForRows(
+        [{ title: row.title, mainTask: row.mainTask, subKpis: row.subKpis, assignedAgent: row.assignedAgent ?? null }],
+        rawCheckboxIsDone,
+      ),
+    );
+    await prisma.kpiMaintenancePeriodSnapshot.upsert({
+      where: {
+        kpiMaintenanceId_periodKey: {
+          kpiMaintenanceId: row.id,
+          periodKey,
+        },
+      },
+      create: {
+        kpiMaintenanceId: row.id,
+        periodKey,
+        frequency: row.frequency,
+        timeZone: zone,
+        total: progress.total,
+        done: progress.done,
+        missing: progress.missing,
+        percent: progress.percent,
+        fullyComplete,
+        contributorProgress,
+      },
+      update: {
+        total: progress.total,
+        done: progress.done,
+        missing: progress.missing,
+        percent: progress.percent,
+        fullyComplete,
+        contributorProgress,
+        capturedAt: new Date(),
+      },
+    });
+    return;
+  }
   if ((row.frequency as KpiFrequencyCode) === "DAILY" && !isKpiMetricsWorkingDay(atDt)) {
     return;
   }
   const periodKey =
     periodKeyOverride?.trim() || resolvePeriodKeyForKpi(row, at, zone);
-  const progress = kpiChecklistProgress(row.subKpis);
+  const progress = kpiChecklistProgress(row.subKpis, kpiMainTaskLabel(row));
   const fullyComplete = progress.total > 0 && progress.missing === 0;
   const contributorProgress = assigneeProgressToStored(
     assigneeProgressForRows(
-      [{ subKpis: row.subKpis, assignedAgent: row.assignedAgent ?? null }],
+      [{ title: row.title, mainTask: row.mainTask, subKpis: row.subKpis, assignedAgent: row.assignedAgent ?? null }],
       rawCheckboxIsDone,
     ),
   );
@@ -362,6 +414,8 @@ async function computeItProjectImplementationPillarMetric(args: {
 
 function assigneeProgressForRows(
   rows: ReadonlyArray<{
+    title: string;
+    mainTask?: string | null;
     subKpis: unknown;
     assignedAgent?: { id: string; name: string } | null;
     items?: SubKpiItem[];
@@ -374,7 +428,8 @@ function assigneeProgressForRows(
   >();
 
   for (const row of rows) {
-    const items = row.items ?? collectAllSubKpiItems(normalizeSubKpis(row.subKpis));
+    const items =
+      row.items ?? collectChecklistProgressItems(row.subKpis, kpiMainTaskLabel(row));
     for (const item of items) {
       if (!item.title.trim()) continue;
       const owner = subKpiProgressOwner(item, row.assignedAgent);
@@ -567,6 +622,8 @@ export function accumulateAssigneeProgressAcrossPeriods(
 
 type PersonnelKpiRosterRow = {
   row: {
+    title: string;
+    mainTask?: string | null;
     subKpis: unknown;
     assignedAgent?: { id: string; name: string } | null;
   };
@@ -762,6 +819,8 @@ type PeriodSnapshotRow = {
 /** Per-period contributor rows aligned with the same snapshot/live source as pillar donut metrics. */
 function contributorProgressForKpiPeriod(
   kpi: {
+    title: string;
+    mainTask?: string | null;
     subKpis: unknown;
     assignedAgent?: { id: string; name: string } | null;
   },
@@ -770,7 +829,12 @@ function contributorProgressForKpiPeriod(
   snap: PeriodSnapshotRow | undefined,
   isDone: (item: SubKpiItem) => boolean,
 ): TaskAssigneeProgress[] {
-  const checkboxRow = { subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null };
+  const checkboxRow = {
+    title: kpi.title,
+    mainTask: kpi.mainTask,
+    subKpis: kpi.subKpis,
+    assignedAgent: kpi.assignedAgent ?? null,
+  };
 
   if (periodKey === nowPeriodKey) {
     return assigneeProgressForRows([checkboxRow], isDone);
@@ -793,6 +857,8 @@ function contributorProgressForKpiPeriod(
 
 type KpiForSubtaskCsv = {
   id: string;
+  title: string;
+  mainTask?: string | null;
   frequency: KpiFrequency;
   subKpis: unknown;
   recurrenceWeekday: number | null;
@@ -804,6 +870,15 @@ function collectSubtaskColumnTitles(pillarKpis: KpiForSubtaskCsv[]): string[] {
   const seen = new Set<string>();
   const titles: string[] = [];
   for (const kpi of pillarKpis) {
+    if (isPillarOnlyTask(kpi.subKpis)) {
+      const title = kpiMainTaskLabel(kpi).trim();
+      if (!title) continue;
+      const key = title.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      titles.push(title);
+      continue;
+    }
     for (const item of collectAllSubKpiItems(normalizeSubKpis(kpi.subKpis))) {
       const title = item.title.trim();
       if (!title) continue;
@@ -816,12 +891,24 @@ function collectSubtaskColumnTitles(pillarKpis: KpiForSubtaskCsv[]): string[] {
   return titles;
 }
 
-function subtaskChecksFromSubKpis(subKpis: unknown, columns: readonly string[]): Record<string, boolean> {
+function subtaskChecksFromSubKpis(
+  subKpis: unknown,
+  columns: readonly string[],
+  taskTitle?: string,
+): Record<string, boolean> {
   const byTitle = new Map<string, boolean>();
-  for (const item of collectAllSubKpiItems(normalizeSubKpis(subKpis))) {
-    const title = item.title.trim();
-    if (!title) continue;
-    byTitle.set(title.toLowerCase(), Boolean(item.done));
+  if (isPillarOnlyTask(subKpis)) {
+    const virtual = pillarVirtualSubKpiItem(subKpis, taskTitle);
+    const title = (taskTitle ?? virtual?.title ?? "").trim();
+    if (virtual && title) {
+      byTitle.set(title.toLowerCase(), Boolean(virtual.done));
+    }
+  } else {
+    for (const item of collectAllSubKpiItems(normalizeSubKpis(subKpis))) {
+      const title = item.title.trim();
+      if (!title) continue;
+      byTitle.set(title.toLowerCase(), Boolean(item.done));
+    }
   }
   return Object.fromEntries(columns.map((title) => [title, byTitle.get(title.toLowerCase()) === true]));
 }
@@ -870,7 +957,7 @@ function progressForKpiPeriod(args: {
     return { progress: snapshotToProgress(snap), subKpis: null };
   }
   if (args.periodKey === args.nowPeriodKey) {
-    return { progress: kpiChecklistProgress(args.kpi.subKpis), subKpis: args.kpi.subKpis };
+    return { progress: kpiChecklistProgress(args.kpi.subKpis, kpiMainTaskLabel(args.kpi)), subKpis: args.kpi.subKpis };
   }
   return null;
 }
@@ -928,7 +1015,7 @@ function buildDailySubtaskCsvRows(args: {
         if (!resolved) continue;
         progressRows.push(resolved.progress);
         if (resolved.subKpis) {
-          checksList.push(subtaskChecksFromSubKpis(resolved.subKpis, args.columns));
+          checksList.push(subtaskChecksFromSubKpis(resolved.subKpis, args.columns, kpiMainTaskLabel(kpi)));
         }
       }
     }
@@ -978,7 +1065,7 @@ function buildMonthlySubtaskCsvRows(args: {
         if (!resolved) continue;
         progressRows.push(resolved.progress);
         if (resolved.subKpis) {
-          checksList.push(subtaskChecksFromSubKpis(resolved.subKpis, args.columns));
+          checksList.push(subtaskChecksFromSubKpis(resolved.subKpis, args.columns, kpiMainTaskLabel(kpi)));
         }
       }
     }
@@ -1052,14 +1139,23 @@ export async function computeTaskChecklistPillarMetrics(args: {
   const { metricsCadence, fromYmd, toYmd, timeZone, kpiWhere = {} } = args;
   const zone = normalizeTimeZone(timeZone);
 
-  const kpis = await prisma.kpiMaintenance.findMany({
-    where: {
-      isRecurring: true,
-      ...kpiWhere,
+  const kpisWhereAnd: Prisma.KpiMaintenanceWhereInput[] = [
+    {
+      OR: [
+        { isRecurring: true },
+        { isRecurring: false, lastFullCompletionAt: { not: null } },
+      ],
     },
+  ];
+  if (Object.keys(kpiWhere).length > 0) {
+    kpisWhereAnd.push(kpiWhere);
+  }
+  const kpis = await prisma.kpiMaintenance.findMany({
+    where: { AND: kpisWhereAnd },
     select: {
       id: true,
       title: true,
+      mainTask: true,
       frequency: true,
       subKpis: true,
       assignedAgent: { select: { id: true, name: true } },
@@ -1154,7 +1250,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
       const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone);
       periodsInRange += periodKeys.length;
       personnelRoster.push({
-        row: { subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null },
+        row: { title: kpi.title, mainTask: kpi.mainTask, subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null },
         periodCount: periodKeys.length,
       });
       const nowPeriodKey = currentPeriodKeyFor(kpi);
@@ -1166,7 +1262,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
           progress = snapshotToProgress(snap);
         } else if (key === nowPeriodKey) {
           /** Live Task Board checkboxes for the active period when no snapshot exists yet. */
-          progress = kpiChecklistProgress(kpi.subKpis);
+          progress = kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi));
         }
         if (!progress) continue;
 
@@ -1191,7 +1287,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
           if (snap) {
             dayRows.push(snapshotToProgress(snap));
           } else if (key === nowPeriodKey) {
-            dayRows.push(kpiChecklistProgress(kpi.subKpis));
+            dayRows.push(kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi)));
           }
         }
       }

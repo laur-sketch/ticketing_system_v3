@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { normalizePortalRole } from "@/lib/staff-role";
-
 const SALT_ROUNDS = 12;
 
 export type PortalRow = {
@@ -11,7 +9,8 @@ export type PortalRow = {
   email: string;
   name: string;
   role: string;
-  passwordHash: string;
+  passwordHash: string | null;
+  accountStatus: string;
   companyId: string | null;
   customerOrgRole: string | null;
   companyName: string | null;
@@ -38,6 +37,7 @@ export async function findPortalByLogin(loginId: string): Promise<PortalRow | nu
       name: true,
       role: true,
       passwordHash: true,
+      accountStatus: true,
       companyId: true,
       customerOrgRole: true,
       staffDesignatedCompanyId: true,
@@ -54,6 +54,7 @@ export async function findPortalByLogin(loginId: string): Promise<PortalRow | nu
     name: row.name,
     role: row.role,
     passwordHash: row.passwordHash,
+    accountStatus: row.accountStatus ?? "ACTIVE",
     companyId: row.companyId,
     customerOrgRole: row.customerOrgRole,
     companyName: row.company?.name ?? null,
@@ -75,6 +76,7 @@ export async function findPortalByUsername(username: string): Promise<PortalRow 
       name: true,
       role: true,
       passwordHash: true,
+      accountStatus: true,
       companyId: true,
       customerOrgRole: true,
       staffDesignatedCompanyId: true,
@@ -91,6 +93,7 @@ export async function findPortalByUsername(username: string): Promise<PortalRow 
     name: row.name,
     role: row.role,
     passwordHash: row.passwordHash,
+    accountStatus: row.accountStatus ?? "ACTIVE",
     companyId: row.companyId,
     customerOrgRole: row.customerOrgRole,
     companyName: row.company?.name ?? null,
@@ -112,6 +115,7 @@ export async function findPortalByEmailOnly(email: string): Promise<PortalRow | 
       name: true,
       role: true,
       passwordHash: true,
+      accountStatus: true,
       companyId: true,
       customerOrgRole: true,
       staffDesignatedCompanyId: true,
@@ -128,6 +132,7 @@ export async function findPortalByEmailOnly(email: string): Promise<PortalRow | 
     name: row.name,
     role: row.role,
     passwordHash: row.passwordHash,
+    accountStatus: row.accountStatus ?? "ACTIVE",
     companyId: row.companyId,
     customerOrgRole: row.customerOrgRole,
     companyName: row.company?.name ?? null,
@@ -144,6 +149,7 @@ export function isSignupRole(r: string): r is SignupRole {
   return (SIGNUP_ROLES as readonly string[]).includes(r);
 }
 
+/** Customer self-signup with username and password. */
 export async function createPortalAccount(input: {
   username: string;
   email: string;
@@ -192,19 +198,22 @@ export async function createPortalAccount(input: {
 export type StaffPortalCreateRole = "Admin" | "Personnel";
 
 /**
- * SuperAdmin-only: create a staff portal account (Admin or Personnel) with a
- * password and designated company queue. Customer self-signup uses {@link createPortalAccount}.
+ * SuperAdmin-only: create a staff portal account (Admin or Personnel) with an
+ * optional password and designated company queue. OAuth-only staff omit password.
  */
 export async function createStaffPortalAccount(input: {
   username: string;
   email: string;
   name: string;
-  password: string;
+  password?: string;
   role: StaffPortalCreateRole;
   staffDesignatedCompanyId: string;
 }): Promise<{ ok: true } | { ok: false; code: "DUPLICATE" | "ERROR" }> {
   const id = randomUUID();
-  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+  const passwordHash =
+    input.password && input.password.length > 0
+      ? await bcrypt.hash(input.password, SALT_ROUNDS)
+      : null;
   const username = input.username.trim().toLowerCase();
   const email = input.email.trim().toLowerCase();
   const teamId = input.staffDesignatedCompanyId.trim();
@@ -232,51 +241,25 @@ export async function createStaffPortalAccount(input: {
   }
 }
 
-/**
- * Ensure OAuth users are linked to a portal row by email.
- * Keeps existing company/org-role assignments intact.
- */
+/** @deprecated Prefer {@link syncOAuthUser} from `@/lib/auth/sync-oauth-user`. */
 export async function upsertPortalOAuthAccount(input: {
   email: string;
   name: string;
   role?: string;
   profileImage?: string | null;
+  provider?: string;
+  providerAccountId?: string;
 }): Promise<PortalRow | null> {
+  const { syncOAuthUser } = await import("@/lib/auth/sync-oauth-user");
   const email = input.email.trim().toLowerCase();
   if (!email) return null;
-  const name = input.name.trim() || email.split("@")[0] || "User";
-
-  const existing = await findPortalByEmailOnly(email);
-  if (existing) {
-    await prisma.portalAccount.update({
-      where: { id: existing.id },
-      data: {
-        name: name || existing.name,
-        ...(input.profileImage && !existing.profileImage ? { profileImage: input.profileImage } : {}),
-      },
-    });
-    return findPortalByEmailOnly(email);
-  }
-
-  const parsed = normalizePortalRole(input.role ?? "");
-  const role =
-    parsed === "Personnel" || parsed === "Customer"
-      ? parsed
-      : isSignupRole(String(input.role ?? ""))
-        ? (String(input.role) as SignupRole)
-        : "Customer";
-
-  await prisma.portalAccount.create({
-    data: {
-      id: randomUUID(),
-      email,
-      name,
-      role,
-      passwordHash: await bcrypt.hash(randomUUID(), SALT_ROUNDS),
-      headPrivileges: false,
-      profileImage: input.profileImage?.trim() || null,
-    },
+  await syncOAuthUser({
+    email,
+    name: input.name,
+    image: input.profileImage,
+    provider: input.provider ?? "google",
+    providerAccountId: input.providerAccountId ?? email,
+    roleHint: input.role ?? null,
   });
-
   return findPortalByEmailOnly(email);
 }

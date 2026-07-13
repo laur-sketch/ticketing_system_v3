@@ -1,5 +1,5 @@
-import type { Prisma } from "@prisma/client";
-import { normalizePersonName } from "@/lib/admin-roster";
+import type { Prisma } from "@prisma/client/primary";
+import { normalizePersonName } from "@/lib/person-name";
 import { DateTime } from "luxon";
 import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
 import {
@@ -17,11 +17,17 @@ import {
   normalizeCompletionRequirements,
   resolveSubKpiCompletionMode,
   resolveSubKpiCompletionRequirements,
+  subKpiItemProgressFraction,
   subKpiRequirementsMet,
   subKpiRequiresScreenshotsFromMode,
+  subKpiRequiresNumerical,
+  subKpiStoredCompletionRequirements,
   type SubKpiCompletionMode,
   type SubKpiCompletionRequirements,
 } from "@/lib/sub-kpi-completion-mode";
+
+/** Synthetic sub-task id when completion applies on the pillar card (no checklist rows). */
+export const PILLAR_ONLY_VIRTUAL_SUBKPI_ID = "__pillar__";
 
 /** Optional schedule fields are calendar days `YYYY-MM-DD` (IT Project Implementation sub-tasks). */
 export type SubKpiItem = {
@@ -38,12 +44,18 @@ export type SubKpiItem = {
   screenshotsEnabled?: boolean;
   beforeScreenshot?: TaskScreenshotMetaItem[];
   afterScreenshot?: TaskScreenshotMetaItem[];
+  /** Generic proof uploads when screenshot-upload completion is enabled. */
+  uploadScreenshot?: TaskScreenshotMetaItem[];
   location?: string | null;
   startDate?: string | null;
   /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
   actualDate?: string | null;
   numericalValue?: number | null;
+  /** Target number admins set when numerical record completion is enabled. */
+  numericalTarget?: number | null;
+  /** Daily penalty amount when this sub-task is delayed (overrides task default). */
+  dailyPenaltyAmount?: number | null;
 };
 
 const SUB_KPI_PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
@@ -77,6 +89,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
       : null;
   const beforeScreenshot = parseTaskScreenshotMetaList(r?.beforeScreenshot);
   const afterScreenshot = parseTaskScreenshotMetaList(r?.afterScreenshot);
+  const uploadScreenshot = parseTaskScreenshotMetaList(r?.uploadScreenshot);
   const completionRequirements = normalizeCompletionRequirements(r?.completionRequirements);
   const completionMode = isSubKpiCompletionMode(r?.completionMode)
     ? r.completionMode
@@ -96,6 +109,16 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const numericalRaw = r?.numericalValue;
   const numericalValue =
     typeof numericalRaw === "number" && Number.isFinite(numericalRaw) ? numericalRaw : null;
+  const numericalTargetRaw = r?.numericalTarget;
+  const numericalTarget =
+    typeof numericalTargetRaw === "number" && Number.isFinite(numericalTargetRaw)
+      ? numericalTargetRaw
+      : null;
+  const dailyPenaltyRaw = r?.dailyPenaltyAmount;
+  const dailyPenaltyAmount =
+    typeof dailyPenaltyRaw === "number" && Number.isFinite(dailyPenaltyRaw) && dailyPenaltyRaw >= 0
+      ? dailyPenaltyRaw
+      : null;
   return {
     id,
     title,
@@ -109,10 +132,13 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(screenshotsEnabled ? { screenshotsEnabled: true } : {}),
     ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
     ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+    ...(uploadScreenshot.length > 0 ? { uploadScreenshot } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
     ...(numericalValue != null ? { numericalValue } : {}),
+    ...(numericalTarget != null ? { numericalTarget } : {}),
+    ...(dailyPenaltyAmount != null ? { dailyPenaltyAmount } : {}),
   };
 }
 
@@ -127,7 +153,14 @@ export type SubKpisStoredEnvelope = {
   pillarScreenshotsEnabled?: boolean;
   pillarBeforeScreenshot?: TaskScreenshotMetaItem[];
   pillarAfterScreenshot?: TaskScreenshotMetaItem[];
+  pillarScreenshotUploadEnabled?: boolean;
+  pillarScreenshot?: TaskScreenshotMetaItem[];
   archivedTaskScreenshots?: ArchivedTaskScreenshotSet[];
+  archivedNumericalRecords?: ArchivedNumericalRecordSet[];
+  /** Default daily penalty for sub-tasks when delayed (sub-task value overrides). */
+  taskDailyPenaltyAmount?: number | null;
+  /** Total number of sub-tasks (checklist items) currently in this group. */
+  taskCount?: number | null;
 };
 
 export type ArchivedTaskScreenshotSet = {
@@ -137,9 +170,21 @@ export type ArchivedTaskScreenshotSet = {
     title: string;
     beforeScreenshot?: TaskScreenshotMetaItem[];
     afterScreenshot?: TaskScreenshotMetaItem[];
+    uploadScreenshot?: TaskScreenshotMetaItem[];
   }>;
   pillarBeforeScreenshot?: TaskScreenshotMetaItem[];
   pillarAfterScreenshot?: TaskScreenshotMetaItem[];
+  pillarScreenshot?: TaskScreenshotMetaItem[];
+};
+
+export type ArchivedNumericalRecordSet = {
+  archivedAt: string;
+  subTasks: Array<{
+    id: string;
+    title: string;
+    numericalTarget?: number | null;
+    numericalValue?: number | null;
+  }>;
 };
 
 export type NormalizedSubKpis =
@@ -207,12 +252,13 @@ export type KpiChecklistProgress = {
   percent: number;
 };
 
-export function kpiChecklistProgress(raw: unknown): KpiChecklistProgress {
-  const all = collectAllSubKpiItems(normalizeSubKpis(raw));
+export function kpiChecklistProgress(raw: unknown, taskTitle?: string): KpiChecklistProgress {
+  const all = collectChecklistProgressItems(raw, taskTitle);
   const total = all.length;
-  const done = all.filter((s) => s.done).length;
+  const done = all.filter((s) => subKpiRequirementsMet(s)).length;
   const missing = total - done;
-  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+  const progressSum = all.reduce((sum, item) => sum + subKpiItemProgressFraction(item), 0);
+  const percent = total > 0 ? Math.round((progressSum / total) * 100) : 0;
   return { total, done, missing, percent };
 }
 
@@ -234,11 +280,9 @@ export function aggregateKpiChecklistProgress(
 /**
  * Cybersecurity / network: checked on the task board = breach or downtime;
  * unchecked items are neutral (safe / uptime), not counted as incidents.
+ * @deprecated Both pillars now use normal checklist semantics (checked = done).
  */
-export const INVERTED_CHECKLIST_PILLARS = new Set<string>([
-  "CYBERSECURITY",
-  "NETWORK PERFORMANCE",
-]);
+export const INVERTED_CHECKLIST_PILLARS = new Set<string>([]);
 
 /** @deprecated Use {@link isInvertedChecklistPillar} — frequency is ignored. */
 export const DAILY_INVERTED_CHECKLIST_PILLARS = INVERTED_CHECKLIST_PILLARS;
@@ -303,11 +347,28 @@ function rawEnvelopeMeta(raw: unknown) {
       pillarScreenshotsEnabled: false,
       pillarBeforeScreenshot: [] as TaskScreenshotMetaItem[],
       pillarAfterScreenshot: [] as TaskScreenshotMetaItem[],
+      pillarScreenshotUploadEnabled: false,
+      pillarScreenshot: [] as TaskScreenshotMetaItem[],
       archivedTaskScreenshots: [] as ArchivedTaskScreenshotSet[],
+      archivedNumericalRecords: [] as ArchivedNumericalRecordSet[],
+      taskDailyPenaltyAmount: null as number | null,
+      pillarCompletionRequirements: null as SubKpiCompletionRequirements | null,
+      pillarDone: false,
+      pillarNumericalTarget: null as number | null,
+      pillarNumericalValue: null as number | null,
+      pillarDueDate: null as string | null,
+      pillarActualDate: null as string | null,
+      taskCount: null as number | null,
     };
   }
   const pillarBeforeScreenshot = parseTaskScreenshotMetaList(raw.pillarBeforeScreenshot);
   const pillarAfterScreenshot = parseTaskScreenshotMetaList(raw.pillarAfterScreenshot);
+  const pillarScreenshot = parseTaskScreenshotMetaList(raw.pillarScreenshot);
+  const penaltyRaw = raw.taskDailyPenaltyAmount;
+  const taskDailyPenaltyAmount =
+    typeof penaltyRaw === "number" && Number.isFinite(penaltyRaw) && penaltyRaw >= 0 ? penaltyRaw : null;
+  const pillarTargetRaw = raw.pillarNumericalTarget;
+  const pillarValueRaw = raw.pillarNumericalValue;
   return {
     taskPriority: normalizeSubKpiPriority(raw.taskPriority),
     pillarScreenshotsEnabled:
@@ -316,7 +377,24 @@ function rawEnvelopeMeta(raw: unknown) {
       pillarAfterScreenshot.length > 0,
     pillarBeforeScreenshot,
     pillarAfterScreenshot,
+    pillarScreenshotUploadEnabled:
+      raw.pillarScreenshotUploadEnabled === true || pillarScreenshot.length > 0,
+    pillarScreenshot,
     archivedTaskScreenshots: parseArchivedTaskScreenshotSets(raw.archivedTaskScreenshots),
+    archivedNumericalRecords: parseArchivedNumericalRecordSets(raw.archivedNumericalRecords),
+    taskDailyPenaltyAmount,
+    pillarCompletionRequirements: normalizeCompletionRequirements(raw.pillarCompletionRequirements),
+    pillarDone: raw.pillarDone === true,
+    pillarNumericalTarget:
+      typeof pillarTargetRaw === "number" && Number.isFinite(pillarTargetRaw) ? pillarTargetRaw : null,
+    pillarNumericalValue:
+      typeof pillarValueRaw === "number" && Number.isFinite(pillarValueRaw) ? pillarValueRaw : null,
+    pillarDueDate: normalizeOptionalSubKpiYmd(raw.pillarDueDate),
+    pillarActualDate: normalizeOptionalSubKpiYmd(raw.pillarActualDate),
+    taskCount:
+      typeof raw.taskCount === "number" && Number.isFinite(raw.taskCount) && Number.isInteger(raw.taskCount) && raw.taskCount >= 0
+        ? raw.taskCount
+        : null,
   };
 }
 
@@ -328,8 +406,48 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.pillarScreenshotsEnabled ? { pillarScreenshotsEnabled: true } : {}),
     ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
     ...(meta.pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot: meta.pillarAfterScreenshot } : {}),
+    ...(meta.pillarScreenshotUploadEnabled ? { pillarScreenshotUploadEnabled: true } : {}),
+    ...(meta.pillarScreenshot.length > 0 ? { pillarScreenshot: meta.pillarScreenshot } : {}),
     ...(meta.archivedTaskScreenshots.length > 0 ? { archivedTaskScreenshots: meta.archivedTaskScreenshots } : {}),
+    ...(meta.archivedNumericalRecords.length > 0 ? { archivedNumericalRecords: meta.archivedNumericalRecords } : {}),
+    ...(meta.taskDailyPenaltyAmount != null ? { taskDailyPenaltyAmount: meta.taskDailyPenaltyAmount } : {}),
+    ...(meta.pillarCompletionRequirements
+      ? { pillarCompletionRequirements: meta.pillarCompletionRequirements }
+      : {}),
+    ...(meta.pillarDone ? { pillarDone: true } : {}),
+    ...(meta.pillarNumericalTarget != null ? { pillarNumericalTarget: meta.pillarNumericalTarget } : {}),
+    ...(meta.pillarNumericalValue != null ? { pillarNumericalValue: meta.pillarNumericalValue } : {}),
+    ...(meta.pillarDueDate ? { pillarDueDate: meta.pillarDueDate } : {}),
+    ...(meta.pillarActualDate ? { pillarActualDate: meta.pillarActualDate } : {}),
+    ...(meta.taskCount != null ? { taskCount: meta.taskCount } : {}),
   } as Prisma.InputJsonValue;
+}
+
+export function taskDailyPenaltyAmountFromSubKpis(raw: unknown): number | null {
+  return rawEnvelopeMeta(raw).taskDailyPenaltyAmount;
+}
+
+export function setTaskDailyPenaltyAmount(
+  raw: unknown,
+  amount: number | null,
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.taskDailyPenaltyAmount =
+    typeof amount === "number" && Number.isFinite(amount) && amount >= 0 ? amount : null;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function taskCountFromSubKpis(raw: unknown): number | null {
+  return rawEnvelopeMeta(raw).taskCount;
+}
+
+export function setTaskCount(raw: unknown, count: number | null): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.taskCount =
+    typeof count === "number" && Number.isFinite(count) && Number.isInteger(count) && count >= 0
+      ? count
+      : null;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
 export function wrapForPersistWithExistingMeta(norm: NormalizedSubKpis, raw: unknown): Prisma.InputJsonValue {
@@ -346,6 +464,146 @@ export function setTaskPriority(raw: unknown, priority: unknown): Prisma.InputJs
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
+export function enablePillarScreenshotUpload(raw: unknown): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarScreenshotUploadEnabled = true;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function pillarScreenshotUploadEnabled(raw: unknown): boolean {
+  return rawEnvelopeMeta(raw).pillarScreenshotUploadEnabled;
+}
+
+export function getPillarScreenshotUploads(raw: unknown): TaskScreenshotMetaItem[] {
+  return rawEnvelopeMeta(raw).pillarScreenshot;
+}
+
+export function setPillarScreenshotUploads(
+  raw: unknown,
+  screenshots: TaskScreenshotMetaItem[],
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarScreenshotUploadEnabled = true;
+  meta.pillarScreenshot = screenshots;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function removePillarScreenshotUpload(
+  raw: unknown,
+  storedFileName: string,
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarScreenshot = meta.pillarScreenshot.filter((item) => item.storedFileName !== storedFileName);
+  meta.pillarScreenshotUploadEnabled = true;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function getPillarCompletionRequirements(raw: unknown): SubKpiCompletionRequirements | null {
+  return rawEnvelopeMeta(raw).pillarCompletionRequirements;
+}
+
+export function isPillarOnlyTask(raw: unknown): boolean {
+  if (collectAllSubKpiItems(normalizeSubKpis(raw)).length > 0) return false;
+  return getPillarCompletionRequirements(raw) != null;
+}
+
+/** Virtual checklist row when completion is stored on the task pillar (no sub-tasks). */
+export function pillarVirtualSubKpiItem(raw: unknown, taskTitle?: string): SubKpiItem | null {
+  const requirements = getPillarCompletionRequirements(raw);
+  if (!requirements) return null;
+  const meta = rawEnvelopeMeta(raw);
+  let item: SubKpiItem = {
+    id: PILLAR_ONLY_VIRTUAL_SUBKPI_ID,
+    title: taskTitle?.trim() || "Task",
+    done: meta.pillarDone,
+    completionRequirements: requirements,
+  };
+  if (requirements.screenshots || meta.pillarBeforeScreenshot.length > 0 || meta.pillarAfterScreenshot.length > 0) {
+    item.screenshotsEnabled = true;
+    if (meta.pillarBeforeScreenshot.length > 0) item.beforeScreenshot = meta.pillarBeforeScreenshot;
+    if (meta.pillarAfterScreenshot.length > 0) item.afterScreenshot = meta.pillarAfterScreenshot;
+  }
+  if (requirements.screenshotUpload || meta.pillarScreenshot.length > 0) {
+    if (meta.pillarScreenshot.length > 0) item.uploadScreenshot = meta.pillarScreenshot;
+  }
+  if (meta.pillarNumericalTarget != null) item.numericalTarget = meta.pillarNumericalTarget;
+  if (meta.pillarNumericalValue != null) item.numericalValue = meta.pillarNumericalValue;
+  if (meta.pillarDueDate) item.dueDate = meta.pillarDueDate;
+  if (meta.pillarActualDate) item.actualDate = meta.pillarActualDate;
+  return item;
+}
+
+/** Sub-tasks for progress, delay, and penalties — includes a virtual pillar row when applicable. */
+export function collectChecklistProgressItems(raw: unknown, taskTitle?: string): SubKpiItem[] {
+  const items = collectAllSubKpiItems(normalizeSubKpis(raw));
+  if (items.length > 0) return items;
+  const virtual = pillarVirtualSubKpiItem(raw, taskTitle);
+  return virtual ? [virtual] : [];
+}
+
+export function applyPillarOnlyTaskCreate(
+  raw: Prisma.InputJsonValue,
+  requirements: SubKpiCompletionRequirements,
+  opts: { numericalTarget?: number | null; dueDate?: string | null } = {},
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarCompletionRequirements = subKpiStoredCompletionRequirements(requirements);
+  meta.pillarDone = false;
+  if (opts.numericalTarget != null) meta.pillarNumericalTarget = opts.numericalTarget;
+  const dueYmd = opts.dueDate ? normalizeOptionalSubKpiYmd(opts.dueDate) : null;
+  if (dueYmd) meta.pillarDueDate = dueYmd;
+  let result = withEnvelopeMeta(ensureEnvelope(raw), meta);
+  if (requirements.screenshots) result = enablePillarScreenshots(result);
+  if (requirements.screenshotUpload) result = enablePillarScreenshotUpload(result);
+  return result;
+}
+
+export function setPillarDone(raw: unknown, done: boolean): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarDone = done;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function setPillarWorkMeta(
+  raw: unknown,
+  patch: {
+    dueDate?: string | null;
+    actualDate?: string | null;
+    numericalTarget?: number | null;
+    numericalValue?: number | null;
+  },
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  if (patch.dueDate !== undefined) {
+    meta.pillarDueDate = patch.dueDate ? normalizeOptionalSubKpiYmd(patch.dueDate) : null;
+  }
+  if (patch.actualDate !== undefined) {
+    meta.pillarActualDate = patch.actualDate ? normalizeOptionalSubKpiYmd(patch.actualDate) : null;
+  }
+  if (patch.numericalTarget !== undefined) {
+    meta.pillarNumericalTarget =
+      patch.numericalTarget != null && Number.isFinite(patch.numericalTarget)
+        ? patch.numericalTarget
+        : null;
+  }
+  if (patch.numericalValue !== undefined) {
+    meta.pillarNumericalValue =
+      patch.numericalValue != null && Number.isFinite(patch.numericalValue)
+        ? patch.numericalValue
+        : null;
+  }
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function syncPillarDoneFromRequirements(raw: unknown): Prisma.InputJsonValue {
+  const virtual = pillarVirtualSubKpiItem(raw);
+  if (!virtual) return raw as Prisma.InputJsonValue;
+  const shouldBeDone = subKpiRequirementsMet(virtual);
+  const meta = rawEnvelopeMeta(raw);
+  if (Boolean(meta.pillarDone) === shouldBeDone) return raw as Prisma.InputJsonValue;
+  return setPillarDone(raw, shouldBeDone);
+}
+
 export function enablePillarScreenshots(raw: unknown): Prisma.InputJsonValue {
   const meta = rawEnvelopeMeta(raw);
   meta.pillarScreenshotsEnabled = true;
@@ -358,11 +616,47 @@ export function pillarScreenshotsEnabled(raw: unknown): boolean {
 
 export function getPillarScreenshots(raw: unknown, slot: TaskScreenshotSlot): TaskScreenshotMetaItem[] {
   const meta = rawEnvelopeMeta(raw);
+  if (slot === "general") return meta.pillarScreenshot;
   return slot === "before" ? meta.pillarBeforeScreenshot : meta.pillarAfterScreenshot;
 }
 
 export function getArchivedTaskScreenshots(raw: unknown): ArchivedTaskScreenshotSet[] {
   return rawEnvelopeMeta(raw).archivedTaskScreenshots;
+}
+
+export function getArchivedNumericalRecords(raw: unknown): ArchivedNumericalRecordSet[] {
+  return rawEnvelopeMeta(raw).archivedNumericalRecords;
+}
+
+/** Past-cycle numerical entries for one sub-task (newest archive last). */
+export function archivedNumericalEntriesForSubKpi(
+  raw: unknown,
+  subKpiId: string,
+): Array<{
+  archivedAt: string;
+  numericalTarget: number | null;
+  numericalValue: number | null;
+}> {
+  const out: Array<{
+    archivedAt: string;
+    numericalTarget: number | null;
+    numericalValue: number | null;
+  }> = [];
+  for (const archive of getArchivedNumericalRecords(raw)) {
+    const row = archive.subTasks.find((it) => it.id === subKpiId);
+    if (!row) continue;
+    const target =
+      typeof row.numericalTarget === "number" && Number.isFinite(row.numericalTarget)
+        ? row.numericalTarget
+        : null;
+    const value =
+      typeof row.numericalValue === "number" && Number.isFinite(row.numericalValue)
+        ? row.numericalValue
+        : null;
+    if (target == null && value == null) continue;
+    out.push({ archivedAt: archive.archivedAt, numericalTarget: target, numericalValue: value });
+  }
+  return out;
 }
 
 export function setPillarScreenshots(
@@ -372,7 +666,10 @@ export function setPillarScreenshots(
 ): Prisma.InputJsonValue {
   const meta = rawEnvelopeMeta(raw);
   meta.pillarScreenshotsEnabled = true;
-  if (slot === "before") meta.pillarBeforeScreenshot = screenshots;
+  if (slot === "general") {
+    meta.pillarScreenshotUploadEnabled = true;
+    meta.pillarScreenshot = screenshots;
+  } else if (slot === "before") meta.pillarBeforeScreenshot = screenshots;
   else meta.pillarAfterScreenshot = screenshots;
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
@@ -383,13 +680,18 @@ export function removePillarScreenshot(
   storedFileName: string,
 ): Prisma.InputJsonValue {
   const meta = rawEnvelopeMeta(raw);
-  const next =
-    slot === "before"
-      ? meta.pillarBeforeScreenshot.filter((item) => item.storedFileName !== storedFileName)
-      : meta.pillarAfterScreenshot.filter((item) => item.storedFileName !== storedFileName);
-  if (slot === "before") meta.pillarBeforeScreenshot = next;
-  else meta.pillarAfterScreenshot = next;
-  meta.pillarScreenshotsEnabled = true;
+  if (slot === "general") {
+    meta.pillarScreenshot = meta.pillarScreenshot.filter((item) => item.storedFileName !== storedFileName);
+    meta.pillarScreenshotUploadEnabled = true;
+  } else {
+    const next =
+      slot === "before"
+        ? meta.pillarBeforeScreenshot.filter((item) => item.storedFileName !== storedFileName)
+        : meta.pillarAfterScreenshot.filter((item) => item.storedFileName !== storedFileName);
+    if (slot === "before") meta.pillarBeforeScreenshot = next;
+    else meta.pillarAfterScreenshot = next;
+    meta.pillarScreenshotsEnabled = true;
+  }
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
@@ -412,19 +714,34 @@ function parseArchivedTaskScreenshotSets(raw: unknown): ArchivedTaskScreenshotSe
               const title = typeof it.title === "string" ? it.title : "";
               const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
               const afterScreenshot = parseTaskScreenshotMetaList(it.afterScreenshot);
-              if (!id || (beforeScreenshot.length === 0 && afterScreenshot.length === 0)) return null;
+              const uploadScreenshot = parseTaskScreenshotMetaList(it.uploadScreenshot);
+              if (
+                !id ||
+                (beforeScreenshot.length === 0 &&
+                  afterScreenshot.length === 0 &&
+                  uploadScreenshot.length === 0)
+              ) {
+                return null;
+              }
               return {
                 id,
                 title,
                 ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
                 ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+                ...(uploadScreenshot.length > 0 ? { uploadScreenshot } : {}),
               };
             })
             .filter((it): it is ArchivedTaskScreenshotSet["subTasks"][number] => it != null)
         : [];
       const pillarBeforeScreenshot = parseTaskScreenshotMetaList(entry.pillarBeforeScreenshot);
       const pillarAfterScreenshot = parseTaskScreenshotMetaList(entry.pillarAfterScreenshot);
-      if (subTasks.length === 0 && pillarBeforeScreenshot.length === 0 && pillarAfterScreenshot.length === 0) {
+      const pillarScreenshot = parseTaskScreenshotMetaList(entry.pillarScreenshot);
+      if (
+        subTasks.length === 0 &&
+        pillarBeforeScreenshot.length === 0 &&
+        pillarAfterScreenshot.length === 0 &&
+        pillarScreenshot.length === 0
+      ) {
         return null;
       }
       return {
@@ -432,9 +749,46 @@ function parseArchivedTaskScreenshotSets(raw: unknown): ArchivedTaskScreenshotSe
         subTasks,
         ...(pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot } : {}),
         ...(pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot } : {}),
+        ...(pillarScreenshot.length > 0 ? { pillarScreenshot } : {}),
       };
     })
     .filter((entry): entry is ArchivedTaskScreenshotSet => entry != null);
+}
+
+function parseArchivedNumericalRecordSets(raw: unknown): ArchivedNumericalRecordSet[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry): ArchivedNumericalRecordSet | null => {
+      if (!isPlainObject(entry)) return null;
+      const subTasks = Array.isArray(entry.subTasks)
+        ? entry.subTasks
+            .map((it): ArchivedNumericalRecordSet["subTasks"][number] | null => {
+              if (!isPlainObject(it)) return null;
+              const id = typeof it.id === "string" ? it.id : "";
+              const title = typeof it.title === "string" ? it.title : "";
+              const targetRaw = it.numericalTarget;
+              const valueRaw = it.numericalValue;
+              const numericalTarget =
+                typeof targetRaw === "number" && Number.isFinite(targetRaw) ? targetRaw : null;
+              const numericalValue =
+                typeof valueRaw === "number" && Number.isFinite(valueRaw) ? valueRaw : null;
+              if (!id || (numericalTarget == null && numericalValue == null)) return null;
+              return {
+                id,
+                title,
+                ...(numericalTarget != null ? { numericalTarget } : {}),
+                ...(numericalValue != null ? { numericalValue } : {}),
+              };
+            })
+            .filter((it): it is ArchivedNumericalRecordSet["subTasks"][number] => it != null)
+        : [];
+      if (subTasks.length === 0) return null;
+      return {
+        archivedAt: typeof entry.archivedAt === "string" ? entry.archivedAt : new Date().toISOString(),
+        subTasks,
+      };
+    })
+    .filter((entry): entry is ArchivedNumericalRecordSet => entry != null);
 }
 
 function archiveScreenshotsForReset(raw: unknown, norm: NormalizedSubKpis): ReturnType<typeof rawEnvelopeMeta> {
@@ -443,16 +797,25 @@ function archiveScreenshotsForReset(raw: unknown, norm: NormalizedSubKpis): Retu
     .map((it) => {
       const beforeScreenshot = it.beforeScreenshot ?? [];
       const afterScreenshot = it.afterScreenshot ?? [];
-      if (beforeScreenshot.length === 0 && afterScreenshot.length === 0) return null;
+      const uploadScreenshot = it.uploadScreenshot ?? [];
+      if (beforeScreenshot.length === 0 && afterScreenshot.length === 0 && uploadScreenshot.length === 0) {
+        return null;
+      }
       return {
         id: it.id,
         title: it.title,
         ...(beforeScreenshot.length > 0 ? { beforeScreenshot } : {}),
         ...(afterScreenshot.length > 0 ? { afterScreenshot } : {}),
+        ...(uploadScreenshot.length > 0 ? { uploadScreenshot } : {}),
       };
     })
     .filter((it): it is ArchivedTaskScreenshotSet["subTasks"][number] => it != null);
-  if (subTasks.length > 0 || meta.pillarBeforeScreenshot.length > 0 || meta.pillarAfterScreenshot.length > 0) {
+  if (
+    subTasks.length > 0 ||
+    meta.pillarBeforeScreenshot.length > 0 ||
+    meta.pillarAfterScreenshot.length > 0 ||
+    meta.pillarScreenshot.length > 0
+  ) {
     meta.archivedTaskScreenshots = [
       ...meta.archivedTaskScreenshots,
       {
@@ -460,36 +823,106 @@ function archiveScreenshotsForReset(raw: unknown, norm: NormalizedSubKpis): Retu
         subTasks,
         ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
         ...(meta.pillarAfterScreenshot.length > 0 ? { pillarAfterScreenshot: meta.pillarAfterScreenshot } : {}),
+        ...(meta.pillarScreenshot.length > 0 ? { pillarScreenshot: meta.pillarScreenshot } : {}),
       },
     ];
     meta.pillarBeforeScreenshot = [];
     meta.pillarAfterScreenshot = [];
+    meta.pillarScreenshot = [];
   }
   return meta;
 }
 
-function clearActiveScreenshots(it: SubKpiItem): SubKpiItem {
+function archiveNumericalRecordsForReset(
+  meta: ReturnType<typeof rawEnvelopeMeta>,
+  norm: NormalizedSubKpis,
+): ReturnType<typeof rawEnvelopeMeta> {
+  const subTasks: ArchivedNumericalRecordSet["subTasks"] = [];
+  for (const it of collectAllSubKpiItems(norm)) {
+    const req = resolveSubKpiCompletionRequirements(it);
+    if (!subKpiRequiresNumerical(req)) continue;
+    const numericalTarget =
+      typeof it.numericalTarget === "number" && Number.isFinite(it.numericalTarget)
+        ? it.numericalTarget
+        : null;
+    const numericalValue =
+      typeof it.numericalValue === "number" && Number.isFinite(it.numericalValue)
+        ? it.numericalValue
+        : null;
+    if (numericalTarget == null && numericalValue == null) continue;
+    subTasks.push({
+      id: it.id,
+      title: it.title,
+      ...(numericalTarget != null ? { numericalTarget } : {}),
+      ...(numericalValue != null ? { numericalValue } : {}),
+    });
+  }
+  if (meta.pillarCompletionRequirements && subKpiRequiresNumerical(meta.pillarCompletionRequirements)) {
+    const numericalTarget = meta.pillarNumericalTarget;
+    const numericalValue = meta.pillarNumericalValue;
+    if (numericalTarget != null || numericalValue != null) {
+      subTasks.push({
+        id: PILLAR_ONLY_VIRTUAL_SUBKPI_ID,
+        title: "Task",
+        ...(numericalTarget != null ? { numericalTarget } : {}),
+        ...(numericalValue != null ? { numericalValue } : {}),
+      });
+    }
+  }
+  if (subTasks.length > 0) {
+    meta.archivedNumericalRecords = [
+      ...meta.archivedNumericalRecords,
+      {
+        archivedAt: new Date().toISOString(),
+        subTasks,
+      },
+    ];
+  }
+  return meta;
+}
+
+function clearPillarForReset(meta: ReturnType<typeof rawEnvelopeMeta>): ReturnType<typeof rawEnvelopeMeta> {
+  meta.pillarDone = false;
+  meta.pillarNumericalValue = null;
+  if (meta.pillarCompletionRequirements && subKpiRequiresNumerical(meta.pillarCompletionRequirements)) {
+    meta.pillarNumericalTarget = null;
+  }
+  return meta;
+}
+
+function clearActiveSubKpiForReset(it: SubKpiItem): SubKpiItem {
   const next = { ...it, done: false };
   delete next.beforeScreenshot;
   delete next.afterScreenshot;
+  delete next.uploadScreenshot;
+  const req = resolveSubKpiCompletionRequirements(it);
+  if (subKpiRequiresNumerical(req)) {
+    delete next.numericalValue;
+    delete next.numericalTarget;
+  }
   return next;
 }
 
 export function resetAllSubKpiDone(raw: unknown): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
-  const meta = archiveScreenshotsForReset(raw, n);
+  let meta = archiveScreenshotsForReset(raw, n);
+  meta = archiveNumericalRecordsForReset(meta, n);
+  meta = clearPillarForReset(meta);
   if (n.segmented) {
     const segments = n.segments.map((seg) => ({
       ...seg,
-      items: seg.items.map(clearActiveScreenshots),
+      items: seg.items.map(clearActiveSubKpiForReset),
     }));
     return withEnvelopeMeta(wrapForPersist({ segmented: true, segments }), meta);
   }
-  const flat = n.flat.map(clearActiveScreenshots);
+  const flat = n.flat.map(clearActiveSubKpiForReset);
   return withEnvelopeMeta(wrapForPersist({ segmented: false, flat }), meta);
 }
 
 export function setSubKpiItemDone(raw: unknown, subKpiId: string, done: boolean): Prisma.InputJsonValue {
+  if (subKpiId === PILLAR_ONLY_VIRTUAL_SUBKPI_ID && isPillarOnlyTask(raw)) {
+    return setPillarDone(raw, done);
+  }
   const n = normalizeSubKpis(raw);
   if (n.segmented) {
     const segments = n.segments.map((seg) => ({
@@ -636,7 +1069,8 @@ export function setSubKpiItemScreenshots(
   screenshots: TaskScreenshotMetaItem[],
 ): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
-  const key = slot === "before" ? "beforeScreenshot" : "afterScreenshot";
+  const key =
+    slot === "before" ? "beforeScreenshot" : slot === "after" ? "afterScreenshot" : "uploadScreenshot";
   const touch = (it: SubKpiItem): SubKpiItem =>
     it.id === subKpiId ? { ...it, [key]: screenshots } : it;
   if (n.segmented) {
@@ -655,7 +1089,8 @@ export function removeSubKpiItemScreenshot(
   storedFileName: string,
 ): Prisma.InputJsonValue {
   const n = normalizeSubKpis(raw);
-  const key = slot === "before" ? "beforeScreenshot" : "afterScreenshot";
+  const key =
+    slot === "before" ? "beforeScreenshot" : slot === "after" ? "afterScreenshot" : "uploadScreenshot";
   const touch = (it: SubKpiItem): SubKpiItem => {
     if (it.id !== subKpiId) return it;
     const nextScreenshots = (it[key] ?? []).filter((item) => item.storedFileName !== storedFileName);
@@ -762,8 +1197,17 @@ export function setSubKpiItemWorkMeta(
     location?: string | null;
     projectPriority?: string | null;
     numericalValue?: number | null;
+    numericalTarget?: number | null;
   },
 ): Prisma.InputJsonValue {
+  if (subKpiId === PILLAR_ONLY_VIRTUAL_SUBKPI_ID && isPillarOnlyTask(raw)) {
+    return setPillarWorkMeta(raw, {
+      dueDate: meta.dueDate,
+      actualDate: meta.actualDate,
+      numericalValue: meta.numericalValue,
+      numericalTarget: meta.numericalTarget,
+    });
+  }
   const n = normalizeSubKpis(raw);
   const start =
     meta.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(meta.startDate) ?? null;
@@ -809,6 +1253,13 @@ export function setSubKpiItemWorkMeta(
         delete (next as { numericalValue?: number }).numericalValue;
       }
     }
+    if (meta.numericalTarget !== undefined) {
+      if (meta.numericalTarget != null && Number.isFinite(meta.numericalTarget)) {
+        next = { ...next, numericalTarget: meta.numericalTarget };
+      } else {
+        delete (next as { numericalTarget?: number }).numericalTarget;
+      }
+    }
     return next;
   };
   if (n.segmented) {
@@ -823,6 +1274,9 @@ export function setSubKpiItemWorkMeta(
 }
 
 export function markEverySubKpiDone(raw: unknown, done: boolean): Prisma.InputJsonValue {
+  if (isPillarOnlyTask(raw)) {
+    return setPillarDone(raw, done);
+  }
   const n = normalizeSubKpis(raw);
   if (n.segmented) {
     const segments = n.segments.map((seg) => ({
@@ -906,8 +1360,11 @@ type SubKpiCreateDraft = string | {
   startDate?: string | null;
   dueDate?: string | null;
   endDate?: string | null;
+  actualDate?: string | null;
   screenshotsEnabled?: boolean | null;
   completionRequirements?: SubKpiCompletionRequirements | null;
+  numericalTarget?: number | null;
+  dailyPenaltyAmount?: number | null;
 };
 
 function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
@@ -916,33 +1373,60 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   if (!title) return null;
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
   const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
+  const actualDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.actualDate);
+  const numericalTarget =
+    typeof input !== "string" &&
+    typeof input.numericalTarget === "number" &&
+    Number.isFinite(input.numericalTarget)
+      ? input.numericalTarget
+      : null;
   let item: SubKpiItem = {
     id: crypto.randomUUID(),
     title,
     done: false,
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
+    ...(actualDate ? { actualDate } : {}),
   };
   if (typeof input !== "string" && input.completionRequirements) {
-    return applySubKpiCompletionRequirements(item, input.completionRequirements);
+    item = applySubKpiCompletionRequirements(item, input.completionRequirements);
+  } else {
+    const screenshotsEnabled = typeof input === "string" ? false : input.screenshotsEnabled === true;
+    item = applySubKpiCompletionRequirements(
+      item,
+      completionRequirementsFromLegacyMode(screenshotsEnabled ? "both" : "checkbox"),
+    );
   }
-  const screenshotsEnabled = typeof input === "string" ? false : input.screenshotsEnabled === true;
-  return applySubKpiCompletionRequirements(
-    item,
-    completionRequirementsFromLegacyMode(screenshotsEnabled ? "both" : "checkbox"),
-  );
+  if (numericalTarget != null) {
+    item = { ...item, numericalTarget };
+  }
+  const dailyPenaltyAmount =
+    typeof input !== "string" &&
+    typeof input.dailyPenaltyAmount === "number" &&
+    Number.isFinite(input.dailyPenaltyAmount) &&
+    input.dailyPenaltyAmount >= 0
+      ? input.dailyPenaltyAmount
+      : null;
+  if (dailyPenaltyAmount != null) {
+    item = { ...item, dailyPenaltyAmount };
+  }
+  return item;
 }
 
 export function validateSegmentStructureForPersist(
   segmented: boolean,
   flatInput: SubKpiCreateDraft[],
   segmentsInput: Array<{ label: string; items: SubKpiCreateDraft[] }> | undefined,
+  options?: { allowPillarOnly?: boolean },
 ): { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string } {
   if (!segmented) {
     const flat = flatInput
       .map(subKpiFromCreateDraft)
       .filter((item): item is SubKpiItem => item != null);
     if (flat.length === 0) {
+      if (options?.allowPillarOnly) {
+        return { ok: true, norm: { segmented: false, flat: [] } };
+      }
       return { ok: false, error: "At least one sub-task is required." };
     }
     return { ok: true, norm: { segmented: false, flat } };
@@ -1079,6 +1563,8 @@ export type UpdateSubKpiItemInput = {
   startDate?: string | null;
   dueDate?: string | null;
   completionMode?: SubKpiCompletionMode;
+  numericalTarget?: number | null;
+  dailyPenaltyAmount?: number | null;
 };
 
 /** Update Sub Task title and/or schedule fields (preserves other item metadata). */
@@ -1112,6 +1598,18 @@ export function updateSubKpiItem(
       : isSubKpiCompletionMode(input.completionMode)
         ? input.completionMode
         : undefined;
+  const numericalTarget =
+    input.numericalTarget === undefined
+      ? undefined
+      : typeof input.numericalTarget === "number" && Number.isFinite(input.numericalTarget)
+        ? input.numericalTarget
+        : null;
+  const dailyPenaltyAmount =
+    input.dailyPenaltyAmount === undefined
+      ? undefined
+      : typeof input.dailyPenaltyAmount === "number" && Number.isFinite(input.dailyPenaltyAmount)
+        ? Math.max(0, input.dailyPenaltyAmount)
+        : null;
 
   const touch = (item: SubKpiItem): SubKpiItem => {
     if (item.id !== id) return item;
@@ -1127,6 +1625,14 @@ export function updateSubKpiItem(
     }
     if (completionMode !== undefined) {
       next = applySubKpiCompletionMode(next, completionMode);
+    }
+    if (numericalTarget !== undefined) {
+      if (numericalTarget != null) next = { ...next, numericalTarget };
+      else delete (next as { numericalTarget?: number }).numericalTarget;
+    }
+    if (dailyPenaltyAmount !== undefined) {
+      if (dailyPenaltyAmount != null) next = { ...next, dailyPenaltyAmount };
+      else delete (next as { dailyPenaltyAmount?: number }).dailyPenaltyAmount;
     }
     return next;
   };
@@ -1201,6 +1707,9 @@ export function stripSubKpiStartDates(raw: unknown): Prisma.InputJsonValue {
 
 /** Sub-tasks without a checkbox requirement auto-complete when other requirements are met. */
 export function syncSubKpiDoneFromRequirements(raw: unknown, subKpiId: string): Prisma.InputJsonValue {
+  if (subKpiId === PILLAR_ONLY_VIRTUAL_SUBKPI_ID && isPillarOnlyTask(raw)) {
+    return syncPillarDoneFromRequirements(raw);
+  }
   const n = normalizeSubKpis(raw);
   const items = n.segmented ? n.segments.flatMap((seg) => seg.items) : n.flat;
   const item = items.find((row) => row.id === subKpiId);

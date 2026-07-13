@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client/primary";
 import type { Session } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";

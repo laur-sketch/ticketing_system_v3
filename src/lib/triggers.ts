@@ -1,4 +1,4 @@
-import type { TicketPriority } from "@prisma/client";
+import type { TicketPriority } from "@prisma/client/primary";
 import { prisma } from "./prisma";
 
 export async function getEscalationTrigger(priority: TicketPriority) {

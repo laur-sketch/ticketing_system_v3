@@ -49,6 +49,23 @@ export default async function TicketPage({
     redirect("/");
   }
 
+  const requestorEmail = (ticket.requestorEmail ?? ticket.contactEmail ?? "").trim();
+  const requestorAccount = requestorEmail
+    ? await prisma.portalAccount.findFirst({
+        where: { email: { equals: requestorEmail, mode: "insensitive" } },
+        select: {
+          company: { select: { name: true } },
+          staffDesignatedCompany: { select: { name: true } },
+        },
+      })
+    : null;
+  const requestorCompanyName =
+    requestorAccount?.company?.name?.trim() ||
+    requestorAccount?.staffDesignatedCompany?.name?.trim() ||
+    null;
+  const branchActivity = ticket.activities.find((a) => a.summary === "Branch");
+  const branch = branchActivity?.detail?.trim() ?? null;
+
   return (
     <main className="mx-auto max-w-[1440px] space-y-4 bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100 sm:px-4">
       <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
@@ -115,30 +132,40 @@ export default async function TicketPage({
               Your ticket is logged with SLA targets for first response and resolution. Share this link with your team
               for status checks.
             </p>
-            <dl className="mt-4 space-y-2 text-sm text-zinc-700 dark:text-zinc-200">
+            <dl className="mt-4 space-y-3 text-sm text-zinc-700 dark:text-zinc-200">
               <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500">Requestor email</dt>
-                <dd className="break-all font-medium min-[420px]:text-right">{ticket.requestorEmail ?? ticket.contactEmail}</dd>
+                <dt className="text-zinc-500 shrink-0">Requestor email</dt>
+                <dd className="break-all font-medium min-[420px]:max-w-[60%] min-[420px]:text-right">{ticket.requestorEmail ?? ticket.contactEmail}</dd>
               </div>
               <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500">Account email</dt>
-                <dd className="break-all font-medium min-[420px]:text-right">{ticket.contactEmail}</dd>
+                <dt className="text-zinc-500 shrink-0">Account email</dt>
+                <dd className="break-all font-medium min-[420px]:max-w-[60%] min-[420px]:text-right">{ticket.contactEmail}</dd>
               </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-zinc-500">Priority</dt>
-                <dd className="max-w-[55%] text-right font-medium">{formatTicketPriorityLabel(ticket.priority)}</dd>
+              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
+                <dt className="text-zinc-500 shrink-0">Priority</dt>
+                <dd className="font-medium min-[420px]:text-right">{formatTicketPriorityLabel(ticket.priority)}</dd>
               </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-zinc-500">Agent</dt>
-                <dd className="font-medium">{ticket.assignedAgent?.name ?? "Queued"}</dd>
+              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
+                <dt className="text-zinc-500 shrink-0">Agent</dt>
+                <dd className="font-medium min-[420px]:text-right">{ticket.assignedAgent?.name ?? "Queued"}</dd>
               </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-zinc-500">First response due</dt>
-                <dd className="font-medium">{ticket.firstResponseDueAt.toLocaleString()}</dd>
+              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
+                <dt className="text-zinc-500 shrink-0">Company</dt>
+                <dd className="font-medium min-[420px]:text-right break-words">{requestorCompanyName ?? "Not assigned"}</dd>
               </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-zinc-500">Resolution due</dt>
-                <dd className="font-medium">{ticket.resolutionDueAt.toLocaleString()}</dd>
+              {branch ? (
+                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
+                  <dt className="text-zinc-500 shrink-0">Branch</dt>
+                  <dd className="font-medium min-[420px]:text-right break-words">{branch}</dd>
+                </div>
+              ) : null}
+              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
+                <dt className="text-zinc-500 shrink-0">First response due</dt>
+                <dd className="font-medium min-[420px]:text-right">{ticket.firstResponseDueAt.toLocaleString()}</dd>
+              </div>
+              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
+                <dt className="text-zinc-500 shrink-0">Resolution due</dt>
+                <dd className="font-medium min-[420px]:text-right">{ticket.resolutionDueAt.toLocaleString()}</dd>
               </div>
             </dl>
           </article>

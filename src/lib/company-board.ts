@@ -1,4 +1,4 @@
-import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client";
+import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import type { Session } from "next-auth";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";

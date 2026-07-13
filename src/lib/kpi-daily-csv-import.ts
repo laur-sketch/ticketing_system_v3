@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import type { KpiFrequency, Prisma } from "@prisma/client";
+import type { KpiFrequency, Prisma } from "@prisma/client/primary";
 import { DateTime } from "luxon";
 import type { ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
 import { pillarFromKpiTitle, matchPillarFromSheetLabel } from "@/lib/kpi-sheet-import-snapshots";

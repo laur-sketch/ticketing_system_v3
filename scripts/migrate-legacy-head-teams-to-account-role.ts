@@ -3,7 +3,7 @@
  * Run after: npx prisma db push (PortalAccount.headPrivileges exists).
  * Usage: npx tsx scripts/migrate-legacy-head-teams-to-account-role.ts
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 

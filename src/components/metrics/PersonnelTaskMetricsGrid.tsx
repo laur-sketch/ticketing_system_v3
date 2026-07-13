@@ -3,6 +3,7 @@
 import { Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { PersonnelCombinedMetricCard } from "@/lib/task-personnel-metrics";
+import { combinedPersonnelEfficiency, personnelEfficiencyBracket, applyPersonnelAverageEfficiencyFloor } from "@/lib/task-personnel-metrics";
 import { ContributorPersonalKpiCard } from "@/components/metrics/TaskPillarMetricsGrid";
 
 type PersonnelTaskMetricsGridProps = {
@@ -34,7 +35,11 @@ export function PersonnelTaskMetricsGrid({
     { closed: 0, efficiencySum: 0, efficiencyCount: 0 },
   );
   const teamEfficiency =
-    totals.efficiencyCount > 0 ? Math.round(totals.efficiencySum / totals.efficiencyCount) : 0;
+    totals.efficiencyCount > 0
+      ? applyPersonnelAverageEfficiencyFloor(totals.efficiencySum / totals.efficiencyCount)
+      : 0;
+  const teamEfficiencyBracket =
+    totals.efficiencyCount > 0 ? personnelEfficiencyBracket(teamEfficiency) : null;
 
   return (
     <section className="space-y-4">
@@ -51,7 +56,8 @@ export function PersonnelTaskMetricsGrid({
           ) : null}
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
             Each card shows Tickets (Closed, Pending, Efficiency) and Tasks (Done, Pending, Efficiency).
-            Task efficiency is Done ÷ Pending; the center badge averages ticket and task efficiency.
+            Task efficiency shows the net rate after delay penalties when applicable, with a note for penalty points.
+            The center badge averages ticket and task efficiency.
             Mon–Sat task periods; Sundays excluded.
           </p>
         </div>
@@ -60,8 +66,25 @@ export function PersonnelTaskMetricsGrid({
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Team rollup
             </p>
-            <p className="mt-1 text-2xl font-black tabular-nums text-zinc-900 dark:text-zinc-100">{teamEfficiency}%</p>
-            <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+            <p
+              className={cn(
+                "mt-1 text-2xl font-black tabular-nums",
+                teamEfficiencyBracket?.valueClassName ?? "text-zinc-900 dark:text-zinc-100",
+              )}
+            >
+              {teamEfficiency}%
+            </p>
+            {teamEfficiencyBracket ? (
+              <p
+                className={cn(
+                  "mt-1 inline-block rounded-md border px-2 py-0.5 text-[10px] font-bold tracking-wide",
+                  teamEfficiencyBracket.badgeClassName,
+                )}
+              >
+                [{teamEfficiencyBracket.label}]
+              </p>
+            ) : null}
+            <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
               {totals.closed} closed · avg {teamEfficiency}% efficiency
             </p>
           </div>

@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 const file = "prisma/migrations/20260428104105_add_api_performance_indexes/migration.sql";

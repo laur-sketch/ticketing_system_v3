@@ -1,4 +1,4 @@
-import type { ActivityActor } from "@prisma/client";
+import type { ActivityActor } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { customerCanAccessTicket, ensureTicketOwnership, requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";

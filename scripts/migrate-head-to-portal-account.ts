@@ -4,7 +4,7 @@
  * Run once before dropping the Agent.accountRole column from the database.
  * Usage: npx tsx scripts/migrate-head-to-portal-account.ts
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 

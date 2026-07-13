@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
 import { computeKpis, parseKpiRangeFromQuery } from "@/lib/kpis";
 import { prisma } from "@/lib/prisma";

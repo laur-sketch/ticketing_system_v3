@@ -6,6 +6,7 @@ declare module "next-auth" {
     error?: "SessionExpired";
     /** Unix seconds; fixed at sign-in — used for immediate client-side expiry redirects. */
     sessionExpiresAt?: number;
+    needsUsername?: boolean;
     user: DefaultSession["user"] & {
       role: UserRole;
       /** OAuth / credentials provider id (e.g. google, credentials). */
@@ -17,6 +18,8 @@ declare module "next-auth" {
       customerOrgRole?: string | null;
       /** Canonical portal staff tier from PortalAccount: Head | Personnel | null for customers. */
       staffRoleLabel?: string | null;
+      /** Portal account username. */
+      username?: string | null;
     };
   }
 
@@ -40,5 +43,9 @@ declare module "next-auth/jwt" {
     companyName?: string | null;
     customerOrgRole?: string | null;
     staffRoleLabel?: string | null;
+    /** Portal account username. */
+    username?: string | null;
+    /** True when the user signed up via OAuth but hasn't set a username yet. */
+    needsUsername?: boolean;
   }
 }

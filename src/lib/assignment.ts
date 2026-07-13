@@ -1,4 +1,4 @@
-import type { TicketCategory } from "@prisma/client";
+import type { TicketCategory } from "@prisma/client/primary";
 import { prisma } from "./prisma";
 
 const CATEGORY_TEAM_HINT: Record<TicketCategory, string> = {

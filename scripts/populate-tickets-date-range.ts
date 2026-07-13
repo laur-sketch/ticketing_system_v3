@@ -9,7 +9,7 @@ import {
   TicketCategory,
   TicketPriority,
   TicketStatus,
-} from "@prisma/client";
+} from "@prisma/client/primary";
 
 const prisma = new PrismaClient();
 

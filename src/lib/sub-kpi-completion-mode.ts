@@ -4,13 +4,17 @@ export type SubKpiCompletionMode = "checkbox" | "screenshots" | "both";
 
 export type SubKpiCompletionRequirements = {
   checkbox: boolean;
+  /** Before/after screenshots on each sub-task. */
   screenshots: boolean;
+  /** Generic screenshot uploads on each sub-task. */
+  screenshotUpload: boolean;
   numerical: boolean;
 };
 
 export const DEFAULT_COMPLETION_REQUIREMENTS: SubKpiCompletionRequirements = {
   checkbox: true,
   screenshots: false,
+  screenshotUpload: false,
   numerical: false,
 };
 
@@ -34,9 +38,10 @@ export function normalizeCompletionRequirements(
   const raw = value as Record<string, unknown>;
   const checkbox = raw.checkbox === true;
   const screenshots = raw.screenshots === true;
+  const screenshotUpload = raw.screenshotUpload === true;
   const numerical = raw.numerical === true;
-  if (!checkbox && !screenshots && !numerical) return null;
-  return { checkbox, screenshots, numerical };
+  if (!checkbox && !screenshots && !screenshotUpload && !numerical) return null;
+  return { checkbox, screenshots, screenshotUpload, numerical };
 }
 
 export function completionRequirementsFromLegacyMode(
@@ -45,7 +50,20 @@ export function completionRequirementsFromLegacyMode(
   return {
     checkbox: mode === "checkbox" || mode === "both",
     screenshots: mode === "screenshots" || mode === "both",
+    screenshotUpload: false,
     numerical: false,
+  };
+}
+
+/** Sub-task completion requirements persisted on each checklist item. */
+export function subKpiStoredCompletionRequirements(
+  requirements: SubKpiCompletionRequirements,
+): Pick<SubKpiCompletionRequirements, "checkbox" | "screenshots" | "screenshotUpload" | "numerical"> {
+  return {
+    checkbox: requirements.checkbox,
+    screenshots: requirements.screenshots,
+    screenshotUpload: requirements.screenshotUpload,
+    numerical: requirements.numerical,
   };
 }
 
@@ -76,6 +94,19 @@ export function subKpiRequiresScreenshots(requirements: SubKpiCompletionRequirem
   return requirements.screenshots;
 }
 
+export function subKpiRequiresScreenshotUpload(requirements: SubKpiCompletionRequirements): boolean {
+  return requirements.screenshotUpload;
+}
+
+/** @deprecated use subKpiRequiresScreenshotUpload */
+export function subKpiRequiresPillarScreenshotUpload(requirements: SubKpiCompletionRequirements): boolean {
+  return subKpiRequiresScreenshotUpload(requirements);
+}
+
+export function hasScreenshotUpload(item: Pick<SubKpiItem, "uploadScreenshot">): boolean {
+  return (item.uploadScreenshot?.length ?? 0) > 0;
+}
+
 export function subKpiRequiresNumerical(requirements: SubKpiCompletionRequirements): boolean {
   return requirements.numerical;
 }
@@ -100,6 +131,44 @@ export function hasNumericalRecord(item: Pick<SubKpiItem, "numericalValue">): bo
   return typeof item.numericalValue === "number" && Number.isFinite(item.numericalValue);
 }
 
+/** Progress for numerical records: `(actual / target) * 100`, rounded. */
+export function numericalRecordProgressPercent(
+  actual: number | null | undefined,
+  target: number | null | undefined,
+): number | null {
+  if (target == null || !Number.isFinite(target) || target === 0) return null;
+  const act = typeof actual === "number" && Number.isFinite(actual) ? actual : 0;
+  return Math.round((act / target) * 100);
+}
+
+/** Sub-task progress (0–1+) averaged across enabled completion requirements. */
+export function subKpiItemProgressFraction(
+  item: Pick<
+    SubKpiItem,
+    | "done"
+    | "completionRequirements"
+    | "completionMode"
+    | "screenshotsEnabled"
+    | "beforeScreenshot"
+    | "afterScreenshot"
+    | "uploadScreenshot"
+    | "numericalValue"
+    | "numericalTarget"
+  >,
+): number {
+  const req = resolveSubKpiCompletionRequirements(item);
+  const parts: number[] = [];
+  if (req.checkbox) parts.push(item.done ? 1 : 0);
+  if (req.screenshots) parts.push(hasBeforeAndAfterScreenshots(item) ? 1 : 0);
+  if (req.screenshotUpload) parts.push(hasScreenshotUpload(item) ? 1 : 0);
+  if (req.numerical) {
+    const pct = numericalRecordProgressPercent(item.numericalValue, item.numericalTarget);
+    parts.push(pct != null ? pct / 100 : 0);
+  }
+  if (parts.length === 0) return item.done ? 1 : 0;
+  return parts.reduce((sum, value) => sum + value, 0) / parts.length;
+}
+
 export function subKpiRequirementsMet(
   item: Pick<
     SubKpiItem,
@@ -109,14 +178,22 @@ export function subKpiRequirementsMet(
     | "screenshotsEnabled"
     | "beforeScreenshot"
     | "afterScreenshot"
+    | "uploadScreenshot"
     | "numericalValue"
+    | "numericalTarget"
   >,
 ): boolean {
   const req = resolveSubKpiCompletionRequirements(item);
+  if (!req.checkbox && !req.screenshots && !req.screenshotUpload && !req.numerical) return Boolean(item.done);
   if (req.checkbox && !item.done) return false;
   if (req.screenshots && !hasBeforeAndAfterScreenshots(item)) return false;
-  if (req.numerical && !hasNumericalRecord(item)) return false;
-  return req.checkbox || req.screenshots || req.numerical;
+  if (req.screenshotUpload && !hasScreenshotUpload(item)) return false;
+  if (req.numerical) {
+    if (!hasNumericalRecord(item)) return false;
+    const pct = numericalRecordProgressPercent(item.numericalValue, item.numericalTarget);
+    if (pct != null && pct < 100) return false;
+  }
+  return true;
 }
 
 export function applySubKpiCompletionMode(item: SubKpiItem, mode: SubKpiCompletionMode): SubKpiItem {
@@ -143,6 +220,9 @@ export function applySubKpiCompletionRequirements(
   if (requirements.screenshots && next.done && !hasBeforeAndAfterScreenshots(next)) {
     next.done = false;
   }
+  if (requirements.screenshotUpload && next.done && !hasScreenshotUpload(next)) {
+    next.done = false;
+  }
   if (requirements.numerical && next.done && !hasNumericalRecord(next)) {
     next.done = false;
   }
@@ -152,9 +232,5 @@ export function applySubKpiCompletionRequirements(
 export function completionRequirementsToPersist(
   requirements: SubKpiCompletionRequirements,
 ): SubKpiItem["completionRequirements"] {
-  return {
-    checkbox: requirements.checkbox,
-    screenshots: requirements.screenshots,
-    numerical: requirements.numerical,
-  };
+  return subKpiStoredCompletionRequirements(requirements);
 }

@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@prisma/client/primary";
 
 const sourceUrl =
   process.env.SOURCE_DATABASE_URL?.trim() ||

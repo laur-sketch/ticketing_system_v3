@@ -1,0 +1,164 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/@prisma/client/secondary"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL_SECONDARY")
+}
+
+/// HRIS employees denormalized with company name (ETL target — read-mostly).
+/// sourceUserId = upstream user id; sourceDatabase = upstream DB name (e.g. hris-dev).
+model MergedUser {
+  sourceUserId      BigInt    @id @map("source_user_id") @db.UnsignedBigInt
+  sourceDatabase    String    @default("hris-dev") @map("source_database") @db.VarChar(64)
+  employeeCode      String?   @map("employee_code")
+  username          String?   @map("username")
+  passwordHash      String?   @map("password_hash") @db.VarChar(255)
+  name              String    @map("name")
+  email             String?   @map("email")
+  phoneNumber       String?   @map("phone_number") @db.VarChar(20)
+  role              String    @map("role") @db.VarChar(20)
+  companyId         BigInt?   @map("company_id") @db.UnsignedBigInt
+  companyName       String?   @map("company_name")
+  department        String?   @map("department")
+  position          String?   @map("position")
+  employmentStatus  String    @map("employment_status")
+  isActive          Boolean   @default(true) @map("is_active")
+  hireDate          DateTime? @map("hire_date") @db.Date
+  createdAt         DateTime? @map("created_at")
+  updatedAt         DateTime? @map("updated_at")
+  mergedAt          DateTime  @default(now()) @map("merged_at")
+
+  attendanceClockIns MergedAttendanceClockIn[]
+
+  @@index([companyId], map: "idx_merged_users_company")
+  @@index([email], map: "idx_merged_users_email")
+  @@index([username], map: "idx_merged_users_username")
+  @@index([sourceDatabase], map: "idx_merged_users_source_db")
+  @@map("merged_users")
+}
+
+/// HRIS clock-in events only (present-time clock-in records).
+model MergedAttendanceClockIn {
+  sourceLogId          BigInt    @id @map("source_log_id") @db.UnsignedBigInt
+  sourceDatabase       String    @default("hris-dev") @map("source_database") @db.VarChar(64)
+  sourceUserId         BigInt    @map("source_user_id") @db.UnsignedBigInt
+  employeeCode         String?   @map("employee_code")
+  employeeName         String?   @map("employee_name")
+  companyName          String?   @map("company_name")
+  clockInAt            DateTime  @map("clock_in_at")
+  verifiedAt           DateTime? @map("verified_at")
+  authenticationMethod String?   @map("authentication_method") @db.VarChar(50)
+  geofenceStatus       String?   @map("geofence_status") @db.VarChar(32)
+  latitude             Decimal?  @map("latitude") @db.Decimal(10, 8)
+  longitude            Decimal?  @map("longitude") @db.Decimal(11, 8)
+  ipAddress            String?   @map("ip_address") @db.VarChar(45)
+  createdAt            DateTime? @map("created_at")
+  mergedAt             DateTime  @default(now()) @map("merged_at")
+
+  user MergedUser @relation(fields: [sourceUserId], references: [sourceUserId])
+
+  @@index([sourceUserId], map: "idx_merged_attendance_user")
+  @@index([clockInAt], map: "idx_merged_attendance_clock_in")
+  @@index([companyName], map: "idx_merged_attendance_company")
+  @@index([sourceDatabase], map: "idx_merged_attendance_source_db")
+  @@map("merged_attendance_clock_in")
+}
+
+/// Task/KPI data synced from ticketing_system (PostgreSQL).
+model MergedKpiMaintenance {
+  sourceId               String    @id @map("source_id") @db.VarChar(191)
+  title                  String    @map("title") @db.Text
+  mainTask               String?   @map("main_task") @db.Text
+  isRecurring            Boolean   @default(true) @map("is_recurring")
+  nonRecurringStartAt    DateTime? @map("non_recurring_start_at") @db.DateTime(3)
+  nonRecurringEndAt      DateTime? @map("non_recurring_end_at") @db.DateTime(3)
+  frequency              String    @map("frequency") @db.VarChar(20)
+  subKpis                Json      @map("sub_kpis")
+  assignedAgentId        String?   @map("assigned_agent_id") @db.VarChar(191)
+  assignedRole           String?   @map("assigned_role")
+  recurrenceWeekday      Int?      @map("recurrence_weekday")
+  recurrenceMonthDay     Int?      @map("recurrence_month_day")
+  periodCycleStartAt     DateTime? @map("period_cycle_start_at") @db.DateTime(3)
+  lastFullCompletionAt   DateTime? @map("last_full_completion_at") @db.DateTime(3)
+  periodKey              String?   @map("period_key")
+  rolledOverIncomplete   Boolean   @default(false) @map("rolled_over_incomplete")
+  itProjectName          String?   @map("it_project_name")
+  itProjectPhase         String?   @map("it_project_phase")
+  scopedCompanyTeamId    String?   @map("scoped_company_team_id") @db.VarChar(191)
+  createdBy              String    @map("created_by") @db.VarChar(191)
+  createdByRole          String    @map("created_by_role")
+  createdAt              DateTime  @map("created_at") @db.DateTime(3)
+  updatedAt              DateTime  @map("updated_at") @db.DateTime(3)
+  sourceDatabase         String    @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  mergedAt               DateTime  @default(now()) @map("merged_at")
+
+  periodSnapshots MergedKpiPeriodSnapshot[]
+
+  @@index([frequency], map: "idx_merged_kpi_freq")
+  @@index([assignedAgentId], map: "idx_merged_kpi_agent")
+  @@map("merged_kpi_maintenance")
+}
+
+model MergedKpiPeriodSnapshot {
+  sourceId             String   @id @map("source_id") @db.VarChar(191)
+  kpiMaintenanceId     String   @map("kpi_maintenance_id") @db.VarChar(191)
+  periodKey            String   @map("period_key")
+  frequency            String   @map("frequency") @db.VarChar(20)
+  timeZone             String   @map("time_zone") @db.VarChar(100)
+  total                Int      @map("total")
+  done                 Int      @map("done")
+  missing              Int      @map("missing")
+  percent              Int      @map("percent")
+  fullyComplete        Boolean  @default(false) @map("fully_complete")
+  contributorProgress  Json?    @map("contributor_progress")
+  capturedAt           DateTime @map("captured_at") @db.DateTime(3)
+  sourceDatabase       String   @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  mergedAt             DateTime @default(now()) @map("merged_at")
+
+  kpiMaintenance MergedKpiMaintenance @relation(fields: [kpiMaintenanceId], references: [sourceId])
+
+  @@index([kpiMaintenanceId], map: "idx_merged_kpi_snap_kpi")
+  @@index([periodKey], map: "idx_merged_kpi_snap_period")
+  @@map("merged_kpi_period_snapshots")
+}
+
+model MergedTaskItem {
+  sourceId        String    @id @map("source_id") @db.VarChar(191)
+  title           String    @map("title") @db.Text
+  description     String?   @map("description") @db.Text
+  status          String    @map("status") @db.VarChar(20)
+  assignedAgentId String?   @map("assigned_agent_id") @db.VarChar(191)
+  priority        String?   @map("priority") @db.VarChar(50)
+  dueAt           DateTime? @map("due_at") @db.DateTime(3)
+  createdBy       String    @map("created_by") @db.VarChar(191)
+  createdByRole   String    @map("created_by_role")
+  createdAt       DateTime  @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime  @map("updated_at") @db.DateTime(3)
+  sourceDatabase  String    @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  mergedAt        DateTime  @default(now()) @map("merged_at")
+
+  activities MergedTaskActivity[]
+
+  @@index([status], map: "idx_merged_task_status")
+  @@index([assignedAgentId], map: "idx_merged_task_agent")
+  @@map("merged_task_items")
+}
+
+model MergedTaskActivity {
+  sourceId       String   @id @map("source_id") @db.VarChar(191)
+  taskId         String   @map("task_id") @db.VarChar(191)
+  author         String   @map("author")
+  action         String   @map("action")
+  detail         String?  @map("detail") @db.Text
+  createdAt      DateTime @map("created_at") @db.DateTime(3)
+  sourceDatabase String   @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  mergedAt       DateTime @default(now()) @map("merged_at")
+
+  task MergedTaskItem @relation(fields: [taskId], references: [sourceId])
+
+  @@index([taskId], map: "idx_merged_task_act_task")
+  @@map("merged_task_activities")
+}

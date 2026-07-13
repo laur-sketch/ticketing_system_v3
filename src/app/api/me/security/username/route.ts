@@ -1,5 +1,5 @@
-import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
+import { verifyPortalPassword } from "@/lib/auth/portal-password";
 import { prisma } from "@/lib/prisma";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -17,8 +17,8 @@ export async function PATCH(req: Request) {
   const newUsername = body.newUsername?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
 
-  if (!newUsername || !password) {
-    return NextResponse.json({ error: "New username and current password are required." }, { status: 400 });
+  if (!newUsername) {
+    return NextResponse.json({ error: "New username is required." }, { status: 400 });
   }
   if (!validUsername(newUsername)) {
     return NextResponse.json(
@@ -40,9 +40,12 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "New username must be different." }, { status: 400 });
   }
 
-  const passwordOk = await bcrypt.compare(password, portal.passwordHash);
-  if (!passwordOk) {
-    return NextResponse.json({ error: "Incorrect password." }, { status: 403 });
+  const auth = await verifyPortalPassword(portal.passwordHash, password);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: auth.reason === "PASSWORD_REQUIRED" ? "Current password is required." : "Incorrect password." },
+      { status: 403 },
+    );
   }
 
   const existing = await prisma.portalAccount.findUnique({

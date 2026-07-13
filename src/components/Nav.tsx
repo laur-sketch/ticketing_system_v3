@@ -11,6 +11,7 @@ import { BrandLockup } from "@/components/BrandLockup";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { PhilippineTimeClock } from "@/components/PhilippineTimeClock";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export function Nav() {
@@ -280,6 +281,7 @@ export function Nav() {
                 aria-label="Find ticket"
               />
             </form>
+            <PhilippineTimeClock compact className="shrink-0" />
             <div className="relative shrink-0" ref={notifRef}>
               <button
                 type="button"

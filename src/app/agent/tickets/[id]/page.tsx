@@ -63,6 +63,8 @@ export default async function AgentTicketPage({
     requestorAccount?.company?.name?.trim() ||
     requestorAccount?.staffDesignatedCompany?.name?.trim() ||
     null;
+  const branchActivity = ticketForWorkspace.activities.find((a) => a.summary === "Branch");
+  const branch = branchActivity?.detail?.trim() ?? null;
   let transferPending = false;
   let lastTransferDetail: string | null = null;
   for (const a of ticketForWorkspace.activities) {
@@ -140,6 +142,12 @@ export default async function AgentTicketPage({
                     {requestorCompanyName ?? "Not assigned"}
                   </span>
                 </p>
+                {branch ? (
+                  <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                    Branch:{" "}
+                    <span className="text-zinc-300 normal-case tracking-normal">{branch}</span>
+                  </p>
+                ) : null}
                 {ticketForWorkspace.team?.name ? (
                   <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
                     Company Requested to:{" "}

@@ -1,4 +1,4 @@
-import type { SlaPolicy, Ticket, TicketPriority } from "@prisma/client";
+import type { SlaPolicy, Ticket, TicketPriority } from "@prisma/client/primary";
 import { prisma } from "./prisma";
 
 export async function getSlaPolicy(

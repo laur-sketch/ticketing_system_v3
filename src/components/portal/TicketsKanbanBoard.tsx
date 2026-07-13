@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { TicketPriority, TicketStatus } from "@prisma/client";
+import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { ExternalLink, MoreHorizontal } from "lucide-react";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";

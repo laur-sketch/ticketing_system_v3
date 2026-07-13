@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client/primary";
 import { normalizePersonName } from "@/lib/admin-roster";
 import { prisma } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";

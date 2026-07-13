@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
 import { basename, resolve } from "path";
-import type { KpiFrequency } from "@prisma/client";
+import type { KpiFrequency } from "@prisma/client/primary";
 import { DateTime } from "luxon";
 import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
 import {

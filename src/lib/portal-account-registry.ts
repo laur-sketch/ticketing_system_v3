@@ -7,7 +7,7 @@ export const PORTAL_REGISTRY_PAGE_SIZE = 10;
 export type PortalAccountRow = {
   id: string;
   username: string | null;
-  passwordHash: string;
+  passwordHash: string | null;
   email: string;
   name: string;
   role: string;

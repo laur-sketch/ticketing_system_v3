@@ -1,6 +1,6 @@
 "use client";
 
-import type { EscalationTrigger, TicketPriority } from "@prisma/client";
+import type { EscalationTrigger, TicketPriority } from "@prisma/client/primary";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";

@@ -1,4 +1,4 @@
-import type { TicketStatus } from "@prisma/client";
+import type { TicketStatus } from "@prisma/client/primary";
 
 /** User-facing ticket status labels (ESCALATED = transfer pending approval). */
 export function formatTicketStatusLabel(status: TicketStatus | string): string {

@@ -38,7 +38,8 @@ const http = require("http");
 const crypto = require("crypto");
 const next = require("next");
 const { Server } = require("socket.io");
-const { PrismaClient } = require("@prisma/client");
+const { PrismaClient: PrimaryClient } = require("@prisma/client/primary");
+const { PrismaClient: AuthClient } = require("@prisma/client/auth");
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOSTNAME || "0.0.0.0";
@@ -52,7 +53,8 @@ const app = next({
 });
 
 const handle = app.getRequestHandler();
-const prisma = new PrismaClient();
+const prisma = new PrimaryClient();
+const prismaAuth = new AuthClient();
 const internalJobKey = process.env.INTERNAL_JOB_KEY || crypto.randomBytes(32).toString("hex");
 process.env.INTERNAL_JOB_KEY = internalJobKey;
 
@@ -76,6 +78,26 @@ async function emitRealtimeSnapshot(io) {
     kpiUpdatedAt: kpiMax._max.updatedAt?.toISOString() ?? null,
     emittedAt: new Date().toISOString(),
   });
+}
+
+let hrisSyncJobRunning = false;
+async function runHrisSyncJob() {
+  if (hrisSyncJobRunning) return;
+  hrisSyncJobRunning = true;
+  try {
+    const jobHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    const res = await fetch(`http://${jobHost}:${port}/api/jobs/sync-hris-portal`, {
+      method: "POST",
+      headers: { "x-internal-job-key": internalJobKey },
+    });
+    if (!res.ok) {
+      console.warn(`HRIS sync job failed with HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.warn("HRIS sync job failed", err);
+  } finally {
+    hrisSyncJobRunning = false;
+  }
 }
 
 let confirmationReminderJobRunning = false;
@@ -117,15 +139,21 @@ app
     const confirmationReminderTimer = setInterval(() => {
       void runConfirmationReminderJob();
     }, 15 * 60 * 1000);
+    const hrisSyncTimer = setInterval(() => {
+      void runHrisSyncJob();
+    }, 30 * 60 * 1000);
     server.listen(port, host, () => {
       // Keep this log minimal: cPanel surfaces startup logs in app logs.
       console.log(`Ticket System listening on http://${host}:${port}`);
       setTimeout(() => void runConfirmationReminderJob(), 60 * 1000);
+      setTimeout(() => void runHrisSyncJob(), 120 * 1000);
     });
     const shutdown = async () => {
       clearInterval(timer);
       clearInterval(confirmationReminderTimer);
+      clearInterval(hrisSyncTimer);
       await prisma.$disconnect();
+      await prismaAuth.$disconnect();
       io.close();
       server.close(() => process.exit(0));
     };

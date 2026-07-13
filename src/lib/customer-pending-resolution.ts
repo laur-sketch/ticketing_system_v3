@@ -1,4 +1,4 @@
-import type { Prisma, TicketStatus } from "@prisma/client";
+import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
 import { resolveTicketContactFields } from "@/lib/ticket-intake-contact";
 

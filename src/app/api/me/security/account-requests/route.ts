@@ -1,5 +1,5 @@
-import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
+import { isOAuthOnlyPortal, verifyPortalPassword } from "@/lib/auth/portal-password";
 import { prisma } from "@/lib/prisma";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -35,8 +35,8 @@ export async function POST(req: Request) {
   const password = body.password ?? "";
   const reason = body.reason?.trim() ?? null;
 
-  if (!allowedRequestTypes.has(requestType) || !password) {
-    return NextResponse.json({ error: "requestType and password are required." }, { status: 400 });
+  if (!allowedRequestTypes.has(requestType)) {
+    return NextResponse.json({ error: "requestType is required." }, { status: 400 });
   }
 
   const portal = await prisma.portalAccount.findUnique({
@@ -45,6 +45,21 @@ export async function POST(req: Request) {
   });
   if (!portal) {
     return NextResponse.json({ error: "Portal account not found." }, { status: 404 });
+  }
+
+  if (requestType === "PASSWORD_RESET" && isOAuthOnlyPortal(portal.passwordHash)) {
+    return NextResponse.json(
+      { error: "Password reset does not apply to Google sign-in accounts." },
+      { status: 400 },
+    );
+  }
+
+  const auth = await verifyPortalPassword(portal.passwordHash, password);
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: auth.reason === "PASSWORD_REQUIRED" ? "Password confirmation is required." : "Incorrect password." },
+      { status: 403 },
+    );
   }
 
   const duplicate = await prisma.accountActionRequest.findFirst({
@@ -59,11 +74,6 @@ export async function POST(req: Request) {
       { error: "You already have a pending request of this type." },
       { status: 409 },
     );
-  }
-
-  const passwordOk = await bcrypt.compare(password, portal.passwordHash);
-  if (!passwordOk) {
-    return NextResponse.json({ error: "Incorrect password." }, { status: 403 });
   }
 
   const created = await prisma.accountActionRequest.create({
