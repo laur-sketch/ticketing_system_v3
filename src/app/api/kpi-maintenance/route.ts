@@ -65,6 +65,7 @@ import {
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
+import { isAgentOnDutyFromMergedDb } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
@@ -464,6 +465,12 @@ export async function POST(req: Request) {
     : null;
   if (assigneeId && !assignee) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
+  }
+  if (assigneeId && !(await isAgentOnDutyFromMergedDb(assigneeId))) {
+    return NextResponse.json(
+      { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
+      { status: 400 },
+    );
   }
 
   const scopedCompanyTeamIdRaw = body.scopedCompanyTeamId?.trim() ?? "";
@@ -1208,6 +1215,12 @@ export async function PATCH(req: Request) {
     if (assignedAgentId && !assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
+    if (assignedAgentId && !(await isAgentOnDutyFromMergedDb(assignedAgentId))) {
+      return NextResponse.json(
+        { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
+        { status: 400 },
+      );
+    }
     if (assignedAgentId && assignedAgentId === kpiRow.assignedAgentId) {
       return NextResponse.json(
         { error: "Main assignee cannot also be assigned as a sub-task assignee." },
@@ -1501,6 +1514,12 @@ export async function PATCH(req: Request) {
     });
     if (!assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
+    }
+    if (!(await isAgentOnDutyFromMergedDb(assignee.id))) {
+      return NextResponse.json(
+        { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
+        { status: 400 },
+      );
     }
     if (hasSubKpiAssignedTo(kpiRow.subKpis, assignee.id)) {
       return NextResponse.json(

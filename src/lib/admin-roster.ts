@@ -52,16 +52,23 @@ export async function ensureAgentRowForPortalStaff(
 ): Promise<void> {
   const agents = await prisma.agent.findMany({ orderBy: { createdAt: "asc" } });
   const canonical = pickCanonicalAgentForPortal(portal, agents);
+  const email = portal.email.trim().toLowerCase();
   if (!canonical) {
     await prisma.agent.create({
-      data: { name: portal.name, email: portal.email.trim().toLowerCase(), teamId },
+      data: { name: portal.name, email, teamId },
     });
     return;
   }
-  if (canonical.teamId !== teamId) {
-    await prisma.agent.update({
-      where: { id: canonical.id },
-      data: { teamId },
-    });
+  const data: { teamId?: string; email?: string; name?: string } = {};
+  if (canonical.teamId !== teamId) data.teamId = teamId;
+  if (canonical.email.trim().toLowerCase() !== email) {
+    const emailTaken = agents.some(
+      (a) => a.id !== canonical.id && a.email.trim().toLowerCase() === email,
+    );
+    if (!emailTaken) data.email = email;
+  }
+  if (canonical.name !== portal.name) data.name = portal.name;
+  if (Object.keys(data).length > 0) {
+    await prisma.agent.update({ where: { id: canonical.id }, data });
   }
 }

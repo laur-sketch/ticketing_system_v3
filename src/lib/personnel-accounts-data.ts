@@ -29,9 +29,9 @@ export type PersonnelAccountsPayload = {
 
 /**
  * Shared bundle for `/admin/personnel` and `GET /api/admin/accounts`.
- * Staff portal accounts with a designated company are auto-promoted to the agent
- * roster on read, eliminating any "awaiting team assignment" intermediate state.
- * SuperAdmin sees all teams + the full roster; Admin sees only their company queue.
+ * Personnel roster shows **HRIS merge-database users only** (portal rows linked via
+ * `mergedSourceUserId`). PostgreSQL-only / legacy portal accounts are excluded;
+ * their tickets/KPIs/tasks are remapped onto the matching HRIS agent elsewhere.
  */
 export async function loadPersonnelAccountsPayload(viewer: {
   role: UserRole;
@@ -41,11 +41,13 @@ export async function loadPersonnelAccountsPayload(viewer: {
   const isSuperAdmin = viewer.role === "SuperAdmin";
 
   /**
-   * Backfill: any staff portal with a designated company but no Agent row gets one
-   * created on its team automatically. This keeps personnel always-promoted.
+   * Backfill: any HRIS-linked staff portal with a designated company but no Agent row
+   * gets one created on its team automatically.
    */
   const staffWithCompany = await prisma.portalAccount.findMany({
     where: {
+      mergedSourceUserId: { not: null },
+      accountStatus: "ACTIVE",
       staffDesignatedCompanyId: { not: null },
     },
     select: {
@@ -75,6 +77,10 @@ export async function loadPersonnelAccountsPayload(viewer: {
     }),
     prisma.team.findMany({ orderBy: { name: "asc" } }),
     prisma.portalAccount.findMany({
+      where: {
+        mergedSourceUserId: { not: null },
+        accountStatus: "ACTIVE",
+      },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,

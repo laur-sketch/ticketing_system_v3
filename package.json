@@ -66,6 +66,10 @@
     "db:import:july-backup": "npx tsx scripts/import-ticketing-backup.ts --confirm && npm run db:fix:logins",
     "db:fix:logins": "npx tsx scripts/fix-all-login-accounts.ts && npx tsx scripts/reconcile-portal-with-merged-users.ts",
     "db:reconcile:merged-users": "npx tsx scripts/reconcile-portal-with-merged-users.ts",
+    "db:sync:portal-merged": "npx tsx scripts/sync-portal-to-merged-users.ts --apply",
+    "db:sync:portal-merged:dry": "npx tsx scripts/sync-portal-to-merged-users.ts",
+    "db:promote:hris-personnel": "npx tsx scripts/promote-hris-personnel.ts --apply",
+    "db:promote:hris-personnel:dry": "npx tsx scripts/promote-hris-personnel.ts",
     "db:merge:source-provenance": "powershell -NoProfile -Command \"Get-Content -Raw scripts/merge-database-source-provenance.sql | & 'C:/Program Files/MySQL/MySQL Server 8.0/bin/mysql.exe' -u root -proot\"",
 
     "postinstall": "node scripts/prisma-generate-retry.cjs",

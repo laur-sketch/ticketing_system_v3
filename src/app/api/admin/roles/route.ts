@@ -27,6 +27,12 @@ export async function GET() {
 
   const [portalRows, rosterTeams, agents, assignmentColorByPortalId] = await Promise.all([
     prisma.portalAccount.findMany({
+      where: {
+        // Portal Accounts registry (SuperAdmin): HRIS merge-linked ACTIVE rows only.
+        // PostgreSQL-only / legacy duplicates are hidden; progress remapped onto HRIS agents.
+        mergedSourceUserId: { not: null },
+        accountStatus: "ACTIVE",
+      },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,

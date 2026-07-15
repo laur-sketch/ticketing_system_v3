@@ -9,6 +9,7 @@ type Props = {
   initialOnDutyPage: number;
   onDutyTotalPages: number;
   onDutyTotal: number;
+  onDutyActiveCount: number;
   initialOnDutyCompanies: string[];
   onDutyPageSize: number;
 };
@@ -18,6 +19,7 @@ export function ActivitiesClient({
   initialOnDutyPage,
   onDutyTotalPages,
   onDutyTotal,
+  onDutyActiveCount,
   initialOnDutyCompanies,
   onDutyPageSize,
 }: Props) {
@@ -30,7 +32,8 @@ export function ActivitiesClient({
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Activities</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-            Staff currently on duty. Filter by company or browse all personnel.
+            Merge-database personnel with live On Duty / Offline status from today&apos;s HRIS
+            clock-ins. Updates every 10 seconds.
           </p>
         </header>
 
@@ -42,6 +45,7 @@ export function ActivitiesClient({
           initialPage={initialOnDutyPage}
           totalPages={onDutyTotalPages}
           initialTotal={onDutyTotal}
+          initialOnDutyCount={onDutyActiveCount}
           initialCompanies={initialOnDutyCompanies}
         />
       </div>

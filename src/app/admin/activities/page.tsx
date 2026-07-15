@@ -20,6 +20,7 @@ export default async function ActivitiesPage() {
       initialOnDutyPage={onDuty.page}
       onDutyTotalPages={onDuty.totalPages}
       onDutyTotal={onDuty.total}
+      onDutyActiveCount={onDuty.onDutyCount}
       initialOnDutyCompanies={onDuty.companies}
       onDutyPageSize={ON_DUTY_PAGE_SIZE}
     />

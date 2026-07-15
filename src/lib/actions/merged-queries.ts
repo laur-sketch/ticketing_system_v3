@@ -42,6 +42,29 @@ export async function listRecentMergedClockIns(limit = 50) {
   });
 }
 
+/**
+ * Today's clock-ins only (Asia/Manila day bounds) — preferred for On Duty checks.
+ * Prefer `loadTodayClockInsBySourceUserId` / `listMergedPersonnelDutyStatuses` from
+ * `@/lib/merged-duty-status` for bulk status maps.
+ */
+export async function listMergedClockInsToday(limit = 500) {
+  const { philippineDayBounds } = await import("@/lib/merged-duty-status");
+  const { start, endExclusive } = philippineDayBounds();
+  return prismaSecondary.mergedAttendanceClockIn.findMany({
+    where: { clockInAt: { gte: start, lt: endExclusive } },
+    orderBy: { clockInAt: "desc" },
+    take: limit,
+    select: {
+      sourceLogId: true,
+      sourceUserId: true,
+      employeeName: true,
+      companyName: true,
+      clockInAt: true,
+      geofenceStatus: true,
+    },
+  });
+}
+
 /** Task/KPI rows synced from ticketing_system into mergeddatabase-dev. */
 export async function listMergedTaskItems(limit = 50) {
   return prismaSecondary.mergedTaskItem.findMany({

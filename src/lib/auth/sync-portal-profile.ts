@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { ensureAgentRowForPortalStaff } from "@/lib/admin-roster";
-import { COMPANY_ROSTER } from "@/lib/company-roster";
 import {
   type CanonicalUserProfile,
   fallbackEmailFromUsername,
@@ -8,6 +7,7 @@ import {
   type SyncSource,
 } from "@/lib/auth/canonical-user-profile";
 import { mapHrisToPortalRole } from "@/lib/auth/role-mapping";
+import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { prismaAuth, prismaPrimary } from "@/lib/prisma";
 import { normalizePortalRole, type PortalRole } from "@/lib/staff-role";
 
@@ -96,10 +96,10 @@ async function upsertAuthCompany(profile: CanonicalUserProfile): Promise<string 
 }
 
 async function resolvePrimaryTeamId(companyName: string | null | undefined): Promise<string | null> {
-  const name = companyName?.trim();
-  if (!name || !(COMPANY_ROSTER as readonly string[]).includes(name)) return null;
+  const rosterName = resolveRosterCompanyName(companyName);
+  if (!rosterName) return null;
   const team = await prismaPrimary.team.findFirst({
-    where: { name },
+    where: { name: rosterName },
     select: { id: true },
   });
   return team?.id ?? null;
@@ -214,7 +214,27 @@ function isAuthSchemaError(e: unknown): boolean {
 async function findExistingPortal(
   email: string,
   username: string | null,
+  hrisSourceUserId?: bigint | null,
 ): Promise<ExistingPortalRow | null> {
+  if (hrisSourceUserId != null) {
+    const bySource = await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId: hrisSourceUserId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        headPrivileges: true,
+        username: true,
+        companyId: true,
+        staffDesignatedCompanyId: true,
+        profileImage: true,
+        authUserId: true,
+      },
+    });
+    if (bySource) return bySource;
+  }
+
   const byEmail = await prismaPrimary.portalAccount.findUnique({
     where: { email },
     select: {
@@ -265,7 +285,7 @@ async function upsertPortalAccount(
     mapped.portalRole === "Personnel" ||
     mapped.portalRole === "SuperAdmin";
 
-  const existing = await findExistingPortal(email, username);
+  const existing = await findExistingPortal(email, username, profile.hrisSourceUserId);
 
   if (existing) {
     const roleUpdate = buildPortalRoleUpdate(existing, mapped);
@@ -292,9 +312,7 @@ async function upsertPortalAccount(
         profileSyncedAt: new Date(),
         ...(profile.image && !existing.profileImage ? { profileImage: profile.image } : {}),
         ...roleUpdate,
-        ...(teamId && isStaff && !existing.staffDesignatedCompanyId
-          ? { staffDesignatedCompanyId: teamId }
-          : {}),
+        ...(teamId && isStaff ? { staffDesignatedCompanyId: teamId } : {}),
       },
     });
 
@@ -386,7 +404,7 @@ export async function syncPortalProfile(
   const teamId = await resolvePrimaryTeamId(profile.companyName);
 
   const username = profile.username?.trim().toLowerCase() || null;
-  const existingPortalRow = await findExistingPortal(email, username);
+  const existingPortalRow = await findExistingPortal(email, username, profile.hrisSourceUserId);
   const existingPortal = existingPortalRow
     ? { id: existingPortalRow.id, authUserId: existingPortalRow.authUserId }
     : null;

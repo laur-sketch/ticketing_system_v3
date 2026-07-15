@@ -134,7 +134,15 @@ type AssignableAgent = {
   headPrivileges?: boolean;
   team?: { id?: string | null; name?: string | null } | null;
   assignmentCompany?: { id?: string | null; name?: string | null } | null;
+  /** From merged DB clock-in today (Asia/Manila). */
+  isOnDuty?: boolean;
+  dutyStatus?: "ON_DUTY" | "OFFLINE";
 };
+
+function agentIsOnDuty(agent: AssignableAgent): boolean {
+  if (typeof agent.isOnDuty === "boolean") return agent.isOnDuty;
+  return agent.dutyStatus === "ON_DUTY";
+}
 
 type CompanyFilterOption = {
   id: string;
@@ -370,6 +378,15 @@ export function AgentKpiKanbanFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tz, companyFilterTeamId, assignedAgentFilterId]);
 
+  /** Refresh On Duty flags from merged clock-ins while the assignment board is open. */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadContext();
+    }, 15_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyFilterTeamId]);
+
   useEffect(() => {
     const mainIds = [...new Set(rows.map((row) => row.assignedAgent?.id).filter(Boolean))] as string[];
     for (const mainId of mainIds) {
@@ -551,6 +568,15 @@ export function AgentKpiKanbanFlow({
   async function assignKpi(id: string, assignedAgentId: string) {
     if (!canAssignWork) return;
     const nextAssigneeId = assignedAgentId === "__UNASSIGNED__" ? "" : assignedAgentId;
+    if (nextAssigneeId) {
+      const target =
+        agents.find((a) => a.id === nextAssigneeId) ??
+        allAssignableAgents.find((a) => a.id === nextAssigneeId);
+      if (target && !agentIsOnDuty(target)) {
+        window.alert(`${target.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
+        return;
+      }
+    }
     if (!nextAssigneeId && !canUnassignWork) return;
     setBusyId(id);
     setError(null);
@@ -573,6 +599,18 @@ export function AgentKpiKanbanFlow({
 
   async function assignSubKpi(recordId: string, subKpiId: string, assignedAgentId: string) {
     if (!canAssignWork) return;
+    if (assignedAgentId) {
+      const target =
+        allAssignableAgents.find((a) => a.id === assignedAgentId) ??
+        agents.find((a) => a.id === assignedAgentId) ??
+        Object.values(subAssigneePeersByMainId)
+          .flat()
+          .find((a) => a.id === assignedAgentId);
+      if (target && !agentIsOnDuty(target)) {
+        window.alert(`${target.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
+        return;
+      }
+    }
     setBusyId(recordId);
     setError(null);
     try {
@@ -1177,7 +1215,8 @@ export function AgentKpiKanbanFlow({
     if (companyScopedAgents.length === 0 && mainAssigneeId) {
       companyScopedAgents = subAssigneePeersByMainId[mainAssigneeId] ?? [];
     }
-    const assignedStillVisible = assignedId && !companyScopedAgents.some((a) => a.id === assignedId);
+    const onDutyScoped = companyScopedAgents.filter((a) => agentIsOnDuty(a));
+    const assignedStillVisible = assignedId && !onDutyScoped.some((a) => a.id === assignedId);
     return (
       <label className="mt-2 flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
         Sub Task assignee
@@ -1189,11 +1228,13 @@ export function AgentKpiKanbanFlow({
         >
           <option value="">Unassigned</option>
           {assignedStillVisible ? (
-            <option value={assignedId}>{agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"}</option>
+            <option value={assignedId}>
+              {agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"} (current)
+            </option>
           ) : null}
-          {companyScopedAgents.map((a) => (
+          {onDutyScoped.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {a.name} · On Duty
             </option>
           ))}
         </select>
@@ -2127,7 +2168,17 @@ export function AgentKpiKanbanFlow({
         setAssignmentCompanyId(companyId);
         return;
       }
-      void assignKpi(id, assignmentUserIdFromTarget(targetId) ?? targetId);
+      const userId = assignmentUserIdFromTarget(targetId) ?? targetId;
+      if (userId && userId !== "__UNASSIGNED__") {
+        const userAgent =
+          agents.find((agent) => agent.id === userId) ??
+          allAssignableAgents.find((agent) => agent.id === userId);
+        if (userAgent && !agentIsOnDuty(userAgent)) {
+          window.alert(`${userAgent.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
+          return;
+        }
+      }
+      void assignKpi(id, userId);
     },
     onHover: (targetId) => {
       const companyId = assignmentCompanyIdFromTarget(targetId);
@@ -2161,6 +2212,7 @@ export function AgentKpiKanbanFlow({
     }
 
     for (const agent of agents) {
+      if (!agentIsOnDuty(agent)) continue;
       const key = assignmentCompanyKey(agent);
       if (key === ASSIGNMENT_NO_COMPANY) continue;
       if (rosterCompanyIds.size > 0 && !rosterCompanyIds.has(key)) continue;
@@ -2200,7 +2252,12 @@ export function AgentKpiKanbanFlow({
       else grouped.set(key, [agent]);
     }
     for (const [key, list] of grouped) {
-      grouped.set(key, sortAssignmentAgentsByRole(list));
+      grouped.set(
+        key,
+        sortAssignmentAgentsByRole(
+          [...list].sort((a, b) => Number(agentIsOnDuty(b)) - Number(agentIsOnDuty(a))),
+        ),
+      );
     }
     return grouped;
   }, [agents]);
@@ -2282,7 +2339,8 @@ export function AgentKpiKanbanFlow({
                     Personnel group
                   </p>
                   <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Drag over a company to reveal its users, then drop on a person.
+                    Only On Duty personnel (merged DB clock-in today) can receive tasks. Drag
+                    over a company, then drop on a person.
                   </p>
                 </div>
               </div>
@@ -2292,7 +2350,9 @@ export function AgentKpiKanbanFlow({
                     const targetId = assignmentCompanyDropTarget(company.id);
                     const isSelected = assignmentCompanyId === company.id;
                     const isRevealed = activeAssignmentCompanyId === company.id;
-                    const companyAgents = agentsByAssignmentCompany.get(company.id) ?? [];
+                    const companyAgents = (agentsByAssignmentCompany.get(company.id) ?? []).filter((agent) =>
+                      agentIsOnDuty(agent),
+                    );
                     const adminAgents = companyAgents.filter((agent) => assignmentRoleLabel(agent) === "Admin");
                     const personnelAgents = companyAgents.filter(
                       (agent) => assignmentRoleLabel(agent) === "Personnel",
@@ -2339,12 +2399,12 @@ export function AgentKpiKanbanFlow({
                         {isRevealed ? (
                           <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
                             <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                              Drop on admin or personnel
+                              Drop on On Duty admin or personnel
                             </p>
                             <div className="max-h-[min(44dvh,20rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-60">
                               {companyAgents.length === 0 ? (
                                 <p className="rounded-md border border-dashed border-zinc-300 px-2 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                                  No users in this company.
+                                  No On Duty users in this company.
                                 </p>
                               ) : null}
                               {[
@@ -2372,9 +2432,14 @@ export function AgentKpiKanbanFlow({
                                           )}
                                         >
                                           <div className="flex items-center justify-between gap-2">
-                                            <p className="min-w-0 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                                              {agent.name}
-                                            </p>
+                                            <div className="min-w-0">
+                                              <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                                {agent.name}
+                                              </p>
+                                              <span className="mt-0.5 inline-flex rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                                                On Duty
+                                              </span>
+                                            </div>
                                             <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                                               {assignedCountByAgent.get(agent.id) ?? 0}
                                             </span>

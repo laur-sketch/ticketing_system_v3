@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
+import { loadOnDutyAgentIdSet } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
@@ -13,10 +14,13 @@ export async function GET(req: Request) {
   const searchParams = new URL(req.url).searchParams;
   const companyTeamId = searchParams.get("company")?.trim();
   const forMainAgentId = searchParams.get("forMainAgentId")?.trim();
+  /** When `onDutyOnly=1`, omit Offline assignees (merged DB clock-in). */
+  const onDutyOnly = searchParams.get("onDutyOnly") === "1" || searchParams.get("onDutyOnly") === "true";
 
   const portalWhere: Prisma.PortalAccountWhereInput = {
     role: { in: ["Admin", "Personnel"] },
     accountStatus: "ACTIVE",
+    mergedSourceUserId: { not: null },
     staffDesignatedCompanyId: { not: null },
   };
   if (forMainAgentId) {
@@ -43,16 +47,32 @@ export async function GET(req: Request) {
     orderBy: { name: "asc" },
     include: { team: true },
   });
+
+  const onDutyIds = await loadOnDutyAgentIdSet(agents.map((a) => a.id));
+
   const headByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.headPrivileges]));
   const roleByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.role] as const));
   const assignmentCompanyByEmail = new Map(
     portals.map((p) => [p.email.toLowerCase(), p.staffDesignatedCompany ?? null] as const),
   );
-  const payload = agents.map((a) => ({
-    ...a,
-    portalRole: roleByEmail.get(a.email.toLowerCase()) ?? null,
-    headPrivileges: headByEmail.get(a.email.toLowerCase()) ?? false,
-    assignmentCompany: assignmentCompanyByEmail.get(a.email.toLowerCase()) ?? null,
-  }));
-  return NextResponse.json(payload);
+
+  let payload = agents.map((a) => {
+    const isOnDuty = onDutyIds.has(a.id);
+    return {
+      ...a,
+      portalRole: roleByEmail.get(a.email.toLowerCase()) ?? null,
+      headPrivileges: headByEmail.get(a.email.toLowerCase()) ?? false,
+      assignmentCompany: assignmentCompanyByEmail.get(a.email.toLowerCase()) ?? null,
+      isOnDuty,
+      dutyStatus: isOnDuty ? ("ON_DUTY" as const) : ("OFFLINE" as const),
+    };
+  });
+
+  if (onDutyOnly) {
+    payload = payload.filter((a) => a.isOnDuty);
+  }
+
+  return NextResponse.json(payload, {
+    headers: { "cache-control": "private, max-age=5, stale-while-revalidate=10" },
+  });
 }

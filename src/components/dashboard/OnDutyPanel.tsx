@@ -10,6 +10,7 @@ type Props = {
   initialPage: number;
   totalPages: number;
   initialTotal?: number;
+  initialOnDutyCount?: number;
   initialCompanies?: string[];
   pageSize?: number;
   variant?: "list" | "cards";
@@ -17,11 +18,22 @@ type Props = {
   className?: string;
 };
 
+function isAgentOnDuty(agent: OnDutyAgentSnapshot): boolean {
+  if (typeof agent.isOnDuty === "boolean") return agent.isOnDuty;
+  if (agent.dutyStatus) return agent.dutyStatus === "ON_DUTY";
+  return Boolean(agent.isOnline);
+}
+
+function dutyLabel(agent: OnDutyAgentSnapshot): "On Duty" | "Offline" {
+  return isAgentOnDuty(agent) ? "On Duty" : "Offline";
+}
+
 export function OnDutyPanel({
   initialAgents,
   initialPage,
   totalPages,
   initialTotal = initialAgents.length,
+  initialOnDutyCount,
   initialCompanies = [],
   pageSize = 6,
   variant = "list",
@@ -32,6 +44,9 @@ export function OnDutyPanel({
   const [page, setPage] = useState(initialPage);
   const [pages, setPages] = useState(totalPages);
   const [total, setTotal] = useState(initialTotal);
+  const [onDutyCount, setOnDutyCount] = useState(
+    initialOnDutyCount ?? initialAgents.filter((a) => isAgentOnDuty(a)).length,
+  );
   const [companies, setCompanies] = useState<string[]>(initialCompanies);
   const [companyFilter, setCompanyFilter] = useState("");
   const canPrev = page > 1;
@@ -57,6 +72,7 @@ export function OnDutyPanel({
           page: number;
           totalPages: number;
           total: number;
+          onDutyCount?: number;
           companies: string[];
         };
         if (stopped) return;
@@ -64,6 +80,11 @@ export function OnDutyPanel({
         setPage(data.page ?? 1);
         setPages(data.totalPages ?? 1);
         setTotal(data.total ?? 0);
+        setOnDutyCount(
+          typeof data.onDutyCount === "number"
+            ? data.onDutyCount
+            : (data.agents ?? []).filter((a) => isAgentOnDuty(a)).length,
+        );
         if (Array.isArray(data.companies) && data.companies.length > 0) {
           setCompanies(data.companies);
         }
@@ -100,8 +121,16 @@ export function OnDutyPanel({
       )}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">On Duty</h3>
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+            Personnel activity
+          </h3>
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            Status from merged DB clock-in (today, Asia/Manila)
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          <span className="text-emerald-700 dark:text-emerald-400">{onDutyCount} on duty</span>
           <span>{total} staff</span>
           <span>
             {page}/{pages}
@@ -138,61 +167,89 @@ export function OnDutyPanel({
         <div className={cardGridClass}>
           {agents.length === 0 ? (
             <p className="col-span-full text-sm text-zinc-600 dark:text-zinc-500">
-              {companyFilter ? "No staff on duty for this company." : "No agents available."}
+              {companyFilter ? "No personnel for this company." : "No personnel linked from the merge database."}
             </p>
           ) : (
-            agents.map((agent) => (
-              <div
-                key={agent.id}
-                className="flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
-                    <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-500">
-                      {agent.companyName || "General Queue"}
-                    </p>
+            agents.map((agent) => {
+              const onDuty = isAgentOnDuty(agent);
+              const label = dutyLabel(agent);
+              return (
+                <div
+                  key={agent.id}
+                  className="flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
+                      <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-500">
+                        {agent.companyName || "General Queue"}
+                      </p>
+                    </div>
+                    <span
+                      className={cn(
+                        "mt-0.5 inline-block size-2.5 shrink-0 rounded-full",
+                        onDuty ? "bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-600",
+                      )}
+                      title={label}
+                    />
                   </div>
-                  <span
-                    className={cn(
-                      "mt-0.5 inline-block size-2.5 shrink-0 rounded-full",
-                      agent.isOnline ? "bg-orange-600 dark:bg-orange-500" : "bg-zinc-400 dark:bg-zinc-600",
-                    )}
-                    title={agent.isOnline ? "Online" : "Offline"}
-                  />
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                        onDuty
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                          : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+                      )}
+                    >
+                      {label}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {agent.lastActivity ?? (onDuty ? "Clocked in today" : "No clock-in today")}
+                  </p>
                 </div>
-                <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                  {agent.isOnline ? "Online" : "Offline"}
-                </p>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       ) : (
         <div className={cardGridClass}>
           {agents.length === 0 ? (
             <p className="text-sm text-zinc-600 dark:text-zinc-500">
-              {companyFilter ? "No staff on duty for this company." : "No agents available."}
+              {companyFilter ? "No personnel for this company." : "No personnel linked from the merge database."}
             </p>
           ) : (
-            agents.map((agent) => (
-              <div
-                key={agent.id}
-                className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900"
-              >
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
-                  <p className="text-xs text-zinc-600 dark:text-zinc-500">{agent.companyName || "General Queue"}</p>
+            agents.map((agent) => {
+              const onDuty = isAgentOnDuty(agent);
+              const label = dutyLabel(agent);
+              return (
+                <div
+                  key={agent.id}
+                  className="flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
+                    <p className="truncate text-xs text-zinc-600 dark:text-zinc-500">
+                      {agent.companyName || "General Queue"}
+                      {" · "}
+                      {agent.lastActivity ?? (onDuty ? "Clocked in today" : "No clock-in today")}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                      onDuty
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                        : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+                    )}
+                    title={label}
+                  >
+                    {label}
+                  </span>
                 </div>
-                <span
-                  className={cn(
-                    "inline-block size-2.5 rounded-full",
-                    agent.isOnline ? "bg-orange-600 dark:bg-orange-500" : "bg-zinc-400 dark:bg-zinc-600",
-                  )}
-                  title={agent.isOnline ? "Online" : "Offline"}
-                />
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
