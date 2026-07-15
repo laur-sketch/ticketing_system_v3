@@ -9,8 +9,14 @@ describe("mapHrisToPortalRole", () => {
     });
   });
 
-  it("maps admin to Admin with head privileges", () => {
+  it("maps admin to Personnel unless head title", () => {
     expect(mapHrisToPortalRole({ hrisRole: "admin" })).toEqual({
+      portalRole: "Personnel",
+      headPrivileges: false,
+    });
+    expect(
+      mapHrisToPortalRole({ hrisRole: "admin", position: "HR Team Head" }),
+    ).toEqual({
       portalRole: "Admin",
       headPrivileges: true,
     });
@@ -20,6 +26,19 @@ describe("mapHrisToPortalRole", () => {
     expect(mapHrisToPortalRole({ hrisRole: "employee" })).toEqual({
       portalRole: "Personnel",
       headPrivileges: false,
+    });
+  });
+
+  it("elevates employee with team leader position to Admin", () => {
+    expect(
+      mapHrisToPortalRole({
+        hrisRole: "employee",
+        position: "IT & MIS UNIT TEAM LEADER",
+        department: "IT DEPARTMENT",
+      }),
+    ).toEqual({
+      portalRole: "Admin",
+      headPrivileges: true,
     });
   });
 
@@ -48,6 +67,16 @@ describe("mapHrisToPortalRole", () => {
 describe("isHrisHeadTitle", () => {
   it("detects head in position", () => {
     expect(isHrisHeadTitle({ hrisRole: "employee", position: "Finance Head" })).toBe(true);
+  });
+
+  it("detects leader in position", () => {
+    expect(
+      isHrisHeadTitle({ hrisRole: "employee", position: "IT & MIS UNIT TEAM LEADER" }),
+    ).toBe(true);
+  });
+
+  it("detects head in compact titles", () => {
+    expect(isHrisHeadTitle({ hrisRole: "employee", position: "Team Head-ACI" })).toBe(true);
   });
 
   it("returns false for regular titles", () => {

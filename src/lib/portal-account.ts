@@ -19,49 +19,10 @@ export type PortalRow = {
   profileImage: string | null;
 };
 
-/** Match portal row by unique username or unique email (case-insensitive). */
+/** Match portal row by unique username, email, or legacy username alias. */
 export async function findPortalByLogin(loginId: string): Promise<PortalRow | null> {
-  const trimmed = loginId.trim();
-  if (!trimmed) return null;
-  const row = await prisma.portalAccount.findFirst({
-    where: {
-      OR: [
-        { email: { equals: trimmed, mode: "insensitive" } },
-        { username: { equals: trimmed, mode: "insensitive" } },
-      ],
-    },
-    select: {
-      id: true,
-      username: true,
-      email: true,
-      name: true,
-      role: true,
-      passwordHash: true,
-      accountStatus: true,
-      companyId: true,
-      customerOrgRole: true,
-      staffDesignatedCompanyId: true,
-      profileImage: true,
-      company: { select: { name: true } },
-      staffDesignatedCompany: { select: { name: true } },
-    },
-  });
-  if (!row) return null;
-  return {
-    id: row.id,
-    username: row.username,
-    email: row.email,
-    name: row.name,
-    role: row.role,
-    passwordHash: row.passwordHash,
-    accountStatus: row.accountStatus ?? "ACTIVE",
-    companyId: row.companyId,
-    customerOrgRole: row.customerOrgRole,
-    companyName: row.company?.name ?? null,
-    staffDesignatedCompanyId: row.staffDesignatedCompanyId,
-    staffDesignatedCompanyName: row.staffDesignatedCompany?.name ?? null,
-    profileImage: row.profileImage,
-  };
+  const { findPortalAccountByLogin } = await import("@/lib/auth/portal-credentials");
+  return findPortalAccountByLogin(loginId);
 }
 
 export async function findPortalByUsername(username: string): Promise<PortalRow | null> {

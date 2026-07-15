@@ -1,0 +1,33 @@
+Subject: Allow server AGCTek-Websites to reach UGREEN NAS (10.10.5.120) for automated backups
+
+Hi,
+
+We need network access from our production server to the UGREEN NAS for automated database backups.
+
+SERVER (source)
+  Hostname: AGCTek-Websites
+  IP:       192.168.50.219  (also 192.168.0.222)
+  Gateway:  192.168.50.1
+
+NAS (destination)
+  Hostname: AGC-NAS
+  IP:       10.10.5.120
+  Service:  SMB / TCP port 445
+  Share:    DB's updated
+
+CURRENT STATUS
+  - A persistent route was added on the server: 10.10.5.0/24 via 192.168.50.1
+  - Traceroute reaches 192.168.254.254 then stops
+  - TCP 445 to 10.10.5.120 still fails (blocked or no route on core router)
+
+REQUEST
+  1. Add routing from 192.168.50.0/24 to 10.10.5.0/24 on router 192.168.254.254 (or equivalent)
+  2. Allow firewall rule: 192.168.50.219 -> 10.10.5.120 TCP 445 (SMB)
+  3. Optional: allow ICMP ping for troubleshooting
+
+ALTERNATIVE (if easier)
+  Assign the UGREEN NAS a second IP on 192.168.50.x so it is on the same subnet as the server.
+
+After this is in place we will connect using \\10.10.5.120 with local NAS account (AGC-NAS\lau).
+
+Thank you.

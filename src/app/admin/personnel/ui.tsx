@@ -37,12 +37,14 @@ type PendingAccountRequestRow = {
 export function PersonnelClient({
   initialTeams,
   initialPersonnel,
+  initialAssignableCompanies,
   viewerMode,
   scopeUnavailable,
   scopedCompanyName,
 }: {
   initialTeams: Team[];
   initialPersonnel: PersonnelRosterRow[];
+  initialAssignableCompanies?: RosterCompany[];
   viewerMode: "superadmin" | "admin";
   scopeUnavailable: boolean;
   scopedCompanyName: string | null;
@@ -52,7 +54,11 @@ export function PersonnelClient({
   const [personnel, setPersonnel] = useState<PersonnelRosterRow[]>(initialPersonnel);
   const [error, setError] = useState<string | null>(null);
   const [portalAccounts, setPortalAccounts] = useState<PortalAccountRow[]>([]);
-  const [rosterCompanies, setRosterCompanies] = useState<RosterCompany[]>([]);
+  const [rosterCompanies, setRosterCompanies] = useState<RosterCompany[]>(
+    initialAssignableCompanies?.length
+      ? initialAssignableCompanies
+      : initialTeams.map((t) => ({ id: t.id, name: t.name })),
+  );
   const [roleBusyId, setRoleBusyId] = useState<string | null>(null);
   const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
   const [reconcileBusy, setReconcileBusy] = useState(false);
@@ -79,8 +85,12 @@ export function PersonnelClient({
 
   const filteredPersonnel = useMemo(
     () =>
-      personnel.filter((row) => matchesRegistryRoleFilter(row.staffRole, registryRoleFilter)),
-    [personnel, registryRoleFilter],
+      personnel.filter(
+        (row) =>
+          matchesRegistryRoleFilter(row.staffRole, registryRoleFilter) &&
+          matchesRegistryCompanyFilter(row.teamId, registryCompanyFilter),
+      ),
+    [personnel, registryRoleFilter, registryCompanyFilter],
   );
 
   const filteredPortalAccounts = useMemo(
@@ -203,9 +213,67 @@ export function PersonnelClient({
     const data = (await res.json()) as {
       teams: Team[];
       personnel?: PersonnelRosterRow[];
+      assignableCompanies?: RosterCompany[];
     };
     setTeams(data.teams ?? []);
     setPersonnel(data.personnel ?? []);
+    if (data.assignableCompanies?.length) {
+      setRosterCompanies(data.assignableCompanies);
+    } else {
+      setRosterCompanies((data.teams ?? []).map((t) => ({ id: t.id, name: t.name })));
+    }
+  }
+
+  async function updateMergedUserRole(mergedSourceUserId: string, role: string) {
+    setError(null);
+    setRoleBusyId(mergedSourceUserId);
+    try {
+      const res = await fetch("/api/admin/personnel/role", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mergedSourceUserId, role }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not update role.");
+        return;
+      }
+      await load();
+    } finally {
+      setRoleBusyId(null);
+    }
+  }
+
+  async function updateMergedUserCompany(mergedSourceUserId: string, teamId: string) {
+    setError(null);
+    setRoleBusyId(mergedSourceUserId);
+    try {
+      const res = await fetch("/api/admin/personnel/company", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mergedSourceUserId,
+          teamId: teamId || null,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not update company.");
+        return;
+      }
+      await load();
+    } finally {
+      setRoleBusyId(null);
+    }
+  }
+
+  function assignableTeamIdForRow(row: PersonnelRosterRow): string {
+    const byId = rosterCompanies.find((c) => c.id === row.teamId);
+    if (byId) return byId.id;
+    const byName = rosterCompanies.find(
+      (c) => c.name.trim().toLowerCase() === row.teamName.trim().toLowerCase(),
+    );
+    return byName?.id ?? "";
   }
 
   async function deletePortalAccount(portalAccountId: string) {
@@ -265,6 +333,7 @@ export function PersonnelClient({
 
   useEffect(() => {
     void loadPendingAccountRequests();
+    void load();
   }, []);
 
   useEffect(() => {
@@ -319,15 +388,18 @@ export function PersonnelClient({
     }
   }
 
-  async function updateStaffAssignmentColor(id: string, staffAssignmentColor: string) {
+  async function updateStaffAssignmentColor(
+    mergedSourceUserId: string,
+    staffAssignmentColor: string,
+  ) {
     setError(null);
-    setRoleBusyId(id);
+    setRoleBusyId(mergedSourceUserId);
     try {
-      const res = await fetch("/api/admin/roles", {
+      const res = await fetch("/api/admin/personnel/color", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id,
+          mergedSourceUserId,
           staffAssignmentColor: staffAssignmentColor.trim() || null,
         }),
       });
@@ -337,9 +409,6 @@ export function PersonnelClient({
         return;
       }
       await load();
-      if (session?.user?.role === "SuperAdmin") {
-        await loadRoles();
-      }
     } finally {
       setRoleBusyId(null);
     }
@@ -394,30 +463,11 @@ export function PersonnelClient({
             {BRAND_TITLE} · Admin console
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Personnel registry</h1>
+          <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">
+            Showing HRIS employees from mergedatabase · progress synced from ticketing
+          </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-            {canManagePortalAccounts && !isAdminCompanyView ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setCreateError(null);
-                  setCreateOk(null);
-                  setCreateAccountModalOpen(true);
-                }}
-                className="shrink-0 rounded-lg bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-orange-500"
-              >
-                Add staff account
-              </button>
-            ) : null}
-            {!isAdminCompanyView ? (
-              <button
-                type="button"
-                disabled={reconcileBusy}
-                onClick={() => void reconcileDuplicateAgents()}
-                className="shrink-0 rounded-lg border border-orange-500/50 bg-orange-500/10 px-3 py-1.5 text-[11px] font-semibold text-orange-800 transition hover:bg-orange-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-orange-200"
-              >
-                {reconcileBusy ? "Merging…" : "Merge duplicate agents"}
-              </button>
-            ) : null}
+            {/* Portal account create / agent merge kept off — roster is mergedatabase SoT */}
           </div>
         </header>
 
@@ -630,21 +680,21 @@ export function PersonnelClient({
                     Company roster
                   </h2>
                   <p className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
-                    {scopedCompanyName ?? "Your queue"} · staff on this company board queue
+                    {scopedCompanyName ?? "Your queue"} · HRIS employees from mergedatabase
                   </p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[560px] table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
+                  <table className="w-full min-w-[600px] table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
                     <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
                       <tr>
-                        <th className="w-[14%] px-3 py-2">Name</th>
+                        <th className="w-[16%] px-3 py-2">Name</th>
                         <th className="w-[10%] px-3 py-2">User</th>
                         <th className="w-[22%] px-3 py-2">Email</th>
                         <th className="w-[10%] px-3 py-2">Status</th>
                         <th className="w-[10%] px-3 py-2">Roles</th>
                         <th className="w-[14%] px-3 py-2">Company</th>
                         <th className="w-[12%] px-3 py-2">Color</th>
-                        <th className="w-[8%] px-3 py-2 text-right">Act.</th>
+                        <th className="w-[6%] px-3 py-2 text-right">Act.</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
@@ -652,13 +702,13 @@ export function PersonnelClient({
                         <tr>
                           <td colSpan={8} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
                             {personnel.length === 0
-                              ? "No personnel are on this company queue yet."
+                              ? "No HRIS personnel for this company yet."
                               : "No users match the selected role filter. Choose All roles to see everyone on this queue."}
                           </td>
                         </tr>
                       ) : (
                         paginatedPersonnel.map((row) => (
-                          <tr key={row.portalAccountId} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
+                          <tr key={row.mergedSourceUserId} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
                             <td className="truncate px-3 py-2 font-medium text-zinc-900 dark:text-white" title={row.name}>
                               {row.name}
                             </td>
@@ -686,9 +736,11 @@ export function PersonnelClient({
                             </td>
                             <td className="px-2 py-2">
                               <StaffAssignmentColorSelect
-                                disabled={roleBusyId === row.portalAccountId}
+                                disabled={roleBusyId === row.mergedSourceUserId}
                                 value={row.staffAssignmentColor ?? ""}
-                                onChange={(next) => void updateStaffAssignmentColor(row.portalAccountId, next)}
+                                onChange={(next) =>
+                                  void updateStaffAssignmentColor(row.mergedSourceUserId, next)
+                                }
                                 selectClassName={assignmentSelectClass}
                               />
                             </td>
@@ -712,160 +764,128 @@ export function PersonnelClient({
           </>
         ) : (
           <>
-            {canManagePortalAccounts ? (
-              <>
-                <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                  Portal accounts · one row per account · SuperAdmin roles & designated company
-                </p>
+            <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+              HRIS roster from mergedatabase · SuperAdmin can set each employee&apos;s role and company queue
+            </p>
 
-                <RegistryFiltersBar
-                  showCompanyFilter
-                  totalCount={portalAccounts.length}
-                  filteredCount={filteredPortalAccounts.length}
-                  registryRoleFilter={registryRoleFilter}
-                  onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
-                  registryCompanyFilter={registryCompanyFilter}
-                  onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
-                  rosterCompanies={rosterCompanies}
-                  registryFiltersActive={registryFiltersActive}
-                />
+            <RegistryFiltersBar
+              showCompanyFilter
+              totalCount={personnel.length}
+              filteredCount={filteredPersonnel.length}
+              registryRoleFilter={registryRoleFilter}
+              onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
+              registryCompanyFilter={registryCompanyFilter}
+              onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
+              rosterCompanies={rosterCompanies}
+              registryFiltersActive={registryFiltersActive}
+            />
 
-                <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
-                    <table className="w-full table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
-                      <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
-                        <tr>
-                          <th className="w-[13%] px-2 py-2">Name</th>
-                          <th className="w-[9%] px-2 py-2">User</th>
-                          <th className="w-[20%] px-2 py-2">Email</th>
-                          <th className="w-[9%] px-2 py-2">Status</th>
-                          <th className="w-[12%] px-2 py-2">Roles</th>
-                          <th className="w-[13%] px-2 py-2">Company</th>
-                          <th className="w-[11%] px-2 py-2">Color</th>
-                          <th className="w-[13%] px-2 py-2 text-right">Act.</th>
+            <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
+                  <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
+                    <tr>
+                      <th className="w-[15%] px-2 py-2">Name</th>
+                      <th className="w-[10%] px-2 py-2">User</th>
+                      <th className="w-[20%] px-2 py-2">Email</th>
+                      <th className="w-[9%] px-2 py-2">Status</th>
+                      <th className="w-[10%] px-2 py-2">Role</th>
+                      <th className="w-[16%] px-2 py-2">Company</th>
+                      <th className="w-[12%] px-2 py-2">Color</th>
+                      <th className="w-[8%] px-2 py-2 text-right">Act.</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
+                    {filteredPersonnel.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
+                          {personnel.length === 0
+                            ? "No HRIS users found in mergedatabase."
+                            : "No users match the selected filters."}
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedPersonnel.map((row) => (
+                        <tr key={row.mergedSourceUserId} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
+                          <td className="truncate px-2 py-1.5 font-medium text-zinc-900 dark:text-white" title={row.name}>
+                            {row.name}
+                          </td>
+                          <td className="truncate px-2 py-1.5 text-zinc-600 dark:text-slate-400" title={row.username ?? ""}>
+                            {row.username?.trim() || "—"}
+                          </td>
+                          <td className="truncate px-2 py-1.5 text-zinc-600 dark:text-slate-400" title={row.email}>
+                            {row.email}
+                          </td>
+                          <td className="max-w-0 px-1 py-1">
+                            <span
+                              className={cn(
+                                "inline-flex max-w-full truncate rounded border px-1 py-0.5 text-[8px] font-bold uppercase leading-tight tracking-wide",
+                                accountStatusClass(row.accountStatus),
+                              )}
+                            >
+                              {row.accountStatus}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <select
+                              disabled={roleBusyId === row.mergedSourceUserId}
+                              value={normalizePortalRole(row.staffRole) ?? row.staffRole}
+                              onChange={(e) =>
+                                void updateMergedUserRole(row.mergedSourceUserId, e.target.value)
+                              }
+                              className={assignmentSelectClass}
+                              title="Portal role"
+                            >
+                              {PORTAL_ROLES.map((r) => (
+                                <option key={r} value={r}>
+                                  {r}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-1 py-1">
+                            <select
+                              disabled={roleBusyId === row.mergedSourceUserId || rosterCompanies.length === 0}
+                              value={assignableTeamIdForRow(row)}
+                              onChange={(e) =>
+                                void updateMergedUserCompany(row.mergedSourceUserId, e.target.value)
+                              }
+                              className={teamSelectClass}
+                              title={row.teamName}
+                            >
+                              <option value="">-</option>
+                              {rosterCompanies.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-1 py-1">
+                            <StaffAssignmentColorSelect
+                              disabled={roleBusyId === row.mergedSourceUserId}
+                              value={row.staffAssignmentColor ?? ""}
+                              onChange={(next) =>
+                                void updateStaffAssignmentColor(row.mergedSourceUserId, next)
+                              }
+                              selectClassName={assignmentSelectClass}
+                            />
+                          </td>
+                          <td className="px-2 py-1 text-right text-[10px] text-zinc-500">—</td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
-                        {filteredPortalAccounts.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
-                              {portalAccounts.length === 0
-                                ? "No portal accounts loaded."
-                                : "No accounts match the selected filters. Choose All roles and All companies to see all portal users."}
-                            </td>
-                          </tr>
-                        ) : (
-                          paginatedPortalAccounts.map((a) => (
-                            <tr key={a.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
-                              <td className="truncate px-2 py-1.5 font-medium text-zinc-900 dark:text-white" title={a.name}>
-                                {a.name}
-                              </td>
-                              <td className="truncate px-2 py-1.5 text-zinc-600 dark:text-slate-400" title={a.username ?? ""}>
-                                {a.username ?? "—"}
-                              </td>
-                              <td className="truncate px-2 py-1.5 text-zinc-600 dark:text-slate-400" title={a.email}>
-                                {a.email}
-                              </td>
-                              <td className="max-w-0 px-1 py-1">
-                                <span
-                                  className={cn(
-                                    "inline-flex max-w-full truncate rounded border px-1 py-0.5 text-[8px] font-bold uppercase leading-tight tracking-wide",
-                                    accountStatusClass(a.accountStatus),
-                                  )}
-                                  title={a.accountStatus ?? "ACTIVE"}
-                                >
-                                  {a.accountStatus ?? "ACTIVE"}
-                                </span>
-                              </td>
-                              <td className="px-1 py-1">
-                                <select
-                                  disabled={roleBusyId === a.id}
-                                  value={(normalizePortalRole(a.role) ?? "Customer") as (typeof PORTAL_ROLES)[number]}
-                                  onChange={(e) => void updateAccountPortalRole(a.id, e.target.value)}
-                                  className={teamSelectClass}
-                                >
-                                  {PORTAL_ROLES.map((r) => (
-                                    <option key={r} value={r}>
-                                      {portalRegistryRoleLabel(r)}
-                                    </option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="px-1 py-1">
-                                {showStaffDesignatedCompany(a.role) ? (
-                                  <select
-                                    disabled={roleBusyId === a.id || rosterCompanies.length === 0}
-                                    value={a.staffDesignatedCompanyId ?? ""}
-                                    onChange={(e) =>
-                                      void updateStaffDesignated(
-                                        a.id,
-                                        e.target.value === ALL_SBUS_VALUE ? "" : e.target.value,
-                                      )
-                                    }
-                                    className={teamSelectClass}
-                                  >
-                                    <option value="">-</option>
-                                    <option value={ALL_SBUS_VALUE}>ALL SBUs</option>
-                                    {rosterCompanies.map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {c.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <span className="text-[10px] text-zinc-500">—</span>
-                                )}
-                              </td>
-                              <td className="px-1 py-1">
-                                {isStaffPortalRole(a.role) ? (
-                                  <StaffAssignmentColorSelect
-                                    disabled={roleBusyId === a.id}
-                                    value={a.staffAssignmentColor ?? ""}
-                                    onChange={(next) => void updateStaffAssignmentColor(a.id, next)}
-                                    selectClassName={assignmentSelectClass}
-                                  />
-                                ) : (
-                                  <span className="text-[10px] text-zinc-500">—</span>
-                                )}
-                              </td>
-                              <td className="px-2 py-1 text-right">
-                                <div className="flex items-center justify-end gap-1">
-                                  {a.agentId ? (
-                                    <button
-                                      type="button"
-                                      disabled={roleBusyId === a.id || deleteBusyId === a.id}
-                                      onClick={() => void removeFromRoster(a.id, a.agentId)}
-                                      className="rounded-md border border-zinc-300 bg-transparent px-2 py-0.5 text-[10px] font-medium text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-500 dark:text-zinc-200 dark:hover:border-zinc-400 dark:hover:bg-zinc-800/50"
-                                    >
-                                      Remove
-                                    </button>
-                                  ) : null}
-                                  {canManagePortalAccounts ? (
-                                    <button
-                                      type="button"
-                                      disabled={deleteBusyId === a.id}
-                                      onClick={() => void deletePortalAccount(a.id)}
-                                      className="rounded-md border border-red-300 bg-transparent px-2 py-0.5 text-[10px] font-medium text-red-700 transition hover:border-red-400 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/50 dark:text-red-300 dark:hover:border-red-400 dark:hover:bg-red-950/30"
-                                    >
-                                      {deleteBusyId === a.id ? "…" : "Delete"}
-                                    </button>
-                                  ) : null}
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                    <SimplePaginationBar
-                      page={portalRegistryPageClamped}
-                      pageSize={PORTAL_REGISTRY_PAGE_SIZE}
-                      total={filteredPortalAccounts.length}
-                      onPageChange={setPortalRegistryPage}
-                      itemLabel="users"
-                    />
-                  </section>
-              </>
-            ) : null}
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <SimplePaginationBar
+                page={personnelRegistryPageClamped}
+                pageSize={PORTAL_REGISTRY_PAGE_SIZE}
+                total={filteredPersonnel.length}
+                onPageChange={setPersonnelRegistryPage}
+                itemLabel="users"
+              />
+            </section>
           </>
         )}
       </div>

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ensureAgentRowForPortalStaff } from "@/lib/admin-roster";
 import {
   type CanonicalUserProfile,
+  type SyncPortalProfileOptions,
   fallbackEmailFromUsername,
   normalizeCanonicalEmail,
   type SyncSource,
@@ -57,7 +58,11 @@ async function resolvePortalRole(profile: CanonicalUserProfile): Promise<{
 }> {
   const dbMapping = await loadRoleMapping(profile.hrisRole);
   const mapped = mapHrisToPortalRole(
-    { hrisRole: profile.hrisRole ?? profile.portalRole, position: null },
+    {
+      hrisRole: profile.hrisRole ?? profile.portalRole,
+      position: profile.position,
+      department: profile.department,
+    },
     dbMapping
       ? {
           portalRole: normalizePortalRole(dbMapping.portalRole) ?? undefined,
@@ -114,7 +119,12 @@ async function resolvePrimaryTeamId(companyName: string | null | undefined): Pro
 function buildPortalRoleUpdate(
   existing: ExistingPortalRow,
   incoming: { portalRole: PortalRole; headPrivileges: boolean },
+  forceRoleRefresh = false,
 ): { role?: PortalRole; headPrivileges?: boolean } {
+  if (forceRoleRefresh) {
+    return { role: incoming.portalRole, headPrivileges: incoming.headPrivileges };
+  }
+
   const existingNorm = normalizePortalRole(existing.role) ?? (existing.role as PortalRole);
   const update: { role?: PortalRole; headPrivileges?: boolean } = {};
 
@@ -277,6 +287,7 @@ async function upsertPortalAccount(
   authUserId: string | null,
   mapped: { portalRole: PortalRole; headPrivileges: boolean },
   teamId: string | null,
+  forceRoleRefresh = false,
 ): Promise<{ portal: ExistingPortalRow; created: boolean }> {
   const email = normalizeCanonicalEmail(profile.email);
   const username = profile.username?.trim().toLowerCase() || null;
@@ -288,7 +299,7 @@ async function upsertPortalAccount(
   const existing = await findExistingPortal(email, username, profile.hrisSourceUserId);
 
   if (existing) {
-    const roleUpdate = buildPortalRoleUpdate(existing, mapped);
+    const roleUpdate = buildPortalRoleUpdate(existing, mapped, forceRoleRefresh);
     let usernameUpdate: string | undefined = username ?? existing.username ?? undefined;
     if (username && existing.username?.toLowerCase() !== username) {
       const conflict = await prismaPrimary.portalAccount.findFirst({
@@ -395,7 +406,9 @@ async function ensureAgentRow(portal: ExistingPortalRow): Promise<void> {
 export async function syncPortalProfile(
   profile: CanonicalUserProfile,
   _source: SyncSource = "hris",
+  options: SyncPortalProfileOptions = {},
 ): Promise<SyncPortalProfileResult> {
+  const forceRoleRefresh = options.forceRoleRefresh === true;
   const email = normalizeCanonicalEmail(profile.email);
   if (!email) throw new Error("syncPortalProfile: email required");
 
@@ -419,7 +432,13 @@ export async function syncPortalProfile(
     );
     authUserId = authUser.id;
 
-    const { portal, created } = await upsertPortalAccount(profile, authUserId, mapped, teamId);
+    const { portal, created } = await upsertPortalAccount(
+      profile,
+      authUserId,
+      mapped,
+      teamId,
+      forceRoleRefresh,
+    );
 
     if (authUser.portalAccountId !== portal.id) {
       await prismaAuth.user.update({
@@ -439,7 +458,13 @@ export async function syncPortalProfile(
     if (!isAuthSchemaError(e)) throw e;
     console.warn("[sync-portal-profile] Auth DB unavailable; syncing portal only.", e);
 
-    const { portal, created } = await upsertPortalAccount(profile, authUserId, mapped, teamId);
+    const { portal, created } = await upsertPortalAccount(
+      profile,
+      authUserId,
+      mapped,
+      teamId,
+      forceRoleRefresh,
+    );
     await ensureAgentRow(portal);
 
     return {
@@ -460,6 +485,7 @@ export function canonicalProfileFromMerged(input: {
   companyName: string | null;
   companyId?: bigint | null;
   position?: string | null;
+  department?: string | null;
 }): CanonicalUserProfile {
   const email = input.email?.trim()
     ? normalizeCanonicalEmail(input.email)
@@ -468,6 +494,7 @@ export function canonicalProfileFromMerged(input: {
   const mapped = mapHrisToPortalRole({
     hrisRole: input.role,
     position: input.position,
+    department: input.department,
   });
 
   return {
@@ -478,6 +505,8 @@ export function canonicalProfileFromMerged(input: {
     headPrivileges: mapped.headPrivileges,
     hrisSourceUserId: input.sourceUserId,
     hrisRole: input.role,
+    position: input.position ?? null,
+    department: input.department ?? null,
     companyName: input.companyName,
     companyExternalId: input.companyId ?? null,
     emailVerified: Boolean(input.email?.trim()),

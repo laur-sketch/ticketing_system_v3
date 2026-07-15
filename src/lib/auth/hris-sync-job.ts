@@ -71,5 +71,5 @@ export async function runHrisPortalSync(): Promise<HrisSyncResult> {
     }
   }
 
-  return { total: rows.length, synced, failed };
+  return { total: rows.length, synced, failed, durationMs: Date.now() - start };
 }

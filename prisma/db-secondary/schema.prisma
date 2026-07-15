@@ -32,6 +32,7 @@ model MergedUser {
   mergedAt          DateTime  @default(now()) @map("merged_at")
 
   attendanceClockIns MergedAttendanceClockIn[]
+  efficiencyBreakdowns MergedUserEfficiencyBreakdown[]
 
   @@index([companyId], map: "idx_merged_users_company")
   @@index([email], map: "idx_merged_users_email")
@@ -78,6 +79,9 @@ model MergedKpiMaintenance {
   frequency              String    @map("frequency") @db.VarChar(20)
   subKpis                Json      @map("sub_kpis")
   assignedAgentId        String?   @map("assigned_agent_id") @db.VarChar(191)
+  assignedAgentEmail     String?   @map("assigned_agent_email") @db.VarChar(255)
+  assignedPortalAccountId String?  @map("assigned_portal_account_id") @db.VarChar(191)
+  assignedMergedSourceUserId BigInt? @map("assigned_merged_source_user_id") @db.UnsignedBigInt
   assignedRole           String?   @map("assigned_role")
   recurrenceWeekday      Int?      @map("recurrence_weekday")
   recurrenceMonthDay     Int?      @map("recurrence_month_day")
@@ -89,6 +93,8 @@ model MergedKpiMaintenance {
   itProjectPhase         String?   @map("it_project_phase")
   scopedCompanyTeamId    String?   @map("scoped_company_team_id") @db.VarChar(191)
   createdBy              String    @map("created_by") @db.VarChar(191)
+  createdByMergedSourceUserId BigInt? @map("created_by_merged_source_user_id") @db.UnsignedBigInt
+  createdByPortalAccountId String? @map("created_by_portal_account_id") @db.VarChar(191)
   createdByRole          String    @map("created_by_role")
   createdAt              DateTime  @map("created_at") @db.DateTime(3)
   updatedAt              DateTime  @map("updated_at") @db.DateTime(3)
@@ -99,6 +105,7 @@ model MergedKpiMaintenance {
 
   @@index([frequency], map: "idx_merged_kpi_freq")
   @@index([assignedAgentId], map: "idx_merged_kpi_agent")
+  @@index([assignedMergedSourceUserId], map: "idx_merged_kpi_merged_user")
   @@map("merged_kpi_maintenance")
 }
 
@@ -131,9 +138,14 @@ model MergedTaskItem {
   description     String?   @map("description") @db.Text
   status          String    @map("status") @db.VarChar(20)
   assignedAgentId String?   @map("assigned_agent_id") @db.VarChar(191)
+  assignedAgentEmail String? @map("assigned_agent_email") @db.VarChar(255)
+  assignedPortalAccountId String? @map("assigned_portal_account_id") @db.VarChar(191)
+  assignedMergedSourceUserId BigInt? @map("assigned_merged_source_user_id") @db.UnsignedBigInt
   priority        String?   @map("priority") @db.VarChar(50)
   dueAt           DateTime? @map("due_at") @db.DateTime(3)
   createdBy       String    @map("created_by") @db.VarChar(191)
+  createdByMergedSourceUserId BigInt? @map("created_by_merged_source_user_id") @db.UnsignedBigInt
+  createdByPortalAccountId String? @map("created_by_portal_account_id") @db.VarChar(191)
   createdByRole   String    @map("created_by_role")
   createdAt       DateTime  @map("created_at") @db.DateTime(3)
   updatedAt       DateTime  @map("updated_at") @db.DateTime(3)
@@ -144,6 +156,7 @@ model MergedTaskItem {
 
   @@index([status], map: "idx_merged_task_status")
   @@index([assignedAgentId], map: "idx_merged_task_agent")
+  @@index([assignedMergedSourceUserId], map: "idx_merged_task_merged_user")
   @@map("merged_task_items")
 }
 
@@ -151,6 +164,8 @@ model MergedTaskActivity {
   sourceId       String   @id @map("source_id") @db.VarChar(191)
   taskId         String   @map("task_id") @db.VarChar(191)
   author         String   @map("author")
+  authorMergedSourceUserId BigInt? @map("author_merged_source_user_id") @db.UnsignedBigInt
+  authorPortalAccountId String? @map("author_portal_account_id") @db.VarChar(191)
   action         String   @map("action")
   detail         String?  @map("detail") @db.Text
   createdAt      DateTime @map("created_at") @db.DateTime(3)
@@ -160,5 +175,138 @@ model MergedTaskActivity {
   task MergedTaskItem @relation(fields: [taskId], references: [sourceId])
 
   @@index([taskId], map: "idx_merged_task_act_task")
+  @@index([authorMergedSourceUserId], map: "idx_merged_task_act_author_merged")
   @@map("merged_task_activities")
+}
+
+/// Overall average KPI progress per user/employee (aggregated from period snapshots).
+/// One row per merged_users.source_user_id, recomputed on each sync.
+model MergedKpiUserAverage {
+  sourceUserId    BigInt   @id @map("source_user_id") @db.UnsignedBigInt
+  sourceDatabase  String   @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  portalAccountId String?  @map("portal_account_id") @db.VarChar(191)
+  agentEmail      String?  @map("agent_email") @db.VarChar(255)
+  displayName     String   @map("display_name") @db.VarChar(255)
+  /// Distinct KPIs the employee contributed to.
+  kpiCount        Int      @default(0) @map("kpi_count")
+  /// Snapshot-level contributions counted toward the averages.
+  snapshotCount   Int      @default(0) @map("snapshot_count")
+  /// Summed checklist items across all counted snapshots.
+  totalItems      Int      @default(0) @map("total_items")
+  doneItems       Int      @default(0) @map("done_items")
+  /// Weighted completion: done / total across all snapshots.
+  overallPercent  Int      @default(0) @map("overall_percent")
+  /// Unweighted mean of per-snapshot completion percentages.
+  averagePercent  Int      @default(0) @map("average_percent")
+  /// Insights task-checklist efficiency % (after delay penalties). Null if no task metrics.
+  taskEfficiency  Int?     @map("task_efficiency")
+  /// Insights ticket efficiency % (closed ÷ open+closed). Null if no ticket metrics.
+  ticketEfficiency Int?    @map("ticket_efficiency")
+  /// Combined overall efficiency: average of available task/ticket sides (floor 50).
+  overallEfficiency Int?   @map("overall_efficiency")
+  firstPeriodKey  String?  @map("first_period_key")
+  lastPeriodKey   String?  @map("last_period_key")
+  computedAt      DateTime @default(now()) @map("computed_at")
+
+  @@index([sourceDatabase], map: "idx_merged_kpi_avg_source_db")
+  @@index([overallPercent], map: "idx_merged_kpi_avg_overall")
+  @@index([overallEfficiency], map: "idx_merged_kpi_avg_overall_eff")
+  @@map("merged_kpi_user_averages")
+}
+
+/// Persistent per-user Task KPI overall-efficiency rollups (period x frequency).
+/// Calculation in src/lib/efficiency/user-efficiency-breakdown.ts:
+/// - Board TaskItem counts -> total/completed/delayed + on-time rate + avg hours
+/// - Task efficiency: DONE / (DONE + CURRENT) x 100 (DELAYED excluded from denom)
+/// - Ticket efficiency: closed / (open + closed) for the period window
+/// - overallEfficiency: mean of available task + ticket efficiencies, floor 50
+/// Idempotent unique key: (source_user_id, period_key, frequency)
+model MergedUserEfficiencyBreakdown {
+  id                        String   @id @default(cuid()) @db.VarChar(191)
+  /// FK to merged_users.source_user_id (HRIS / portal-merged identity).
+  sourceUserId              BigInt   @map("source_user_id") @db.UnsignedBigInt
+  portalAccountId           String?  @map("portal_account_id") @db.VarChar(191)
+  displayName               String   @map("display_name") @db.VarChar(255)
+  /// Reporting period key: `2026-07-14` | `2026-W28` | `2026-07` | `2026-Q3`
+  periodKey                 String   @map("period_key") @db.VarChar(32)
+  frequency                 String   @map("frequency") @db.VarChar(20)
+  periodStartAt             DateTime @map("period_start_at") @db.DateTime(3)
+  periodEndAt               DateTime @map("period_end_at") @db.DateTime(3)
+  overallEfficiency         Decimal  @map("overall_efficiency") @db.Decimal(6, 2)
+  taskEfficiency            Decimal? @map("task_efficiency") @db.Decimal(6, 2)
+  ticketEfficiency          Decimal? @map("ticket_efficiency") @db.Decimal(6, 2)
+  totalTasks                Int      @default(0) @map("total_tasks")
+  completedTasks            Int      @default(0) @map("completed_tasks")
+  delayedTasks              Int      @default(0) @map("delayed_tasks")
+  onTimeCompletionRate      Decimal? @map("on_time_completion_rate") @db.Decimal(6, 2)
+  /// Mean (completedAt − createdAt) in hours for DONE tasks in the window.
+  averageTaskCompletionHours Decimal? @map("average_task_completion_hours") @db.Decimal(10, 2)
+  efficiencyScore           Decimal? @map("efficiency_score") @db.Decimal(8, 2)
+  sourceDatabase            String   @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  computedAt                DateTime @default(now()) @map("computed_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  user        MergedUser                        @relation(fields: [sourceUserId], references: [sourceUserId], onDelete: Cascade)
+  taskDetails MergedUserEfficiencyTaskDetail[]
+
+  @@unique([sourceUserId, periodKey, frequency], map: "uq_user_eff_breakdown_period")
+  @@index([sourceUserId], map: "idx_user_eff_breakdown_user")
+  @@index([periodKey], map: "idx_user_eff_breakdown_period")
+  @@index([frequency], map: "idx_user_eff_breakdown_freq")
+  @@index([overallEfficiency], map: "idx_user_eff_breakdown_overall")
+  @@map("merged_user_efficiency_breakdowns")
+}
+
+/// Drill-down rows for a user x period efficiency rollup.
+/// Prefer TaskItem ids; may also store KPI checklist / ticket aggregate lines when board tasks are empty.
+model MergedUserEfficiencyTaskDetail {
+  id                       String    @id @default(cuid()) @db.VarChar(191)
+  breakdownId              String    @map("breakdown_id") @db.VarChar(191)
+  /// Primary PG TaskItem.id when source = TASK_ITEM.
+  taskId                   String?   @map("task_id") @db.VarChar(191)
+  /// TASK_ITEM | KPI_CHECKLIST | TICKET_SUMMARY
+  taskSource               String    @default("TASK_ITEM") @map("task_source") @db.VarChar(32)
+  taskTitle                String    @map("task_title") @db.VarChar(512)
+  status                   String    @map("status") @db.VarChar(20)
+  dueAt                    DateTime? @map("due_at") @db.DateTime(3)
+  completedAt              DateTime? @map("completed_at") @db.DateTime(3)
+  efficiencyContribution   Decimal?  @map("efficiency_contribution") @db.Decimal(8, 2)
+  notes                    String?   @map("notes") @db.Text
+  createdAt                DateTime  @default(now()) @map("created_at")
+
+  breakdown MergedUserEfficiencyBreakdown @relation(fields: [breakdownId], references: [id], onDelete: Cascade)
+
+  @@index([breakdownId], map: "idx_user_eff_task_breakdown")
+  @@index([taskId], map: "idx_user_eff_task_task")
+  @@map("merged_user_efficiency_task_details")
+}
+
+/// Maps external system user IDs (HRIS, portal, etc.) → merged_users.source_user_id.
+model ExternalUserMapping {
+  id                  String    @id @default(cuid())
+  externalSource      String    @map("external_source") @db.VarChar(64)
+  externalUserId      BigInt    @map("external_user_id") @db.UnsignedBigInt
+  mergedSourceUserId  BigInt    @map("merged_source_user_id") @db.UnsignedBigInt
+  legacyUsername      String?   @map("legacy_username")
+  legacyEmail         String?   @map("legacy_email")
+  portalAccountId     String?   @map("portal_account_id") @db.VarChar(191)
+  lastSyncedAt        DateTime? @map("last_synced_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  @@unique([externalSource, externalUserId], map: "external_user_mappings_source_user_key")
+  @@index([mergedSourceUserId], map: "idx_external_user_mappings_merged")
+  @@index([portalAccountId], map: "idx_external_user_mappings_portal")
+  @@map("external_user_mappings")
+}
+
+/// Alternate login usernames for merged_users (e.g. legacy HRIS username).
+model MergedUsernameAlias {
+  id           String   @id @default(cuid())
+  sourceUserId BigInt   @map("source_user_id") @db.UnsignedBigInt
+  username     String   @unique @map("username")
+  source       String   @default("hris") @map("source") @db.VarChar(32)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([sourceUserId], map: "idx_merged_username_aliases_user")
+  @@map("merged_username_aliases")
 }

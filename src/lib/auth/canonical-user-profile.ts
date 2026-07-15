@@ -10,6 +10,8 @@ export type CanonicalUserProfile = {
   headPrivileges: boolean;
   hrisSourceUserId?: bigint | null;
   hrisRole?: string | null;
+  position?: string | null;
+  department?: string | null;
   companyName?: string | null;
   companyExternalId?: bigint | null;
   emailVerified?: boolean;
@@ -17,6 +19,11 @@ export type CanonicalUserProfile = {
     provider: string;
     providerAccountId: string;
   } | null;
+};
+
+export type SyncPortalProfileOptions = {
+  /** When true, portal/auth roles always follow merged HRIS mapping (no upgrade-only policy). */
+  forceRoleRefresh?: boolean;
 };
 
 export type SyncSource = "oauth" | "hris" | "migration";

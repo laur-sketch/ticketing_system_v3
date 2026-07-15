@@ -89,9 +89,37 @@ model PortalAccount {
   profileSyncedAt           DateTime?              @map("profile_synced_at")
   createdAt                 DateTime               @default(now()) @map("created_at")
   actionRequests            AccountActionRequest[]
+  usernameAliases           PortalUsernameAlias[]
+  mergeMapping              PortalMergeMapping?
 
   @@index([authUserId])
   @@map("portal_accounts")
+}
+
+/// Alternate login usernames (e.g. legacy portal username before HRIS merge).
+model PortalUsernameAlias {
+  id              String        @id @default(cuid())
+  portalAccountId String        @map("portal_account_id")
+  portalAccount   PortalAccount @relation(fields: [portalAccountId], references: [id], onDelete: Cascade)
+  username        String        @unique @map("username")
+  source          String        @default("legacy") @map("source")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@index([portalAccountId], map: "idx_portal_username_aliases_portal")
+  @@map("portal_username_aliases")
+}
+
+/// Explicit PortalAccount ↔ merged_users.source_user_id mapping + legacy identifiers.
+model PortalMergeMapping {
+  portalAccountId    String        @id @map("portal_account_id")
+  portalAccount      PortalAccount @relation(fields: [portalAccountId], references: [id], onDelete: Cascade)
+  mergedSourceUserId BigInt        @unique @map("merged_source_user_id")
+  legacyPortalEmail  String?       @map("legacy_portal_email")
+  legacyUsername     String?       @map("legacy_username")
+  lastSyncedAt       DateTime?     @map("last_synced_at")
+
+  @@index([mergedSourceUserId], map: "idx_portal_merge_mappings_merged_id")
+  @@map("portal_merge_mappings")
 }
 
 model Team {

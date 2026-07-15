@@ -394,6 +394,7 @@ async function computeItProjectImplementationPillarMetric(args: {
   const percent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
   const assigneeProgress = assigneeProgressForRows(
     rows.map((row) => ({
+      title: IT_PROJECT_IMPLEMENTATION_TITLE,
       subKpis: row.subKpis,
       assignedAgent: row.assignedAgent,
       items: itProjectChecklistItems(row.subKpis),

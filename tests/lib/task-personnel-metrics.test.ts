@@ -92,6 +92,7 @@ describe("personnelAssigneeProgressAcrossPeriods", () => {
     const roster = [
       {
         row: {
+          title: "Server Monitoring",
           subKpis: {
             segmented: false,
             items: [{ id: "s1", title: "Monitoring", done: false, assignedAgentId: "m1" }],

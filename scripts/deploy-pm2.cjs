@@ -45,6 +45,22 @@ function runStart() {
   }
 }
 
+/** Apply schema updates for deploy (multi-DB project — no root schema.prisma). */
+function runDatabasePrep() {
+  console.log("Applying primary PostgreSQL migrations…");
+  execSync("npm run db:migrate:deploy:primary", opts);
+
+  console.log("Syncing auth PostgreSQL schema…");
+  try {
+    execSync("npm run db:migrate:deploy:auth", opts);
+  } catch {
+    console.warn("Auth migrate deploy unavailable; falling back to prisma db push.");
+    execSync("npx prisma db push --schema=prisma/db-auth/schema.prisma --skip-generate", opts);
+  }
+
+  console.log("Skipping secondary MySQL migrate (ETL-managed mergeddatabase schema).");
+}
+
 runStop();
 
 if (process.platform === "win32") {
@@ -58,9 +74,9 @@ if (process.platform === "win32") {
 execSync("npm run build", opts);
 
 try {
-  execSync("npx prisma migrate deploy", opts);
+  runDatabasePrep();
 } catch (e) {
-  console.error("Database migration failed. Fix migrations before serving traffic.");
+  console.error("Database preparation failed. Fix migrations before serving traffic.");
   throw e;
 }
 

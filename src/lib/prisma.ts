@@ -8,30 +8,59 @@ const globalForPrisma = globalThis as unknown as {
   prismaAuth: PrismaClientAuth | undefined;
 };
 
-const logLevels =
-  process.env.NODE_ENV === "development"
-    ? (["error", "warn"] as const)
-    : (["error"] as const);
+const logLevels: ("error" | "warn")[] =
+  process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"];
+
+/** Cap Prisma pools so three clients (primary/secondary/auth) cannot exhaust Postgres. */
+function withPoolLimit(url: string | undefined, limit: number): string | undefined {
+  if (!url?.trim()) return url;
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has("connection_limit")) {
+      u.searchParams.set("connection_limit", String(limit));
+    }
+    if (!u.searchParams.has("pool_timeout")) {
+      u.searchParams.set("pool_timeout", "10");
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
 
 export const prismaPrimary =
   globalForPrisma.prismaPrimary ??
-  new PrismaClientPrimary({ log: logLevels });
+  new PrismaClientPrimary({
+    log: logLevels,
+    datasources: {
+      db: { url: withPoolLimit(process.env.DATABASE_URL_PRIMARY, 10) },
+    },
+  });
 
-/** Secondary (MySQL mergeddatabase-dev): HRIS + attendance + ticketing KPI/task ETL read model. */
+/** Secondary (MySQL mergedatabase): HRIS + attendance + task activities + user efficiencies. */
 export const prismaSecondary =
   globalForPrisma.prismaSecondary ??
-  new PrismaClientSecondary({ log: logLevels });
+  new PrismaClientSecondary({
+    log: logLevels,
+    datasources: {
+      db: { url: withPoolLimit(process.env.DATABASE_URL_SECONDARY, 10) },
+    },
+  });
 
 /** Auth DB (PostgreSQL): OAuth identities linked to portal profiles. */
 export const prismaAuth =
   globalForPrisma.prismaAuth ??
-  new PrismaClientAuth({ log: logLevels });
+  new PrismaClientAuth({
+    log: logLevels,
+    datasources: {
+      db: { url: withPoolLimit(process.env.DATABASE_URL_AUTH, 5) },
+    },
+  });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prismaPrimary = prismaPrimary;
-  globalForPrisma.prismaSecondary = prismaSecondary;
-  globalForPrisma.prismaAuth = prismaAuth;
-}
+// Always reuse clients across HMR / workers to avoid "too many clients already".
+globalForPrisma.prismaPrimary = prismaPrimary;
+globalForPrisma.prismaSecondary = prismaSecondary;
+globalForPrisma.prismaAuth = prismaAuth;
 
 /** Backward-compatible alias so existing imports of `prisma` still work. */
 export const prisma = prismaPrimary;

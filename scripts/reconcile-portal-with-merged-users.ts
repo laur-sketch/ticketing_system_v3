@@ -3,6 +3,7 @@
  * - Resolves username conflicts on portal rows
  * - Links every active merged user via merged_source_user_id
  * - Marks portal-only duplicates as LEGACY_CONFLICT
+ * - Clears portal password_hash on HRIS-linked rows (credentials live in merged_users)
  *
  * Usage: npm run db:reconcile:merged-users
  */
@@ -13,6 +14,14 @@ import {
 import { MERGED_SOURCE_DATABASE } from "../src/lib/merged-database-sources";
 import { prismaPrimary, prismaSecondary } from "../src/lib/prisma";
 
+function resolveSourceTag(): string {
+  return (
+    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
+    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
+    MERGED_SOURCE_DATABASE.HRIS_DEMO
+  );
+}
+
 type MergedRow = {
   source_user_id: bigint;
   source_database: string;
@@ -21,6 +30,8 @@ type MergedRow = {
   email: string | null;
   role: string;
   company_name: string | null;
+  position: string | null;
+  department: string | null;
 };
 
 function normEmail(v: string | null | undefined): string | null {
@@ -52,16 +63,18 @@ async function mergedHasLogin(username: string | null, email: string | null): Pr
 }
 
 async function main() {
+  const sourceTag = resolveSourceTag();
   const mergedRows = await prismaSecondary.$queryRaw<MergedRow[]>`
-    SELECT source_user_id, source_database, username, name, email, role, company_name
+    SELECT source_user_id, source_database, username, name, email, role, company_name, position, department
     FROM merged_users
-    WHERE is_active = 1
+    WHERE is_active = 1 AND source_database = ${sourceTag}
     ORDER BY source_user_id
   `;
 
   let synced = 0;
   let conflictsCleared = 0;
   let legacyMarked = 0;
+  let passwordsCleared = 0;
   const claimedPortalIds = new Set<string>();
 
   for (const row of mergedRows) {
@@ -108,8 +121,11 @@ async function main() {
         email: row.email,
         role: row.role,
         companyName: row.company_name,
+        position: row.position,
+        department: row.department,
       }),
       "hris",
+      { forceRoleRefresh: true },
     );
     synced++;
 
@@ -123,6 +139,19 @@ async function main() {
       select: { id: true },
     });
     if (linked) claimedPortalIds.add(linked.id);
+  }
+
+  // HRIS-linked portal rows: keep portal password_hash when PORTAL_CREDENTIALS_SOURCE=portal
+  const portalCredentialSource = process.env.PORTAL_CREDENTIALS_SOURCE?.trim().toLowerCase() === "portal";
+  if (!portalCredentialSource) {
+    const cleared = await prismaPrimary.portalAccount.updateMany({
+      where: {
+        mergedSourceUserId: { not: null },
+        passwordHash: { not: null },
+      },
+      data: { passwordHash: null },
+    });
+    passwordsCleared = cleared.count;
   }
 
   const unlinkedPortals = await prismaPrimary.portalAccount.findMany({
@@ -146,10 +175,12 @@ async function main() {
   }
 
   console.log("[reconcile-portal-with-merged-users] done");
-  console.log(`  merged users (source=${MERGED_SOURCE_DATABASE.HRIS}): ${mergedRows.length}`);
+  console.log(`  source tag: ${sourceTag}`);
+  console.log(`  merged users: ${mergedRows.length}`);
   console.log(`  portal profiles synced: ${synced}`);
   console.log(`  username conflicts cleared: ${conflictsCleared}`);
   console.log(`  portal-only rows marked LEGACY_CONFLICT: ${legacyMarked}`);
+  console.log(`  portal password_hash cleared (HRIS-linked): ${passwordsCleared}`);
 }
 
 main()

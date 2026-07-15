@@ -9,6 +9,7 @@ import {
   findMergedUserByLogin,
   verifyMergedPassword,
 } from "@/lib/auth/merged-credentials";
+import { useMergedCredentials } from "@/lib/auth/credentials-source";
 import { ensurePortalFromMergedUser } from "@/lib/auth/ensure-portal-from-merged";
 import { normalizePortalRole } from "@/lib/staff-role";
 import { applyOAuthSignupIntent, readOAuthSignupIntentFromCookies, clearOAuthSignupIntentCookie } from "@/lib/auth/oauth-signup-intent";
@@ -138,14 +139,36 @@ export const authOptions: NextAuthOptions = {
         const password = credentials?.password ?? "";
         if (!loginId || !password) return null;
 
-        // 1) mergeddatabase-dev.merged_users (HRIS username/password ETL)
-        const merged = await findMergedUserByLogin(loginId);
-        if (merged?.passwordHash) {
-          const mergedOk = await verifyMergedPassword(merged.passwordHash, password);
-          if (mergedOk) {
+        const sessionFromPortal = (portal: {
+          id: string;
+          email: string;
+          name: string;
+          role: string;
+          companyId: string | null;
+          companyName: string | null;
+          customerOrgRole: string | null;
+        }) => ({
+          id: portal.id,
+          email: portal.email,
+          name: portal.name,
+          role: normalizeRole(portal.role) ?? "Customer",
+          companyId: portal.companyId,
+          companyName: portal.companyName,
+          customerOrgRole: portal.customerOrgRole,
+          staffRoleLabel: normalizePortalRole(portal.role),
+        });
+
+        // Default SoT: merged_users (avoids portal ↔ HRIS password conflicts).
+        // Portal password login only when PORTAL_CREDENTIALS_SOURCE=portal, or as
+        // a last resort for customer accounts with no merged_users row.
+        if (useMergedCredentials()) {
+          const merged = await findMergedUserByLogin(loginId);
+          if (merged?.passwordHash) {
+            const mergedOk = await verifyMergedPassword(merged.passwordHash, password);
+            if (!mergedOk) return null;
             try {
               const portal = await ensurePortalFromMergedUser(merged);
-              return {
+              return sessionFromPortal({
                 id: portal.id,
                 email: portal.email,
                 name: portal.name,
@@ -153,45 +176,62 @@ export const authOptions: NextAuthOptions = {
                 companyId: portal.companyId,
                 companyName: portal.company?.name ?? null,
                 customerOrgRole: portal.customerOrgRole,
-                staffRoleLabel: normalizePortalRole(portal.role),
-              };
+              });
             } catch (e) {
               console.error("ensurePortalFromMergedUser failed", e);
-              const portalFallback = await findPortalByLogin(loginId);
-              if (portalFallback) {
-                return {
-                  id: portalFallback.id,
-                  email: portalFallback.email,
-                  name: portalFallback.name,
-                  role: portalFallback.role,
-                  companyId: portalFallback.companyId,
-                  companyName: portalFallback.companyName,
-                  customerOrgRole: portalFallback.customerOrgRole,
-                  staffRoleLabel: normalizePortalRole(portalFallback.role),
-                };
-              }
+              return null;
+            }
+          }
+
+          // Pure customer / portal-only accounts (no merged_users credential).
+          const portalOnly = await findPortalByLogin(loginId);
+          if (
+            portalOnly?.passwordHash &&
+            portalOnly.accountStatus !== "LEGACY_CONFLICT" &&
+            !(await findMergedUserByLogin(portalOnly.email))
+          ) {
+            const portalOk = await bcrypt.compare(password, portalOnly.passwordHash);
+            if (!portalOk) return null;
+            return sessionFromPortal(portalOnly);
+          }
+
+          return null;
+        }
+
+        // Legacy mode: portal_accounts.password_hash first, then merged_users.
+        const portalFirst = await findPortalByLogin(loginId);
+        if (
+          portalFirst?.passwordHash &&
+          portalFirst.accountStatus !== "LEGACY_CONFLICT"
+        ) {
+          const portalOk = await bcrypt.compare(password, portalFirst.passwordHash);
+          if (!portalOk) return null;
+          return sessionFromPortal(portalFirst);
+        }
+
+        const merged = await findMergedUserByLogin(loginId);
+        if (merged?.passwordHash) {
+          const mergedOk = await verifyMergedPassword(merged.passwordHash, password);
+          if (mergedOk) {
+            try {
+              const portal = await ensurePortalFromMergedUser(merged);
+              return sessionFromPortal({
+                id: portal.id,
+                email: portal.email,
+                name: portal.name,
+                role: portal.role,
+                companyId: portal.companyId,
+                companyName: portal.company?.name ?? null,
+                customerOrgRole: portal.customerOrgRole,
+              });
+            } catch (e) {
+              console.error("ensurePortalFromMergedUser failed", e);
               return null;
             }
           }
         }
 
-        // 2) Fallback: portal_accounts (legacy portal-only accounts not superseded by merged_users)
-        const portal = await findPortalByLogin(loginId);
-        if (!portal?.passwordHash || portal.accountStatus === "LEGACY_CONFLICT") return null;
-
-        const passwordOk = await bcrypt.compare(password, portal.passwordHash);
-        if (!passwordOk) return null;
-
-        return {
-          id: portal.id,
-          email: portal.email,
-          name: portal.name,
-          role: portal.role,
-          companyId: portal.companyId,
-          companyName: portal.companyName,
-          customerOrgRole: portal.customerOrgRole,
-          staffRoleLabel: normalizePortalRole(portal.role),
-        };
+        return null;
       },
     }),
     ...(googleReady

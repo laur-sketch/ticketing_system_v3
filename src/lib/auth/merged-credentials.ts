@@ -96,8 +96,31 @@ export async function findMergedUserByLogin(loginId: string): Promise<MergedAuth
   `;
 
   const row = rows[0];
-  if (!row) return null;
-  return mapRow(row);
+  if (row) return mapRow(row);
+
+  // Legacy HRIS / merged username alias
+  const aliasRows = await prismaSecondary.$queryRaw<MergedUserRow[]>`
+    SELECT
+      u.source_user_id,
+      u.source_database,
+      u.employee_code,
+      u.username,
+      u.password_hash,
+      u.name,
+      u.email,
+      u.role,
+      u.company_name,
+      u.is_active
+    FROM merged_username_aliases a
+    INNER JOIN merged_users u ON u.source_user_id = a.source_user_id
+    WHERE u.is_active = 1
+      AND LOWER(a.username) = ${needle}
+    LIMIT 1
+  `;
+
+  const aliasRow = aliasRows[0];
+  if (!aliasRow) return null;
+  return mapRow(aliasRow);
 }
 
 export async function findMergedUserByEmail(email: string): Promise<MergedAuthUser | null> {

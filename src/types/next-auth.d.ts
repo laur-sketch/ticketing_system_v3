@@ -8,6 +8,7 @@ declare module "next-auth" {
     sessionExpiresAt?: number;
     needsUsername?: boolean;
     user: DefaultSession["user"] & {
+      id?: string;
       role: UserRole;
       /** OAuth / credentials provider id (e.g. google, credentials). */
       authProvider?: string | null;

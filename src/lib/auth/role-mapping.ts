@@ -1,5 +1,4 @@
 import type { PortalRole } from "@/lib/staff-role";
-import { normalizePortalRole } from "@/lib/staff-role";
 
 export type HrisRoleMappingInput = {
   hrisRole: string;
@@ -19,7 +18,8 @@ export const DEFAULT_HRIS_ROLE_MAPPINGS: ReadonlyArray<{
   headPrivileges: boolean;
 }> = [
   { hrisRole: "super_admin", portalRole: "SuperAdmin", headPrivileges: false },
-  { hrisRole: "admin", portalRole: "Admin", headPrivileges: true },
+  // Staff roles resolve by head title; presets default to Personnel until elevated.
+  { hrisRole: "admin", portalRole: "Personnel", headPrivileges: false },
   { hrisRole: "employee", portalRole: "Personnel", headPrivileges: false },
 ];
 
@@ -27,7 +27,9 @@ function normalizeHrisToken(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/** Detect department/position head titles (e.g. "IT Support Head", "Operations Head"). */
+const ADMIN_TITLE_PATTERN = /\b(head|leader)\b/;
+
+/** Detect head/leader titles in position or department (e.g. "Team Head", "Unit Team Leader"). */
 export function isHrisHeadTitle(input: Pick<HrisRoleMappingInput, "position" | "department" | "hrisRole">): boolean {
   const tokens = [
     normalizeHrisToken(input.position),
@@ -35,47 +37,42 @@ export function isHrisHeadTitle(input: Pick<HrisRoleMappingInput, "position" | "
     normalizeHrisToken(input.hrisRole),
   ].filter(Boolean);
 
-  return tokens.some(
-    (t) => t === "head" || t.endsWith(" head") || t.includes(" head ") || t.startsWith("head "),
-  );
+  return tokens.some((t) => ADMIN_TITLE_PATTERN.test(t));
+}
+
+function mapHeadOrPersonnel(input: HrisRoleMappingInput): MappedPortalRole {
+  if (isHrisHeadTitle(input)) {
+    return { portalRole: "Admin", headPrivileges: true };
+  }
+  return { portalRole: "Personnel", headPrivileges: false };
 }
 
 /**
- * Map HRIS role (+ optional position) to portal role and headPrivileges.
- * Head titles elevate non-admin staff to Admin with headPrivileges.
+ * Map HRIS profile to portal role.
+ * - super_admin → SuperAdmin
+ * - Head/leader titles (position/department) → Admin
+ * - Everyone else → Personnel
  */
 export function mapHrisToPortalRole(
   input: HrisRoleMappingInput,
   overrides?: Partial<MappedPortalRole> | null,
 ): MappedPortalRole {
+  const roleKey = normalizeHrisToken(input.hrisRole);
+
+  if (roleKey === "super_admin") {
+    return { portalRole: "SuperAdmin", headPrivileges: false };
+  }
+
   if (overrides?.portalRole) {
-    return {
+    const base: MappedPortalRole = {
       portalRole: overrides.portalRole,
       headPrivileges: overrides.headPrivileges ?? overrides.portalRole === "Admin",
     };
-  }
-
-  const roleKey = normalizeHrisToken(input.hrisRole);
-  const preset = DEFAULT_HRIS_ROLE_MAPPINGS.find((m) => m.hrisRole === roleKey);
-
-  if (preset) {
-    if (preset.portalRole === "Personnel" && isHrisHeadTitle(input)) {
+    if (base.portalRole === "Personnel" && isHrisHeadTitle(input)) {
       return { portalRole: "Admin", headPrivileges: true };
     }
-    return { portalRole: preset.portalRole, headPrivileges: preset.headPrivileges };
+    return base;
   }
 
-  const normalized = normalizePortalRole(input.hrisRole);
-  if (normalized) {
-    return {
-      portalRole: normalized,
-      headPrivileges: normalized === "Admin" || isHrisHeadTitle(input),
-    };
-  }
-
-  if (isHrisHeadTitle(input)) {
-    return { portalRole: "Admin", headPrivileges: true };
-  }
-
-  return { portalRole: "Personnel", headPrivileges: false };
+  return mapHeadOrPersonnel(input);
 }

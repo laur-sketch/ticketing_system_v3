@@ -8,7 +8,16 @@ import {
   canonicalProfileFromMerged,
   syncPortalProfile,
 } from "../src/lib/auth/sync-portal-profile";
+import { MERGED_SOURCE_DATABASE } from "../src/lib/merged-database-sources";
 import { prismaAuth, prismaSecondary } from "../src/lib/prisma";
+
+function resolveSourceTag(): string {
+  return (
+    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
+    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
+    MERGED_SOURCE_DATABASE.HRIS_DEMO
+  );
+}
 
 type MergedRow = {
   source_user_id: bigint;
@@ -19,10 +28,12 @@ type MergedRow = {
   company_name: string | null;
   company_id: bigint | null;
   position: string | null;
+  department: string | null;
   updated_at: Date | null;
 };
 
 async function main() {
+  const sourceTag = resolveSourceTag();
   const rows = await prismaSecondary.$queryRaw<MergedRow[]>`
     SELECT
       source_user_id,
@@ -33,9 +44,10 @@ async function main() {
       company_name,
       company_id,
       position,
+      department,
       updated_at
     FROM merged_users
-    WHERE is_active = 1
+    WHERE is_active = 1 AND source_database = ${sourceTag}
     ORDER BY source_user_id
   `;
 
@@ -53,8 +65,9 @@ async function main() {
         companyName: row.company_name,
         companyId: row.company_id,
         position: row.position,
+        department: row.department,
       });
-      await syncPortalProfile(profile, "hris");
+      await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
       synced++;
     } catch (e) {
       failed++;
@@ -62,7 +75,7 @@ async function main() {
     }
   }
 
-  console.log(`[sync-hris-portal] total=${rows.length} synced=${synced} failed=${failed}`);
+  console.log(`[sync-hris-portal] source=${sourceTag} total=${rows.length} synced=${synced} failed=${failed}`);
 }
 
 main()

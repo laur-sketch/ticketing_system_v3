@@ -56,9 +56,109 @@ function replaceAssignedAgentIdInJson(
       next.assignedAgentName = canonical.name;
       continue;
     }
+    if (key === "id" && raw === staleId) {
+      next.id = canonical.id;
+      if (typeof obj.name === "string") next.name = canonical.name;
+      continue;
+    }
     next[key] = replaceAssignedAgentIdInJson(raw, staleId, canonical);
   }
   return next;
+}
+
+export type MergeAgentOwnershipResult = {
+  ticketsUpdated: number;
+  kpisUpdated: number;
+  tasksUpdated: number;
+  kpiSubAssigneeRowsUpdated: number;
+  snapshotRowsUpdated: number;
+};
+
+/** Move tickets, KPIs, tasks, sub-KPI JSON, and contributor snapshots from one agent to another. */
+export async function mergeAgentOwnership(
+  staleId: string,
+  canonical: { id: string; name: string },
+  options?: { dryRun?: boolean },
+): Promise<MergeAgentOwnershipResult> {
+  const dryRun = options?.dryRun ?? true;
+  let ticketsUpdated = 0;
+  let kpisUpdated = 0;
+  let tasksUpdated = 0;
+  let kpiSubAssigneeRowsUpdated = 0;
+  let snapshotRowsUpdated = 0;
+
+  if (!dryRun) {
+    ticketsUpdated += (
+      await prisma.ticket.updateMany({
+        where: { assignedAgentId: staleId },
+        data: { assignedAgentId: canonical.id },
+      })
+    ).count;
+    kpisUpdated += (
+      await prisma.kpiMaintenance.updateMany({
+        where: { assignedAgentId: staleId },
+        data: { assignedAgentId: canonical.id },
+      })
+    ).count;
+    tasksUpdated += (
+      await prisma.taskItem.updateMany({
+        where: { assignedAgentId: staleId },
+        data: { assignedAgentId: canonical.id },
+      })
+    ).count;
+  } else {
+    ticketsUpdated += await prisma.ticket.count({ where: { assignedAgentId: staleId } });
+    kpisUpdated += await prisma.kpiMaintenance.count({ where: { assignedAgentId: staleId } });
+    tasksUpdated += await prisma.taskItem.count({ where: { assignedAgentId: staleId } });
+  }
+
+  const kpiRows = await prisma.kpiMaintenance.findMany({
+    where: { subKpis: { not: Prisma.DbNull } },
+    select: { id: true, subKpis: true },
+  });
+  for (const row of kpiRows) {
+    const raw = JSON.stringify(row.subKpis);
+    if (!raw.includes(staleId)) continue;
+    kpiSubAssigneeRowsUpdated += 1;
+    if (!dryRun) {
+      await prisma.kpiMaintenance.update({
+        where: { id: row.id },
+        data: {
+          subKpis: replaceAssignedAgentIdInJson(row.subKpis, staleId, canonical) as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+
+  const snapshots = await prisma.kpiMaintenancePeriodSnapshot.findMany({
+    where: { contributorProgress: { not: Prisma.DbNull } },
+    select: { id: true, contributorProgress: true },
+  });
+  for (const row of snapshots) {
+    const raw = JSON.stringify(row.contributorProgress);
+    if (!raw.includes(staleId)) continue;
+    snapshotRowsUpdated += 1;
+    if (!dryRun) {
+      await prisma.kpiMaintenancePeriodSnapshot.update({
+        where: { id: row.id },
+        data: {
+          contributorProgress: replaceAssignedAgentIdInJson(
+            row.contributorProgress,
+            staleId,
+            canonical,
+          ) as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+
+  return {
+    ticketsUpdated,
+    kpisUpdated,
+    tasksUpdated,
+    kpiSubAssigneeRowsUpdated,
+    snapshotRowsUpdated,
+  };
 }
 
 export async function listPortalAgentDuplicateMappingsFromDb() {
@@ -98,47 +198,11 @@ export async function reconcileDuplicateAgentRows(options?: { dryRun?: boolean }
   let staleAgentsDeleted = 0;
 
   for (const [staleId, canonical] of canonicalByStaleId) {
-    if (!dryRun) {
-      const ticketResult = await prisma.ticket.updateMany({
-        where: { assignedAgentId: staleId },
-        data: { assignedAgentId: canonical.id },
-      });
-      ticketsUpdated += ticketResult.count;
-
-      const kpiResult = await prisma.kpiMaintenance.updateMany({
-        where: { assignedAgentId: staleId },
-        data: { assignedAgentId: canonical.id },
-      });
-      kpisUpdated += kpiResult.count;
-
-      const taskResult = await prisma.taskItem.updateMany({
-        where: { assignedAgentId: staleId },
-        data: { assignedAgentId: canonical.id },
-      });
-      tasksUpdated += taskResult.count;
-    } else {
-      ticketsUpdated += await prisma.ticket.count({ where: { assignedAgentId: staleId } });
-      kpisUpdated += await prisma.kpiMaintenance.count({ where: { assignedAgentId: staleId } });
-      tasksUpdated += await prisma.taskItem.count({ where: { assignedAgentId: staleId } });
-    }
-
-    const kpiRows = await prisma.kpiMaintenance.findMany({
-      where: { subKpis: { not: Prisma.DbNull } },
-      select: { id: true, subKpis: true },
-    });
-    for (const row of kpiRows) {
-      const raw = JSON.stringify(row.subKpis);
-      if (!raw.includes(staleId)) continue;
-      kpiSubAssigneeRowsUpdated += 1;
-      if (!dryRun) {
-        await prisma.kpiMaintenance.update({
-          where: { id: row.id },
-          data: {
-            subKpis: replaceAssignedAgentIdInJson(row.subKpis, staleId, canonical) as Prisma.InputJsonValue,
-          },
-        });
-      }
-    }
+    const merged = await mergeAgentOwnership(staleId, canonical, { dryRun });
+    ticketsUpdated += merged.ticketsUpdated;
+    kpisUpdated += merged.kpisUpdated;
+    tasksUpdated += merged.tasksUpdated;
+    kpiSubAssigneeRowsUpdated += merged.kpiSubAssigneeRowsUpdated;
   }
 
   for (const staleId of canonicalByStaleId.keys()) {
