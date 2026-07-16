@@ -26,6 +26,10 @@ import { helpdeskSupportPercent } from "@/lib/kpis";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { prismaPrimary } from "@/lib/prisma";
 import {
+  buildCanonicalMergedIdMap,
+  canonicalMergedId,
+} from "@/lib/sync/merged-person-identity";
+import {
   applyPersonnelAverageEfficiencyFloor,
   normalizePersonnelTaskTotals,
 } from "@/lib/task-personnel-metrics";
@@ -265,10 +269,10 @@ async function loadAgentEnrichment(): Promise<Map<string, AgentEnrichment>> {
   return out;
 }
 
-async function ticketEfficiencyForWindow(
+async function ticketCountsForWindow(
   start: Date,
   end: Date,
-): Promise<Map<string, number>> {
+): Promise<Map<string, { closed: number; pending: number }>> {
   const [closedByAgent, pendingByAgent] = await Promise.all([
     prismaPrimary.ticket.groupBy({
       by: ["assignedAgentId"],
@@ -287,19 +291,18 @@ async function ticketEfficiencyForWindow(
       _count: true,
     }),
   ]);
-  const ids = new Set<string>();
-  for (const r of closedByAgent) if (r.assignedAgentId) ids.add(r.assignedAgentId);
-  for (const r of pendingByAgent) if (r.assignedAgentId) ids.add(r.assignedAgentId);
-  const closedMap = new Map(
-    closedByAgent.filter((r) => r.assignedAgentId).map((r) => [r.assignedAgentId!, r._count]),
-  );
-  const pendingMap = new Map(
-    pendingByAgent.filter((r) => r.assignedAgentId).map((r) => [r.assignedAgentId!, r._count]),
-  );
-  const out = new Map<string, number>();
-  for (const id of ids) {
-    const pct = helpdeskSupportPercent(closedMap.get(id) ?? 0, pendingMap.get(id) ?? 0);
-    if (pct != null) out.set(id, pct);
+  const out = new Map<string, { closed: number; pending: number }>();
+  for (const r of closedByAgent) {
+    if (!r.assignedAgentId) continue;
+    const cur = out.get(r.assignedAgentId) ?? { closed: 0, pending: 0 };
+    cur.closed += r._count;
+    out.set(r.assignedAgentId, cur);
+  }
+  for (const r of pendingByAgent) {
+    if (!r.assignedAgentId) continue;
+    const cur = out.get(r.assignedAgentId) ?? { closed: 0, pending: 0 };
+    cur.pending += r._count;
+    out.set(r.assignedAgentId, cur);
   }
   return out;
 }
@@ -344,11 +347,23 @@ async function upsertBucket(
   bucket: PeriodBucket,
   agentById: Map<string, AgentEnrichment>,
   mergedUserIds: Set<string>,
-  ticketEff: Map<string, number>,
+  ticketEff: Map<string, { closed: number; pending: number }>,
   sourceTag: string,
   dryRun: boolean,
   counters: { upsertedBreakdowns: number; upsertedDetails: number; skippedNoMergedUser: number },
 ) {
+  // Group contributor rows by (canonical) merged user — the same person can
+  // appear under several agent ids and their totals must accumulate.
+  type PersonAgg = {
+    enriched: AgentEnrichment;
+    total: number;
+    done: number;
+    entries: Array<{ title: string; total: number; done: number }>;
+    ticketsClosed: number;
+    ticketsPending: number;
+    hasTicketData: boolean;
+  };
+  const byMerged = new Map<string, PersonAgg>();
   for (const [agentId, agg] of bucket.byAgent) {
     const enriched = agentById.get(agentId);
     if (!enriched) continue;
@@ -356,10 +371,39 @@ async function upsertBucket(
       counters.skippedNoMergedUser++;
       continue;
     }
+    const key = enriched.mergedSourceUserId.toString();
+    const cur =
+      byMerged.get(key) ??
+      ({
+        enriched,
+        total: 0,
+        done: 0,
+        entries: [],
+        ticketsClosed: 0,
+        ticketsPending: 0,
+        hasTicketData: false,
+      } as PersonAgg);
+    cur.total += agg.total;
+    cur.done += Math.min(agg.done, agg.total);
+    cur.entries.push(...agg.entries);
+    const counts = ticketEff.get(agentId);
+    if (counts) {
+      cur.hasTicketData = true;
+      cur.ticketsClosed += counts.closed;
+      cur.ticketsPending += counts.pending;
+    }
+    byMerged.set(key, cur);
+  }
+
+  for (const person of byMerged.values()) {
+    const { enriched, entries } = person;
+    const agg = { total: person.total, done: person.done, entries };
+    const ticketEfficiency = person.hasTicketData
+      ? helpdeskSupportPercent(person.ticketsClosed, person.ticketsPending)
+      : null;
 
     const normalized = normalizePersonnelTaskTotals(agg.total, agg.done);
     const taskEfficiency = normalized.efficiency;
-    const ticketEfficiency = ticketEff.get(agentId) ?? null;
     const overallEfficiency = computeOverall(taskEfficiency, ticketEfficiency);
     const totalTasks = normalized.pending + normalized.closed;
     const completedTasks = normalized.closed;
@@ -421,6 +465,8 @@ async function upsertBucket(
       totalTasks,
       completedTasks,
       delayedTasks,
+      ticketsClosed: person.ticketsClosed,
+      ticketsPending: person.ticketsPending,
       onTimeCompletionRate: null,
       averageTaskCompletionHours: null,
       efficiencyScore: new Prisma.Decimal(round2(overallEfficiency)),
@@ -648,9 +694,17 @@ export async function runMigrateKpiToEfficiencyBreakdowns(options?: {
 
     const agentById = await loadAgentEnrichment();
     const existingUsers = await prismaWrite.mergedUser.findMany({
-      select: { sourceUserId: true },
+      select: { sourceUserId: true, name: true, email: true },
     });
     const mergedUserIds = new Set(existingUsers.map((u) => u.sourceUserId.toString()));
+    // Fold portal-synthetic merged ids into their HRIS person (personnel-tab row).
+    const canonicalIds = buildCanonicalMergedIdMap(existingUsers);
+    for (const enrichment of agentById.values()) {
+      enrichment.mergedSourceUserId = canonicalMergedId(
+        enrichment.mergedSourceUserId,
+        canonicalIds,
+      );
+    }
 
     const snapshots = await prismaPrimary.kpiMaintenancePeriodSnapshot.findMany({
       select: {
@@ -691,13 +745,13 @@ export async function runMigrateKpiToEfficiencyBreakdowns(options?: {
     const allBuckets = [...snapshotBuckets.values(), ...derived];
 
     // Cache ticket eff by window key to avoid repeat queries.
-    const ticketCache = new Map<string, Map<string, number>>();
+    const ticketCache = new Map<string, Map<string, { closed: number; pending: number }>>();
 
     for (const bucket of allBuckets) {
       const tKey = `${bucket.start.toISOString()}|${bucket.end.toISOString()}`;
       let ticketEff = ticketCache.get(tKey);
       if (!ticketEff) {
-        ticketEff = await ticketEfficiencyForWindow(bucket.start, bucket.end);
+        ticketEff = await ticketCountsForWindow(bucket.start, bucket.end);
         ticketCache.set(tKey, ticketEff);
       }
       await upsertBucket(

@@ -14,7 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignment-colors";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AutoSubmitForm } from "@/components/AutoSubmitForm";
@@ -222,18 +222,11 @@ export default async function AgentHome({
   const fetchTicketPipeline = !isCompanyBoard && boardTab !== "kpi";
 
   async function loadAgentsForCompanyFilter(companyTeamId: string) {
-    const portals = await prisma.portalAccount.findMany({
-      where: {
-        role: { in: ["Admin", "Personnel"] },
-        accountStatus: "ACTIVE",
-        staffDesignatedCompanyId: companyTeamId,
-      },
-      select: { email: true },
-    });
-    const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
-    if (emails.length === 0) return [];
+    // Merged-first company membership so filters match the personnel tab.
+    const agentIds = await loadAgentIdsForCompanyTeam(companyTeamId);
+    if (agentIds.length === 0) return [];
     return prisma.agent.findMany({
-      where: { email: { in: emails } },
+      where: { id: { in: agentIds } },
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     });

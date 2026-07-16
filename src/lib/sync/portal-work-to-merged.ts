@@ -21,6 +21,10 @@ import {
 } from "@/lib/kpis";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import {
+  buildCanonicalMergedIdMap,
+  canonicalMergedId,
+} from "@/lib/sync/merged-person-identity";
+import {
   aggregatePersonnelTaskMetrics,
   applyDelayPenaltiesToPersonnelTasks,
   combinedPersonnelEfficiency,
@@ -123,6 +127,16 @@ async function buildAgentEnrichment(): Promise<{
     `,
   ]);
 
+  // Fold portal-synthetic merged ids (>= 9e9) into their HRIS person so all
+  // work attribution lands on the merged_users row the personnel tab shows.
+  const canonicalIds = buildCanonicalMergedIdMap(
+    mergedRows.map((m) => ({
+      sourceUserId: m.source_user_id,
+      name: m.name,
+      email: m.email,
+    })),
+  );
+
   const byEmail = new Map<string, PortalLink>();
   // Prefer active portals over LEGACY_CONFLICT when emails collide.
   const sortedPortals = [...portals].sort((a, b) => {
@@ -136,7 +150,10 @@ async function buildAgentEnrichment(): Promise<{
       byEmail.set(key, {
         id: portal.id,
         email: portal.email,
-        mergedSourceUserId: portal.mergedSourceUserId,
+        mergedSourceUserId:
+          portal.mergedSourceUserId != null
+            ? canonicalMergedId(portal.mergedSourceUserId, canonicalIds)
+            : null,
       });
     }
   }
@@ -214,6 +231,9 @@ async function buildAgentEnrichment(): Promise<{
         }
       }
       if (best) mergedSourceUserId = best.sourceUserId;
+    }
+    if (mergedSourceUserId != null) {
+      mergedSourceUserId = canonicalMergedId(mergedSourceUserId, canonicalIds);
     }
 
     const enrichment: AgentEnrichment = {

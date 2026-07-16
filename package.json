@@ -65,6 +65,7 @@
     "db:seed:auth-role-mappings": "npx tsx scripts/seed-auth-role-mappings.ts",
     "db:sync:hris-portal": "npx tsx scripts/sync-hris-portal-profiles.ts",
     "db:sync:hris-portal:incremental": "npx tsx scripts/sync-hris-portal-incremental.ts",
+    "db:sync:hris-clockins": "npx tsx scripts/sync-hris-clockins.ts",
     "db:reset:passwords": "npx tsx scripts/reset-all-login-passwords.ts --confirm aci12345",
     "db:import:restore": "npx tsx scripts/import-from-restore-db.ts --confirm && npx tsx scripts/link-portal-staff-after-import.ts && npm run db:reset:passwords",
     "db:import:july-backup": "npx tsx scripts/import-ticketing-backup.ts --confirm && npm run db:fix:logins",

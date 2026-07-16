@@ -13,10 +13,9 @@ export const IT_SALF_DAILY_COMPANY_COLUMNS = ["ALI", "ACI", "MCHISI", "AWIC", "E
 
 const PILLAR_FROM_FILENAME: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
   { match: /data\s*backup/i, pillar: "DATA BACKUP" },
-  { match: /system\s*availability/i, pillar: "SYSTEM AVAILABILITY" },
-  { match: /cybersecurity/i, pillar: "CYBERSECURITY" },
-  { match: /network\s*performance/i, pillar: "NETWORK PERFORMANCE" },
   { match: /system\s*maintenance/i, pillar: "SYSTEM MAINTENANCE" },
+  { match: /monitoring/i, pillar: "MONITORING" },
+  { match: /documentation/i, pillar: "DOCUMENTATION" },
 ];
 
 export type ItSalfDailyRow = {

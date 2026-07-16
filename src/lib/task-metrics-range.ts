@@ -85,6 +85,33 @@ export function defaultTaskMetricsRangeForCadence(
   return { dailyDate: defaultTaskMetricsDailyDate(), from, to };
 }
 
+/**
+ * Merged-DB reporting period key for the Task Metrics panel state
+ * (matches merged_user_efficiency_breakdowns: 2026-07-14 | 2026-W28 | 2026-07 | 2026-Q3).
+ */
+export function taskMetricsMergedPeriod(
+  cadence: KpiFrequencyCode,
+  opts: { dailyDate: string; rangeFrom: string; rangeTo: string },
+): { frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY"; periodKey: string } {
+  if (cadence === "DAILY") {
+    const d = DateTime.fromISO(opts.dailyDate.trim() || calendarYmd());
+    return { frequency: "DAILY", periodKey: d.isValid ? d.toISODate()! : calendarYmd() };
+  }
+  if (cadence === "MONTHLY") {
+    const ym = isYearMonthKey(opts.rangeFrom) ? opts.rangeFrom.trim() : calendarYm();
+    return { frequency: "MONTHLY", periodKey: ym };
+  }
+  const from = DateTime.fromISO(opts.rangeFrom.trim());
+  const base = from.isValid ? from : DateTime.now();
+  if (cadence === "QUARTERLY") {
+    return { frequency: "QUARTERLY", periodKey: `${base.year}-Q${base.quarter}` };
+  }
+  return {
+    frequency: "WEEKLY",
+    periodKey: `${base.weekYear}-W${String(base.weekNumber).padStart(2, "0")}`,
+  };
+}
+
 /** Query `from` / `to` for `/api/kpis/task-metrics` from cadence + UI state. */
 export function resolveTaskMetricsQueryRange(
   cadence: KpiFrequencyCode,

@@ -1,3 +1,4 @@
+import { runHrisAttendanceSync } from "@/lib/auth/hris-attendance-sync";
 import {
   canonicalProfileFromMerged,
   syncPortalProfile,
@@ -21,10 +22,23 @@ export type HrisSyncResult = {
   synced: number;
   failed: number;
   durationMs: number;
+  attendanceUpserted?: number;
 };
 
 export async function runHrisPortalSync(): Promise<HrisSyncResult> {
   const start = Date.now();
+
+  // Pull current clock-ins from the live HRIS DB first, so On Duty is fresh.
+  let attendanceUpserted = 0;
+  try {
+    const att = await runHrisAttendanceSync();
+    attendanceUpserted = att.upserted;
+    if (att.skipped) {
+      console.warn(`[hris-sync-job] attendance sync skipped: ${att.skipped}`);
+    }
+  } catch (e) {
+    console.error("[hris-sync-job] attendance sync failed", e);
+  }
 
   const lastSync = await prismaAuth.user.aggregate({
     _max: { lastSyncedAt: true },
@@ -71,5 +85,5 @@ export async function runHrisPortalSync(): Promise<HrisSyncResult> {
     }
   }
 
-  return { total: rows.length, synced, failed, durationMs: Date.now() - start };
+  return { total: rows.length, synced, failed, durationMs: Date.now() - start, attendanceUpserted };
 }

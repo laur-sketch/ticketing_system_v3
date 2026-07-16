@@ -1,6 +1,7 @@
 /**
- * Activities / On Duty roster: HRIS-linked personnel from primary portals,
- * enriched with today's clock-in status from the merged database only.
+ * Activities / On Duty roster: active personnel from mergedatabase-demo
+ * (merged_users is the source of truth for who exists, their name and company),
+ * enriched with today's clock-in status from the merged attendance table.
  */
 
 import { pickCanonicalAgentForPortal } from "@/lib/admin-roster";
@@ -11,8 +12,13 @@ import {
   loadTodayClockInsBySourceUserId,
   type DutyStatus,
 } from "@/lib/merged-duty-status";
-import { prisma } from "@/lib/prisma";
+import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import { prisma, prismaSecondary } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";
+import {
+  buildCanonicalMergedIdMap,
+  canonicalMergedId,
+} from "@/lib/sync/merged-person-identity";
 
 export type OnDutyAgentSnapshot = {
   id: string;
@@ -54,37 +60,50 @@ function formatLastActivity(clockInAt: Date | null, dutyStatus: DutyStatus): str
   })}`;
 }
 
-function companyLabelForPortal(portal: {
-  staffDesignatedCompany: { name: string } | null;
-}): string {
-  const designated = portal.staffDesignatedCompany?.name?.trim();
-  if (designated) {
-    return resolveRosterCompanyName(designated) ?? designated;
-  }
-  return "General Queue";
+function resolveHrisSourceTag(): string {
+  return (
+    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
+    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
+    MERGED_SOURCE_DATABASE.HRIS_DEMO
+  );
 }
 
+/** Company label straight from merged_users.company_name (personnel source of truth). */
+function companyLabel(mergedCompanyName: string | null | undefined): string {
+  const merged = mergedCompanyName?.trim();
+  if (merged) return resolveRosterCompanyName(merged) ?? merged;
+  return "Unassigned";
+}
+
+type MergedRosterRow = {
+  source_user_id: bigint;
+  name: string;
+  email: string | null;
+  role: string;
+  company_name: string | null;
+  source_database: string;
+};
+
 /**
- * Load all active HRIS-linked staff, status from merged DB clock-ins for today (PHT).
+ * Load the active mergedatabase-demo HRIS roster with today's clock-in status (PHT).
+ * Primary portals/agents are used only to attach a stable agent id per person.
  */
 export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promise<OnDutySnapshot> {
   const pageSize = Math.min(48, Math.max(1, options.pageSize ?? 6));
   const pageRaw = Math.max(1, options.page ?? 1);
   const companyFilter = options.companyFilter?.trim() ?? "";
+  const sourceTag = resolveHrisSourceTag();
 
-  const [portals, agents] = await Promise.all([
+  const [mergedRows, portals, agents] = await Promise.all([
+    prismaSecondary.$queryRaw<MergedRosterRow[]>`
+      SELECT source_user_id, name, email, role, company_name, source_database
+      FROM merged_users
+      WHERE is_active = 1
+      ORDER BY name ASC
+    `,
     prisma.portalAccount.findMany({
-      where: {
-        mergedSourceUserId: { not: null },
-        accountStatus: "ACTIVE",
-      },
-      select: {
-        email: true,
-        name: true,
-        role: true,
-        mergedSourceUserId: true,
-        staffDesignatedCompany: { select: { name: true } },
-      },
+      where: { mergedSourceUserId: { not: null } },
+      select: { email: true, name: true, mergedSourceUserId: true },
     }),
     prisma.agent.findMany({
       orderBy: { createdAt: "asc" },
@@ -92,32 +111,62 @@ export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promi
     }),
   ]);
 
-  const staffPortals = portals.filter((p) => isStaffPortalRole(p.role) && p.mergedSourceUserId != null);
-  if (staffPortals.length === 0) {
+  /** Roster = HRIS rows only; other merged rows (portal duplicates) map back via canonical ids. */
+  const rosterRows = mergedRows.filter(
+    (r) => r.source_database === sourceTag && r.role !== "super_admin",
+  );
+  if (rosterRows.length === 0) {
     return { agents: [], page: 1, totalPages: 1, total: 0, companies: [], onDutyCount: 0 };
   }
 
-  const sourceIds = staffPortals.map((p) => p.mergedSourceUserId!);
-  const clockInsToday = await loadTodayClockInsBySourceUserId(sourceIds);
+  const canonicalMap = buildCanonicalMergedIdMap(
+    mergedRows.map((r) => ({ sourceUserId: r.source_user_id, name: r.name, email: r.email })),
+  );
+  const portalsByCanonicalId = new Map<string, Array<{ email: string; name: string }>>();
+  for (const p of portals) {
+    if (p.mergedSourceUserId == null) continue;
+    const key = canonicalMergedId(p.mergedSourceUserId, canonicalMap).toString();
+    const list = portalsByCanonicalId.get(key) ?? [];
+    list.push({ email: p.email, name: p.name });
+    portalsByCanonicalId.set(key, list);
+  }
+
+  const clockInsToday = await loadTodayClockInsBySourceUserId(
+    rosterRows.map((r) => r.source_user_id),
+  );
 
   const allAgents: OnDutyAgentSnapshot[] = [];
-  const seenAgentIds = new Set<string>();
+  const seenIds = new Set<string>();
 
-  for (const portal of staffPortals) {
-    const canon = pickCanonicalAgentForPortal(portal, agents);
-    if (!canon || seenAgentIds.has(canon.id)) continue;
-    seenAgentIds.add(canon.id);
+  for (const row of rosterRows) {
+    const sourceKey = row.source_user_id.toString();
 
-    const sourceKey = portal.mergedSourceUserId!.toString();
+    /** Attach a primary agent id when one exists (by merged email, portal emails, or name). */
+    const candidates = [
+      ...(row.email?.trim() ? [{ email: row.email.trim().toLowerCase(), name: row.name }] : []),
+      ...(portalsByCanonicalId.get(sourceKey) ?? []),
+    ];
+    let canon: { id: string } | null = null;
+    for (const candidate of candidates) {
+      canon = pickCanonicalAgentForPortal(candidate, agents);
+      if (canon) break;
+    }
+    if (!canon) {
+      canon = pickCanonicalAgentForPortal({ email: `${sourceKey}@hris.merged`, name: row.name }, agents);
+    }
+
+    const id = canon?.id ?? `merged:${sourceKey}`;
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+
     const lastClockIn = clockInsToday.get(sourceKey) ?? null;
     const dutyStatus = dutyStatusFromLatestClockIn(lastClockIn);
     const isOnDuty = isOnDutyStatus(dutyStatus);
-    const companyName = companyLabelForPortal(portal);
 
     allAgents.push({
-      id: canon.id,
-      name: canon.name || portal.name,
-      companyName,
+      id,
+      name: row.name,
+      companyName: companyLabel(row.company_name),
       isOnline: isOnDuty,
       dutyStatus,
       isOnDuty,

@@ -39,6 +39,37 @@ export async function GET(req: Request) {
   const db = createEfficiencyQueryClient();
 
   try {
+    if (mode === "personnel") {
+      // Personnel verification view: breakdown rows joined to merged_users so
+      // names/companies come straight from mergedatabase-demo.
+      const rows = await db.mergedUserEfficiencyBreakdown.findMany({
+        where: { periodKey, frequency },
+        orderBy: [{ overallEfficiency: "desc" }, { displayName: "asc" }],
+        include: { user: { select: { name: true, companyName: true } } },
+      });
+      return NextResponse.json({
+        periodKey,
+        frequency,
+        source: "mergedatabase",
+        rows: rows.map((r) => ({
+          sourceUserId: r.sourceUserId.toString(),
+          name: r.user?.name?.trim() || r.displayName,
+          companyName: r.user?.companyName ?? null,
+          totalTasks: r.totalTasks,
+          completedTasks: r.completedTasks,
+          delayedTasks: r.delayedTasks,
+          ticketsClosed: r.ticketsClosed,
+          ticketsPending: r.ticketsPending,
+          taskEfficiency: r.taskEfficiency != null ? Number(r.taskEfficiency) : null,
+          ticketEfficiency: r.ticketEfficiency != null ? Number(r.ticketEfficiency) : null,
+          overallEfficiency: Number(r.overallEfficiency),
+          onTimeCompletionRate:
+            r.onTimeCompletionRate != null ? Number(r.onTimeCompletionRate) : null,
+          computedAt: r.computedAt.toISOString(),
+        })),
+      });
+    }
+
     if (mode === "leaderboard") {
       const limit = Number(searchParams.get("limit") ?? "50");
       const rows = await getEfficiencyLeaderboard(db, {

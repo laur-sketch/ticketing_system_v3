@@ -118,7 +118,6 @@ export async function loadPersonnelAccountsPayload(viewer: {
     prismaPrimary.agent.findMany({ select: { id: true, email: true, name: true } }),
     prismaPrimary.portalAccount.findMany({
       where: {
-        accountStatus: { not: "LEGACY_CONFLICT" },
         mergedSourceUserId: { not: null },
       },
       select: {
@@ -146,11 +145,20 @@ export async function loadPersonnelAccountsPayload(viewer: {
   ]);
 
   const colorByPortalId = await loadPortalStaffAssignmentColorMap();
-  const portalByMergedId = new Map(
-    portals
-      .filter((p) => p.mergedSourceUserId != null)
-      .map((p) => [p.mergedSourceUserId!.toString(), p]),
-  );
+  /**
+   * Prefer the active portal profile; fall back to a LEGACY_CONFLICT one so
+   * users whose portals were all merged/conflicted (e.g. duplicate-email
+   * legacy accounts) still expose their assignment color and profile link.
+   */
+  const portalByMergedId = new Map<string, (typeof portals)[number]>();
+  for (const p of portals) {
+    if (p.mergedSourceUserId == null) continue;
+    const key = p.mergedSourceUserId.toString();
+    const existing = portalByMergedId.get(key);
+    if (!existing || (existing.accountStatus === "LEGACY_CONFLICT" && p.accountStatus !== "LEGACY_CONFLICT")) {
+      portalByMergedId.set(key, p);
+    }
+  }
   const kpiByMergedId = new Map(
     kpiAverages.map((k) => [
       k.source_user_id.toString(),
@@ -199,7 +207,12 @@ export async function loadPersonnelAccountsPayload(viewer: {
       teamName: company.teamName,
       portalAccountId: portal?.id ?? null,
       staffRole: portalRole,
-      accountStatus: portal?.accountStatus ?? (m.is_active ? "ACTIVE" : "INACTIVE"),
+      accountStatus:
+        portal && portal.accountStatus !== "LEGACY_CONFLICT"
+          ? portal.accountStatus
+          : m.is_active
+            ? "ACTIVE"
+            : "INACTIVE",
       staffAssignmentColor: portal ? colorByPortalId.get(portal.id) ?? null : null,
       kpiOverallPercent: kpi?.overall ?? null,
       kpiAveragePercent: kpi?.average ?? null,

@@ -156,7 +156,7 @@ describe("aggregatePersonnelTaskMetrics", () => {
       name: "Alex",
       done: 3,
       remaining: 1,
-      percent: 100,
+      percent: 75,
       pillarsContributed: 1,
     });
   });
@@ -171,16 +171,16 @@ describe("normalizePersonnelTaskTotals", () => {
     });
   });
 
-  it("computes efficiency as done divided by pending", () => {
+  it("computes efficiency as done divided by total assigned (company-view math)", () => {
     expect(normalizePersonnelTaskTotals(4, 3)).toEqual({
       pending: 1,
       closed: 3,
-      efficiency: 100,
+      efficiency: 75,
     });
     expect(normalizePersonnelTaskTotals(10, 3)).toEqual({
       pending: 7,
       closed: 3,
-      efficiency: 43,
+      efficiency: 30,
     });
   });
 });
@@ -232,7 +232,44 @@ describe("mergePersonnelMetricCards", () => {
     expect(rows[0]).toMatchObject({
       name: "Alex",
       tickets: { closed: 5, pending: 2, efficiency: 71 },
-      tasks: { closed: 3, pending: 1, efficiency: 100, pillarsContributed: 1 },
+      tasks: { closed: 3, pending: 1, efficiency: 75, pillarsContributed: 1 },
+    });
+  });
+
+  it("accumulates duplicate agent rows for the same person instead of overwriting", () => {
+    const rows = mergePersonnelMetricCards(
+      [
+        {
+          id: "m1",
+          name: "Mark Anthony Robina",
+          role: "Assignee",
+          total: 13,
+          done: 11,
+          remaining: 2,
+          percent: 85,
+          pillarsContributed: 2,
+        },
+        {
+          id: "m2",
+          name: "Mark Anthony Robina",
+          role: "Assignee",
+          total: 13,
+          done: 1,
+          remaining: 12,
+          percent: 8,
+          pillarsContributed: 1,
+        },
+      ],
+      [
+        { id: "m1", name: "Mark Anthony Robina", closed: 5, pending: 0, efficiency: 100 },
+        { id: "m2", name: "Mark Anthony Robina", closed: 1, pending: 0, efficiency: 100 },
+      ],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tickets: { closed: 6, pending: 0, efficiency: 100 },
+      // 12 done of 26 assigned = 46%
+      tasks: { closed: 12, pending: 14, efficiency: 46, pillarsContributed: 2 },
     });
   });
 });

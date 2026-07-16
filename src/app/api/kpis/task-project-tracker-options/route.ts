@@ -17,7 +17,7 @@ import {
 } from "@/lib/kpi-recurrence";
 import { IT_PROJECT_IMPLEMENTATION_TITLE } from "@/lib/it-task-pillar-titles";
 import { prisma } from "@/lib/prisma";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { loadEffectiveCompaniesByPortalEmail, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { isStaffPortalRole } from "@/lib/staff-role";
 import { TaskStatus } from "@prisma/client/primary";
 
@@ -204,9 +204,11 @@ export async function GET() {
       },
     }),
     prisma.portalAccount.findMany({
-      where: { staffDesignatedCompanyId: { not: null } },
+      where: { accountStatus: "ACTIVE" },
       select: {
+        email: true,
         role: true,
+        mergedSourceUserId: true,
         staffDesignatedCompany: { select: { id: true, name: true } },
       },
     }),
@@ -215,10 +217,13 @@ export async function GET() {
     }),
   ]);
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  // Merged-first companies so tracker grouping matches the personnel tab.
+  const staffPortalRows = staffCompanyRows.filter((row) => isStaffPortalRole(row.role));
+  const effectiveCompanyByEmail = await loadEffectiveCompaniesByPortalEmail(staffPortalRows);
   const companiesById = new Map<string, { id: string; name: string }>();
-  for (const row of staffCompanyRows) {
-    if (!isStaffPortalRole(row.role) || !row.staffDesignatedCompany) continue;
-    companiesById.set(row.staffDesignatedCompany.id, row.staffDesignatedCompany);
+  for (const company of effectiveCompanyByEmail.values()) {
+    if (!company?.id) continue;
+    companiesById.set(company.id, { id: company.id, name: company.name });
   }
   const companies = sortByRosterOrder(Array.from(companiesById.values())).filter((company) =>
     restrictToAssignedCompany ? company.id === scopedCompanyId : true,
@@ -235,20 +240,12 @@ export async function GET() {
         where: { email: { in: assigneeEmails } },
         select: {
           email: true,
-          staffDesignatedCompanyId: true,
-          staffDesignatedCompany: { select: { name: true } },
+          mergedSourceUserId: true,
+          staffDesignatedCompany: { select: { id: true, name: true } },
         },
       })
     : [];
-  const companyByEmail = new Map(
-    portalCompanies.map((row) => [
-      row.email.trim().toLowerCase(),
-      {
-        id: row.staffDesignatedCompanyId,
-        name: row.staffDesignatedCompany?.name ?? null,
-      },
-    ]),
-  );
+  const companyByEmail = await loadEffectiveCompaniesByPortalEmail(portalCompanies);
 
   const prefixCounts = new Map<string, number>();
   const now = new Date();

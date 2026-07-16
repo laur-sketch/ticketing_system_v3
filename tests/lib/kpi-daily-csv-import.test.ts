@@ -8,7 +8,8 @@ import {
 describe("kpi-daily-csv-import", () => {
   it("maps filenames to pillars", () => {
     expect(pillarFromItSalfFilename("IT SALF - DATA BACKUP.csv")).toBe("DATA BACKUP");
-    expect(pillarFromItSalfFilename("IT SALF - SYSTEM AVAILABILITY.csv")).toBe("SYSTEM AVAILABILITY");
+    expect(pillarFromItSalfFilename("IT SALF - SYSTEM MAINTENANCE.csv")).toBe("SYSTEM MAINTENANCE");
+    expect(pillarFromItSalfFilename("IT SALF - DOCUMENTATION.csv")).toBe("DOCUMENTATION");
   });
 
   it("parses IT SALF date cells", () => {

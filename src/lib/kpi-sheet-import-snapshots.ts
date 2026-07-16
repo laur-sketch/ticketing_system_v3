@@ -21,22 +21,18 @@ export { parseCsvLine };
 
 /** Pillars imported from the IT SALF KPI spreadsheet into Task metrics. */
 export const KPI_SHEET_IMPORT_PILLARS: ItTaskPillarTitle[] = [
-  "SYSTEM AVAILABILITY",
-  "CYBERSECURITY",
   "DATA BACKUP",
   "SYSTEM MAINTENANCE",
-  "NETWORK PERFORMANCE",
+  "MONITORING",
+  "DOCUMENTATION",
 ];
 
 /** Map KPI sheet labels (any case/spacing) to canonical pillar titles. */
 const PILLAR_LOOKUP: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
-  { match: /^\s*system\s+availability\s*$/i, pillar: "SYSTEM AVAILABILITY" },
-  { match: /^\s*cybersecurity\s*$/i, pillar: "CYBERSECURITY" },
   { match: /^\s*(data|database)\s+backup\s*$/i, pillar: "DATA BACKUP" },
   { match: /^\s*system\s+maintenance\s*$/i, pillar: "SYSTEM MAINTENANCE" },
   { match: /^\s*monitoring\s*$/i, pillar: "MONITORING" },
-  { match: /^\s*preventive\s+maintenance\s*$/i, pillar: "PREVENTIVE MAINTENANCE" },
-  { match: /^\s*network\s+performance\s*$/i, pillar: "NETWORK PERFORMANCE" },
+  { match: /^\s*documentations?\s*$/i, pillar: "DOCUMENTATION" },
 ];
 
 export function matchPillarFromSheetLabel(raw: string): ItTaskPillarTitle | null {
@@ -293,10 +289,7 @@ export function parseItSalfPillarCsv(content: string, timeZone: string): DailyPi
 }
 
 const IT_SALF_DISPLAY_FILENAMES: Partial<Record<ItTaskPillarTitle, string>> = {
-  "SYSTEM AVAILABILITY": "IT SALF - SYSTEM AVAILABILITY.csv",
   "DATA BACKUP": "IT SALF - DATA BACKUP.csv",
-  CYBERSECURITY: "IT SALF - CYBERSECURITY.csv",
-  "NETWORK PERFORMANCE": "IT SALF - NETWORK PERFORMANCE.csv",
 };
 const DAILY_ACTIVITY_MONITORING_FILENAME = "IT DAILY ACTIVITY - DAILY ACTIVITY ROBINA.csv";
 
@@ -417,16 +410,13 @@ export async function loadItSalfDisplayCsvRowsForTaskMetrics(args: {
   return out;
 }
 
-/** Map `IT SALF - SYSTEM AVAILABILITY.csv` style filenames to pillar titles. */
+/** Map `IT SALF - DATA BACKUP.csv` style filenames to pillar titles. */
 export function pillarFromItSalfDailyFilename(filePath: string): ItTaskPillarTitle | null {
   const name = basename(filePath).toUpperCase();
-  if (name.includes("NETWORK") && name.includes("PERFORMANCE")) return "NETWORK PERFORMANCE";
-  if (name.includes("CYBER")) return "CYBERSECURITY";
-  if (name.includes("SYSTEM") && name.includes("AVAILABILITY")) return "SYSTEM AVAILABILITY";
   if (name.includes("SYSTEM") && name.includes("MAINTENANCE")) return "SYSTEM MAINTENANCE";
   if (name.includes("MONITORING")) return "MONITORING";
-  if (name.includes("PREVENTIVE") && name.includes("MAINTENANCE")) return "PREVENTIVE MAINTENANCE";
   if (name.includes("DATA") && name.includes("BACKUP")) return "DATA BACKUP";
+  if (name.includes("DOCUMENTATION")) return "DOCUMENTATION";
   return matchPillarFromSheetLabel(name.replace(/\.CSV$/i, "").replace(/^IT SALF\s*-\s*/i, ""));
 }
 

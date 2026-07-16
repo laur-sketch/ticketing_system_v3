@@ -1,15 +1,12 @@
 /** Canonical task / KPI pillar titles (Task management intake + task metrics grid). */
 export const IT_TASK_PILLAR_TITLES = [
-  "SYSTEM AVAILABILITY",
   "HELPDESK SUPPORT",
-  "CYBERSECURITY",
   "DATA BACKUP",
   "SYSTEM MAINTENANCE",
   "MONITORING",
-  "PREVENTIVE MAINTENANCE",
+  "DOCUMENTATION",
   "USER SUPPORT",
   "IT PROJECT IMPLEMENTATION",
-  "NETWORK PERFORMANCE",
 ] as const;
 
 export const IT_PROJECT_IMPLEMENTATION_TITLE = "IT PROJECT IMPLEMENTATION" as const;
@@ -20,14 +17,11 @@ export function isItProjectImplementationPillar(title: string): boolean {
 
 /** Task title dropdown — excludes pillars tracked outside KPI maintenance (helpdesk tickets, etc.). */
 export const IT_TASK_PILLAR_SELECT_OPTIONS = [
-  "SYSTEM AVAILABILITY",
-  "CYBERSECURITY",
   "DATA BACKUP",
   "SYSTEM MAINTENANCE",
   "MONITORING",
-  "PREVENTIVE MAINTENANCE",
+  "DOCUMENTATION",
   "IT PROJECT IMPLEMENTATION",
-  "NETWORK PERFORMANCE",
 ] as const;
 
 export type ItTaskPillarTitle = (typeof IT_TASK_PILLAR_TITLES)[number];

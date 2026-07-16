@@ -126,9 +126,14 @@ export type PersonnelTicketMetricCard = {
 /** @deprecated Use PersonnelCombinedMetricCard */
 export type PersonnelMetricCardRow = PersonnelTaskMetricCard | PersonnelTicketMetricCard;
 
+/**
+ * Done ÷ total, matching the company-view pillar math (and the per-pillar
+ * contributor rows), so the personnel cards agree with the company donuts.
+ */
 function personnelTaskEfficiency(done: number, pending: number): number {
-  if (pending <= 0) return done > 0 ? 100 : 0;
-  return Math.min(100, Math.round((done / pending) * 100));
+  const total = done + pending;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.round((done / total) * 100));
 }
 
 export function normalizePersonnelTaskTotals(
@@ -201,10 +206,15 @@ export function mergePersonnelMetricCards(
       tickets: null,
       tasks: null,
     };
+    // The same person can own several agent rows (legacy emails, duplicate
+    // accounts) — accumulate their counts instead of overwriting the card.
+    const closed = (current.tickets?.closed ?? 0) + ticket.closed;
+    const pending = (current.tickets?.pending ?? 0) + ticket.pending;
+    const total = closed + pending;
     current.tickets = {
-      closed: ticket.closed,
-      pending: ticket.pending,
-      efficiency: Math.round(ticket.efficiency),
+      closed,
+      pending,
+      efficiency: total > 0 ? Math.round((closed / total) * 100) : Math.round(ticket.efficiency),
     };
     if (ticket.id) current.id = ticket.id;
     byName.set(key, current);
@@ -221,17 +231,30 @@ export function mergePersonnelMetricCards(
       tasks: null,
     };
     const normalized = normalizePersonnelTaskTotals(task.total, task.done);
-    const penaltyDeduction = task.penaltyDeduction ?? 0;
-    const efficiencyBeforePenalty = normalized.efficiency;
+    // Accumulate duplicate person rows; the delay penalty is name-keyed, so
+    // the same deduction would repeat — take the max instead of summing it.
+    const closed = (current.tasks?.closed ?? 0) + normalized.closed;
+    const pending = (current.tasks?.pending ?? 0) + normalized.pending;
+    const penaltyDeduction = Math.max(
+      task.penaltyDeduction ?? 0,
+      current.tasks?.penaltyDeduction ?? 0,
+    );
+    const efficiencyBeforePenalty = normalizePersonnelTaskTotals(
+      closed + pending,
+      closed,
+    ).efficiency;
     const efficiency =
       penaltyDeduction > 0
         ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
         : efficiencyBeforePenalty;
     current.tasks = {
-      pending: normalized.pending,
-      closed: normalized.closed,
+      pending,
+      closed,
       efficiency,
-      pillarsContributed: task.pillarsContributed,
+      pillarsContributed: Math.max(
+        task.pillarsContributed,
+        current.tasks?.pillarsContributed ?? 0,
+      ),
       ...(penaltyDeduction > 0
         ? { penaltyDeduction, efficiencyBeforePenalty }
         : {}),

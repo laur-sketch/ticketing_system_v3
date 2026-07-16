@@ -9,7 +9,7 @@ import {
 
 function kpiRow(overrides: Partial<KpiRowForSnapshot> & Pick<KpiRowForSnapshot, "id" | "frequency">): KpiRowForSnapshot {
   return {
-    title: "SYSTEM AVAILABILITY",
+    title: "DATA BACKUP",
     subKpis: wrapForPersist({
       segmented: false,
       flat: [
@@ -34,7 +34,7 @@ describe("buildSubtaskCsvPreviewForPillar", () => {
     const kpi = kpiRow({ id: "k1", frequency: "DAILY" });
     const nowKey = getDailyPeriodKey(DateTime.fromISO(ymd, { zone }).toJSDate(), zone);
     const preview = buildSubtaskCsvPreviewForPillar({
-      pillar: "SYSTEM AVAILABILITY",
+      pillar: "DATA BACKUP",
       pillarKpis: [kpi],
       metricsCadence: "DAILY",
       fromYmd: ymd,

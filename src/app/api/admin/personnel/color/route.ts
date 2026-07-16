@@ -8,6 +8,11 @@ import {
 import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
 import { isPersonnelAssignmentColorKey } from "@/lib/personnel-assignment-colors";
 import {
+  buildCanonicalMergedIdMap,
+  canonicalMergedId,
+  type MergedIdentityRow,
+} from "@/lib/sync/merged-person-identity";
+import {
   getPortalStaffAssignmentColor,
   setPortalStaffAssignmentColor,
 } from "@/lib/portal-staff-assignment-color-sql";
@@ -78,17 +83,24 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "HRIS user not found in mergedatabase." }, { status: 404 });
   }
 
-  // Prefer an already-linked portal; otherwise create/sync from merged profile.
-  let portal = await prismaPrimary.portalAccount.findFirst({
-    where: { mergedSourceUserId },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      staffDesignatedCompanyId: true,
-    },
-  });
+  // Prefer an already-linked ACTIVE portal; fall back to a LEGACY_CONFLICT one
+  // (users whose duplicate accounts were merged only have conflict portals left).
+  const portalSelect = {
+    id: true,
+    email: true,
+    name: true,
+    role: true,
+    staffDesignatedCompanyId: true,
+  } as const;
+  let portal =
+    (await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId, accountStatus: { not: "LEGACY_CONFLICT" } },
+      select: portalSelect,
+    })) ??
+    (await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId },
+      select: portalSelect,
+    }));
 
   if (!portal) {
     const profile = canonicalProfileFromMerged({
@@ -101,7 +113,15 @@ export async function PATCH(req: Request) {
       position: merged.position,
       department: merged.department,
     });
-    await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
+    try {
+      await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
+    } catch (e) {
+      console.error("syncPortalProfile (color route) failed", e);
+      return NextResponse.json(
+        { error: "Could not create a portal profile for this HRIS user." },
+        { status: 500 },
+      );
+    }
 
     portal = await prismaPrimary.portalAccount.findFirst({
       where: {
@@ -112,13 +132,7 @@ export async function PATCH(req: Request) {
             : []),
         ],
       },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        staffDesignatedCompanyId: true,
-      },
+      select: portalSelect,
     });
   }
 
@@ -159,6 +173,42 @@ export async function PATCH(req: Request) {
   } catch (e) {
     console.error("setPortalStaffAssignmentColor failed", e);
     return NextResponse.json({ error: "Could not save assignment color." }, { status: 500 });
+  }
+
+  /**
+   * Propagate the color to every other portal row of the same person (duplicate
+   * legacy portals link to synthetic merged ids >= 9e9). Agent/ticket views
+   * resolve colors by portal email, so all of the person's rows must agree.
+   */
+  try {
+    const identityRows = await prismaSecondary.$queryRaw<
+      Array<{ source_user_id: bigint; name: string; email: string | null }>
+    >`
+      SELECT source_user_id, name, email
+      FROM merged_users
+      WHERE is_active = 1
+    `;
+    const canonicalMap = buildCanonicalMergedIdMap(
+      identityRows.map(
+        (r): MergedIdentityRow => ({
+          sourceUserId: r.source_user_id,
+          name: r.name,
+          email: r.email,
+        }),
+      ),
+    );
+    const personIds = identityRows
+      .map((r) => r.source_user_id)
+      .filter((id) => canonicalMergedId(id, canonicalMap) === mergedSourceUserId);
+    const siblingPortals = await prismaPrimary.portalAccount.findMany({
+      where: { mergedSourceUserId: { in: personIds }, id: { not: portal.id } },
+      select: { id: true },
+    });
+    for (const sibling of siblingPortals) {
+      await setPortalStaffAssignmentColor(sibling.id, colorNext);
+    }
+  } catch (e) {
+    console.error("assignment color propagation to sibling portals failed", e);
   }
 
   if (portal.staffDesignatedCompanyId && isStaffPortalRole(portal.role)) {

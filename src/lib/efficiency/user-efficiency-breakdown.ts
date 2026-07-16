@@ -39,6 +39,10 @@ import { helpdeskSupportPercent } from "@/lib/kpis";
 import { normalizeTimeZone, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { prismaPrimary } from "@/lib/prisma";
 import {
+  buildCanonicalMergedIdMap,
+  canonicalMergedId,
+} from "@/lib/sync/merged-person-identity";
+import {
   applyPersonnelAverageEfficiencyFloor,
   normalizePersonnelTaskTotals,
 } from "@/lib/task-personnel-metrics";
@@ -283,10 +287,10 @@ async function loadTasksInWindow(start: Date, end: Date): Promise<TaskRow[]> {
   return rows as TaskRow[];
 }
 
-async function loadTicketEfficiencyByAgent(
+async function loadTicketCountsByAgent(
   start: Date,
   end: Date,
-): Promise<Map<string, number>> {
+): Promise<Map<string, { closed: number; pending: number }>> {
   const [closedByAgent, pendingByAgent] = await Promise.all([
     prismaPrimary.ticket.groupBy({
       by: ["assignedAgentId"],
@@ -306,27 +310,18 @@ async function loadTicketEfficiencyByAgent(
     }),
   ]);
 
-  const agentIds = new Set<string>();
-  for (const row of closedByAgent) if (row.assignedAgentId) agentIds.add(row.assignedAgentId);
-  for (const row of pendingByAgent) if (row.assignedAgentId) agentIds.add(row.assignedAgentId);
-
-  const closedMap = new Map(
-    closedByAgent
-      .filter((r) => r.assignedAgentId)
-      .map((r) => [r.assignedAgentId!, r._count] as const),
-  );
-  const pendingMap = new Map(
-    pendingByAgent
-      .filter((r) => r.assignedAgentId)
-      .map((r) => [r.assignedAgentId!, r._count] as const),
-  );
-
-  const out = new Map<string, number>();
-  for (const id of agentIds) {
-    const closed = closedMap.get(id) ?? 0;
-    const pending = pendingMap.get(id) ?? 0;
-    const pct = helpdeskSupportPercent(closed, pending);
-    if (pct != null) out.set(id, pct);
+  const out = new Map<string, { closed: number; pending: number }>();
+  for (const row of closedByAgent) {
+    if (!row.assignedAgentId) continue;
+    const cur = out.get(row.assignedAgentId) ?? { closed: 0, pending: 0 };
+    cur.closed += row._count;
+    out.set(row.assignedAgentId, cur);
+  }
+  for (const row of pendingByAgent) {
+    if (!row.assignedAgentId) continue;
+    const cur = out.get(row.assignedAgentId) ?? { closed: 0, pending: 0 };
+    cur.pending += row._count;
+    out.set(row.assignedAgentId, cur);
   }
   return out;
 }
@@ -438,13 +433,19 @@ export async function runComputeUserEfficiencyBreakdowns(
     const agentById = new Map(agents.map((a) => [a.agentId, a]));
 
     const existingUsers = await prismaWrite.mergedUser.findMany({
-      select: { sourceUserId: true, name: true },
+      select: { sourceUserId: true, name: true, email: true },
     });
     const mergedUserIds = new Set(existingUsers.map((u) => u.sourceUserId.toString()));
+    // Portal-synthetic merged ids (>= 9e9) fold into their HRIS person so the
+    // breakdown lands on the row the personnel tab shows (with company/role).
+    const canonicalIds = buildCanonicalMergedIdMap(existingUsers);
+    const mergedNameById = new Map(
+      existingUsers.map((u) => [u.sourceUserId.toString(), u.name] as const),
+    );
 
     for (const period of periods) {
       const tasks = await loadTasksInWindow(period.start, period.end);
-      const ticketEff = await loadTicketEfficiencyByAgent(period.start, period.end);
+      const ticketCounts = await loadTicketCountsByAgent(period.start, period.end);
       const checklistFallback =
         tasks.length === 0
           ? await loadChecklistFallbackByAgent(period.start, period.end)
@@ -460,19 +461,42 @@ export async function runComputeUserEfficiencyBreakdowns(
 
       const agentIds = new Set<string>([
         ...tasksByAgent.keys(),
-        ...ticketEff.keys(),
+        ...ticketCounts.keys(),
         ...checklistFallback.keys(),
       ]);
 
+      // Group agent rows by canonical merged person: the same person can own
+      // several agent rows (legacy emails / duplicate portals) and their work
+      // must accumulate on one breakdown row.
+      type PersonGroup = {
+        mergedSourceUserId: bigint;
+        portalAccountId: string | null;
+        name: string;
+        agentIds: string[];
+      };
+      const groups = new Map<string, PersonGroup>();
       for (const agentId of agentIds) {
         const enriched = agentById.get(agentId);
         if (!enriched) continue;
-        if (!mergedUserIds.has(enriched.mergedSourceUserId.toString())) {
+        const mergedId = canonicalMergedId(enriched.mergedSourceUserId, canonicalIds);
+        const key = mergedId.toString();
+        if (!mergedUserIds.has(key)) {
           result.skippedNoMergedUser++;
           continue;
         }
+        const group = groups.get(key) ?? {
+          mergedSourceUserId: mergedId,
+          portalAccountId: enriched.portalAccountId,
+          name: mergedNameById.get(key) ?? enriched.name,
+          agentIds: [],
+        };
+        group.portalAccountId = group.portalAccountId ?? enriched.portalAccountId;
+        group.agentIds.push(agentId);
+        groups.set(key, group);
+      }
 
-        const agentTasks = tasksByAgent.get(agentId) ?? [];
+      for (const group of groups.values()) {
+        const agentTasks = group.agentIds.flatMap((id) => tasksByAgent.get(id) ?? []);
         let totalTasks = agentTasks.length;
         let completedTasks = agentTasks.filter((t) => t.status === "DONE").length;
         let delayedTasks = agentTasks.filter((t) => t.status === "DELAYED").length;
@@ -532,7 +556,20 @@ export async function runComputeUserEfficiencyBreakdowns(
                 : null,
           }));
         } else {
-          const fb = checklistFallback.get(agentId);
+          // Sum checklist fallback across all agent rows of this person.
+          const fb = group.agentIds.reduce<{
+            total: number;
+            done: number;
+            details: Array<{ title: string; done: number; total: number }>;
+          } | null>((acc, id) => {
+            const part = checklistFallback.get(id);
+            if (!part || part.total <= 0) return acc;
+            if (!acc) return { total: part.total, done: part.done, details: [...part.details] };
+            acc.total += part.total;
+            acc.done += part.done;
+            acc.details.push(...part.details);
+            return acc;
+          }, null);
           if (fb && fb.total > 0) {
             const normalized = normalizePersonnelTaskTotals(fb.total, fb.done);
             totalTasks = normalized.pending + normalized.closed;
@@ -555,7 +592,20 @@ export async function runComputeUserEfficiencyBreakdowns(
           }
         }
 
-        const ticketEfficiency = ticketEff.get(agentId) ?? null;
+        // Sum ticket counts across the person's agent rows, then take the rate.
+        let ticketClosed = 0;
+        let ticketPending = 0;
+        let hasTicketData = false;
+        for (const id of group.agentIds) {
+          const counts = ticketCounts.get(id);
+          if (!counts) continue;
+          hasTicketData = true;
+          ticketClosed += counts.closed;
+          ticketPending += counts.pending;
+        }
+        const ticketEfficiency = hasTicketData
+          ? helpdeskSupportPercent(ticketClosed, ticketPending)
+          : null;
         if (ticketEfficiency != null && details.every((d) => d.taskSource !== "TICKET_SUMMARY")) {
           details.push({
             taskId: null,
@@ -592,7 +642,7 @@ export async function runComputeUserEfficiencyBreakdowns(
         const existing = await prismaWrite.mergedUserEfficiencyBreakdown.findUnique({
           where: {
             sourceUserId_periodKey_frequency: {
-              sourceUserId: enriched.mergedSourceUserId,
+              sourceUserId: group.mergedSourceUserId,
               periodKey: period.periodKey,
               frequency: period.frequency,
             },
@@ -602,8 +652,8 @@ export async function runComputeUserEfficiencyBreakdowns(
 
         const breakdownId = existing?.id ?? randomUUID();
         const payload = {
-          portalAccountId: enriched.portalAccountId,
-          displayName: enriched.name,
+          portalAccountId: group.portalAccountId,
+          displayName: group.name,
           periodStartAt: period.start,
           periodEndAt: period.end,
           overallEfficiency: new Prisma.Decimal(round2(overallEfficiency)),
@@ -614,6 +664,8 @@ export async function runComputeUserEfficiencyBreakdowns(
           totalTasks,
           completedTasks,
           delayedTasks,
+          ticketsClosed: hasTicketData ? ticketClosed : 0,
+          ticketsPending: hasTicketData ? ticketPending : 0,
           onTimeCompletionRate:
             onTimeCompletionRate != null
               ? new Prisma.Decimal(onTimeCompletionRate)
@@ -639,7 +691,7 @@ export async function runComputeUserEfficiencyBreakdowns(
           await prismaWrite.mergedUserEfficiencyBreakdown.create({
             data: {
               id: breakdownId,
-              sourceUserId: enriched.mergedSourceUserId,
+              sourceUserId: group.mergedSourceUserId,
               periodKey: period.periodKey,
               frequency: period.frequency,
               ...payload,

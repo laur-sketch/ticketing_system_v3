@@ -198,6 +198,8 @@ export async function ensureUserEfficiencyBreakdownTables(
       total_tasks                     INT NOT NULL DEFAULT 0,
       completed_tasks                 INT NOT NULL DEFAULT 0,
       delayed_tasks                   INT NOT NULL DEFAULT 0,
+      tickets_closed                  INT NOT NULL DEFAULT 0,
+      tickets_pending                 INT NOT NULL DEFAULT 0,
       on_time_completion_rate         DECIMAL(6,2) NULL,
       average_task_completion_hours   DECIMAL(10,2) NULL,
       efficiency_score                DECIMAL(8,2) NULL,
@@ -215,6 +217,21 @@ export async function ensureUserEfficiencyBreakdownTables(
         ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  // Pre-existing installs: add the ticket-count columns in place.
+  const ticketCols = await db.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'merged_user_efficiency_breakdowns'
+       AND COLUMN_NAME = 'tickets_closed'`,
+    targetDb,
+  );
+  if (Number(ticketCols[0]?.n ?? 0) === 0) {
+    await db.$executeRawUnsafe(`
+      ALTER TABLE ${target}.merged_user_efficiency_breakdowns
+        ADD COLUMN tickets_closed INT NOT NULL DEFAULT 0 AFTER delayed_tasks,
+        ADD COLUMN tickets_pending INT NOT NULL DEFAULT 0 AFTER tickets_closed
+    `);
+  }
 
   await db.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS ${target}.merged_user_efficiency_task_details (

@@ -18,10 +18,13 @@ import {
 } from "@/components/metrics/MetricsCharts";
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { PersonnelTaskMetricsGrid } from "@/components/metrics/PersonnelTaskMetricsGrid";
-import { aggregatePersonnelTaskMetrics, applyDelayPenaltiesToPersonnelTasks, mergePersonnelMetricCards } from "@/lib/task-personnel-metrics";
-import type { PersonnelDelayPenaltyRow } from "@/lib/task-personnel-metrics";
+import type {
+  PersonnelCombinedMetricCard,
+  PersonnelDelayPenaltyRow,
+} from "@/lib/task-personnel-metrics";
 import type { PersonnelTicketMetric } from "@/lib/kpis";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
+import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { DEFAULT_TIME_ZONE, type KpiFrequencyCode, isKpiMetricsWorkingYmd } from "@/lib/kpi-recurrence";
 import type {
   CsatStarDistributionRow,
@@ -33,6 +36,7 @@ import {
   defaultTaskMetricsRangeForCadence,
   formatTaskMetricsPeriodLabel,
   resolveTaskMetricsQueryRange,
+  taskMetricsMergedPeriod,
 } from "@/lib/task-metrics-range";
 
 type KpiPayload = {
@@ -734,23 +738,106 @@ function TaskMetricsPanel({
     rangeTo,
   });
   const showCompanyTaskMetrics = metricsViewMode === "company" && selectedCompany !== "";
-  const personnelRows = useMemo(
-    () =>
-      mergePersonnelMetricCards(
-        applyDelayPenaltiesToPersonnelTasks(
-          aggregatePersonnelTaskMetrics(checklistPillars),
-          personnelDelayPenalties,
-        ),
-        personnelTicketMetrics,
-      ),
-    [checklistPillars, personnelTicketMetrics, personnelDelayPenalties],
-  );
   const selectedCompanyName =
     selectedCompany === ""
       ? null
       : companies.find((company) => company.id === selectedCompany)?.name ?? null;
   const showPersonnelCompanyFilter = metricsViewMode === "personnel";
   const showCompanyScopeFilter = metricsViewMode === "company";
+
+  // Personnel view reads the stored KPI from mergedatabase-demo (merged_users +
+  // merged_user_efficiency_breakdowns) so stored values can be verified.
+  const [mergedPersonnelRows, setMergedPersonnelRows] = useState<MergedPersonnelEfficiencyRow[]>([]);
+  type MergedPersonnelEfficiencyRow = {
+    sourceUserId: string;
+    name: string;
+    companyName: string | null;
+    totalTasks: number;
+    completedTasks: number;
+    delayedTasks: number;
+    ticketsClosed: number;
+    ticketsPending: number;
+    taskEfficiency: number | null;
+    ticketEfficiency: number | null;
+    overallEfficiency: number;
+    onTimeCompletionRate: number | null;
+    computedAt: string;
+  };
+  const [mergedPersonnelLoading, setMergedPersonnelLoading] = useState(false);
+  const [mergedPersonnelError, setMergedPersonnelError] = useState<string | null>(null);
+  const mergedPeriod = taskMetricsMergedPeriod(freq, { dailyDate, rangeFrom, rangeTo });
+
+  useEffect(() => {
+    if (metricsViewMode !== "personnel") return;
+    let cancelled = false;
+    async function loadMergedPersonnel() {
+      setMergedPersonnelLoading(true);
+      setMergedPersonnelError(null);
+      try {
+        const qs = new URLSearchParams({
+          mode: "personnel",
+          periodKey: mergedPeriod.periodKey,
+          frequency: mergedPeriod.frequency,
+        });
+        const res = await fetch(`/api/admin/efficiency?${qs.toString()}`, { cache: "no-store" });
+        if (!res.ok) {
+          if (!cancelled) {
+            setMergedPersonnelRows([]);
+            setMergedPersonnelError("Could not load merged KPI rows for this period.");
+          }
+          return;
+        }
+        const json = (await res.json()) as { rows?: MergedPersonnelEfficiencyRow[] };
+        if (!cancelled) setMergedPersonnelRows(json.rows ?? []);
+      } catch {
+        if (!cancelled) {
+          setMergedPersonnelRows([]);
+          setMergedPersonnelError("Could not load merged KPI rows for this period.");
+        }
+      } finally {
+        if (!cancelled) setMergedPersonnelLoading(false);
+      }
+    }
+    void loadMergedPersonnel();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metricsViewMode, mergedPeriod.periodKey, mergedPeriod.frequency]);
+
+  const mergedPersonnelCards = useMemo<PersonnelCombinedMetricCard[]>(() => {
+    let rows = mergedPersonnelRows;
+    if (selectedCompanyName) {
+      const target = resolveRosterCompanyName(selectedCompanyName) ?? selectedCompanyName;
+      rows = rows.filter((row) => {
+        const rowCompany =
+          resolveRosterCompanyName(row.companyName) ?? row.companyName?.trim() ?? "";
+        return rowCompany.toLowerCase() === target.toLowerCase();
+      });
+    }
+    return rows.map((row) => ({
+      id: row.sourceUserId,
+      name: row.name,
+      role: "Assignee",
+      tickets:
+        row.ticketEfficiency != null || row.ticketsClosed + row.ticketsPending > 0
+          ? {
+              closed: row.ticketsClosed,
+              pending: row.ticketsPending,
+              efficiency: Math.round(row.ticketEfficiency ?? 0),
+            }
+          : null,
+      tasks:
+        row.totalTasks > 0 || row.taskEfficiency != null
+          ? {
+              closed: row.completedTasks,
+              pending: Math.max(0, row.totalTasks - row.completedTasks),
+              efficiency: Math.round(row.taskEfficiency ?? 0),
+              pillarsContributed: 0,
+            }
+          : null,
+    }));
+  }, [mergedPersonnelRows, selectedCompanyName]);
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
@@ -958,12 +1045,19 @@ function TaskMetricsPanel({
             includeChecklistPillars={showCompanyTaskMetrics}
           />
         ) : (
-          <PersonnelTaskMetricsGrid
-            rows={personnelRows}
-            reportingPeriodLabel={reportingPeriodLabel}
-            companyLabel={selectedCompanyName}
-            loading={loading}
-          />
+          <>
+            {mergedPersonnelError ? (
+              <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/30 dark:text-rose-100">
+                {mergedPersonnelError}
+              </p>
+            ) : null}
+            <PersonnelTaskMetricsGrid
+              rows={mergedPersonnelCards}
+              reportingPeriodLabel={reportingPeriodLabel}
+              companyLabel={selectedCompanyName}
+              loading={mergedPersonnelLoading}
+            />
+          </>
         )}
       </div>
     </section>

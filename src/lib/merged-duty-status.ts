@@ -49,6 +49,40 @@ export function isOnDutyStatus(status: DutyStatus): boolean {
 }
 
 /**
+ * Company name per `source_user_id` from merged_users (the personnel-tab source
+ * of truth). Keys are decimal string forms of BigInt ids for Map lookups.
+ */
+export async function loadCompanyNamesBySourceUserId(
+  sourceUserIds: ReadonlyArray<bigint | number | string>,
+): Promise<Map<string, string | null>> {
+  const ids = [
+    ...new Set(
+      sourceUserIds
+        .map((id) => {
+          try {
+            return BigInt(id);
+          } catch {
+            return null;
+          }
+        })
+        .filter((id): id is bigint => id != null),
+    ),
+  ];
+  if (ids.length === 0) return new Map();
+
+  const rows = await prismaSecondary.mergedUser.findMany({
+    where: { sourceUserId: { in: ids } },
+    select: { sourceUserId: true, companyName: true },
+  });
+
+  const byId = new Map<string, string | null>();
+  for (const row of rows) {
+    byId.set(row.sourceUserId.toString(), row.companyName ?? null);
+  }
+  return byId;
+}
+
+/**
  * Latest clock-in today per `source_user_id` from the merged DB.
  * Keys are decimal string forms of BigInt ids for easy Map lookups.
  */

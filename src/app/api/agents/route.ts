@@ -4,7 +4,11 @@ import { requireRole } from "@/lib/access";
 import { loadOnDutyAgentIdSet } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
-import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
+import {
+  loadEffectiveCompaniesByPortalEmail,
+  resolveAgentDesignatedCompanyId,
+  type EffectiveAssignmentCompany,
+} from "@/lib/staff-company-scope";
 
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
@@ -21,15 +25,7 @@ export async function GET(req: Request) {
     role: { in: ["Admin", "Personnel"] },
     accountStatus: "ACTIVE",
     mergedSourceUserId: { not: null },
-    staffDesignatedCompanyId: { not: null },
   };
-  if (forMainAgentId) {
-    const mainCompanyId = await resolveAgentDesignatedCompanyId(forMainAgentId);
-    if (!mainCompanyId) return NextResponse.json([]);
-    portalWhere.staffDesignatedCompanyId = mainCompanyId;
-  } else if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
-    portalWhere.staffDesignatedCompanyId = companyTeamId;
-  }
 
   const portals = await prisma.portalAccount.findMany({
     where: portalWhere,
@@ -37,10 +33,35 @@ export async function GET(req: Request) {
       email: true,
       role: true,
       headPrivileges: true,
+      mergedSourceUserId: true,
       staffDesignatedCompany: { select: { id: true, name: true } },
     },
   });
-  const staffEmails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
+
+  // Company per staff member follows the personnel tab (merged_users.company_name
+  // first, portal designated company as legacy fallback).
+  const companiesByEmail = await loadEffectiveCompaniesByPortalEmail(portals);
+
+  let companyIdFilter: string | null = null;
+  if (forMainAgentId) {
+    const mainCompanyId = await resolveAgentDesignatedCompanyId(forMainAgentId);
+    if (!mainCompanyId) return NextResponse.json([]);
+    companyIdFilter = mainCompanyId;
+  } else if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
+    companyIdFilter = companyTeamId;
+  }
+
+  const eligiblePortals = portals.filter((p) => {
+    const email = p.email.trim().toLowerCase();
+    if (!email) return false;
+    const company = companiesByEmail.get(email);
+    // Assignees must belong to a company (merged or designated) to appear.
+    if (!company) return false;
+    if (companyIdFilter) return company.id === companyIdFilter;
+    return true;
+  });
+
+  const staffEmails = eligiblePortals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
 
   const agents = await prisma.agent.findMany({
     where: staffEmails.length > 0 ? { email: { in: staffEmails } } : { id: "__none__" },
@@ -50,19 +71,18 @@ export async function GET(req: Request) {
 
   const onDutyIds = await loadOnDutyAgentIdSet(agents.map((a) => a.id));
 
-  const headByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.headPrivileges]));
-  const roleByEmail = new Map(portals.map((p) => [p.email.toLowerCase(), p.role] as const));
-  const assignmentCompanyByEmail = new Map(
-    portals.map((p) => [p.email.toLowerCase(), p.staffDesignatedCompany ?? null] as const),
-  );
+  const headByEmail = new Map(eligiblePortals.map((p) => [p.email.toLowerCase(), p.headPrivileges]));
+  const roleByEmail = new Map(eligiblePortals.map((p) => [p.email.toLowerCase(), p.role] as const));
 
   let payload = agents.map((a) => {
+    const emailKey = a.email.toLowerCase();
     const isOnDuty = onDutyIds.has(a.id);
+    const assignmentCompany: EffectiveAssignmentCompany | null = companiesByEmail.get(emailKey) ?? null;
     return {
       ...a,
-      portalRole: roleByEmail.get(a.email.toLowerCase()) ?? null,
-      headPrivileges: headByEmail.get(a.email.toLowerCase()) ?? false,
-      assignmentCompany: assignmentCompanyByEmail.get(a.email.toLowerCase()) ?? null,
+      portalRole: roleByEmail.get(emailKey) ?? null,
+      headPrivileges: headByEmail.get(emailKey) ?? false,
+      assignmentCompany,
       isOnDuty,
       dutyStatus: isOnDuty ? ("ON_DUTY" as const) : ("OFFLINE" as const),
     };

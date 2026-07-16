@@ -71,7 +71,7 @@ import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
-import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
+import { loadAgentIdsForCompanyTeam, resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import {
   hasBeforeAndAfterScreenshots,
   hasNumericalRecord,
@@ -138,19 +138,8 @@ export async function GET(req: Request) {
 
   const companyTeamId = searchParams.get("company")?.trim();
   if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
-    const portals = await prisma.portalAccount.findMany({
-      where: { staffDesignatedCompanyId: companyTeamId },
-      select: { email: true },
-    });
-    const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
-    const agentsInSbu =
-      emails.length > 0
-        ? await prisma.agent.findMany({
-            where: { email: { in: emails } },
-            select: { id: true },
-          })
-        : [];
-    const agentIds = agentsInSbu.map((a) => a.id);
+    // Merged-first company membership so the board filter matches the personnel tab.
+    const agentIds = await loadAgentIdsForCompanyTeam(companyTeamId);
     const companyScopeOr: Prisma.KpiMaintenanceWhereInput[] = [
       { assignedAgentId: null, scopedCompanyTeamId: companyTeamId },
     ];

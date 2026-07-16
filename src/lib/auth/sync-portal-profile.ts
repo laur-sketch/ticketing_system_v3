@@ -80,15 +80,27 @@ async function upsertAuthCompany(profile: CanonicalUserProfile): Promise<string 
   const name = profile.companyName?.trim();
   if (!name) return null;
 
+  // HRIS data can map multiple company names to one company_id, but
+  // auth_companies.external_id is unique. Only claim externalId if no other
+  // company already owns it, so a shared id never fails the whole sync/login.
+  let externalId = profile.companyExternalId ?? null;
+  if (externalId != null) {
+    const owner = await prismaAuth.company.findUnique({
+      where: { externalId },
+      select: { name: true },
+    });
+    if (owner && owner.name !== name) externalId = null;
+  }
+
   try {
     const company = await prismaAuth.company.upsert({
       where: { name },
       create: {
         name,
-        externalId: profile.companyExternalId ?? null,
+        externalId,
       },
       update: {
-        externalId: profile.companyExternalId ?? undefined,
+        externalId: externalId ?? undefined,
       },
       select: { id: true },
     });
@@ -96,6 +108,17 @@ async function upsertAuthCompany(profile: CanonicalUserProfile): Promise<string 
   } catch (e) {
     const code = (e as { code?: string }).code;
     if (code === "P2021" || code === "P2022") return null;
+    // External_id race/collision: fall back to a name-only company row so
+    // login and profile sync still succeed for this user.
+    if (code === "P2002") {
+      const company = await prismaAuth.company.upsert({
+        where: { name },
+        create: { name, externalId: null },
+        update: {},
+        select: { id: true },
+      });
+      return company.id;
+    }
     throw e;
   }
 }

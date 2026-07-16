@@ -100,6 +100,27 @@ async function runHrisSyncJob() {
   }
 }
 
+let portalMergedSyncJobRunning = false;
+/** Sync task progress + KPI from primary ticketing_system_v3 into mergedatabase users. */
+async function runPortalMergedSyncJob() {
+  if (portalMergedSyncJobRunning) return;
+  portalMergedSyncJobRunning = true;
+  try {
+    const jobHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    const res = await fetch(`http://${jobHost}:${port}/api/jobs/sync-portal-merged`, {
+      method: "POST",
+      headers: { "x-internal-job-key": internalJobKey },
+    });
+    if (!res.ok) {
+      console.warn(`Portal→merged work sync job failed with HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.warn("Portal→merged work sync job failed", err);
+  } finally {
+    portalMergedSyncJobRunning = false;
+  }
+}
+
 let confirmationReminderJobRunning = false;
 async function runConfirmationReminderJob() {
   if (confirmationReminderJobRunning) return;
@@ -142,16 +163,22 @@ app
     const hrisSyncTimer = setInterval(() => {
       void runHrisSyncJob();
     }, 30 * 60 * 1000);
+    const portalMergedSyncTimer = setInterval(() => {
+      void runPortalMergedSyncJob();
+    }, 30 * 60 * 1000);
     server.listen(port, host, () => {
       // Keep this log minimal: cPanel surfaces startup logs in app logs.
       console.log(`Ticket System listening on http://${host}:${port}`);
       setTimeout(() => void runConfirmationReminderJob(), 60 * 1000);
       setTimeout(() => void runHrisSyncJob(), 120 * 1000);
+      // Offset from the HRIS job so the two syncs do not overlap at startup.
+      setTimeout(() => void runPortalMergedSyncJob(), 5 * 60 * 1000);
     });
     const shutdown = async () => {
       clearInterval(timer);
       clearInterval(confirmationReminderTimer);
       clearInterval(hrisSyncTimer);
+      clearInterval(portalMergedSyncTimer);
       await prisma.$disconnect();
       await prismaAuth.$disconnect();
       io.close();

@@ -82,12 +82,15 @@ export function ManualAssignmentBoard({
   personnel,
   rosterCompanies = [],
   companyFilterLabel,
+  showCompanyFilter = false,
   notice,
 }: {
   unassigned: TicketCard[];
   personnel: PersonnelColumn[];
   rosterCompanies?: RosterCompany[];
   companyFilterLabel?: string | null;
+  /** SuperAdmin/Admin: show the company dropdown to narrow the personnel group. */
+  showCompanyFilter?: boolean;
   notice?: string | null;
 }) {
   const [cards, setCards] = useState<TicketCard[]>(unassigned);
@@ -96,6 +99,7 @@ export function ManualAssignmentBoard({
   const [error, setError] = useState<string | null>(null);
   const [openCompanyId, setOpenCompanyId] = useState<string | null>(null);
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
+  const [companyFilter, setCompanyFilter] = useState<string>(ASSIGNMENT_COMPANY_ALL);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -213,6 +217,17 @@ export function ManualAssignmentBoard({
   const activeCompanyId =
     dragRevealCompanyId ?? (!laneDrag.draggingItemId && openCompanyId !== ASSIGNMENT_COMPANY_ALL ? openCompanyId : null);
 
+  /** Company dropdown (SuperAdmin/Admin) narrows the personnel group to one company/SBU. */
+  const visibleCompanyOptions =
+    companyFilter === ASSIGNMENT_COMPANY_ALL
+      ? companyOptions
+      : companyOptions.filter((c) => c.id === companyFilter);
+
+  function handleCompanyFilterChange(next: string) {
+    setCompanyFilter(next);
+    setOpenCompanyId(next === ASSIGNMENT_COMPANY_ALL ? null : next);
+  }
+
   function renderTicketCard(t: TicketCard, assigneeColorKey?: string | null, compact?: boolean) {
     const inner = (
       <>
@@ -324,26 +339,49 @@ export function ManualAssignmentBoard({
           </article>
 
           <div className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-2.5 dark:border-zinc-800 dark:bg-[#0b1220] sm:p-3">
-            <div className="mb-2 px-1">
-              <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
-                Personnel group
-              </h2>
-              <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                Tap a company to expand, or drag a ticket over it to reveal admins and personnel.
-              </p>
+            <div className="mb-2 flex flex-wrap items-start justify-between gap-2 px-1">
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
+                  Personnel group
+                </h2>
+                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Tap a company to expand, or drag a ticket over it to reveal admins and personnel.
+                </p>
+              </div>
+              {showCompanyFilter && companyOptions.length > 0 ? (
+                <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                  <span className="uppercase tracking-wide">Company</span>
+                  <select
+                    value={companyFilter}
+                    onChange={(e) => handleCompanyFilterChange(e.target.value)}
+                    className={cn(
+                      "min-w-[200px] max-w-[300px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                      "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
+                    )}
+                    title="Narrow the personnel group to one company/SBU"
+                  >
+                    <option value={ASSIGNMENT_COMPANY_ALL}>All companies</option>
+                    {companyOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.agentCount})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
             </div>
 
             {columns.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
                 No personnel — designate staff to a company/SBU in Personnel (Portal Accounts).
               </div>
-            ) : companyOptions.length === 0 ? (
+            ) : visibleCompanyOptions.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
                 No personnel with a designated company/SBU.
               </div>
             ) : (
               <div className="max-h-[min(72dvh,48rem)] space-y-2 overflow-y-auto pr-1">
-                {companyOptions.map((company) => {
+                {visibleCompanyOptions.map((company) => {
                   const targetId = assignmentCompanyDropTarget(company.id);
                   const isSelected = openCompanyId === company.id;
                   const isRevealed = activeCompanyId === company.id;

@@ -604,12 +604,16 @@ async function loadPersonnelTicketMetrics(
   scoped: Record<string, unknown>,
   workingDayIntervals: WorkingDayInterval[],
 ): Promise<PersonnelTicketMetric[]> {
+  // Keep the agent scope (company / personnel) — a plain `assignedAgentId: { not: null }`
+  // key would silently replace the scoped filter spread before it.
+  const assignedAgentFilter =
+    (scoped as { assignedAgentId?: unknown }).assignedAgentId ?? ({ not: null } as const);
   const [closedByAgent, pendingByAgent] = await Promise.all([
     prisma.ticket.groupBy({
       by: ["assignedAgentId"],
       where: {
         ...scoped,
-        assignedAgentId: { not: null },
+        assignedAgentId: assignedAgentFilter,
         AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDayIntervals)],
       },
       _count: true,
@@ -618,7 +622,7 @@ async function loadPersonnelTicketMetrics(
       by: ["assignedAgentId"],
       where: {
         ...scoped,
-        assignedAgentId: { not: null },
+        assignedAgentId: assignedAgentFilter,
         status: { in: ["OPEN", "IN_PROGRESS"] },
       },
       _count: true,

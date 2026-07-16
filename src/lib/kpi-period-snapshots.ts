@@ -29,7 +29,6 @@ import { countItProjectSubKpiStatus, itProjectChecklistItems, itProjectStatusPro
 import {
   IT_PROJECT_IMPLEMENTATION_TITLE,
   IT_TASK_PILLAR_TITLES,
-  type ItTaskPillarTitle,
 } from "@/lib/it-task-pillar-titles";
 import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
@@ -339,7 +338,16 @@ export type TaskAssigneeProgress = {
   percent: number;
 };
 
-export type TaskChecklistPillarMetrics = Partial<Record<ItTaskPillarTitle, TaskChecklistPillarMetric>>;
+/**
+ * Keyed by pillar title. Canonical pillars are always present; any other task group
+ * created on the Task Board appears under its own normalized (uppercase) title.
+ */
+export type TaskChecklistPillarMetrics = Partial<Record<string, TaskChecklistPillarMetric>>;
+
+/** Dynamic task groups use their Task Board title, squished and uppercased, as the pillar key. */
+export function normalizeDynamicPillarTitle(title: string): string {
+  return title.trim().replace(/\s+/g, " ").toUpperCase();
+}
 
 /** IANA zone used when writing/reading imported KPI period snapshots (defaults to REPORT_TZ). */
 export function snapshotTimeZoneForTaskMetrics(clientTz?: string | null): string {
@@ -989,6 +997,32 @@ function mergeSubtaskChecks(
   return out;
 }
 
+/**
+ * Snapshots for past periods store only done/total, not per-item check state.
+ * Fill unknown check cells from the period progress so the marks agree with EFF %
+ * (100% → all checked, 0% → all unchecked, partial → done-count checked left to right).
+ */
+function fillChecksFromProgress(
+  checks: Record<string, boolean | undefined>,
+  columns: readonly string[],
+  progress: KpiChecklistProgress,
+): Record<string, boolean | undefined> {
+  if (progress.total <= 0) return checks;
+  const unknown = columns.filter((title) => checks[title] === undefined);
+  if (unknown.length === 0) return checks;
+
+  const knownTrue = columns.filter((title) => checks[title] === true).length;
+  const targetTrue = Math.round((progress.done / progress.total) * columns.length);
+  let remainingTrue = Math.max(0, Math.min(unknown.length, targetTrue - knownTrue));
+
+  const out = { ...checks };
+  for (const title of unknown) {
+    out[title] = remainingTrue > 0;
+    if (remainingTrue > 0) remainingTrue--;
+  }
+  return out;
+}
+
 function buildDailySubtaskCsvRows(args: {
   pillarKpis: KpiForSubtaskCsv[];
   columns: readonly string[];
@@ -1021,8 +1055,12 @@ function buildDailySubtaskCsvRows(args: {
       }
     }
     if (progressRows.length === 0) continue;
-    const mergedChecks = mergeSubtaskChecks(checksList, args.columns);
     const progress = mergePeriodProgress(progressRows);
+    const mergedChecks = fillChecksFromProgress(
+      mergeSubtaskChecks(checksList, args.columns),
+      args.columns,
+      progress,
+    );
     rows.push([
       formatSubtaskCsvDateLabel(ymd, args.zone),
       ...args.columns.map((title) => formatSubtaskCsvCheckCell(mergedChecks[title])),
@@ -1071,8 +1109,12 @@ function buildMonthlySubtaskCsvRows(args: {
       }
     }
 
-    const mergedChecks = mergeSubtaskChecks(checksList, args.columns);
     const progress = mergePeriodProgress(progressRows);
+    const mergedChecks = fillChecksFromProgress(
+      mergeSubtaskChecks(checksList, args.columns),
+      args.columns,
+      progress,
+    );
     rows.push([
       formatMonthlySubtaskCsvDateLabel(args.year, month, args.zone),
       ...args.columns.map((title) => formatSubtaskCsvCheckCell(mergedChecks[title])),
@@ -1083,7 +1125,7 @@ function buildMonthlySubtaskCsvRows(args: {
 }
 
 export function buildSubtaskCsvPreviewForPillar(args: {
-  pillar: ItTaskPillarTitle;
+  pillar: string;
   pillarKpis: KpiForSubtaskCsv[];
   metricsCadence: KpiFrequencyCode;
   fromYmd: string;
@@ -1168,19 +1210,27 @@ export async function computeTaskChecklistPillarMetrics(args: {
     },
   });
 
-  const kpisByPillar = new Map<ItTaskPillarTitle, (typeof kpis)[number][]>();
+  const kpisByPillar = new Map<string, (typeof kpis)[number][]>();
   for (const kpi of kpis) {
-    const pillar = pillarFromKpiTitle(kpi.title);
+    /** Unknown titles become their own dynamic pillar so new task groups get a donut automatically. */
+    const pillar = pillarFromKpiTitle(kpi.title) ?? normalizeDynamicPillarTitle(kpi.title);
     if (!pillar || pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
     const list = kpisByPillar.get(pillar) ?? [];
     list.push(kpi);
     kpisByPillar.set(pillar, list);
   }
 
+  const canonicalPillars = IT_TASK_PILLAR_TITLES.filter(
+    (p) => p !== "HELPDESK SUPPORT" && p !== "USER SUPPORT",
+  );
+  const dynamicPillars = [...kpisByPillar.keys()]
+    .filter((p) => !(IT_TASK_PILLAR_TITLES as readonly string[]).includes(p))
+    .sort();
+  const pillarsToCompute: string[] = [...canonicalPillars, ...dynamicPillars];
+
   const selectedByPillar = new Map<string, (typeof kpis)[number][]>();
   const allSelectedKpis: (typeof kpis)[number][] = [];
-  for (const pillar of IT_TASK_PILLAR_TITLES) {
-    if (pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
+  for (const pillar of pillarsToCompute) {
     const pillarKpis = kpisByPillar.get(pillar) ?? [];
     const selected = selectKpisForPillarTaskMetrics(pillarKpis, metricsCadence);
     if (selected.length > 0) {
@@ -1217,9 +1267,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
   const result: TaskChecklistPillarMetrics = {};
 
-  for (const pillar of IT_TASK_PILLAR_TITLES) {
-    if (pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
-
+  for (const pillar of pillarsToCompute) {
     if (pillar === IT_PROJECT_IMPLEMENTATION_TITLE) {
       result[pillar] = await computeItProjectImplementationPillarMetric({ kpiWhere, timeZone: zone });
       continue;
@@ -1250,11 +1298,8 @@ export async function computeTaskChecklistPillarMetrics(args: {
     for (const kpi of pillarKpis) {
       const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone);
       periodsInRange += periodKeys.length;
-      personnelRoster.push({
-        row: { title: kpi.title, mainTask: kpi.mainTask, subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null },
-        periodCount: periodKeys.length,
-      });
       const nowPeriodKey = currentPeriodKeyFor(kpi);
+      let countedPeriodsForKpi = 0;
 
       for (const key of periodKeys) {
         const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
@@ -1262,17 +1307,33 @@ export async function computeTaskChecklistPillarMetrics(args: {
         if (snap) {
           progress = snapshotToProgress(snap);
         } else if (key === nowPeriodKey) {
-          /** Live Task Board checkboxes for the active period when no snapshot exists yet. */
-          progress = kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi));
+          /**
+           * Live Task Board checkboxes for the active period when no snapshot exists yet.
+           * Count the in-progress period toward the aggregate only once it is fully
+           * complete; otherwise an unfinished "today" drags the percent below the
+           * personnel breakdowns, which are snapshot-based. Inverted (incident-style)
+           * pillars keep live inclusion since unchecked means healthy there.
+           */
+          const live = kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi));
+          if (invert || (live.total > 0 && live.done >= live.total)) {
+            progress = live;
+          }
         }
         if (!progress) continue;
 
+        countedPeriodsForKpi += 1;
         progressRows.push(progress);
         assigneeBundles.push({
           progress,
           contributors: contributorProgressForKpiPeriod(kpi, key, nowPeriodKey, snap, rawCheckboxIsDone),
         });
       }
+
+      personnelRoster.push({
+        row: { title: kpi.title, mainTask: kpi.mainTask, subKpis: kpi.subKpis, assignedAgent: kpi.assignedAgent ?? null },
+        /** Assigned should reflect only counted periods so an in-progress day doesn't inflate it. */
+        periodCount: countedPeriodsForKpi,
+      });
     }
 
     const dailyProgressRows: TaskChecklistDailyProgress[] = [];
@@ -1365,9 +1426,9 @@ export async function computeTaskChecklistPillarMetrics(args: {
   return result;
 }
 
-/** Headline percent for a pillar (respects inverted cyber/network pillars). */
+/** Headline percent for a pillar (respects inverted checklist pillars). */
 export function pillarMetricPercent(
-  pillar: ItTaskPillarTitle,
+  pillar: string,
   _metricsCadence: KpiFrequencyCode,
   agg: KpiChecklistProgress,
 ): number {

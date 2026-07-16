@@ -4,11 +4,10 @@ import type { LucideIcon } from "lucide-react";
 import {
   Cloud,
   Activity,
+  ClipboardList,
+  FileText,
   Headphones,
   LayoutGrid,
-  Router,
-  Server,
-  Shield,
   Smile,
   Wrench,
 } from "lucide-react";
@@ -39,17 +38,21 @@ import {
 } from "@/lib/kinetic-palette";
 
 const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
-  "SYSTEM AVAILABILITY": Server,
   "HELPDESK SUPPORT": Headphones,
-  CYBERSECURITY: Shield,
   "DATA BACKUP": Cloud,
   "SYSTEM MAINTENANCE": Wrench,
   MONITORING: Activity,
-  "PREVENTIVE MAINTENANCE": Wrench,
+  DOCUMENTATION: FileText,
   "USER SUPPORT": Smile,
   "IT PROJECT IMPLEMENTATION": LayoutGrid,
-  "NETWORK PERFORMANCE": Router,
 };
+
+/** New task groups created on the Task Board don't have a curated icon yet. */
+const DEFAULT_PILLAR_ICON: LucideIcon = ClipboardList;
+
+function pillarIcon(pillar: string): LucideIcon {
+  return PILLAR_ICONS[pillar as ItTaskPillarTitle] ?? DEFAULT_PILLAR_ICON;
+}
 
 /** Helpdesk pillar: closed vs remainder of denominator (cadence-specific). */
 const SEG_COLORS_HELPDESK = {
@@ -94,7 +97,7 @@ const DAILY_PROGRESS_CSV_COLUMNS = ["DATE", "DONE", "ON GOING", "NOT STARTED", "
 /** Cybersecurity / network: unchecked = safe, checked = breached. */
 const INCIDENT_DAILY_CSV_COLUMNS = ["DATE", "SAFE", "BREACHED", "EFF %"];
 
-function dailyProgressCsvColumnsForPillar(pillar: ItTaskPillarTitle, hasDailyRows: boolean): string[] {
+function dailyProgressCsvColumnsForPillar(pillar: string, hasDailyRows: boolean): string[] {
   if (!hasDailyRows) {
     return pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
   }
@@ -134,13 +137,13 @@ function PillarDonutCard({
   subLabel,
   onInspect,
 }: {
-  pillar: ItTaskPillarTitle;
+  pillar: string;
   segments: DonutSegment[];
   headline: string;
   subLabel?: string;
   onInspect: () => void;
 }) {
-  const Icon = PILLAR_ICONS[pillar];
+  const Icon = pillarIcon(pillar);
   const [lastTapMs, setLastTapMs] = useState(0);
   const total = segments.reduce((a, s) => a + s.value, 0);
   const cx = 50;
@@ -291,37 +294,30 @@ function PillarDonutCard({
   );
 }
 
-const CHECKLIST_PILLAR_CONFIG: Partial<
-  Record<
-    ItTaskPillarTitle,
-    {
-      positiveLabel: string;
-      negativeLabel: string;
-      metricName: string;
-      /** Unchecked = safe/uptime; checked on task board = breach/downtime. */
-      invertChecklist?: boolean;
-    }
-  >
-> = {
-  "SYSTEM AVAILABILITY": { positiveLabel: "Uptime", negativeLabel: "Downtime", metricName: "uptime" },
-  CYBERSECURITY: {
-    positiveLabel: "Safe",
-    negativeLabel: "Breached",
-    metricName: "done",
-  },
+type ChecklistPillarConfig = {
+  positiveLabel: string;
+  negativeLabel: string;
+  metricName: string;
+  /** Unchecked = safe/uptime; checked on task board = breach/downtime. */
+  invertChecklist?: boolean;
+};
+
+/** Dynamic task groups without a curated config render as a plain Done/Missing donut. */
+const DEFAULT_CHECKLIST_PILLAR_CONFIG: ChecklistPillarConfig = {
+  positiveLabel: "Done",
+  negativeLabel: "Missing",
+  metricName: "done",
+};
+
+const CHECKLIST_PILLAR_CONFIG: Partial<Record<string, ChecklistPillarConfig>> = {
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   MONITORING: { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
-  "PREVENTIVE MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
+  DOCUMENTATION: { positiveLabel: "Done", negativeLabel: "Missing", metricName: "done" },
   "IT PROJECT IMPLEMENTATION": {
     positiveLabel: "On time",
     negativeLabel: "Delayed",
     metricName: "on time",
-  },
-  "NETWORK PERFORMANCE": {
-    positiveLabel: "Uptime",
-    negativeLabel: "Downtime",
-    metricName: "done",
   },
 };
 
@@ -525,42 +521,40 @@ export function ContributorPersonalKpiCard({
 
   return (
     <article className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50/90 p-3.5 dark:border-zinc-800 dark:from-zinc-900/80 dark:to-zinc-950/60">
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <div className="min-w-0 justify-self-start">
-          <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">{row.name}</p>
-          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-            {row.role}
+      <div className="min-w-0">
+        <p
+          title={row.name}
+          className="line-clamp-2 break-words text-sm font-bold leading-snug text-zinc-900 dark:text-zinc-100"
+        >
+          {row.name}
+        </p>
+        <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+          {row.role}
+        </p>
+      </div>
+      {averageEfficiency != null && efficiencyBracket ? (
+        <div className="mt-2.5 flex items-center justify-center gap-2.5 rounded-lg border border-zinc-200/80 bg-zinc-50/80 px-3 py-1.5 dark:border-zinc-700/60 dark:bg-zinc-900/40">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+            Avg efficiency
+          </p>
+          <p
+            className={cn(
+              "text-lg font-black tabular-nums leading-none",
+              efficiencyBracket.valueClassName,
+            )}
+          >
+            {averageEfficiency}%
+          </p>
+          <p
+            className={cn(
+              "inline-block rounded-md border px-2 py-0.5 text-[10px] font-bold tracking-wide",
+              efficiencyBracket.badgeClassName,
+            )}
+          >
+            [{efficiencyBracket.label}]
           </p>
         </div>
-        {averageEfficiency != null && efficiencyBracket ? (
-          <div className="justify-self-center text-center">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-              Avg efficiency
-            </p>
-            <p
-              className={cn(
-                "mt-0.5 text-lg font-black tabular-nums leading-none",
-                efficiencyBracket.valueClassName,
-              )}
-            >
-              {averageEfficiency}%
-            </p>
-            <p
-              className={cn(
-                "mt-1 inline-block rounded-md border px-2 py-0.5 text-[10px] font-bold tracking-wide",
-                efficiencyBracket.badgeClassName,
-              )}
-            >
-              [{efficiencyBracket.label}]
-            </p>
-          </div>
-        ) : (
-          <div />
-        )}
-        <div className="justify-self-end rounded-full border border-orange-500/25 bg-orange-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
-          Personal KPI
-        </div>
-      </div>
+      ) : null}
 
       <div className="mt-3 space-y-3">
         {row.tickets ? (
@@ -611,7 +605,7 @@ export function ContributorPersonalKpiCard({
                 subLabel={
                   row.tasks.penaltyDeduction != null && row.tasks.penaltyDeduction > 0
                     ? "net after penalties"
-                    : "done / pending"
+                    : "done / assigned"
                 }
                 tone="teal"
               />
@@ -641,7 +635,7 @@ export function ContributorPersonalKpiCard({
 }
 
 function csvLayoutRowsForPillar(args: {
-  pillar: ItTaskPillarTitle;
+  pillar: string;
   metricsCadence: KpiFrequencyCode;
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
@@ -713,8 +707,28 @@ function csvLayoutRowsForPillar(args: {
   ];
 }
 
+/** Extended-view cells: render boolean TRUE/FALSE values as a check / cross instead of text. */
+function csvBooleanCellDisplay(cell: string): ReactNode {
+  const normalized = cell.trim().toUpperCase();
+  if (normalized === "TRUE") {
+    return (
+      <span aria-label="Done" title="Done" className="font-bold text-emerald-600 dark:text-emerald-400">
+        ✓
+      </span>
+    );
+  }
+  if (normalized === "FALSE") {
+    return (
+      <span aria-label="Not done" title="Not done" className="font-bold text-rose-600 dark:text-rose-400">
+        ✗
+      </span>
+    );
+  }
+  return cell;
+}
+
 function sourceDetailsForPillar(args: {
-  pillar: ItTaskPillarTitle;
+  pillar: string;
   metricsCadence: KpiFrequencyCode;
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
@@ -892,7 +906,7 @@ export function TaskPillarMetricsGrid({
   userSupportTickets: TaskMetricsUserSupportTickets | null;
   includeChecklistPillars?: boolean;
 }) {
-  const [inspectedPillar, setInspectedPillar] = useState<ItTaskPillarTitle | null>(null);
+  const [inspectedPillar, setInspectedPillar] = useState<string | null>(null);
   const [extendedView, setExtendedView] = useState(false);
   const inspected = inspectedPillar
     ? sourceDetailsForPillar({
@@ -905,6 +919,12 @@ export function TaskPillarMetricsGrid({
       })
     : null;
 
+  /** Canonical pillars first, then any new task groups found in the computed metrics. */
+  const dynamicPillars = Object.keys(checklistPillars ?? {})
+    .filter((p) => !(IT_TASK_PILLAR_TITLES as readonly string[]).includes(p))
+    .sort();
+  const pillars: string[] = [...IT_TASK_PILLAR_TITLES, ...dynamicPillars];
+
   return (
     <div className="space-y-3">
       <div
@@ -914,7 +934,7 @@ export function TaskPillarMetricsGrid({
           "xl:grid-cols-4",
         )}
       >
-      {IT_TASK_PILLAR_TITLES.map((pillar) => {
+      {pillars.map((pillar) => {
         if (pillar === "IT PROJECT IMPLEMENTATION") {
           return null;
         }
@@ -963,52 +983,46 @@ export function TaskPillarMetricsGrid({
           return null;
         }
 
-        const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
-        if (cfg) {
-          const agg = checklistPillars?.[pillar] ?? {
-            total: 0,
-            done: 0,
-            missing: 0,
-            percent: 0,
-            periodsCounted: 0,
-            periodsInRange: 0,
-          };
-          if (agg.total <= 0) {
-            return null;
-          }
-          const invert =
-            cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
-          const view = kpiChecklistMetricView(agg, invert);
-          const showCountedPeriods =
-            pillar === "SYSTEM AVAILABILITY" ||
-            pillar === "DATA BACKUP" ||
-            pillar === "MONITORING";
-          const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
-            hideZeroNegative: invert,
-          });
-          const headline =
-            agg.total === 0
-              ? "—"
-              : `${view.percent}% ${cfg.metricName}`;
-          const subLabel = showCountedPeriods
-            ? countedPeriodsLabel(agg)
-            : undefined;
-          return (
-            <PillarDonutCard
-              key={pillar}
-              pillar={pillar}
-              segments={segments}
-              headline={headline}
-              subLabel={subLabel}
-              onInspect={() => {
-                setInspectedPillar(pillar);
-                setExtendedView(false);
-              }}
-            />
-          );
+        const cfg = CHECKLIST_PILLAR_CONFIG[pillar] ?? DEFAULT_CHECKLIST_PILLAR_CONFIG;
+        const agg = checklistPillars?.[pillar] ?? {
+          total: 0,
+          done: 0,
+          missing: 0,
+          percent: 0,
+          periodsCounted: 0,
+          periodsInRange: 0,
+        };
+        if (agg.total <= 0) {
+          return null;
         }
-
-        return null;
+        const invert =
+          cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
+        const view = kpiChecklistMetricView(agg, invert);
+        /** Dynamic task groups show the counted-periods sublabel like the standard checklist groups. */
+        const showCountedPeriods = pillar !== "SYSTEM MAINTENANCE";
+        const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
+          hideZeroNegative: invert,
+        });
+        const headline =
+          agg.total === 0
+            ? "—"
+            : `${view.percent}% ${cfg.metricName}`;
+        const subLabel = showCountedPeriods
+          ? countedPeriodsLabel(agg)
+          : undefined;
+        return (
+          <PillarDonutCard
+            key={pillar}
+            pillar={pillar}
+            segments={segments}
+            headline={headline}
+            subLabel={subLabel}
+            onInspect={() => {
+              setInspectedPillar(pillar);
+              setExtendedView(false);
+            }}
+          />
+        );
       })}
       </div>
       {inspected ? (
@@ -1163,7 +1177,7 @@ export function TaskPillarMetricsGrid({
                                     cellIndex === 1 && "tabular-nums text-orange-700 dark:text-orange-300",
                                   )}
                                 >
-                                  {cell}
+                                  {csvBooleanCellDisplay(cell)}
                                 </td>
                               ))}
                             </tr>

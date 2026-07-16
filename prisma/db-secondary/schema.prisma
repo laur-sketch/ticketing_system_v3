@@ -238,6 +238,9 @@ model MergedUserEfficiencyBreakdown {
   totalTasks                Int      @default(0) @map("total_tasks")
   completedTasks            Int      @default(0) @map("completed_tasks")
   delayedTasks              Int      @default(0) @map("delayed_tasks")
+  /// Ticket counts backing ticketEfficiency (closed ÷ closed+pending).
+  ticketsClosed             Int      @default(0) @map("tickets_closed")
+  ticketsPending            Int      @default(0) @map("tickets_pending")
   onTimeCompletionRate      Decimal? @map("on_time_completion_rate") @db.Decimal(6, 2)
   /// Mean (completedAt − createdAt) in hours for DONE tasks in the window.
   averageTaskCompletionHours Decimal? @map("average_task_completion_hours") @db.Decimal(10, 2)

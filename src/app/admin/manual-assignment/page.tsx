@@ -2,10 +2,15 @@ import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
-import { prisma } from "@/lib/prisma";
+import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import { prisma, prismaSecondary } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+import {
+  buildCanonicalMergedIdMap,
+  canonicalMergedId,
+} from "@/lib/sync/merged-person-identity";
 import { ManualAssignmentBoard } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -98,6 +103,7 @@ export default async function ManualAssignmentPage() {
         name: true,
         role: true,
         headPrivileges: true,
+        mergedSourceUserId: true,
         staffDesignatedCompanyId: true,
         companyId: true,
         staffDesignatedCompany: { select: { name: true } },
@@ -121,6 +127,48 @@ export default async function ManualAssignmentPage() {
     teams[0]?.id ??
     null;
   /**
+   * Board lanes show only people who exist in the mergedatabase-demo HRIS roster
+   * (merged_users, source = HRIS). Portal accounts are matched by their merged
+   * link or email; synthetic duplicate ids canonicalize to the HRIS person.
+   */
+  const hrisSourceTag =
+    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
+    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
+    MERGED_SOURCE_DATABASE.HRIS_DEMO;
+  const mergedRows = await prismaSecondary.$queryRaw<
+    Array<{ source_user_id: bigint; name: string; email: string | null; source_database: string }>
+  >`
+    SELECT source_user_id, name, email, source_database
+    FROM merged_users
+    WHERE is_active = 1
+  `;
+  const canonicalMap = buildCanonicalMergedIdMap(
+    mergedRows.map((r) => ({ sourceUserId: r.source_user_id, name: r.name, email: r.email })),
+  );
+  const hrisMergedIds = new Set(
+    mergedRows
+      .filter((r) => r.source_database === hrisSourceTag)
+      .map((r) => r.source_user_id.toString()),
+  );
+  const mergedIdByEmail = new Map<string, bigint>();
+  for (const r of mergedRows) {
+    const email = r.email?.trim().toLowerCase();
+    if (email && !mergedIdByEmail.has(email)) {
+      mergedIdByEmail.set(email, canonicalMergedId(r.source_user_id, canonicalMap));
+    }
+  }
+  const isMergedHrisPerson = (p: { mergedSourceUserId: bigint | null; email: string }) => {
+    if (
+      p.mergedSourceUserId != null &&
+      hrisMergedIds.has(canonicalMergedId(p.mergedSourceUserId, canonicalMap).toString())
+    ) {
+      return true;
+    }
+    const byEmail = mergedIdByEmail.get(p.email.trim().toLowerCase());
+    return byEmail != null && hrisMergedIds.has(byEmail.toString());
+  };
+
+  /**
    * SBU filter uses **staff designation only** (`staffDesignatedCompanyId`).
    * Do not fall back to `companyId` — that is the customer/signup company and stays out of sync,
    * which caused personnel moved to ALI to still appear under AGC.
@@ -128,49 +176,76 @@ export default async function ManualAssignmentPage() {
   const staffPortal = portalStaff.filter((p) => {
     if (!isStaffPortalRole(p.role)) return false;
     if (scopeUnavailable) return false;
+    if (!isMergedHrisPerson(p)) return false;
     if (!personnelScopeCompanyId) return true;
     return p.staffDesignatedCompanyId === personnelScopeCompanyId;
   });
-  const staffEmails = Array.from(
-    new Set(staffPortal.map((p) => p.email.trim().toLowerCase()).filter(Boolean)),
-  );
-  const existingAgents = staffEmails.length
+  const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+
+  /**
+   * One lane per merged person: group staff portals by canonical merged id so a
+   * person with several legacy portal emails gets a single lane and we never
+   * auto-create a duplicate agent for their secondary email.
+   */
+  const personKeyFor = (p: { mergedSourceUserId: bigint | null; email: string }) => {
+    if (p.mergedSourceUserId != null) {
+      return `id:${canonicalMergedId(p.mergedSourceUserId, canonicalMap)}`;
+    }
+    const byEmail = mergedIdByEmail.get(p.email.trim().toLowerCase());
+    return byEmail != null ? `id:${byEmail}` : `email:${p.email.trim().toLowerCase()}`;
+  };
+  const personPortals = new Map<string, typeof staffPortal>();
+  for (const p of staffPortal) {
+    const key = personKeyFor(p);
+    personPortals.set(key, [...(personPortals.get(key) ?? []), p]);
+  }
+
+  const allAgents = await prisma.agent.findMany({
+    select: { id: true, email: true, name: true },
+  });
+  const agentIdByEmail = new Map(allAgents.map((a) => [a.email.trim().toLowerCase(), a.id]));
+  const agentIdByName = new Map<string, string>();
+  for (const a of allAgents) {
+    const key = normalizeName(a.name);
+    if (key && !agentIdByName.has(key)) agentIdByName.set(key, a.id);
+  }
+
+  const laneAgentIds = new Set<string>();
+  for (const portals of personPortals.values()) {
+    const emails = portals.map((p) => p.email.trim().toLowerCase()).filter(Boolean);
+    const emailHit = emails.find((e) => agentIdByEmail.has(e));
+    if (emailHit) {
+      laneAgentIds.add(agentIdByEmail.get(emailHit)!);
+      continue;
+    }
+    const nameHit = portals
+      .map((p) => agentIdByName.get(normalizeName(p.name)))
+      .find((id): id is string => Boolean(id));
+    if (nameHit) {
+      laneAgentIds.add(nameHit);
+      continue;
+    }
+    if (!defaultTeamId) continue;
+    const primary = portals[0]!;
+    const created = await prisma.agent
+      .create({
+        data: {
+          name: primary.name,
+          email: primary.email.trim().toLowerCase(),
+          teamId: defaultTeamId,
+        },
+      })
+      .catch(() => null);
+    if (created) laneAgentIds.add(created.id);
+  }
+
+  const personnelAgents = laneAgentIds.size
     ? await prisma.agent.findMany({
-        where: { email: { in: staffEmails } },
-        select: { email: true },
+        where: { id: { in: [...laneAgentIds] } },
+        orderBy: { name: "asc" },
+        include: { team: true },
       })
     : [];
-  const existingAgentEmails = new Set(existingAgents.map((a) => a.email.trim().toLowerCase()));
-  if (defaultTeamId) {
-    const missingStaff = staffPortal.filter(
-      (p) => !existingAgentEmails.has(p.email.trim().toLowerCase()),
-    );
-    if (missingStaff.length) {
-      await Promise.all(
-        missingStaff.map((p) =>
-          prisma.agent
-            .create({
-              data: {
-                name: p.name,
-                email: p.email.trim().toLowerCase(),
-                teamId: defaultTeamId,
-              },
-            })
-            .catch(() => null),
-        ),
-      );
-    }
-  }
-  const personnelAgents = await prisma.agent.findMany({
-    where: staffEmails.length
-      ? {
-          email: { in: staffEmails },
-        }
-      : undefined,
-    orderBy: { name: "asc" },
-    include: { team: true },
-  });
-  const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
   const portalByEmail = new Map(portalStaff.map((p) => [p.email.trim().toLowerCase(), p]));
 
   const assigneeColorByEmail = await loadStaffAssignmentColorsForAgents(
@@ -234,6 +309,7 @@ export default async function ManualAssignmentPage() {
   return (
     <ManualAssignmentBoard
       companyFilterLabel={effectiveCompanyFilterLabel}
+      showCompanyFilter={!isPersonnelCompanyLock}
       rosterCompanies={orderedCompanyTeams.map((t) => ({ id: t.id, name: t.name }))}
       notice={
         scopeUnavailable
