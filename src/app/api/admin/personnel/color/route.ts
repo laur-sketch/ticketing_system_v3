@@ -5,7 +5,10 @@ import {
   canonicalProfileFromMerged,
   syncPortalProfile,
 } from "@/lib/auth/sync-portal-profile";
-import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import {
+  resolveHrisSourceTags,
+  resolveSecondaryDatabaseName,
+} from "@/lib/merged-database-sources";
 import { isPersonnelAssignmentColorKey } from "@/lib/personnel-assignment-colors";
 import {
   buildCanonicalMergedIdMap,
@@ -18,14 +21,7 @@ import {
 } from "@/lib/portal-staff-assignment-color-sql";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";
-
-function resolveHrisSourceTag(): string {
-  return (
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO
-  );
-}
+import { Prisma } from "@prisma/client/secondary";
 
 /**
  * PATCH /api/admin/personnel/color
@@ -48,7 +44,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "mergedSourceUserId is required." }, { status: 400 });
   }
   const mergedSourceUserId = BigInt(mergedIdRaw);
-  const sourceTag = resolveHrisSourceTag();
+  const sourceTags = resolveHrisSourceTags();
 
   let colorNext: string | null = null;
   if (body.staffAssignmentColor != null && String(body.staffAssignmentColor).trim() !== "") {
@@ -74,13 +70,16 @@ export async function PATCH(req: Request) {
     SELECT source_user_id, name, username, email, role, company_name, position, department
     FROM merged_users
     WHERE source_user_id = ${mergedSourceUserId}
-      AND source_database = ${sourceTag}
+      AND source_database IN (${Prisma.join(sourceTags)})
       AND is_active = 1
     LIMIT 1
   `;
   const merged = mergedRows[0];
   if (!merged) {
-    return NextResponse.json({ error: "HRIS user not found in mergedatabase." }, { status: 404 });
+    return NextResponse.json(
+      { error: `HRIS user not found in ${resolveSecondaryDatabaseName()}.` },
+      { status: 404 },
+    );
   }
 
   // Prefer an already-linked ACTIVE portal; fall back to a LEGACY_CONFLICT one

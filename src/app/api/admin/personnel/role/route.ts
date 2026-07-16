@@ -6,9 +6,13 @@ import {
   canonicalProfileFromMerged,
   syncPortalProfile,
 } from "@/lib/auth/sync-portal-profile";
-import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import {
+  resolveHrisSourceTags,
+  resolveSecondaryDatabaseName,
+} from "@/lib/merged-database-sources";
 import { setPortalStaffAssignmentColor } from "@/lib/portal-staff-assignment-color-sql";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
+import { Prisma } from "@prisma/client/secondary";
 import {
   isPlatformSuperAdminPortalRole,
   isStaffPortalRole,
@@ -16,14 +20,6 @@ import {
   PORTAL_ROLES,
   type PortalRole,
 } from "@/lib/staff-role";
-
-function resolveHrisSourceTag(): string {
-  return (
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO
-  );
-}
 
 const MANAGEABLE = new Set<string>(PORTAL_ROLES);
 
@@ -53,7 +49,7 @@ export async function PATCH(req: Request) {
   }
 
   const mergedSourceUserId = BigInt(mergedIdRaw);
-  const sourceTag = resolveHrisSourceTag();
+  const sourceTags = resolveHrisSourceTags();
   const mergedHrisRole = mapPortalRoleToMergedHrisRole(portalRole);
 
   const mergedRows = await prismaSecondary.$queryRaw<
@@ -71,13 +67,16 @@ export async function PATCH(req: Request) {
     SELECT source_user_id, name, username, email, role, company_name, position, department
     FROM merged_users
     WHERE source_user_id = ${mergedSourceUserId}
-      AND (source_database = ${sourceTag} OR source_user_id >= 9000000000)
+      AND (source_database IN (${Prisma.join(sourceTags)}) OR source_user_id >= 9000000000)
       AND is_active = 1
     LIMIT 1
   `;
   const merged = mergedRows[0];
   if (!merged) {
-    return NextResponse.json({ error: "HRIS user not found in mergedatabase." }, { status: 404 });
+    return NextResponse.json(
+      { error: `HRIS user not found in ${resolveSecondaryDatabaseName()}.` },
+      { status: 404 },
+    );
   }
 
   await prismaSecondary.$executeRaw`

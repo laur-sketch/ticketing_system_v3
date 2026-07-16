@@ -31,6 +31,7 @@ export default async function PersonnelPage() {
       viewerMode={payload.viewerMode}
       scopeUnavailable={payload.scopeUnavailable}
       scopedCompanyName={payload.scopedCompanyName}
+      secondaryDatabaseName={payload.secondaryDatabaseName}
     />
   );
 }

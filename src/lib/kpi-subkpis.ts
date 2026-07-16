@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client/primary";
 import { normalizePersonName } from "@/lib/person-name";
 import { DateTime } from "luxon";
-import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
+import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis, wrapItProjectSubKpis } from "@/lib/it-project-subkpis";
 import {
   parseTaskScreenshotMetaList,
   type TaskScreenshotMetaItem,
@@ -56,7 +56,32 @@ export type SubKpiItem = {
   numericalTarget?: number | null;
   /** Daily penalty amount when this sub-task is delayed (overrides task default). */
   dailyPenaltyAmount?: number | null;
+  /** Main assignee unlocked helper assignment via Seek Assistance. */
+  assistanceRequested?: boolean;
+  assistanceRequestedAt?: string | null;
+  assistanceRequestedBy?: string | null;
 };
+
+/** Subtask assignee UI/API unlocked when parent flag is on or Seek Assistance was used. */
+export function isSubKpiAssigneeUnlocked(
+  enableSubtaskAssignees: boolean,
+  item: Pick<SubKpiItem, "assistanceRequested">,
+): boolean {
+  return enableSubtaskAssignees === true || item.assistanceRequested === true;
+}
+
+/** Who may set a subtask assignee once unlocked. */
+export function canMutateSubKpiAssignee(opts: {
+  enableSubtaskAssignees: boolean;
+  item: Pick<SubKpiItem, "assistanceRequested">;
+  canAssignWork: boolean;
+  isMainAssignee: boolean;
+}): boolean {
+  return (
+    isSubKpiAssigneeUnlocked(opts.enableSubtaskAssignees, opts.item) &&
+    (opts.canAssignWork || opts.isMainAssignee)
+  );
+}
 
 const SUB_KPI_PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
 
@@ -119,6 +144,11 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     typeof dailyPenaltyRaw === "number" && Number.isFinite(dailyPenaltyRaw) && dailyPenaltyRaw >= 0
       ? dailyPenaltyRaw
       : null;
+  const assistanceRequested = r?.assistanceRequested === true;
+  const assistanceRequestedAt =
+    typeof r?.assistanceRequestedAt === "string" ? r.assistanceRequestedAt.trim() : "";
+  const assistanceRequestedBy =
+    typeof r?.assistanceRequestedBy === "string" ? r.assistanceRequestedBy.trim() : "";
   return {
     id,
     title,
@@ -139,6 +169,9 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(numericalValue != null ? { numericalValue } : {}),
     ...(numericalTarget != null ? { numericalTarget } : {}),
     ...(dailyPenaltyAmount != null ? { dailyPenaltyAmount } : {}),
+    ...(assistanceRequested ? { assistanceRequested: true } : {}),
+    ...(assistanceRequestedAt ? { assistanceRequestedAt } : {}),
+    ...(assistanceRequestedBy ? { assistanceRequestedBy } : {}),
   };
 }
 
@@ -697,8 +730,18 @@ export function removePillarScreenshot(
 
 /** Migrate legacy array to envelope (optional, for consistency). */
 export function ensureEnvelope(raw: unknown): Prisma.InputJsonValue {
+  // IT Project envelopes must keep kind/phases/items — normalizeSubKpis would wipe them.
+  if (isItProjectEnvelope(raw)) {
+    const wrapped = wrapItProjectSubKpisPreserve(raw);
+    return withEnvelopeMeta(wrapped, rawEnvelopeMeta(raw));
+  }
   const n = normalizeSubKpis(raw);
   return wrapForPersistWithExistingMeta(n, raw);
+}
+
+/** Re-wrap IT project JSON without going through checklist normalize (avoids circular import issues at call sites). */
+function wrapItProjectSubKpisPreserve(raw: unknown): Prisma.InputJsonValue {
+  return wrapItProjectSubKpis(parseItProjectSubKpis(raw));
 }
 
 function parseArchivedTaskScreenshotSets(raw: unknown): ArchivedTaskScreenshotSet[] {
@@ -1059,6 +1102,37 @@ export function setSubKpiItemAssignee(
     return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
   }
   const flat = n.flat.map(touch);
+  return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
+}
+
+export function setSubKpiItemAssistanceRequested(
+  raw: unknown,
+  subKpiId: string,
+  byAgentId: string,
+  atIso: string = new Date().toISOString(),
+): Prisma.InputJsonValue | null {
+  const n = normalizeSubKpis(raw);
+  let found = false;
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    found = true;
+    return {
+      ...it,
+      assistanceRequested: true,
+      assistanceRequestedAt: atIso,
+      assistanceRequestedBy: byAgentId,
+    };
+  };
+  if (n.segmented) {
+    const segments = n.segments.map((seg) => ({
+      ...seg,
+      items: seg.items.map(touch),
+    }));
+    if (!found) return null;
+    return wrapForPersistWithExistingMeta({ segmented: true, segments }, raw);
+  }
+  const flat = n.flat.map(touch);
+  if (!found) return null;
   return wrapForPersistWithExistingMeta({ segmented: false, flat }, raw);
 }
 

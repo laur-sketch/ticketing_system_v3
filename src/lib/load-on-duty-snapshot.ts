@@ -1,5 +1,5 @@
 /**
- * Activities / On Duty roster: active personnel from mergedatabase-demo
+ * Activities / On Duty roster: active personnel from the secondary merge DB
  * (merged_users is the source of truth for who exists, their name and company),
  * enriched with today's clock-in status from the merged attendance table.
  */
@@ -12,7 +12,7 @@ import {
   loadTodayClockInsBySourceUserId,
   type DutyStatus,
 } from "@/lib/merged-duty-status";
-import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
 import { prisma, prismaSecondary } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";
 import {
@@ -60,14 +60,6 @@ function formatLastActivity(clockInAt: Date | null, dutyStatus: DutyStatus): str
   })}`;
 }
 
-function resolveHrisSourceTag(): string {
-  return (
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO
-  );
-}
-
 /** Company label straight from merged_users.company_name (personnel source of truth). */
 function companyLabel(mergedCompanyName: string | null | undefined): string {
   const merged = mergedCompanyName?.trim();
@@ -85,14 +77,14 @@ type MergedRosterRow = {
 };
 
 /**
- * Load the active mergedatabase-demo HRIS roster with today's clock-in status (PHT).
+ * Load the active merge-DB HRIS roster with today's clock-in status (PHT).
  * Primary portals/agents are used only to attach a stable agent id per person.
  */
 export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promise<OnDutySnapshot> {
   const pageSize = Math.min(48, Math.max(1, options.pageSize ?? 6));
   const pageRaw = Math.max(1, options.page ?? 1);
   const companyFilter = options.companyFilter?.trim() ?? "";
-  const sourceTag = resolveHrisSourceTag();
+  const sourceTags = new Set(resolveHrisSourceTags());
 
   const [mergedRows, portals, agents] = await Promise.all([
     prismaSecondary.$queryRaw<MergedRosterRow[]>`
@@ -113,7 +105,7 @@ export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promi
 
   /** Roster = HRIS rows only; other merged rows (portal duplicates) map back via canonical ids. */
   const rosterRows = mergedRows.filter(
-    (r) => r.source_database === sourceTag && r.role !== "super_admin",
+    (r) => sourceTags.has(r.source_database) && r.role !== "super_admin",
   );
   if (rosterRows.length === 0) {
     return { agents: [], page: 1, totalPages: 1, total: 0, companies: [], onDutyCount: 0 };

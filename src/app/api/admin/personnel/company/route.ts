@@ -1,21 +1,17 @@
 import { NextResponse } from "next/server";
 import { ensureAgentRowForPortalStaff } from "@/lib/admin-roster";
 import { requireRole } from "@/lib/access";
-import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import {
+  resolveHrisSourceTags,
+  resolveSecondaryDatabaseName,
+} from "@/lib/merged-database-sources";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";
-
-function resolveHrisSourceTag(): string {
-  return (
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO
-  );
-}
+import { Prisma } from "@prisma/client/secondary";
 
 /**
  * PATCH /api/admin/personnel/company
- * SuperAdmin: set company on a mergedatabase (HRIS) user.
+ * SuperAdmin: set company on a merged DB (HRIS) user.
  * Body: { mergedSourceUserId: string, teamId: string | null }
  */
 export async function PATCH(req: Request) {
@@ -32,7 +28,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "mergedSourceUserId is required." }, { status: 400 });
   }
   const mergedSourceUserId = BigInt(mergedIdRaw);
-  const sourceTag = resolveHrisSourceTag();
+  const sourceTags = resolveHrisSourceTags();
 
   const existing = await prismaSecondary.$queryRaw<
     Array<{ source_user_id: bigint; name: string; email: string | null }>
@@ -40,12 +36,15 @@ export async function PATCH(req: Request) {
     SELECT source_user_id, name, email
     FROM merged_users
     WHERE source_user_id = ${mergedSourceUserId}
-      AND source_database = ${sourceTag}
+      AND source_database IN (${Prisma.join(sourceTags)})
       AND is_active = 1
     LIMIT 1
   `;
   if (!existing[0]) {
-    return NextResponse.json({ error: "HRIS user not found in mergedatabase." }, { status: 404 });
+    return NextResponse.json(
+      { error: `HRIS user not found in ${resolveSecondaryDatabaseName()}.` },
+      { status: 404 },
+    );
   }
 
   let companyName: string | null = null;

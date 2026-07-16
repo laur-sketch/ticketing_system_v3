@@ -29,7 +29,7 @@ const TASK_TITLE_INPUT_CLASS =
 type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly" | "Quarterly";
 type DraftSegmentRow = { id: string; label: string; items: SubKpi[] };
 type ItProjectSubDraft = { id: string; title: string; dueDate: string };
-type ItProjectPhaseDraft = { id: string; name: string; items: ItProjectSubDraft[] };
+type ItProjectPhaseDraft = { id: string; name: string; dueDate?: string; items: ItProjectSubDraft[] };
 
 export type KpiDefinitionMaintenanceRecord = {
   id: string;
@@ -84,6 +84,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [completionNumerical, setCompletionNumerical] = useState(false);
   const [numericalTargetDraft, setNumericalTargetDraft] = useState("");
   const [dailyPenaltyDraft, setDailyPenaltyDraft] = useState("");
+  const [enableSubtaskAssignees, setEnableSubtaskAssignees] = useState(true);
   const [draftSegments, setDraftSegments] = useState<DraftSegmentRow[]>([]);
   const [newPillarDraft, setNewPillarDraft] = useState("");
   const [scopedCompanyTeamId, setScopedCompanyTeamId] = useState("");
@@ -116,6 +117,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [itProjectPhases, setItProjectPhases] = useState<ItProjectPhaseDraft[]>([]);
   const [activePhaseId, setActivePhaseId] = useState<string | null>(null);
   const [itProjectPhaseName, setItProjectPhaseName] = useState("Phase 1");
+  const [itProjectPhaseDueDate, setItProjectPhaseDueDate] = useState("");
   const [itProjectSubDraft, setItProjectSubDraft] = useState<ItProjectSubDraft[]>([]);
   const [itProjectSubTitle, setItProjectSubTitle] = useState("");
   const [itProjectSubDue, setItProjectSubDue] = useState("");
@@ -268,6 +270,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       const snap: ItProjectPhaseDraft = {
         id: activePhaseId,
         name: itProjectPhaseName.trim() || `Phase ${phases.length + 1}`,
+        ...(itProjectPhaseDueDate.trim() ? { dueDate: itProjectPhaseDueDate.trim() } : {}),
         items: [...itProjectSubDraft],
       };
       const idx = phases.findIndex((p) => p.id === activePhaseId);
@@ -278,7 +281,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       }
       return [...phases, snap];
     },
-    [activePhaseId, itProjectPhaseName, itProjectSubDraft],
+    [activePhaseId, itProjectPhaseName, itProjectPhaseDueDate, itProjectSubDraft],
   );
 
   const itProjectPhasesForUi = useMemo(
@@ -293,6 +296,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setItProjectPhases(merged);
     setActivePhaseId(target.id);
     setItProjectPhaseName(target.name);
+    setItProjectPhaseDueDate(target.dueDate ?? "");
     setItProjectSubDraft([...target.items]);
     setLocalError(null);
   }
@@ -303,6 +307,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setItProjectPhases(merged);
     setActivePhaseId(newId);
     setItProjectPhaseName(`Phase ${merged.length + 1}`);
+    setItProjectPhaseDueDate("");
     setItProjectSubDraft([]);
     setItProjectSubTitle("");
     setItProjectSubDue("");
@@ -314,6 +319,10 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     if (!title) return;
     if (!itProjectSubDue) {
       setLocalError("Each sub-task needs a due date.");
+      return;
+    }
+    if (itProjectPhaseDueDate.trim() && itProjectSubDue > itProjectPhaseDueDate.trim()) {
+      setLocalError("Sub-task due date must be on or before the phase target/due date.");
       return;
     }
     if (!activePhaseId) setActivePhaseId(crypto.randomUUID());
@@ -456,6 +465,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       setItProjectPhases([]);
       setActivePhaseId(null);
       setItProjectPhaseName("Phase 1");
+      setItProjectPhaseDueDate("");
       setItProjectSubDraft([]);
       setItProjectSubTitle("");
       setItProjectSubDue("");
@@ -479,6 +489,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       setItProjectPhases([]);
       setActivePhaseId(null);
       setItProjectPhaseName("Phase 1");
+      setItProjectPhaseDueDate("");
       setItProjectSubDraft([]);
       setItProjectSubTitle("");
       setItProjectSubDue("");
@@ -572,6 +583,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       title,
       frequency: freqUpper,
       isRecurring: isItProject ? false : maintenanceIsRecurring,
+      enableSubtaskAssignees: enableSubtaskAssignees === true,
     };
     if (!isItProject) {
       body.mainTask = mainTaskDraft.trim();
@@ -599,6 +611,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       const phasesForSubmit = snapshotCurrentItProjectPhase(itProjectPhases).filter((p) => p.items.length > 0);
       body.itProjectPhases = phasesForSubmit.map((p) => ({
         name: p.name,
+        ...(p.dueDate ? { dueDate: p.dueDate } : {}),
         items: p.items.map((s) => ({ title: s.title, dueDate: s.dueDate })),
       }));
     } else if (draftUseSegments) {
@@ -822,6 +835,24 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
               </label>
             </div>
           </fieldset>
+        ) : null}
+        {kpiMaintenanceAssignWork && hasTaskGroupSelected ? (
+          <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 md:col-span-2">
+            <input
+              type="checkbox"
+              checked={enableSubtaskAssignees}
+              onChange={(e) => setEnableSubtaskAssignees(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                Enable Subtask Assignees
+              </span>
+              <span className="mt-0.5 block text-xs font-normal normal-case tracking-normal text-zinc-600 dark:text-zinc-400">
+                When off, subtasks stay unassigned until the main assignee uses Seek Assistance.
+              </span>
+            </span>
+          </label>
         ) : null}
         {hasTaskGroupSelected && !isItProject ? (
           <div className="grid gap-3 md:col-span-2 md:grid-cols-[minmax(220px,1fr)_180px]">
@@ -1131,6 +1162,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
               placeholder="e.g. Discovery"
               className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
             />
+          </label>
+          <label className="flex max-w-md flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+            Phase target / due date
+            <input
+              type="date"
+              value={itProjectPhaseDueDate}
+              onChange={(e) => setItProjectPhaseDueDate(e.target.value)}
+              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal outline-none ring-orange-500/30 focus:border-orange-500 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            <span className="text-[10px] font-medium normal-case tracking-normal text-zinc-500">
+              Sub-task due dates must be on or before this date when set.
+            </span>
           </label>
           {itProjectPhasesForUi.length > 0 ? (
             <div className="flex flex-wrap gap-2">

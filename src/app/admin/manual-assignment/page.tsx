@@ -2,7 +2,7 @@ import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
-import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
 import { prisma, prismaSecondary } from "@/lib/prisma";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
@@ -131,10 +131,7 @@ export default async function ManualAssignmentPage() {
    * (merged_users, source = HRIS). Portal accounts are matched by their merged
    * link or email; synthetic duplicate ids canonicalize to the HRIS person.
    */
-  const hrisSourceTag =
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO;
+  const hrisSourceTags = new Set(resolveHrisSourceTags());
   const mergedRows = await prismaSecondary.$queryRaw<
     Array<{ source_user_id: bigint; name: string; email: string | null; source_database: string }>
   >`
@@ -147,7 +144,7 @@ export default async function ManualAssignmentPage() {
   );
   const hrisMergedIds = new Set(
     mergedRows
-      .filter((r) => r.source_database === hrisSourceTag)
+      .filter((r) => hrisSourceTags.has(r.source_database))
       .map((r) => r.source_user_id.toString()),
   );
   const mergedIdByEmail = new Map<string, bigint>();

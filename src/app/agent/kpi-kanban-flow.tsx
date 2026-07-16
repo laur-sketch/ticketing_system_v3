@@ -20,8 +20,10 @@ import {
   itProjectStatusProgress,
   itProjectAggregatedProgressFromRaw,
   itProjectChecklistProgressFromRaw,
+  itProjectChecklistItems,
   itProjectPhaseProgressFromItems,
   parseItProjectSubKpis,
+  setItProjectSubKpiLifecycle,
 } from "@/lib/it-project-subkpis";
 import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
@@ -43,6 +45,8 @@ import {
   subKpiProgressMismatchWarning,
   taskDailyPenaltyAmountFromSubKpis,
   SUB_KPI_PROGRESS_MISMATCH_WARNING,
+  canMutateSubKpiAssignee,
+  isSubKpiAssigneeUnlocked,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import {
@@ -124,6 +128,7 @@ type KpiRecord = {
   assignedAgent?: { id: string; name: string; team?: { id?: string | null; name?: string | null } | null } | null;
   itProjectName?: string | null;
   itProjectPhase?: string | null;
+  enableSubtaskAssignees?: boolean;
 };
 
 type AssignableAgent = {
@@ -598,7 +603,26 @@ export function AgentKpiKanbanFlow({
   }
 
   async function assignSubKpi(recordId: string, subKpiId: string, assignedAgentId: string) {
-    if (!canAssignWork) return;
+    const record = rows.find((r) => r.id === recordId);
+    const items = record
+      ? isItProjectImplementationPillar(record.title)
+        ? itProjectChecklistItems(record.subKpis)
+        : collectAllSubKpiItems(normalizeSubKpis(record.subKpis))
+      : [];
+    const item = items.find((it) => it.id === subKpiId) ?? null;
+    const isMainAssignee = Boolean(operatorAgentId && record?.assignedAgent?.id === operatorAgentId);
+    if (
+      !record ||
+      !item ||
+      !canMutateSubKpiAssignee({
+        enableSubtaskAssignees: record.enableSubtaskAssignees === true,
+        item,
+        canAssignWork,
+        isMainAssignee,
+      })
+    ) {
+      return;
+    }
     if (assignedAgentId) {
       const target =
         allAssignableAgents.find((a) => a.id === assignedAgentId) ??
@@ -625,6 +649,29 @@ export function AgentKpiKanbanFlow({
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "Could not assign sub-task.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function seekAssistance(recordId: string, subKpiId: string) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: recordId,
+          seekAssistance: { subKpiId },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not seek assistance.");
         return;
       }
       await load();
@@ -805,7 +852,7 @@ export function AgentKpiKanbanFlow({
   async function patchSubKpiSchedule(
     recordId: string,
     subKpiId: string,
-    schedule: { dueDate?: string | null; actualDate?: string | null },
+    schedule: { dueDate?: string | null; actualDate?: string | null; startDate?: string | null },
   ) {
     setBusyId(recordId);
     setError(null);
@@ -818,6 +865,70 @@ export function AgentKpiKanbanFlow({
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "Could not update sub-task dates.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function patchSubKpiLifecycle(recordId: string, subKpiId: string, action: "start" | "end") {
+    setBusyId(recordId);
+    setError(null);
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.id !== recordId || !isItProjectImplementationPillar(row.title)) return row;
+        const life = setItProjectSubKpiLifecycle(row.subKpis, subKpiId, action, tz);
+        if (!life.ok) return row;
+        return { ...row, subKpis: life.json };
+      }),
+    );
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: recordId, subKpiLifecycle: { subKpiId, action } }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update task lifecycle.");
+        await load();
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function patchItProjectPhaseDue(recordId: string, phaseId: string, dueDate: string | null) {
+    const row = rows.find((r) => r.id === recordId);
+    if (!row) return;
+    const data = parseItProjectSubKpis(row.subKpis, row.itProjectPhase);
+    const nextPhases = data.phases.map((p) => {
+      if (p.id !== phaseId) return p;
+      if (!dueDate) {
+        const { dueDate: _removed, ...rest } = p;
+        void _removed;
+        return rest;
+      }
+      return { ...p, dueDate };
+    });
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: recordId,
+          itProjectState: { activePhaseId: data.activePhaseId, phases: nextPhases },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update phase due date.");
         return;
       }
       await load();
@@ -1199,9 +1310,55 @@ export function AgentKpiKanbanFlow({
 
   function renderSubKpiAssignmentControl(r: KpiRecord, s: SubKpiItem) {
     const assignedId = subKpiAssignedAgentId(s) ?? "";
-    if (!canAssignWork) {
-      return <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{subKpiAssigneeLabel(s)}</p>;
+    // Only treat an explicit true as unlocked from the parent flag (false must hide dropdowns).
+    const enableAssignees = r.enableSubtaskAssignees === true;
+    const unlocked = isSubKpiAssigneeUnlocked(enableAssignees, s);
+    const isMainAssignee = Boolean(operatorAgentId && r.assignedAgent?.id === operatorAgentId);
+    const canMutate = canMutateSubKpiAssignee({
+      enableSubtaskAssignees: enableAssignees,
+      item: s,
+      canAssignWork,
+      isMainAssignee,
+    });
+
+    const assistanceBadge = s.assistanceRequested ? (
+      <span className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
+        Assistance Requested
+      </span>
+    ) : null;
+
+    if (!unlocked) {
+      if (isMainAssignee) {
+        return (
+          <div className="mt-2 flex flex-col gap-1.5">
+            {assistanceBadge}
+            <button
+              type="button"
+              disabled={busyId === r.id || !r.assignedAgent?.id}
+              onClick={() => void seekAssistance(r.id, s.id)}
+              className="rounded-lg border border-orange-500 bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Seek Assistance
+            </button>
+            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
+              Unlock a helper assignee for this subtask.
+            </p>
+          </div>
+        );
+      }
+      // Locked for everyone else: no assignee dropdown / label.
+      return assistanceBadge ? <div className="mt-1">{assistanceBadge}</div> : null;
     }
+
+    if (!canMutate) {
+      return (
+        <div className="mt-1 flex flex-col gap-1">
+          {assistanceBadge}
+          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">{subKpiAssigneeLabel(s)}</p>
+        </div>
+      );
+    }
+
     const mainAssigneeId = r.assignedAgent?.id;
     const mainAssignee = mainAssigneeId
       ? allAssignableAgents.find((a) => a.id === mainAssigneeId) ??
@@ -1218,32 +1375,35 @@ export function AgentKpiKanbanFlow({
     const onDutyScoped = companyScopedAgents.filter((a) => agentIsOnDuty(a));
     const assignedStillVisible = assignedId && !onDutyScoped.some((a) => a.id === assignedId);
     return (
-      <label className="mt-2 flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-        Sub Task assignee
-        <select
-          value={assignedId}
-          disabled={busyId === r.id || (!r.assignedAgent?.id && !assignedId)}
-          onChange={(e) => void assignSubKpi(r.id, s.id, e.target.value)}
-          className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-        >
-          <option value="">Unassigned</option>
-          {assignedStillVisible ? (
-            <option value={assignedId}>
-              {agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"} (current)
-            </option>
+      <div className="mt-2 flex flex-col gap-1.5">
+        {assistanceBadge}
+        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          Sub Task assignee
+          <select
+            value={assignedId}
+            disabled={busyId === r.id || (!r.assignedAgent?.id && !assignedId)}
+            onChange={(e) => void assignSubKpi(r.id, s.id, e.target.value)}
+            className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          >
+            <option value="">Unassigned</option>
+            {assignedStillVisible ? (
+              <option value={assignedId}>
+                {agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"} (current)
+              </option>
+            ) : null}
+            {onDutyScoped.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} · On Duty
+              </option>
+            ))}
+          </select>
+          {!r.assignedAgent?.id ? (
+            <span className="text-[10px] font-medium normal-case tracking-normal text-zinc-500 dark:text-zinc-500">
+              Assign the main task first to show personnel from that company.
+            </span>
           ) : null}
-          {onDutyScoped.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name} · On Duty
-            </option>
-          ))}
-        </select>
-        {!r.assignedAgent?.id ? (
-          <span className="text-[10px] font-medium normal-case tracking-normal text-zinc-500 dark:text-zinc-500">
-            Assign the main task first to show personnel from that company.
-          </span>
-        ) : null}
-      </label>
+        </label>
+      </div>
     );
   }
 
@@ -1896,10 +2056,19 @@ export function AgentKpiKanbanFlow({
     );
   }
 
-  function renderItProjectSubKpiCard(r: KpiRecord, s: SubKpiItem, parentEditable: boolean) {
+  function renderItProjectSubKpiCard(
+    r: KpiRecord,
+    s: SubKpiItem,
+    parentEditable: boolean,
+    phaseDueDate?: string | null,
+  ) {
     const subEditable = canEditSubKpi(r, s);
     const projectStatus = s.projectStatus ?? (s.assignedAgentId ? "Pending" : "");
     const projectProgress = itProjectStatusProgress(s);
+    const started = Boolean(s.startDate?.trim());
+    const ended = hasValidActualDate(s);
+    const canStart = subEditable && !started && !ended;
+    const canEnd = subEditable && started && !ended;
     return (
       <div
         key={s.id}
@@ -1922,6 +2091,41 @@ export function AgentKpiKanbanFlow({
           </span>
         </div>
         {renderSubKpiAssignmentControl(r, s)}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!canStart || busyId === r.id}
+            onClick={() => void patchSubKpiLifecycle(r.id, s.id, "start")}
+            className={cn(
+              "rounded-lg px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide",
+              canStart
+                ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                : "cursor-not-allowed bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500",
+            )}
+          >
+            Start Task
+          </button>
+          <button
+            type="button"
+            disabled={!canEnd || busyId === r.id}
+            onClick={() => void patchSubKpiLifecycle(r.id, s.id, "end")}
+            className={cn(
+              "rounded-lg px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide",
+              canEnd
+                ? "bg-orange-600 text-white hover:bg-orange-500"
+                : "cursor-not-allowed bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500",
+            )}
+          >
+            End Task
+          </button>
+        </div>
+        {(started || ended) && (
+          <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {started ? `Started ${s.startDate}` : null}
+            {started && ended ? " · " : null}
+            {ended ? `Ended ${s.actualDate}` : null}
+          </p>
+        )}
         <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
           <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             Priority
@@ -1974,7 +2178,7 @@ export function AgentKpiKanbanFlow({
         </div>
         {!hasValidActualDate(s) ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-            Set completion to Done when this task is finished.
+            Use End Task (or set Completion to Done) when finished.
           </p>
         ) : null}
         <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
@@ -1985,15 +2189,26 @@ export function AgentKpiKanbanFlow({
             Due date
             <DatePickerField
               value={s.dueDate ?? ""}
+              max={phaseDueDate ?? undefined}
               disabled={!parentEditable || busyId === r.id}
-              onChange={(e) =>
+              onChange={(e) => {
+                const next = e.target.value || null;
+                if (next && phaseDueDate && next > phaseDueDate) {
+                  setError(`Due date must be on or before phase due (${phaseDueDate}).`);
+                  return;
+                }
                 void patchSubKpiSchedule(r.id, s.id, {
-                  dueDate: e.target.value || null,
-                })
-              }
+                  dueDate: next,
+                });
+              }}
               wrapperClassName="mt-1"
               aria-label={`Due date for ${s.title}`}
             />
+            {phaseDueDate ? (
+              <span className="mt-0.5 text-[10px] font-medium normal-case tracking-normal text-zinc-500">
+                Must be on or before phase due {phaseDueDate}
+              </span>
+            ) : null}
           </label>
         </div>
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
@@ -2011,6 +2226,25 @@ export function AgentKpiKanbanFlow({
             {subTaskStatusLabel(s, nowMs, tz)}
           </span>
         </p>
+        {(() => {
+          const penaltyCtx = {
+            nowMs,
+            timeZone: tz,
+            frequency: (r.frequency as KpiFrequencyCode) ?? "DAILY",
+            isRecurring: false as const,
+            title: r.title,
+            taskDailyPenaltyAmount: taskDailyPenaltyAmountFromSubKpis(r.subKpis),
+            phaseDueDate: phaseDueDate ?? null,
+          };
+          const penalty = subKpiAccruedPenalty(s, penaltyCtx);
+          if (penalty <= 0) return null;
+          const days = subKpiPenaltyDays(s, penaltyCtx);
+          return (
+            <p className="mt-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400">
+              Delay penalty: −{penalty} pts{days > 0 ? ` (${days}d overdue)` : ""}
+            </p>
+          );
+        })()}
       </div>
     );
   }
@@ -2136,6 +2370,23 @@ export function AgentKpiKanbanFlow({
                     : "No sub-tasks"}
                 </span>
               </div>
+              {editable ? (
+                <label className="mt-2 flex max-w-xs flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                  Phase target / due
+                  <DatePickerField
+                    value={phase.dueDate ?? ""}
+                    disabled={busyId === r.id}
+                    onChange={(e) =>
+                      void patchItProjectPhaseDue(r.id, phase.id, e.target.value || null)
+                    }
+                    aria-label={`Due date for phase ${phase.name}`}
+                  />
+                </label>
+              ) : phase.dueDate ? (
+                <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                  Phase due {phase.dueDate}
+                </p>
+              ) : null}
               {phaseProgress.total > 0 ? (
                 <ChecklistProgressBar
                   percent={phaseProgress.percent}
@@ -2149,7 +2400,9 @@ export function AgentKpiKanbanFlow({
                   No sub-tasks in this phase.
                 </p>
               ) : (
-                phase.items.map((s) => renderItProjectSubKpiCard(r, s, editable))
+                phase.items.map((s) =>
+                  renderItProjectSubKpiCard(r, s, editable, phase.dueDate),
+                )
               )}
             </div>
           </div>

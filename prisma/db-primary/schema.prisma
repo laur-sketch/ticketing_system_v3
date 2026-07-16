@@ -286,6 +286,8 @@ model KpiMaintenance {
   itProjectName        String?      @map("it_project_name")
   itProjectPhase       String?      @map("it_project_phase")
   scopedCompanyTeamId  String?      @map("scoped_company_team_id")
+  /// When false, subtask assignee UI stays hidden until Seek Assistance unlocks a subtask.
+  enableSubtaskAssignees Boolean    @default(true) @map("enable_subtask_assignees")
   createdBy            String       @map("created_by")
   createdByRole        String       @map("created_by_role")
   createdAt            DateTime     @default(now()) @map("created_at")
@@ -338,19 +340,27 @@ model HelpdeskCsvTicket {
 }
 
 model TaskItem {
-  id              String      @id @default(cuid())
-  title           String      @map("title")
-  description     String?     @map("description")
-  status          TaskStatus  @default(CURRENT) @map("status")
-  assignedAgentId String?     @map("assigned_agent_id")
-  assignedAgent   Agent?      @relation("AssignedTask", fields: [assignedAgentId], references: [id])
-  priority        String?     @map("priority")
-  dueAt           DateTime?   @map("due_at")
-  createdBy       String      @map("created_by")
-  createdByRole   String      @map("created_by_role")
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
-  activities      TaskActivity[]
+  id                   String      @id @default(cuid())
+  title                String      @map("title")
+  description          String?     @map("description")
+  status               TaskStatus  @default(CURRENT) @map("status")
+  assignedAgentId      String?     @map("assigned_agent_id")
+  assignedAgent        Agent?      @relation("AssignedTask", fields: [assignedAgentId], references: [id])
+  priority             String?     @map("priority")
+  dueAt                DateTime?   @map("due_at")
+  /// When the assignee started work (Start Task).
+  startedAt            DateTime?   @map("started_at")
+  /// When the task was completed (End Task). Prefer over updatedAt for efficiency.
+  completedAt          DateTime?   @map("completed_at")
+  /// Points deducted per overdue calendar day (null = use default rate).
+  delayPenaltyAmount   Int?        @map("delay_penalty_amount")
+  /// Cached accrued delay penalty points for display.
+  delayPenaltyAccrued  Int         @default(0) @map("delay_penalty_accrued")
+  createdBy            String      @map("created_by")
+  createdByRole        String      @map("created_by_role")
+  createdAt            DateTime    @default(now()) @map("created_at")
+  updatedAt            DateTime    @updatedAt @map("updated_at")
+  activities           TaskActivity[]
 
   @@index([assignedAgentId, status])
   @@index([status, dueAt])

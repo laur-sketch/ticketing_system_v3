@@ -28,6 +28,7 @@ import {
   resetAllSubKpiDone,
   setPillarScreenshots,
   setSubKpiItemAssignee,
+  setSubKpiItemAssistanceRequested,
   setSubKpiItemDone,
   setSubKpiItemScreenshots,
   setSubKpiItemWorkMeta,
@@ -47,19 +48,26 @@ import {
   validateStructuredUpdate,
   wrapForPersist,
   wrapForPersistWithExistingMeta,
+  canMutateSubKpiAssignee,
 } from "@/lib/kpi-subkpis";
 import {
   buildItProjectFromPhaseDrafts,
+  findItProjectPhaseForSubKpi,
   isItProjectEnvelope,
+  isSubtaskDueWithinPhaseDue,
   itProjectActivePhase,
   itProjectAllItems,
+  itProjectChecklistItems,
   parseItProjectSubKpis,
   setItProjectActivePhase,
   setItProjectSubKpiAssignee,
+  setItProjectSubKpiAssistanceRequested,
   setItProjectSubKpiDone,
+  setItProjectSubKpiLifecycle,
   setItProjectSubKpiProjectMeta,
   setItProjectSubKpiSchedule,
   updateItProjectPhases,
+  validateItProjectPhaseDueConstraints,
   wrapItProjectSubKpis,
   type ItProjectData,
 } from "@/lib/it-project-subkpis";
@@ -393,7 +401,11 @@ export async function POST(req: Request) {
     nonRecurringEndAt?: string;
     itProjectName?: string;
     itProjectPhase?: string;
-    itProjectPhases?: Array<{ name?: string; items?: Array<{ title?: string; dueDate?: string }> }>;
+    itProjectPhases?: Array<{
+      name?: string;
+      dueDate?: string;
+      items?: Array<{ title?: string; dueDate?: string }>;
+    }>;
     itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
     scopedCompanyTeamId?: string | null;
     completionRequirements?: SubKpiCompletionRequirements;
@@ -401,11 +413,14 @@ export async function POST(req: Request) {
     mainTask?: string;
     pillarDueDate?: string;
     taskDailyPenaltyAmount?: number | null;
+    enableSubtaskAssignees?: boolean;
   };
   const title = body.title?.trim() ?? "";
   const mainTaskRaw = body.mainTask?.trim() ?? "";
   const isItProject = isItProjectImplementationPillar(title);
   const frequency = (body.frequency?.toUpperCase() ?? "DAILY") as KpiFrequency;
+  const enableSubtaskAssigneesFlag =
+    typeof body.enableSubtaskAssignees === "boolean" ? body.enableSubtaskAssignees : true;
   if (!title || !allowedFrequencies.has(frequency)) {
     return NextResponse.json({ error: "title and frequency are required." }, { status: 400 });
   }
@@ -513,6 +528,7 @@ export async function POST(req: Request) {
     const phaseDrafts = Array.isArray(body.itProjectPhases)
       ? body.itProjectPhases.map((p) => ({
           name: (p.name ?? "").trim(),
+          dueDate: (p.dueDate ?? "").trim(),
           items: Array.isArray(p.items)
             ? p.items.map((it) => ({
                 title: (it.title ?? "").trim(),
@@ -588,8 +604,8 @@ export async function POST(req: Request) {
       dueDate: !isRecurring ? (body.pillarDueDate?.trim() ?? "") : null,
     });
   }
-  if (!isItProject && body.taskDailyPenaltyAmount !== undefined) {
-    if (isRecurring) {
+  if (body.taskDailyPenaltyAmount !== undefined) {
+    if (!isItProject && isRecurring) {
       return NextResponse.json(
         { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
         { status: 400 },
@@ -670,17 +686,30 @@ export async function POST(req: Request) {
   }
 
   if (existingTaskGroup && isItProject) {
-    return NextResponse.json(
-      { error: `Task group '${title}' already exists. IT Project tasks cannot be merged into an existing group.` },
-      { status: 409 },
-    );
+    // Allow multiple IT projects under the same pillar title; block only duplicate project names.
+    if (itProjectName) {
+      const existingProject = await prisma.kpiMaintenance.findFirst({
+        where: {
+          title,
+          itProjectName: { equals: itProjectName, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (existingProject) {
+        return NextResponse.json(
+          { error: `IT Project "${itProjectName}" already exists. Use a different project name.` },
+          { status: 409 },
+        );
+      }
+    }
   }
 
   let created;
   try {
-    // Set initial taskCount on the subKpis envelope
-    const newNorm = normalizeSubKpis(subKpisPersist);
-    const newItemCount = collectAllSubKpiItems(newNorm).length;
+    // Preserve IT project envelopes; setTaskCount pass-throughs kind: it_project.
+    const newItemCount = isItProject
+      ? itProjectChecklistItems(subKpisPersist).length
+      : collectAllSubKpiItems(normalizeSubKpis(subKpisPersist)).length;
     const initialJson = setTaskCount(subKpisPersist, newItemCount);
 
     created = await prisma.kpiMaintenance.create({
@@ -707,6 +736,7 @@ export async function POST(req: Request) {
         createdByRole: session.user.role,
         itProjectName,
         itProjectPhase,
+        enableSubtaskAssignees: enableSubtaskAssigneesFlag,
       },
     });
   } catch (e) {
@@ -754,6 +784,11 @@ export async function PATCH(req: Request) {
       subKpiId?: string;
       dueDate?: string | null;
       actualDate?: string | null;
+      startDate?: string | null;
+    };
+    subKpiLifecycle?: {
+      subKpiId?: string;
+      action?: "start" | "end";
     };
     subKpiWorkMeta?: {
       subKpiId?: string;
@@ -772,6 +807,9 @@ export async function PATCH(req: Request) {
     subKpiAssignee?: {
       subKpiId?: string;
       assignedAgentId?: string | null;
+    };
+    seekAssistance?: {
+      subKpiId?: string;
     };
     subKpiScreenshot?: {
       subKpiId?: string;
@@ -860,6 +898,7 @@ export async function PATCH(req: Request) {
       lastFullCompletionAt: true,
       itProjectName: true,
       itProjectPhase: true,
+      enableSubtaskAssignees: true,
     },
   });
   if (!row) return NextResponse.json({ error: "KPI not found." }, { status: 404 });
@@ -967,10 +1006,15 @@ export async function PATCH(req: Request) {
         typeof body.itProjectState.activePhaseId === "string" && body.itProjectState.activePhaseId.trim()
           ? body.itProjectState.activePhaseId.trim()
           : parsed.activePhaseId;
-      wrapped = updateItProjectPhases(kpiRow.subKpis, {
+      const nextState: ItProjectData = {
         activePhaseId,
         phases: body.itProjectState.phases as ItProjectData["phases"],
-      });
+      };
+      const dueCheck = validateItProjectPhaseDueConstraints(nextState);
+      if (!dueCheck.ok) {
+        return NextResponse.json({ error: dueCheck.error }, { status: 400 });
+      }
+      wrapped = updateItProjectPhases(kpiRow.subKpis, nextState);
     } else if (typeof body.itProjectState.activePhaseId === "string" && body.itProjectState.activePhaseId.trim()) {
       wrapped = setItProjectActivePhase(kpiRow.subKpis, body.itProjectState.activePhaseId.trim());
     } else {
@@ -1000,13 +1044,7 @@ export async function PATCH(req: Request) {
   }
 
   if (body.taskDailyPenaltyAmount !== undefined) {
-    if (isItProjectImplementationPillar(kpiRow.title)) {
-      return NextResponse.json(
-        { error: "Task daily penalty applies only to regular checklist tasks." },
-        { status: 400 },
-      );
-    }
-    if (kpiRow.isRecurring) {
+    if (kpiRow.isRecurring && !isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
         { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
         { status: 400 },
@@ -1125,9 +1163,24 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const sched = body.subKpiSchedule;
+    const projectData = parseItProjectSubKpis(kpiRow.subKpis);
+    const phase = findItProjectPhaseForSubKpi(projectData, subKpiIdSched);
+    if (sched.dueDate != null && sched.dueDate !== "" && phase) {
+      if (!isSubtaskDueWithinPhaseDue(sched.dueDate, phase.dueDate)) {
+        return NextResponse.json(
+          {
+            error: `Sub-task due date must be on or before phase "${phase.name}" due date${
+              phase.dueDate ? ` (${phase.dueDate})` : ""
+            }.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
     const updatedJson = setItProjectSubKpiSchedule(kpiRow.subKpis, subKpiIdSched, {
       dueDate: sched.dueDate,
       actualDate: sched.actualDate,
+      startDate: sched.startDate,
     });
     const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
     const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
@@ -1139,6 +1192,45 @@ export async function PATCH(req: Request) {
       where: { id },
       data: {
         subKpis: updatedJson,
+        ...(nextComplete ? { rolledOverIncomplete: false } : {}),
+        ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
+      },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.subKpiLifecycle != null && typeof body.subKpiLifecycle === "object") {
+    if (!isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Start/End lifecycle applies only to IT Project Implementation." },
+        { status: 400 },
+      );
+    }
+    const subKpiIdLife = String(body.subKpiLifecycle.subKpiId ?? "").trim();
+    const action = body.subKpiLifecycle.action;
+    if (!subKpiIdLife || (action !== "start" && action !== "end")) {
+      return NextResponse.json(
+        { error: "subKpiLifecycle.subKpiId and action ('start'|'end') are required." },
+        { status: 400 },
+      );
+    }
+    if (!canEditSubKpi(subKpiIdLife)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const life = setItProjectSubKpiLifecycle(kpiRow.subKpis, subKpiIdLife, action, patchTz);
+    if (!life.ok) {
+      return NextResponse.json({ error: life.error }, { status: 400 });
+    }
+    const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const nextComplete = checklistFullyComplete(life.json, kpiMainTaskLabel(kpiRow));
+    let lastFullCompletionAt: Date | null | undefined;
+    if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
+    else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
+
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: {
+        subKpis: life.json,
         ...(nextComplete ? { rolledOverIncomplete: false } : {}),
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
@@ -1181,9 +1273,6 @@ export async function PATCH(req: Request) {
   }
 
   if (body.subKpiAssignee != null && typeof body.subKpiAssignee === "object") {
-    if (!perms.canAssignWork) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
     const subKpiIdAssign = String(body.subKpiAssignee.subKpiId ?? "").trim();
     if (!subKpiIdAssign) {
       return NextResponse.json({ error: "subKpiAssignee.subKpiId is required." }, { status: 400 });
@@ -1191,6 +1280,23 @@ export async function PATCH(req: Request) {
     const target = subKpiItems.find((it) => it.id === subKpiIdAssign);
     if (!target) {
       return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
+    if (
+      !canMutateSubKpiAssignee({
+        enableSubtaskAssignees: kpiRow.enableSubtaskAssignees,
+        item: target,
+        canAssignWork: perms.canAssignWork,
+        isMainAssignee: isAssignee,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error: kpiRow.enableSubtaskAssignees
+            ? "Forbidden"
+            : "Subtask assignees are locked. The main assignee must Seek Assistance first.",
+        },
+        { status: 403 },
+      );
     }
     const assignedAgentIdRaw = body.subKpiAssignee.assignedAgentId;
     const assignedAgentId =
@@ -1241,6 +1347,45 @@ export async function PATCH(req: Request) {
     const updatedJson = isItProjectImplementationPillar(kpiRow.title)
       ? setItProjectSubKpiAssignee(kpiRow.subKpis, subKpiIdAssign, assignee)
       : setSubKpiItemAssignee(kpiRow.subKpis, subKpiIdAssign, assignee);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.seekAssistance != null && typeof body.seekAssistance === "object") {
+    if (!isAssignee) {
+      return NextResponse.json(
+        { error: "Only the main assignee can seek assistance on subtasks." },
+        { status: 403 },
+      );
+    }
+    const subKpiIdSeek = String(body.seekAssistance.subKpiId ?? "").trim();
+    if (!subKpiIdSeek) {
+      return NextResponse.json({ error: "seekAssistance.subKpiId is required." }, { status: 400 });
+    }
+    const targetSeek = subKpiItems.find((it) => it.id === subKpiIdSeek);
+    if (!targetSeek) {
+      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
+    if (kpiRow.enableSubtaskAssignees) {
+      return NextResponse.json(
+        { error: "Subtask assignees are already enabled for this task." },
+        { status: 400 },
+      );
+    }
+    if (targetSeek.assistanceRequested) {
+      const updated = await prisma.kpiMaintenance.findUnique({ where: { id } });
+      return NextResponse.json(updated);
+    }
+    const byAgentId = perms.operator!.id;
+    const updatedJson = isItProjectImplementationPillar(kpiRow.title)
+      ? setItProjectSubKpiAssistanceRequested(kpiRow.subKpis, subKpiIdSeek, byAgentId)
+      : setSubKpiItemAssistanceRequested(kpiRow.subKpis, subKpiIdSeek, byAgentId);
+    if (!updatedJson) {
+      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    }
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
       data: { subKpis: updatedJson },

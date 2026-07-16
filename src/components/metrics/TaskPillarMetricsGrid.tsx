@@ -935,10 +935,6 @@ export function TaskPillarMetricsGrid({
         )}
       >
       {pillars.map((pillar) => {
-        if (pillar === "IT PROJECT IMPLEMENTATION") {
-          return null;
-        }
-
         if (pillar === "HELPDESK SUPPORT") {
           const ht = helpdeskTickets;
           const segments = ht ? helpdeskRatioSegments(ht) : [];
@@ -1007,9 +1003,12 @@ export function TaskPillarMetricsGrid({
           agg.total === 0
             ? "—"
             : `${view.percent}% ${cfg.metricName}`;
-        const subLabel = showCountedPeriods
-          ? countedPeriodsLabel(agg)
-          : undefined;
+        const subLabel =
+          pillar === "IT PROJECT IMPLEMENTATION"
+            ? `${view.positive} on time · ${view.negative} delayed · ${agg.total} sub-tasks`
+            : showCountedPeriods
+              ? countedPeriodsLabel(agg)
+              : undefined;
         return (
           <PillarDonutCard
             key={pillar}

@@ -83,6 +83,9 @@ type TaskRow = {
   dueAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  delayPenaltyAccrued: number;
   assignedAgentId: string | null;
 };
 
@@ -271,6 +274,7 @@ async function loadTasksInWindow(start: Date, end: Date): Promise<TaskRow[]> {
       OR: [
         { createdAt: { gte: start, lt: end } },
         { updatedAt: { gte: start, lt: end } },
+        { completedAt: { gte: start, lt: end } },
         { dueAt: { gte: start, lt: end } },
       ],
     },
@@ -281,6 +285,9 @@ async function loadTasksInWindow(start: Date, end: Date): Promise<TaskRow[]> {
       dueAt: true,
       createdAt: true,
       updatedAt: true,
+      startedAt: true,
+      completedAt: true,
+      delayPenaltyAccrued: true,
       assignedAgentId: true,
     },
   });
@@ -530,9 +537,10 @@ export async function runComputeUserEfficiencyBreakdowns(
             let onTime = 0;
             let hoursSum = 0;
             for (const t of doneTasks) {
-              const completedAt = t.updatedAt;
+              const completedAt = t.completedAt ?? t.updatedAt;
               if (!t.dueAt || completedAt.getTime() <= t.dueAt.getTime()) onTime++;
-              hoursSum += Math.max(0, (completedAt.getTime() - t.createdAt.getTime()) / 3_600_000);
+              const startAt = t.startedAt ?? t.createdAt;
+              hoursSum += Math.max(0, (completedAt.getTime() - startAt.getTime()) / 3_600_000);
             }
             onTimeCompletionRate = round2((onTime / doneTasks.length) * 100);
             averageTaskCompletionHours = round2(hoursSum / doneTasks.length);
@@ -548,12 +556,14 @@ export async function runComputeUserEfficiencyBreakdowns(
             taskTitle: t.title.slice(0, 512),
             status: t.status,
             dueAt: t.dueAt,
-            completedAt: t.status === "DONE" ? t.updatedAt : null,
+            completedAt: t.status === "DONE" ? t.completedAt ?? t.updatedAt : null,
             efficiencyContribution: t.status === "DONE" ? perDone : 0,
             notes:
               t.status === "DELAYED"
                 ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
-                : null,
+                : t.delayPenaltyAccrued > 0
+                  ? `Delay penalty accrued: ${t.delayPenaltyAccrued} pts`
+                  : null,
           }));
         } else {
           // Sum checklist fallback across all agent rows of this person.

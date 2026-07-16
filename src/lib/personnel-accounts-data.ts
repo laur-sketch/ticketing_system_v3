@@ -1,11 +1,15 @@
 import { findPortalByEmailOnly } from "@/lib/portal-account";
 import { loadPortalStaffAssignmentColorMap } from "@/lib/portal-staff-assignment-color-sql";
-import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import {
+  resolveHrisSourceTags,
+  resolveSecondaryDatabaseName,
+} from "@/lib/merged-database-sources";
 import { mapHrisToPortalRole } from "@/lib/auth/role-mapping";
 import type { UserRole } from "@/lib/auth";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import { normalizePersonName } from "@/lib/person-name";
 import { normalizePortalRole } from "@/lib/staff-role";
+import { Prisma } from "@prisma/client/secondary";
 
 export type PersonnelRosterRow = {
   /** HRIS / merged_users primary key */
@@ -34,6 +38,8 @@ export type PersonnelAccountsPayload = {
   scopedCompanyName: string | null;
   scopeUnavailable: boolean;
   viewerMode: "superadmin" | "admin";
+  /** MySQL schema name from DATABASE_URL_SECONDARY (e.g. mergeddatabase-dev). */
+  secondaryDatabaseName: string;
 };
 
 type MergedStaffRow = {
@@ -53,14 +59,6 @@ type KpiAvgRow = {
   overall_percent: number;
   average_percent: number;
 };
-
-function resolveHrisSourceTag(): string {
-  return (
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO
-  );
-}
 
 function companyKey(name: string | null | undefined): string {
   return normalizePersonName(name ?? "");
@@ -101,7 +99,7 @@ function scoreNames(a: string, b: string): number {
 }
 
 /**
- * Personnel roster from mergedatabase (hrisdemo users).
+ * Personnel roster from the secondary merge MySQL DB (HRIS users).
  * PostgreSQL portal/agent rows are not listed — only used to attach
  * assignment color / optional agent link for synced progress.
  */
@@ -111,7 +109,8 @@ export async function loadPersonnelAccountsPayload(viewer: {
 }): Promise<PersonnelAccountsPayload> {
   const email = (viewer.email ?? "").trim().toLowerCase();
   const isSuperAdmin = viewer.role === "SuperAdmin";
-  const sourceTag = resolveHrisSourceTag();
+  const sourceTags = resolveHrisSourceTags();
+  const secondaryDatabaseName = resolveSecondaryDatabaseName();
 
   const [teams, agents, portals, mergedUsers, kpiAverages] = await Promise.all([
     prismaPrimary.team.findMany({ orderBy: { name: "asc" } }),
@@ -135,13 +134,26 @@ export async function loadPersonnelAccountsPayload(viewer: {
         source_user_id, name, username, email, role, company_name, position, department, is_active
       FROM merged_users
       WHERE is_active = 1
-        AND source_database = ${sourceTag}
+        AND source_database IN (${Prisma.join(sourceTags)})
       ORDER BY name ASC
     `,
-    prismaSecondary.$queryRaw<KpiAvgRow[]>`
-      SELECT source_user_id, overall_percent, average_percent
-      FROM merged_kpi_user_averages
-    `,
+    // Table is created by ensureMergedPortalWorkTables / portal-work sync.
+    // Soft-fail so Personnel still loads when averages have not been bootstrapped yet.
+    prismaSecondary
+      .$queryRaw<KpiAvgRow[]>`
+        SELECT source_user_id, overall_percent, average_percent
+        FROM merged_kpi_user_averages
+      `
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("merged_kpi_user_averages") || message.includes("1146")) {
+          console.warn(
+            "[personnel] merged_kpi_user_averages missing; KPI % columns will be empty until sync.",
+          );
+          return [] as KpiAvgRow[];
+        }
+        throw err;
+      }),
   ]);
 
   const colorByPortalId = await loadPortalStaffAssignmentColorMap();
@@ -237,6 +249,7 @@ export async function loadPersonnelAccountsPayload(viewer: {
       scopedCompanyName: null,
       scopeUnavailable: false,
       viewerMode: "superadmin",
+      secondaryDatabaseName,
     };
   }
 
@@ -250,6 +263,7 @@ export async function loadPersonnelAccountsPayload(viewer: {
       scopedCompanyName: null,
       scopeUnavailable: true,
       viewerMode: "admin",
+      secondaryDatabaseName,
     };
   }
 
@@ -266,5 +280,6 @@ export async function loadPersonnelAccountsPayload(viewer: {
     scopedCompanyName: scopedName,
     scopeUnavailable: false,
     viewerMode: "admin",
+    secondaryDatabaseName,
   };
 }

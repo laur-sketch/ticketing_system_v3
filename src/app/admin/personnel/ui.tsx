@@ -41,6 +41,7 @@ export function PersonnelClient({
   viewerMode,
   scopeUnavailable,
   scopedCompanyName,
+  secondaryDatabaseName = "mergeddatabase-dev",
 }: {
   initialTeams: Team[];
   initialPersonnel: PersonnelRosterRow[];
@@ -48,6 +49,7 @@ export function PersonnelClient({
   viewerMode: "superadmin" | "admin";
   scopeUnavailable: boolean;
   scopedCompanyName: string | null;
+  secondaryDatabaseName?: string;
 }) {
   const isAdminCompanyView = viewerMode === "admin";
   const [, setTeams] = useState<Team[]>(initialTeams);
@@ -464,7 +466,7 @@ export function PersonnelClient({
           </p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Personnel registry</h1>
           <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">
-            Showing HRIS employees from mergedatabase · progress synced from ticketing
+            Showing HRIS employees from {secondaryDatabaseName} · progress synced from ticketing
           </p>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
             {/* Portal account create / agent merge kept off — roster is mergedatabase SoT */}
@@ -680,7 +682,7 @@ export function PersonnelClient({
                     Company roster
                   </h2>
                   <p className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
-                    {scopedCompanyName ?? "Your queue"} · HRIS employees from mergedatabase
+                    {scopedCompanyName ?? "Your queue"} · HRIS employees from {secondaryDatabaseName}
                   </p>
                 </div>
                 <div className="overflow-x-auto">
@@ -765,7 +767,7 @@ export function PersonnelClient({
         ) : (
           <>
             <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-              HRIS roster from mergedatabase · SuperAdmin can set each employee&apos;s role and company queue
+              HRIS roster from {secondaryDatabaseName} · SuperAdmin can set each employee&apos;s role and company queue
             </p>
 
             <RegistryFiltersBar
@@ -800,7 +802,7 @@ export function PersonnelClient({
                       <tr>
                         <td colSpan={8} className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-500">
                           {personnel.length === 0
-                            ? "No HRIS users found in mergedatabase."
+                            ? `No HRIS users found in ${secondaryDatabaseName}.`
                             : "No users match the selected filters."}
                         </td>
                       </tr>

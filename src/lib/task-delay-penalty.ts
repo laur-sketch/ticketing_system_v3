@@ -3,8 +3,11 @@ import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
-  itProjectChecklistItems,
+  findItProjectPhaseForSubKpi,
   isItProjectEnvelope,
+  isItProjectSubTaskDelayed,
+  itProjectChecklistItems,
+  parseItProjectSubKpis,
 } from "@/lib/it-project-subkpis";
 import {
   isNonRecurringSubKpiDelayed,
@@ -12,9 +15,7 @@ import {
 } from "@/lib/kpi-cycle-state";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import {
-  collectAllSubKpiItems,
   collectChecklistProgressItems,
-  normalizeSubKpis,
   subKpiProgressOwner,
   taskDailyPenaltyAmountFromSubKpis,
   type SubKpiItem,
@@ -30,6 +31,8 @@ export type SubKpiPenaltyContext = {
   isRecurring: boolean;
   title: string;
   taskDailyPenaltyAmount?: number | null;
+  /** Optional phase due (YYYY-MM-DD) when subtask due is missing (IT projects). */
+  phaseDueDate?: string | null;
 };
 
 function parseSubKpiYmd(value: unknown, timeZone: string): DateTime | null {
@@ -47,19 +50,34 @@ export function penaltyAccrualDays(delayStartMs: number, endMs: number, timeZone
   return Math.floor(endDay.diff(startDay, "days").days) + 1;
 }
 
+function effectiveDueYmd(item: SubKpiItem, ctx: SubKpiPenaltyContext): string | null {
+  const due = item.dueDate?.trim();
+  if (due && YMD.test(due)) return due;
+  const phaseDue = ctx.phaseDueDate?.trim();
+  if (phaseDue && YMD.test(phaseDue)) return phaseDue;
+  return null;
+}
+
 export function subKpiPenaltyDelayStartMs(
   item: SubKpiItem,
   ctx: SubKpiPenaltyContext,
 ): number | null {
-  if (ctx.isRecurring !== false) return null;
-  if (isItProjectImplementationPillar(ctx.title)) return null;
+  const isIt = isItProjectImplementationPillar(ctx.title);
+  if (!isIt && ctx.isRecurring !== false) return null;
   const zone = normalizeTimeZone(ctx.timeZone);
-  const dueYmd = item.dueDate?.trim();
+  const dueYmd = effectiveDueYmd(item, ctx);
   if (!dueYmd) return null;
   return nonRecurringDelayStartExclusive(dueYmd, zone)?.getTime() ?? null;
 }
 
 export function isSubKpiInDelayPenaltyScope(item: SubKpiItem, ctx: SubKpiPenaltyContext): boolean {
+  if (isItProjectImplementationPillar(ctx.title)) {
+    // Overdue incomplete or late actual — same semantics as board delay.
+    const due = effectiveDueYmd(item, ctx);
+    if (!due) return false;
+    const withDue = { ...item, dueDate: due };
+    return isItProjectSubTaskDelayed(withDue, ctx.nowMs, ctx.timeZone);
+  }
   if (ctx.isRecurring !== false) return false;
   const zone = normalizeTimeZone(ctx.timeZone);
   return isNonRecurringSubKpiDelayed(item, ctx.nowMs, zone);
@@ -71,7 +89,9 @@ export function subKpiPenaltyDays(item: SubKpiItem, ctx: SubKpiPenaltyContext): 
   if (delayStartMs == null) return 0;
 
   const actual = parseSubKpiYmd(item.actualDate, zone);
-  const complete = subKpiRequirementsMet(item);
+  const complete = isItProjectImplementationPillar(ctx.title)
+    ? Boolean(actual)
+    : subKpiRequirementsMet(item);
 
   if (actual) {
     const actualMs = actual.toMillis();
@@ -101,8 +121,8 @@ export function resolveSubKpiDailyPenaltyAmount(
 }
 
 export function subKpiAccruedPenalty(item: SubKpiItem, ctx: SubKpiPenaltyContext): number {
-  if (ctx.isRecurring !== false) return 0;
-  if (isItProjectImplementationPillar(ctx.title)) return 0;
+  // IT projects are non-recurring for penalty purposes even if row flags differ.
+  if (!isItProjectImplementationPillar(ctx.title) && ctx.isRecurring !== false) return 0;
   const rate = resolveSubKpiDailyPenaltyAmount(item, ctx);
   if (rate <= 0) return 0;
   const days = subKpiPenaltyDays(item, ctx);
@@ -123,9 +143,38 @@ export function penaltyDeductionsForKpi(
   kpi: KpiPenaltySource,
   ctx: { nowMs: number; timeZone: string },
 ): Map<string, { id: string; name: string; deduction: number }> {
-  if (kpi.isRecurring !== false) return new Map();
-  if (isItProjectImplementationPillar(kpi.title)) return new Map();
+  const isIt = isItProjectImplementationPillar(kpi.title);
+  if (!isIt && kpi.isRecurring !== false) return new Map();
+
   const taskDailyPenaltyAmount = taskDailyPenaltyAmountFromSubKpis(kpi.subKpis);
+  const byPerson = new Map<string, { id: string; name: string; deduction: number }>();
+
+  if (isItProjectEnvelope(kpi.subKpis) || isIt) {
+    const data = parseItProjectSubKpis(kpi.subKpis);
+    for (const item of itProjectChecklistItems(kpi.subKpis)) {
+      if (!item.title.trim()) continue;
+      const phase = findItProjectPhaseForSubKpi(data, item.id);
+      const penaltyCtx: SubKpiPenaltyContext = {
+        nowMs: ctx.nowMs,
+        timeZone: ctx.timeZone,
+        frequency: kpi.frequency,
+        isRecurring: false,
+        title: kpi.title,
+        taskDailyPenaltyAmount,
+        phaseDueDate: phase?.dueDate ?? null,
+      };
+      const deduction = subKpiAccruedPenalty(item, penaltyCtx);
+      if (deduction <= 0) continue;
+      const owner = subKpiProgressOwner(item, kpi.assignedAgent ?? null);
+      if (owner.id === "__unassigned__") continue;
+      const key = owner.id !== "__unassigned__" ? owner.id : owner.name.trim().toLowerCase();
+      const current = byPerson.get(key) ?? { id: owner.id, name: owner.name, deduction: 0 };
+      current.deduction += deduction;
+      byPerson.set(key, current);
+    }
+    return byPerson;
+  }
+
   const penaltyCtx: SubKpiPenaltyContext = {
     nowMs: ctx.nowMs,
     timeZone: ctx.timeZone,
@@ -135,11 +184,7 @@ export function penaltyDeductionsForKpi(
     taskDailyPenaltyAmount,
   };
 
-  const items = isItProjectEnvelope(kpi.subKpis)
-    ? itProjectChecklistItems(kpi.subKpis)
-    : collectChecklistProgressItems(kpi.subKpis, kpiMainTaskLabel(kpi));
-
-  const byPerson = new Map<string, { id: string; name: string; deduction: number }>();
+  const items = collectChecklistProgressItems(kpi.subKpis, kpiMainTaskLabel(kpi));
   for (const item of items) {
     if (!item.title.trim()) continue;
     const deduction = subKpiAccruedPenalty(item, penaltyCtx);

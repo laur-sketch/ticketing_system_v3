@@ -3,8 +3,34 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
+import { DateTime } from "luxon";
+import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 
 const statusSet = new Set(Object.values(TaskStatus));
+
+function taskItemAccruedPenalty(args: {
+  dueAt: Date | null;
+  completedAt: Date | null;
+  status: TaskStatus;
+  delayPenaltyAmount: number | null;
+  now?: Date;
+}): number {
+  const rate = args.delayPenaltyAmount ?? 0;
+  if (rate <= 0 || !args.dueAt) return 0;
+  const zone = DEFAULT_TIME_ZONE;
+  const dueDay = DateTime.fromJSDate(args.dueAt, { zone }).startOf("day");
+  const endSource =
+    args.completedAt ??
+    (args.status === "DONE" ? args.completedAt : null) ??
+    args.now ??
+    new Date();
+  const endDay = DateTime.fromJSDate(endSource, { zone }).startOf("day");
+  if (!dueDay.isValid || !endDay.isValid) return 0;
+  const delayStart = dueDay.plus({ days: 1 });
+  if (endDay < delayStart) return 0;
+  const days = Math.floor(endDay.diff(delayStart, "days").days) + 1;
+  return Math.max(0, Math.round(rate * days));
+}
 
 export async function GET() {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
@@ -12,8 +38,6 @@ export async function GET() {
   const perms = await resolveOpsPermissions(session);
   const role = session.user.role;
 
-  // Admins oversee all tasks; Heads see all operational tasks they can coordinate;
-  // others only see rows assigned to their linked Agent profile.
   const where =
     role === "Admin" || role === "SuperAdmin"
       ? {}
@@ -41,6 +65,7 @@ export async function POST(req: Request) {
     assignedAgentId?: string;
     dueAt?: string;
     priority?: string;
+    delayPenaltyAmount?: number | null;
   };
   const title = body.title?.trim() ?? "";
   if (!title || !body.assignedAgentId) {
@@ -52,6 +77,10 @@ export async function POST(req: Request) {
   }
 
   const dueAt = body.dueAt ? new Date(body.dueAt) : null;
+  const delayPenaltyAmount =
+    typeof body.delayPenaltyAmount === "number" && Number.isFinite(body.delayPenaltyAmount)
+      ? Math.max(0, Math.round(body.delayPenaltyAmount))
+      : null;
   const created = await prisma.taskItem.create({
     data: {
       title,
@@ -59,6 +88,7 @@ export async function POST(req: Request) {
       assignedAgentId: assignee.id,
       dueAt: dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt : null,
       priority: body.priority?.trim() || null,
+      delayPenaltyAmount,
       createdBy: session.user.email ?? session.user.name ?? "unknown",
       createdByRole: session.user.role,
     },
@@ -79,35 +109,126 @@ export async function PATCH(req: Request) {
   if (unauthorized || !session) return unauthorized;
   const perms = await resolveOpsPermissions(session);
 
-  const body = (await req.json()) as { id?: string; status?: string };
+  const body = (await req.json()) as {
+    id?: string;
+    status?: string;
+    lifecycle?: "start" | "end";
+  };
   const id = body.id?.trim() ?? "";
-  const status = body.status?.toUpperCase() as TaskStatus;
-  if (!id || !status || !statusSet.has(status)) {
-    return NextResponse.json({ error: "id and valid status are required." }, { status: 400 });
+  if (!id) {
+    return NextResponse.json({ error: "id is required." }, { status: 400 });
   }
 
-  const task = await prisma.taskItem.findUnique({ where: { id }, select: { id: true, assignedAgentId: true } });
+  const task = await prisma.taskItem.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      assignedAgentId: true,
+      status: true,
+      startedAt: true,
+      completedAt: true,
+      dueAt: true,
+      delayPenaltyAmount: true,
+    },
+  });
   if (!task) return NextResponse.json({ error: "Task not found." }, { status: 404 });
   const isAssignee = !!perms.operator && perms.operator.id === task.assignedAgentId;
 
-  // Admin/SuperAdmin cannot change task status (oversee only).
   if (session.user.role === "Admin" || session.user.role === "SuperAdmin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
   if (!isAssignee) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const current = await prisma.taskItem.findUnique({ where: { id }, select: { status: true } });
-  const updated = await prisma.taskItem.update({ where: { id }, data: { status } });
-  if (current && current.status !== status) {
+  if (body.lifecycle === "start" || body.lifecycle === "end") {
+    const now = new Date();
+    if (body.lifecycle === "start") {
+      if (task.startedAt || task.completedAt || task.status === "DONE") {
+        return NextResponse.json({ error: "Task already started or completed." }, { status: 400 });
+      }
+      const updated = await prisma.taskItem.update({
+        where: { id },
+        data: { startedAt: now, status: "CURRENT" },
+      });
+      await prisma.taskActivity.create({
+        data: {
+          taskId: id,
+          author: session.user.email ?? session.user.name ?? "unknown",
+          action: "Task started",
+          detail: now.toISOString(),
+        },
+      });
+      return NextResponse.json(updated);
+    }
+
+    if (!task.startedAt && !task.completedAt) {
+      return NextResponse.json({ error: "Start the task before ending it." }, { status: 400 });
+    }
+    if (task.completedAt || task.status === "DONE") {
+      return NextResponse.json({ error: "Task already completed." }, { status: 400 });
+    }
+    const accrued = taskItemAccruedPenalty({
+      dueAt: task.dueAt,
+      completedAt: now,
+      status: "DONE",
+      delayPenaltyAmount: task.delayPenaltyAmount,
+      now,
+    });
+    const updated = await prisma.taskItem.update({
+      where: { id },
+      data: {
+        completedAt: now,
+        status: "DONE",
+        delayPenaltyAccrued: accrued,
+        ...(task.startedAt ? {} : { startedAt: now }),
+      },
+    });
+    await prisma.taskActivity.create({
+      data: {
+        taskId: id,
+        author: session.user.email ?? session.user.name ?? "unknown",
+        action: "Task ended",
+        detail: accrued > 0 ? `Completed with ${accrued} delay penalty pts` : now.toISOString(),
+      },
+    });
+    return NextResponse.json(updated);
+  }
+
+  const status = body.status?.toUpperCase() as TaskStatus;
+  if (!status || !statusSet.has(status)) {
+    return NextResponse.json({ error: "id and valid status (or lifecycle) are required." }, { status: 400 });
+  }
+
+  const data: {
+    status: TaskStatus;
+    completedAt?: Date | null;
+    startedAt?: Date;
+    delayPenaltyAccrued?: number;
+  } = { status };
+  if (status === "DONE") {
+    const now = new Date();
+    data.completedAt = now;
+    if (!task.startedAt) data.startedAt = now;
+    data.delayPenaltyAccrued = taskItemAccruedPenalty({
+      dueAt: task.dueAt,
+      completedAt: now,
+      status: "DONE",
+      delayPenaltyAmount: task.delayPenaltyAmount,
+      now,
+    });
+  } else if (task.status === "DONE") {
+    data.completedAt = null;
+  }
+
+  const updated = await prisma.taskItem.update({ where: { id }, data });
+  if (task.status !== status) {
     await prisma.taskActivity.create({
       data: {
         taskId: id,
         author: session.user.email ?? session.user.name ?? "unknown",
         action: "Status updated",
-        detail: `${current.status} -> ${status}`,
+        detail: `${task.status} -> ${status}`,
       },
     });
   }
