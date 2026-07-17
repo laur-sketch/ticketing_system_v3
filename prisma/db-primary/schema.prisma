@@ -397,3 +397,32 @@ model AccountActionRequest {
   @@index([status, createdAt])
   @@map("account_action_requests")
 }
+
+/// Changelog / release notes shown in the header Patch Notes modal.
+model PatchNote {
+  id         String              @id @default(dbgenerated("gen_random_uuid()::text"))
+  version    String
+  title      String
+  /// e.g. { "newFeatures": [...], "bugFixes": [...], "improvements": [...] }
+  content    Json
+  releasedAt DateTime            @default(now())
+  createdAt  DateTime            @default(now())
+  views      UserPatchNoteView[]
+
+  @@index([releasedAt])
+  @@map("PatchNote")
+}
+
+/// Tracks which merge-DB users have read a given patch note.
+model UserPatchNoteView {
+  id          String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  /// MergeDatabase merged_users.source_user_id (as text).
+  userId      String
+  patchNoteId String
+  patchNote   PatchNote @relation(fields: [patchNoteId], references: [id], onDelete: Cascade)
+  viewedAt    DateTime  @default(now())
+
+  @@unique([userId, patchNoteId])
+  @@index([userId])
+  @@map("UserPatchNoteView")
+}

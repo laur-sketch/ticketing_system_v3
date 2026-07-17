@@ -13,6 +13,7 @@ import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { PhilippineTimeClock } from "@/components/PhilippineTimeClock";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PatchNotesControl } from "@/components/PatchNotesControl";
 
 export function Nav() {
   const { data } = useSession();
@@ -326,6 +327,7 @@ export function Nav() {
             >
               <SlidersHorizontal size={15} />
             </Link>
+            <PatchNotesControl visible={showUtilities} />
           </>
         ) : null}
 
