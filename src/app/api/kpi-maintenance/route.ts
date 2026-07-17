@@ -251,7 +251,9 @@ export async function GET(req: Request) {
 
     const lastFull = row.lastFullCompletionAt;
     if (!staleCycle && complete && lastFull) {
-      const eligible = nextRolloverEligibleAtUtc(lastFull, timeZone);
+      // WEEKLY/MONTHLY/QUARTERLY: eligible immediately on DONE.
+      // DAILY: still waits until the next calendar day (see getRolloverEligibleAfterCompletion).
+      const eligible = nextRolloverEligibleAtUtc(lastFull, timeZone, freq);
       if (eligible && now.getTime() >= eligible.getTime()) {
         await upsertKpiPeriodSnapshot(
           {
@@ -377,18 +379,22 @@ export async function POST(req: Request) {
     subKpisSegmented?: boolean;
     subKpis?: Array<{
       title?: string;
+      description?: string | null;
       startDate?: string;
       endDate?: string;
       dueDate?: string;
+      projectPriority?: string | null;
       screenshotsEnabled?: boolean;
     }>;
     segments?: Array<{
       label?: string;
       items?: Array<{
         title?: string;
+        description?: string | null;
         startDate?: string;
         endDate?: string;
         dueDate?: string;
+        projectPriority?: string | null;
         screenshotsEnabled?: boolean;
       }>;
     }>;
@@ -548,16 +554,20 @@ export async function POST(req: Request) {
     const subTaskScreenshots = subTaskCompletionRequirements.screenshots;
     const mapDraftItem = (s: {
       title?: string;
+      description?: string | null;
       startDate?: string;
       dueDate?: string;
       endDate?: string;
       actualDate?: string;
+      projectPriority?: string | null;
       screenshotsEnabled?: boolean;
     }) => ({
       title: (s.title ?? "").trim(),
+      description: typeof s.description === "string" ? s.description : "",
       startDate: "",
       dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
       actualDate: isRecurring ? "" : (s.actualDate ?? "").trim(),
+      projectPriority: s.projectPriority ?? null,
       completionRequirements: subTaskCompletionRequirements,
       screenshotsEnabled: subTaskScreenshots,
       ...(numericalTarget != null ? { numericalTarget } : {}),
@@ -643,66 +653,49 @@ export async function POST(req: Request) {
       ? body.itProjectPhase.trim() || null
       : null;
 
-  // Check for existing task group by title — deduplicate by name
-  const existingTaskGroup = title
-    ? await prisma.kpiMaintenance.findFirst({
-        where: { title },
-        select: { id: true, title: true, mainTask: true, subKpis: true, isRecurring: true, frequency: true, lastFullCompletionAt: true },
-      })
-    : null;
-
-  if (existingTaskGroup && !isItProject) {
-    // Merge new subKpi items into the existing group's subKpis
-    const existingNorm = normalizeSubKpis(existingTaskGroup.subKpis);
-    const newNorm = normalizeSubKpis(subKpisPersist);
-    const mergedItems = [
-      ...collectAllSubKpiItems(existingNorm),
-      ...collectAllSubKpiItems(newNorm),
-    ];
-    const taskCount = mergedItems.length;
-    const rawWithCount = setTaskCount(existingTaskGroup.subKpis, taskCount);
-    const mergedSubKpis = wrapForPersistWithExistingMeta(
-      { segmented: false, flat: mergedItems },
-      rawWithCount,
-    );
-
-    // Reset lastFullCompletionAt so the group goes back to CURRENT when new tasks are added
-    const updateData: Prisma.KpiMaintenanceUpdateInput = { subKpis: mergedSubKpis };
-    if (existingTaskGroup.lastFullCompletionAt) {
-      updateData.lastFullCompletionAt = null;
-    }
-
-    const updated = await prisma.kpiMaintenance.update({
-      where: { id: existingTaskGroup.id },
-      data: updateData,
-    });
-    return NextResponse.json(
-      {
-        message: `Task added to group '${updated.title}' (now ${taskCount} task${taskCount !== 1 ? "s" : ""} total).`,
-        taskGroup: updated,
+  // Same task group (title) can hold many tasks — each needs a distinct mainTask
+  // (@@unique([title, mainTask])). Never merge into an existing running row.
+  if (!isItProject && mainTaskRaw) {
+    const duplicateMainTask = await prisma.kpiMaintenance.findFirst({
+      where: {
+        title,
+        mainTask: { equals: mainTaskRaw, mode: "insensitive" },
       },
-      { status: 200 },
-    );
-  }
-
-  if (existingTaskGroup && isItProject) {
-    // Allow multiple IT projects under the same pillar title; block only duplicate project names.
-    if (itProjectName) {
-      const existingProject = await prisma.kpiMaintenance.findFirst({
-        where: {
-          title,
-          itProjectName: { equals: itProjectName, mode: "insensitive" },
+      select: { id: true, mainTask: true },
+    });
+    if (duplicateMainTask) {
+      return NextResponse.json(
+        {
+          error: `A task named "${mainTaskRaw}" already exists under group '${title}'. Use a different main task name.`,
         },
-        select: { id: true },
-      });
-      if (existingProject) {
-        return NextResponse.json(
-          { error: `IT Project "${itProjectName}" already exists. Use a different project name.` },
-          { status: 409 },
-        );
-      }
+        { status: 409 },
+      );
     }
   }
+
+  if (isItProject && itProjectName) {
+    // Allow multiple IT projects under the same pillar title; block only duplicate project names.
+    const existingProject = await prisma.kpiMaintenance.findFirst({
+      where: {
+        title,
+        itProjectName: { equals: itProjectName, mode: "insensitive" },
+      },
+      select: { id: true },
+    });
+    if (existingProject) {
+      return NextResponse.json(
+        { error: `IT Project "${itProjectName}" already exists. Use a different project name.` },
+        { status: 409 },
+      );
+    }
+  }
+
+  const titleAlreadyUsed = Boolean(
+    await prisma.kpiMaintenance.findFirst({
+      where: { title },
+      select: { id: true },
+    }),
+  );
 
   let created;
   try {
@@ -744,7 +737,11 @@ export async function POST(req: Request) {
     if (e instanceof Prisma.PrismaClientKnownRequestError) {
       if (e.code === "P2002") {
         return NextResponse.json(
-          { error: `Task group '${title}' already exists. Task inserted into the group.` },
+          {
+            error: isItProject
+              ? `Could not create project under '${title}' (duplicate name).`
+              : `A task named "${mainTaskRaw}" already exists under group '${title}'. Use a different main task name.`,
+          },
           { status: 409 },
         );
       }
@@ -753,9 +750,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
   const createdDate = new Date(created.createdAt).toISOString().slice(0, 10);
+  const message = isItProject
+    ? `New project '${itProjectName ?? created.title}' created on ${createdDate}.`
+    : titleAlreadyUsed
+      ? `New task '${mainTaskRaw}' added under group '${created.title}' on ${createdDate}.`
+      : `New task group '${created.title}' created on ${createdDate}.`;
   return NextResponse.json(
     {
-      message: `New task group '${created.title}' created on ${createdDate}.`,
+      message,
       taskGroup: created,
     },
     { status: 201 },
@@ -829,15 +831,19 @@ export async function PATCH(req: Request) {
     };
     addSubKpi?: {
       title?: string;
+      description?: string | null;
       segmentId?: string | null;
       startDate?: string | null;
       dueDate?: string | null;
+      projectPriority?: string | null;
     };
     updateSubKpi?: {
       subKpiId?: string;
       title?: string;
+      description?: string | null;
       startDate?: string | null;
       dueDate?: string | null;
+      projectPriority?: string | null;
       completionMode?: SubKpiCompletionMode;
       numericalTarget?: number | null;
       dailyPenaltyAmount?: number | null;
@@ -1690,9 +1696,11 @@ export async function PATCH(req: Request) {
     }
     const result = appendSubKpiItem(kpiRow.subKpis, {
       title,
+      description: body.addSubKpi.description,
       segmentId: body.addSubKpi.segmentId,
       startDate: body.addSubKpi.startDate,
       dueDate: body.addSubKpi.dueDate,
+      projectPriority: body.addSubKpi.projectPriority,
     });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
@@ -1730,14 +1738,25 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "updateSubKpi.subKpiId is required." }, { status: 400 });
     }
     const hasTitle = body.updateSubKpi.title !== undefined;
+    const hasDescription = body.updateSubKpi.description !== undefined;
     const hasStartDate = body.updateSubKpi.startDate !== undefined;
     const hasDueDate = body.updateSubKpi.dueDate !== undefined;
+    const hasPriority = body.updateSubKpi.projectPriority !== undefined;
     const hasCompletionMode = body.updateSubKpi.completionMode !== undefined;
     const hasNumericalTarget = body.updateSubKpi.numericalTarget !== undefined;
     const hasDailyPenalty = body.updateSubKpi.dailyPenaltyAmount !== undefined;
-    if (!hasTitle && !hasStartDate && !hasDueDate && !hasCompletionMode && !hasNumericalTarget && !hasDailyPenalty) {
+    if (
+      !hasTitle &&
+      !hasDescription &&
+      !hasStartDate &&
+      !hasDueDate &&
+      !hasPriority &&
+      !hasCompletionMode &&
+      !hasNumericalTarget &&
+      !hasDailyPenalty
+    ) {
       return NextResponse.json(
-        { error: "Provide title, startDate, dueDate, completionMode, numericalTarget, and/or dailyPenaltyAmount to update a Sub Task." },
+        { error: "Provide title, description, startDate, dueDate, projectPriority, completionMode, numericalTarget, and/or dailyPenaltyAmount to update a Sub Task." },
         { status: 400 },
       );
     }
@@ -1761,8 +1780,10 @@ export async function PATCH(req: Request) {
     }
     const result = updateSubKpiItem(kpiRow.subKpis, subKpiIdUpdate, {
       ...(hasTitle ? { title: body.updateSubKpi.title } : {}),
+      ...(hasDescription ? { description: body.updateSubKpi.description ?? null } : {}),
       ...(hasStartDate ? { startDate: body.updateSubKpi.startDate } : {}),
       ...(hasDueDate ? { dueDate: body.updateSubKpi.dueDate } : {}),
+      ...(hasPriority ? { projectPriority: body.updateSubKpi.projectPriority ?? null } : {}),
       ...(hasCompletionMode ? { completionMode: body.updateSubKpi.completionMode as SubKpiCompletionMode } : {}),
       ...(hasNumericalTarget ? { numericalTarget: body.updateSubKpi.numericalTarget ?? null } : {}),
       ...(hasDailyPenalty ? { dailyPenaltyAmount: body.updateSubKpi.dailyPenaltyAmount ?? null } : {}),

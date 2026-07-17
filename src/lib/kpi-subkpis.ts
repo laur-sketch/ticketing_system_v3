@@ -33,6 +33,8 @@ export const PILLAR_ONLY_VIRTUAL_SUBKPI_ID = "__pillar__";
 export type SubKpiItem = {
   id: string;
   title: string;
+  /** Optional free-text details shown in the Sub Tasks manager. */
+  description?: string | null;
   done?: boolean;
   assignedAgentId?: string | null;
   assignedAgentName?: string | null;
@@ -98,9 +100,16 @@ export function normalizeOptionalSubKpiYmd(v: unknown): string | null {
   return YMD.test(s) ? s : null;
 }
 
+const SUB_KPI_DESCRIPTION_MAX = 600;
+
+function normalizeSubKpiDescription(value: unknown): string {
+  return typeof value === "string" ? value.trim().slice(0, SUB_KPI_DESCRIPTION_MAX) : "";
+}
+
 function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const id = String(r?.id ?? "");
   const title = String(r?.title ?? "");
+  const description = normalizeSubKpiDescription(r?.description);
   const done = Boolean(r?.done);
   const assignedAgentId = typeof r?.assignedAgentId === "string" ? r.assignedAgentId.trim() : "";
   const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
@@ -152,6 +161,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   return {
     id,
     title,
+    ...(description ? { description } : {}),
     done,
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
@@ -545,7 +555,7 @@ export function pillarVirtualSubKpiItem(raw: unknown, taskTitle?: string): SubKp
   const requirements = getPillarCompletionRequirements(raw);
   if (!requirements) return null;
   const meta = rawEnvelopeMeta(raw);
-  let item: SubKpiItem = {
+  const item: SubKpiItem = {
     id: PILLAR_ONLY_VIRTUAL_SUBKPI_ID,
     title: taskTitle?.trim() || "Task",
     done: meta.pillarDone,
@@ -1367,6 +1377,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   const title = typeof it.title === "string" ? it.title.trim() : "";
   if (!title) return null;
   const id = typeof it.id === "string" && it.id.trim() ? it.id.trim() : crypto.randomUUID();
+  const description = normalizeSubKpiDescription(it.description);
   const assignedAgentId = typeof it.assignedAgentId === "string" ? it.assignedAgentId.trim() : "";
   const assignedAgentName = typeof it.assignedAgentName === "string" ? it.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
@@ -1386,6 +1397,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   return {
     id,
     title,
+    ...(description ? { description } : {}),
     done: Boolean(it.done),
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
@@ -1431,10 +1443,12 @@ const MIN_SEGMENTED_SUBKPIS = MIN_SEGMENTED_SUBKPIS_FOR_CREATE;
 
 type SubKpiCreateDraft = string | {
   title?: string | null;
+  description?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
   endDate?: string | null;
   actualDate?: string | null;
+  projectPriority?: string | null;
   screenshotsEnabled?: boolean | null;
   completionRequirements?: SubKpiCompletionRequirements | null;
   numericalTarget?: number | null;
@@ -1445,6 +1459,9 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   const rawTitle = typeof input === "string" ? input : input.title;
   const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
   if (!title) return null;
+  const description = typeof input === "string" ? "" : normalizeSubKpiDescription(input.description);
+  const projectPriority =
+    typeof input === "string" ? null : normalizeSubKpiPriority(input.projectPriority);
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
   const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
   const actualDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.actualDate);
@@ -1457,7 +1474,9 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   let item: SubKpiItem = {
     id: crypto.randomUUID(),
     title,
+    ...(description ? { description } : {}),
     done: false,
+    ...(projectPriority ? { projectPriority } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
@@ -1593,9 +1612,11 @@ export function validateStructuredUpdate(
 
 export type AppendSubKpiInput = {
   title: string;
+  description?: string | null;
   segmentId?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  projectPriority?: string | null;
   screenshotsEnabled?: boolean;
 };
 
@@ -1606,8 +1627,10 @@ export function appendSubKpiItem(
 ): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
   const item = subKpiFromCreateDraft({
     title: input.title,
+    description: input.description,
     startDate: input.startDate,
     dueDate: input.dueDate,
+    projectPriority: input.projectPriority,
     screenshotsEnabled: input.screenshotsEnabled,
   });
   if (!item) return { ok: false, error: "Sub Task title is required." };
@@ -1634,8 +1657,10 @@ export function appendSubKpiItem(
 
 export type UpdateSubKpiItemInput = {
   title?: string;
+  description?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  projectPriority?: string | null;
   completionMode?: SubKpiCompletionMode;
   numericalTarget?: number | null;
   dailyPenaltyAmount?: number | null;
@@ -1662,6 +1687,10 @@ export function updateSubKpiItem(
     return { ok: false, error: "Sub Task title is required." };
   }
 
+  const description =
+    input.description === undefined ? undefined : normalizeSubKpiDescription(input.description);
+  const projectPriority =
+    input.projectPriority === undefined ? undefined : normalizeSubKpiPriority(input.projectPriority);
   const startDate =
     input.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.startDate) ?? null;
   const dueDate =
@@ -1689,6 +1718,14 @@ export function updateSubKpiItem(
     if (item.id !== id) return item;
     let next = { ...item };
     if (title !== undefined) next = { ...next, title };
+    if (description !== undefined) {
+      if (description) next = { ...next, description };
+      else delete (next as { description?: string }).description;
+    }
+    if (projectPriority !== undefined) {
+      if (projectPriority) next = { ...next, projectPriority };
+      else delete (next as { projectPriority?: SubKpiItem["projectPriority"] }).projectPriority;
+    }
     if (startDate !== undefined) {
       if (startDate) next = { ...next, startDate };
       else delete (next as { startDate?: string }).startDate;

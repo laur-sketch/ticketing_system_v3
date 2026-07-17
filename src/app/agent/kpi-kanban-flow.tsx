@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, GripVertical, Maximize2, X } from "lucide-react";
+import { ChevronDown, GripVertical, ListChecks, Maximize2, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { normalizePersonName } from "@/lib/person-name";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
@@ -78,6 +78,7 @@ import {
 } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
+import { SubTasksManagerPopup } from "@/components/task-board/SubTasksManagerPopup";
 import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
@@ -278,6 +279,7 @@ export function AgentKpiKanbanFlow({
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [subTasksManagerTaskId, setSubTasksManagerTaskId] = useState<string | null>(null);
   const [taskManagementOpen, setTaskManagementOpen] = useState(false);
   const [assignmentBoardOpen, setAssignmentBoardOpen] = useState(false);
   const [subAssigneePeersByMainId, setSubAssigneePeersByMainId] = useState<Record<string, AssignableAgent[]>>({});
@@ -1925,6 +1927,11 @@ export function AgentKpiKanbanFlow({
             </span>
           </div>
         </div>
+        {!pillarOnlyMode && s.description ? (
+          <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-600 dark:text-zinc-400">
+            {s.description}
+          </p>
+        ) : null}
         {needsScreenshotsForCheckbox ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
             Upload both before and after screenshots before marking this sub-task done.
@@ -3345,6 +3352,23 @@ export function AgentKpiKanbanFlow({
                                 {drawerOpen ? "Close Sub Tasks" : "Open Sub Tasks"}
                               </button>
                             ) : null}
+                            {!itProject && !pillarOnly ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSubTasksManagerTaskId(r.id);
+                                }}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/60 bg-orange-500/10 px-3 py-1.5 text-[11px] font-semibold text-orange-800 hover:bg-orange-500/20 dark:border-orange-500/40 dark:text-orange-200 dark:hover:bg-orange-950/40"
+                              >
+                                <ListChecks className="size-3.5" aria-hidden />
+                                Add Sub Tasks
+                                <span className="rounded-full bg-orange-600 px-1.5 py-px text-[10px] font-bold text-white">
+                                  {checklistItems.length}
+                                </span>
+                              </button>
+                            ) : null}
                             {showAdminTaskManagement ? (
                               <button
                                 type="button"
@@ -3407,6 +3431,23 @@ export function AgentKpiKanbanFlow({
       >
         {renderAssignmentBoard()}
       </TaskBoardPopup>
+      {(() => {
+        const managerRecord = subTasksManagerTaskId
+          ? rows.find((r) => r.id === subTasksManagerTaskId) ?? null
+          : null;
+        return (
+          <SubTasksManagerPopup
+            open={Boolean(managerRecord)}
+            taskId={managerRecord?.id ?? null}
+            taskLabel={managerRecord ? taskLabel(managerRecord) : ""}
+            canManage={showAdminTaskManagement}
+            hideDueDate={managerRecord ? hideAddSubTaskScheduleDate(managerRecord) : false}
+            tz={tz}
+            onClose={() => setSubTasksManagerTaskId(null)}
+            onChanged={() => void load()}
+          />
+        );
+      })()}
       {renderActiveTaskModal()}
     </section>
   );

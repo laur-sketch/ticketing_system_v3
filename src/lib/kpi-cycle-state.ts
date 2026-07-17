@@ -193,7 +193,12 @@ export function taskKanbanDerivedStatus(
   return done === total ? "DONE" : "CURRENT";
 }
 
-export function nextRolloverEligibleAtUtc(lastFullCompletionAt: Date | null, timeZone: string): Date | null {
+export function nextRolloverEligibleAtUtc(
+  lastFullCompletionAt: Date | null,
+  timeZone: string,
+  /** When set (recurring W/M/Q), completion can roll over immediately. Omit for Daily / one-off archive delay. */
+  frequency?: KpiFrequencyCode | null,
+): Date | null {
   if (!lastFullCompletionAt || !Number.isFinite(lastFullCompletionAt.getTime())) return null;
-  return getRolloverEligibleAfterCompletion(lastFullCompletionAt, timeZone);
+  return getRolloverEligibleAfterCompletion(lastFullCompletionAt, timeZone, frequency);
 }

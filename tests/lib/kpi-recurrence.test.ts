@@ -31,5 +31,17 @@ describe("daily KPI recurrence", () => {
     expect(getRolloverEligibleAfterCompletion(saturdayComplete, TZ)).toEqual(
       DateTime.fromISO("2026-05-25T00:00:00", { zone: TZ }).toJSDate(),
     );
+    expect(getRolloverEligibleAfterCompletion(saturdayComplete, TZ, "DAILY")).toEqual(
+      DateTime.fromISO("2026-05-25T00:00:00", { zone: TZ }).toJSDate(),
+    );
+  });
+
+  it("allows weekly/monthly/quarterly rollover immediately on completion (no +1 day wait)", () => {
+    const completedAt = DateTime.fromISO("2026-05-20T14:30:00", { zone: TZ }).toJSDate();
+    for (const frequency of ["WEEKLY", "MONTHLY", "QUARTERLY"] as const) {
+      expect(getRolloverEligibleAfterCompletion(completedAt, TZ, frequency).getTime()).toBe(
+        completedAt.getTime(),
+      );
+    }
   });
 });

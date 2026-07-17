@@ -221,8 +221,24 @@ export function getPeriodEndExclusiveFromCycleStart(
   }
 }
 
-/** First instant eligible for rollover: start of calendar day following completion (in `timeZone`). */
-export function getRolloverEligibleAfterCompletion(completedAtUtc: Date, timeZone: string): Date {
+/**
+ * When a completed checklist may roll into the next recurrence cycle.
+ *
+ * - WEEKLY / MONTHLY / QUARTERLY: eligible immediately on full completion
+ *   (no artificial +1 calendar-day wait before resetting to CURRENT).
+ * - DAILY (and callers that omit frequency, e.g. one-off archive): still
+ *   wait until the start of the next calendar day in `timeZone` so the
+ *   completed day remains visible until midnight.
+ */
+export function getRolloverEligibleAfterCompletion(
+  completedAtUtc: Date,
+  timeZone: string,
+  frequency?: KpiFrequencyCode | null,
+): Date {
+  // Multi-day cadences must recur as soon as the checklist hits DONE.
+  if (frequency === "WEEKLY" || frequency === "MONTHLY" || frequency === "QUARTERLY") {
+    return completedAtUtc;
+  }
   const zone = normalizeTimeZone(timeZone);
   const completedDay = DateTime.fromMillis(completedAtUtc.getTime(), { zone }).startOf("day");
   return getNextDailyPeriodStartDt(completedDay).toJSDate();
