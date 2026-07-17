@@ -47,6 +47,7 @@ import {
   SUB_KPI_PROGRESS_MISMATCH_WARNING,
   canMutateSubKpiAssignee,
   isSubKpiAssigneeUnlocked,
+  PILLAR_ONLY_VIRTUAL_SUBKPI_ID,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import {
@@ -78,6 +79,7 @@ import {
 } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotSlot } from "@/lib/task-screenshot-meta";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
+import { SeekAssistanceModal } from "@/components/task-board/SeekAssistanceModal";
 import { SubTasksManagerPopup } from "@/components/task-board/SubTasksManagerPopup";
 import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import { DatePickerField } from "@/components/ui/DatePickerField";
@@ -280,6 +282,12 @@ export function AgentKpiKanbanFlow({
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [subTasksManagerTaskId, setSubTasksManagerTaskId] = useState<string | null>(null);
+  const [seekAssistModal, setSeekAssistModal] = useState<{
+    kpiId: string;
+    taskTitle: string;
+    segmentLabel?: string | null;
+    candidates: { id: string; title: string }[];
+  } | null>(null);
   const [taskManagementOpen, setTaskManagementOpen] = useState(false);
   const [assignmentBoardOpen, setAssignmentBoardOpen] = useState(false);
   const [subAssigneePeersByMainId, setSubAssigneePeersByMainId] = useState<Record<string, AssignableAgent[]>>({});
@@ -659,7 +667,11 @@ export function AgentKpiKanbanFlow({
     }
   }
 
-  async function seekAssistance(recordId: string, subKpiId: string) {
+  async function seekAssistance(recordId: string, subKpiIds: string | string[]) {
+    const ids = (Array.isArray(subKpiIds) ? subKpiIds : [subKpiIds])
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean);
+    if (ids.length === 0) return;
     setBusyId(recordId);
     setError(null);
     try {
@@ -668,7 +680,7 @@ export function AgentKpiKanbanFlow({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           id: recordId,
-          seekAssistance: { subKpiId },
+          seekAssistance: ids.length === 1 ? { subKpiId: ids[0] } : { subKpiIds: ids },
         }),
       });
       if (!res.ok) {
@@ -676,6 +688,7 @@ export function AgentKpiKanbanFlow({
         setError(body.error ?? "Could not seek assistance.");
         return;
       }
+      setSeekAssistModal(null);
       await load();
     } finally {
       setBusyId(null);
@@ -1310,6 +1323,61 @@ export function AgentKpiKanbanFlow({
     return `Sub Task assignee: ${agentNameById.get(id) ?? s.assignedAgentName ?? "assigned personnel"}`;
   }
 
+  function canSeekAssistanceOnTask(r: KpiRecord): boolean {
+    if (isItProjectImplementationPillar(r.title)) return false;
+    if (r.enableSubtaskAssignees === true) return false;
+    if (!operatorAgentId || r.assignedAgent?.id !== operatorAgentId) return false;
+    return true;
+  }
+
+  function realSubKpiItems(items: SubKpiItem[]): SubKpiItem[] {
+    return items.filter((s) => s.id !== PILLAR_ONLY_VIRTUAL_SUBKPI_ID);
+  }
+
+  function lockedSeekCandidates(r: KpiRecord, items: SubKpiItem[]): SubKpiItem[] {
+    const enableAssignees = r.enableSubtaskAssignees === true;
+    return realSubKpiItems(items).filter((s) => !isSubKpiAssigneeUnlocked(enableAssignees, s));
+  }
+
+  function shouldShowTaskSeekAssistance(r: KpiRecord, scopeItems: SubKpiItem[]): boolean {
+    if (!canSeekAssistanceOnTask(r)) return false;
+    const real = realSubKpiItems(scopeItems);
+    if (real.length === 0) return true;
+    return lockedSeekCandidates(r, real).length > 0;
+  }
+
+  function openTaskSeekAssistance(r: KpiRecord, scopeItems: SubKpiItem[], segmentLabel?: string | null) {
+    const locked = lockedSeekCandidates(r, scopeItems);
+    setSeekAssistModal({
+      kpiId: r.id,
+      taskTitle: taskLabel(r),
+      segmentLabel: segmentLabel ?? null,
+      candidates: locked.map((s) => ({ id: s.id, title: s.title || "Untitled sub-task" })),
+    });
+  }
+
+  function renderTaskSeekAssistanceButton(
+    r: KpiRecord,
+    scopeItems: SubKpiItem[],
+    opts?: { segmentLabel?: string | null; stopPropagation?: boolean },
+  ) {
+    if (!shouldShowTaskSeekAssistance(r, scopeItems)) return null;
+    return (
+      <button
+        type="button"
+        disabled={busyId === r.id}
+        onClick={(e) => {
+          if (opts?.stopPropagation) e.stopPropagation();
+          openTaskSeekAssistance(r, scopeItems, opts?.segmentLabel);
+        }}
+        onPointerDown={opts?.stopPropagation ? (e) => e.stopPropagation() : undefined}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-500 bg-orange-500 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Seek Assistance
+      </button>
+    );
+  }
+
   function renderSubKpiAssignmentControl(r: KpiRecord, s: SubKpiItem) {
     const assignedId = subKpiAssignedAgentId(s) ?? "";
     // Only treat an explicit true as unlocked from the parent flag (false must hide dropdowns).
@@ -1322,6 +1390,7 @@ export function AgentKpiKanbanFlow({
       canAssignWork,
       isMainAssignee,
     });
+    const perSubtaskSeek = isItProjectImplementationPillar(r.title);
 
     const assistanceBadge = s.assistanceRequested ? (
       <span className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
@@ -1330,7 +1399,9 @@ export function AgentKpiKanbanFlow({
     ) : null;
 
     if (!unlocked) {
-      if (isMainAssignee) {
+      // Task Management: Seek Assistance lives on the main task / segment — not each sub-task row.
+      // IT Project Implementation keeps the per-subtask Seek Assistance control.
+      if (isMainAssignee && perSubtaskSeek) {
         return (
           <div className="mt-2 flex flex-col gap-1.5">
             {assistanceBadge}
@@ -1348,7 +1419,7 @@ export function AgentKpiKanbanFlow({
           </div>
         );
       }
-      // Locked for everyone else: no assignee dropdown / label.
+      // Locked for everyone else (and Task main assignee): no assignee dropdown / label.
       return assistanceBadge ? <div className="mt-1">{assistanceBadge}</div> : null;
     }
 
@@ -2336,7 +2407,14 @@ export function AgentKpiKanbanFlow({
     const itProjectData = itProject ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase) : null;
     if (!itProject && isPillarOnlyTask(r.subKpis)) {
       const virtual = pillarVirtualSubKpiItem(r.subKpis, taskLabel(r));
-      if (virtual) return renderNonItSubKpiCard(r, virtual, false, true);
+      if (virtual) {
+        return (
+          <div className="space-y-2">
+            {renderTaskSeekAssistanceButton(r, [], { stopPropagation: true })}
+            {renderNonItSubKpiCard(r, virtual, false, true)}
+          </div>
+        );
+      }
     }
     const checklistItems = collectAllSubKpiItems(normalized);
     const editable = canEditChecklist(r);
@@ -2348,9 +2426,15 @@ export function AgentKpiKanbanFlow({
           key={seg.id}
           className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-900/50"
         >
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">
-            {seg.label}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">
+              {seg.label}
+            </p>
+            {renderTaskSeekAssistanceButton(r, seg.items, {
+              segmentLabel: seg.label,
+              stopPropagation: true,
+            })}
+          </div>
           <div className="mt-1 space-y-2">
             {seg.items.map((s) => renderNonItSubKpiCard(r, s, showSubtaskPriority))}
           </div>
@@ -2417,7 +2501,12 @@ export function AgentKpiKanbanFlow({
       });
     }
 
-    return checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s, showSubtaskPriority));
+    return (
+      <div className="space-y-2">
+        {renderTaskSeekAssistanceButton(r, checklistItems, { stopPropagation: true })}
+        {checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s, showSubtaskPriority))}
+      </div>
+    );
   }
 
   const assignLaneDrag = usePointerColumnDrag<string>({
@@ -3352,6 +3441,11 @@ export function AgentKpiKanbanFlow({
                                 {drawerOpen ? "Close Sub Tasks" : "Open Sub Tasks"}
                               </button>
                             ) : null}
+                            {!itProject && !pillarOnly && !drawerOpen
+                              ? renderTaskSeekAssistanceButton(r, checklistItems, {
+                                  stopPropagation: true,
+                                })
+                              : null}
                             {!itProject && !pillarOnly ? (
                               <button
                                 type="button"
@@ -3449,6 +3543,18 @@ export function AgentKpiKanbanFlow({
         );
       })()}
       {renderActiveTaskModal()}
+      <SeekAssistanceModal
+        open={Boolean(seekAssistModal)}
+        taskTitle={seekAssistModal?.taskTitle ?? ""}
+        segmentLabel={seekAssistModal?.segmentLabel}
+        candidates={seekAssistModal?.candidates ?? []}
+        busy={Boolean(seekAssistModal && busyId === seekAssistModal.kpiId)}
+        onClose={() => setSeekAssistModal(null)}
+        onConfirm={(ids) => {
+          if (!seekAssistModal) return;
+          void seekAssistance(seekAssistModal.kpiId, ids);
+        }}
+      />
     </section>
   );
 }

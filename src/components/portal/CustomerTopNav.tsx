@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Bell, CircleHelp, LifeBuoy, Menu, Plus, Search, UserRound, X } from "lucide-react";
+import { Bell, CircleHelp, LifeBuoy, Menu, Plus, UserRound, X } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/cn";
 import { BrandLockup } from "@/components/BrandLockup";
@@ -198,20 +198,7 @@ export function CustomerTopNav() {
             </TabsList>
           </Tabs>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 lg:min-w-0 lg:flex-1">
-          <form
-            action="/my-tickets"
-            method="get"
-            className="order-last flex w-full items-center gap-2 rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 shadow-inner md:order-none md:w-[min(30rem,38vw)] md:min-w-[18rem] dark:border-zinc-800 dark:bg-[#181716]"
-          >
-            <Search className="size-4 shrink-0 text-zinc-500" aria-hidden />
-            <input
-              name="q"
-              placeholder="Search tickets, IDs, or keywords…"
-              className="w-full bg-transparent text-sm text-zinc-900 placeholder:text-zinc-500 focus:outline-none dark:text-zinc-100 dark:placeholder:text-zinc-600"
-              aria-label="Search"
-            />
-          </form>
+        <div className="flex flex-wrap items-center justify-start gap-2 lg:min-w-0 lg:flex-1">
           <Link
             href={
               intake.canCreateTickets

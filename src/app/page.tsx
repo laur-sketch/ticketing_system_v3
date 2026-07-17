@@ -597,7 +597,7 @@ export default async function Home() {
 
       <footer className="border-t border-border bg-surface">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 text-[11px] text-muted">
-          <p>AGCTek Help Desk Â· 2026</p>
+          <p>{BRAND_TITLE} · 2026</p>
           <div className="flex gap-4">
             <a href="#" className="hover:text-foreground">
               Privacy Policy

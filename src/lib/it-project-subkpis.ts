@@ -561,11 +561,24 @@ export function setItProjectSubKpiAssistanceRequested(
   byAgentId: string,
   atIso: string = new Date().toISOString(),
 ): Prisma.InputJsonValue | null {
+  return setItProjectSubKpiItemsAssistanceRequested(raw, [subKpiId], byAgentId, atIso);
+}
+
+/** Mark Seek Assistance on one or more IT Project sub-tasks. Returns null if any id is missing. */
+export function setItProjectSubKpiItemsAssistanceRequested(
+  raw: unknown,
+  subKpiIds: string[],
+  byAgentId: string,
+  atIso: string = new Date().toISOString(),
+): Prisma.InputJsonValue | null {
+  const idSet = new Set(subKpiIds.map((id) => String(id ?? "").trim()).filter(Boolean));
+  if (idSet.size === 0) return null;
   const data = parseItProjectSubKpis(raw);
-  let found = false;
+  const found = new Set<string>();
   const touch = (it: SubKpiItem): SubKpiItem => {
-    if (it.id !== subKpiId) return it;
-    found = true;
+    if (!idSet.has(it.id)) return it;
+    found.add(it.id);
+    if (it.assistanceRequested) return it;
     return {
       ...it,
       assistanceRequested: true,
@@ -580,7 +593,7 @@ export function setItProjectSubKpiAssistanceRequested(
       items: phase.items.map(touch),
     })),
   );
-  return found ? next : null;
+  return found.size === idSet.size ? next : null;
 }
 
 export function setItProjectSubKpiDone(

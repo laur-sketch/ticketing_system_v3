@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Bell, Search, SlidersHorizontal, UserRound } from "lucide-react";
+import { Bell, SlidersHorizontal, UserRound } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -37,8 +37,6 @@ export function Nav() {
   const userName = data?.user?.name ?? data?.user?.email ?? "Account";
   const showUtilities =
     role === "SuperAdmin" || role === "Admin" || role === "Personnel";
-  const inQueueContext =
-    pathname.startsWith("/agent") || pathname === "/admin/manual-assignment";
 
   const status = searchParams.get("status") ?? "";
   const priority = searchParams.get("priority") ?? "";
@@ -261,73 +259,54 @@ export function Nav() {
         {showUtilities ? (
           <>
             <BrandLockup variant="staff-header-compact" href="/" className="inline-flex min-w-0 shrink-0 max-sm:flex-1" />
-            <form
-              action="/agent"
-              method="get"
-              className="order-last flex min-w-0 w-full flex-none items-center rounded-[var(--radius-stoic)] border border-border bg-surface-muted px-3 py-2 text-sm text-muted shadow-sm sm:order-none sm:w-auto sm:flex-1 sm:basis-0 sm:max-w-xl"
-            >
-              {inQueueContext && status ? <input type="hidden" name="status" value={status} /> : null}
-              {inQueueContext && priority ? <input type="hidden" name="priority" value={priority} /> : null}
-              {inQueueContext && sort ? <input type="hidden" name="sort" value={sort} /> : null}
-              {inQueueContext && dir ? <input type="hidden" name="dir" value={dir} /> : null}
-              {inQueueContext && view ? <input type="hidden" name="view" value={view} /> : null}
-              {inQueueContext && assigned ? <input type="hidden" name="assigned" value={assigned} /> : null}
-              <input type="hidden" name="page" value="1" />
-              <Search size={14} className="mr-2 shrink-0 text-zinc-400 dark:text-zinc-500" />
-              <input
-                name="q"
-                defaultValue={inQueueContext ? q : ""}
-                placeholder="Find ticket..."
-                className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted"
-                aria-label="Find ticket"
-              />
-            </form>
-            <PhilippineTimeClock compact className="shrink-0" />
-            <div className="relative shrink-0" ref={notifRef}>
-              <button
-                type="button"
-                onClick={() => {
-                  setNotifOpen((v) => {
-                    const next = !v;
-                    if (next && typeof window !== "undefined") {
-                      const key = `notif-open-seen-ts:${data?.user?.email ?? "unknown"}`;
-                      const now = Date.now().toString();
-                      window.localStorage.setItem(key, now);
-                      setUnreadOpenCount(0);
-                    }
-                    return next;
-                  });
-                }}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted sm:h-9 sm:w-9"
-                aria-label="Open notifications panel"
-                title="Open notifications panel"
-              >
-                <Bell size={15} />
-                {unreadOpenCount > 0 ? (
-                  <span className="absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-4 text-white">
-                    {unreadOpenCount > 9 ? "9+" : unreadOpenCount}
-                  </span>
-                ) : null}
-              </button>
-              {notifOpen ? (
-                <div
-                  ref={desktopNotifPanelRef}
-                  className="absolute right-0 z-50 mt-2 hidden w-[min(360px,calc(100vw_-_2rem))] max-w-[calc(100vw_-_2rem)] max-h-[min(420px,calc(100dvh_-_6rem))] overflow-hidden stoic-card-elevated bg-[var(--surface-elevated)] p-2 sm:block"
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:basis-0 sm:max-w-xl">
+              <PhilippineTimeClock compact className="shrink-0" />
+              <div className="relative shrink-0" ref={notifRef}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifOpen((v) => {
+                      const next = !v;
+                      if (next && typeof window !== "undefined") {
+                        const key = `notif-open-seen-ts:${data?.user?.email ?? "unknown"}`;
+                        const now = Date.now().toString();
+                        window.localStorage.setItem(key, now);
+                        setUnreadOpenCount(0);
+                      }
+                      return next;
+                    });
+                  }}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted sm:h-9 sm:w-9"
+                  aria-label="Open notifications panel"
+                  title="Open notifications panel"
                 >
-                  {notifPanelBody}
-                </div>
-              ) : null}
+                  <Bell size={15} />
+                  {unreadOpenCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-4 text-white">
+                      {unreadOpenCount > 9 ? "9+" : unreadOpenCount}
+                    </span>
+                  ) : null}
+                </button>
+                {notifOpen ? (
+                  <div
+                    ref={desktopNotifPanelRef}
+                    className="absolute left-0 z-50 mt-2 hidden w-[min(360px,calc(100vw_-_2rem))] max-w-[calc(100vw_-_2rem)] max-h-[min(420px,calc(100dvh_-_6rem))] overflow-hidden stoic-card-elevated bg-[var(--surface-elevated)] p-2 sm:block"
+                  >
+                    {notifPanelBody}
+                  </div>
+                ) : null}
+              </div>
+              {mobileNotifOverlay}
+              <Link
+                href="/process"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:h-9 sm:w-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                aria-label="Open process controls"
+                title="Open process controls"
+              >
+                <SlidersHorizontal size={15} />
+              </Link>
+              <PatchNotesControl visible={showUtilities} />
             </div>
-            {mobileNotifOverlay}
-            <Link
-              href="/process"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:h-9 sm:w-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-              aria-label="Open process controls"
-              title="Open process controls"
-            >
-              <SlidersHorizontal size={15} />
-            </Link>
-            <PatchNotesControl visible={showUtilities} />
           </>
         ) : null}
 

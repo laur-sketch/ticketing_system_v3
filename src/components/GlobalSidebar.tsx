@@ -38,7 +38,6 @@ function linksForRole(role: string | undefined): NavItem[] {
         children: [
           { href: "/", label: "Ticket Dashboard" },
           { href: "/my-requests", label: "My requests" },
-          { href: "/admin/ticket-requests", label: "Create requests" },
         ],
       },
       { kind: "group", label: "Operations", children: [{ href: "/agent", label: "Board" }] },
@@ -63,7 +62,6 @@ function linksForRole(role: string | undefined): NavItem[] {
         children: [
           { href: "/", label: "Ticket Dashboard" },
           { href: "/my-requests", label: "My requests" },
-          { href: "/admin/ticket-requests", label: "Create requests" },
         ],
       },
       { kind: "group", label: "Operations", children: [{ href: "/agent", label: "Board" }] },

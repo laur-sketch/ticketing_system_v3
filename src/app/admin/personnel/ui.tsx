@@ -13,6 +13,7 @@ import {
   accountStatusClass,
   matchesRegistryCompanyFilter,
   matchesRegistryRoleFilter,
+  matchesRegistrySearchFilter,
   portalRegistryRoleLabel,
   type PortalAccountRow,
   type RosterCompany,
@@ -81,6 +82,7 @@ export function PersonnelClient({
   const [portalRegistryPage, setPortalRegistryPage] = useState(1);
   const [registryRoleFilter, setRegistryRoleFilter] = useState("");
   const [registryCompanyFilter, setRegistryCompanyFilter] = useState("");
+  const [registrySearchQuery, setRegistrySearchQuery] = useState("");
 
   const { data: session, status: sessionStatus } = useSession();
   const canManagePortalAccounts = session?.user?.role === "SuperAdmin";
@@ -90,9 +92,10 @@ export function PersonnelClient({
       personnel.filter(
         (row) =>
           matchesRegistryRoleFilter(row.staffRole, registryRoleFilter) &&
-          matchesRegistryCompanyFilter(row.teamId, registryCompanyFilter),
+          matchesRegistryCompanyFilter(row.teamId, registryCompanyFilter) &&
+          matchesRegistrySearchFilter(row, registrySearchQuery),
       ),
-    [personnel, registryRoleFilter, registryCompanyFilter],
+    [personnel, registryRoleFilter, registryCompanyFilter, registrySearchQuery],
   );
 
   const filteredPortalAccounts = useMemo(
@@ -100,12 +103,15 @@ export function PersonnelClient({
       portalAccounts.filter(
         (a) =>
           matchesRegistryRoleFilter(a.role, registryRoleFilter) &&
-          matchesRegistryCompanyFilter(a.staffDesignatedCompanyId, registryCompanyFilter),
+          matchesRegistryCompanyFilter(a.staffDesignatedCompanyId, registryCompanyFilter) &&
+          matchesRegistrySearchFilter(a, registrySearchQuery),
       ),
-    [portalAccounts, registryRoleFilter, registryCompanyFilter],
+    [portalAccounts, registryRoleFilter, registryCompanyFilter, registrySearchQuery],
   );
 
-  const registryFiltersActive = Boolean(registryRoleFilter || registryCompanyFilter);
+  const registryFiltersActive = Boolean(
+    registryRoleFilter || registryCompanyFilter || registrySearchQuery.trim(),
+  );
 
   function handleRegistryRoleFilterChange(value: string) {
     setRegistryRoleFilter(value);
@@ -115,6 +121,12 @@ export function PersonnelClient({
 
   function handleRegistryCompanyFilterChange(value: string) {
     setRegistryCompanyFilter(value);
+    setPersonnelRegistryPage(1);
+    setPortalRegistryPage(1);
+  }
+
+  function handleRegistrySearchQueryChange(value: string) {
+    setRegistrySearchQuery(value);
     setPersonnelRegistryPage(1);
     setPortalRegistryPage(1);
   }
@@ -673,6 +685,8 @@ export function PersonnelClient({
                   onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
                   registryCompanyFilter={registryCompanyFilter}
                   onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
+                  registrySearchQuery={registrySearchQuery}
+                  onRegistrySearchQueryChange={handleRegistrySearchQueryChange}
                   rosterCompanies={rosterCompanies}
                   registryFiltersActive={registryFiltersActive}
                 />
@@ -778,6 +792,8 @@ export function PersonnelClient({
               onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
               registryCompanyFilter={registryCompanyFilter}
               onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
+              registrySearchQuery={registrySearchQuery}
+              onRegistrySearchQueryChange={handleRegistrySearchQueryChange}
               rosterCompanies={rosterCompanies}
               registryFiltersActive={registryFiltersActive}
             />

@@ -45,3 +45,16 @@ export function matchesRegistryCompanyFilter(companyId: string | null | undefine
   if (filter === NO_COMPANY_FILTER) return !companyId;
   return companyId === filter;
 }
+
+/** Case-insensitive substring match on name and/or email (and optional username). */
+export function matchesRegistrySearchFilter(
+  row: { name?: string | null; email?: string | null; username?: string | null },
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const name = (row.name ?? "").trim().toLowerCase();
+  const email = (row.email ?? "").trim().toLowerCase();
+  const username = (row.username ?? "").trim().toLowerCase();
+  return name.includes(q) || email.includes(q) || username.includes(q);
+}

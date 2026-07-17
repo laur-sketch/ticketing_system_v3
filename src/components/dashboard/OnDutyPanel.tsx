@@ -49,8 +49,25 @@ export function OnDutyPanel({
   );
   const [companies, setCompanies] = useState<string[]>(initialCompanies);
   const [companyFilter, setCompanyFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const canPrev = page > 1;
   const canNext = page < pages;
+
+  useEffect(() => {
+    const next = searchInput.trim();
+    const timer = window.setTimeout(() => {
+      setSearchQuery((prev) => {
+        if (prev === next) return prev;
+        return next;
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery]);
 
   const endpoint = useMemo(() => {
     const params = new URLSearchParams({
@@ -58,8 +75,9 @@ export function OnDutyPanel({
       pageSize: String(pageSize),
     });
     if (companyFilter) params.set("company", companyFilter);
+    if (searchQuery) params.set("q", searchQuery);
     return `/api/dashboard/on-duty?${params.toString()}`;
-  }, [page, pageSize, companyFilter]);
+  }, [page, pageSize, companyFilter, searchQuery]);
 
   useEffect(() => {
     let stopped = false;
@@ -108,6 +126,11 @@ export function OnDutyPanel({
     setPage(1);
   }
 
+  const filtersActive = Boolean(companyFilter || searchQuery);
+  const emptyMessage = filtersActive
+    ? "No personnel match the current filters."
+    : "No personnel linked from the merge database.";
+
   const cardGridClass =
     variant === "cards"
       ? "mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
@@ -139,25 +162,38 @@ export function OnDutyPanel({
       </div>
 
       {showCompanyFilter ? (
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <label className="flex min-w-[12rem] flex-col gap-1">
-            <span className={authLabelClass}>Filter by company</span>
-            <select
-              value={companyFilter}
-              onChange={(e) => handleCompanyFilterChange(e.target.value)}
-              className={cn(authInputClass, "py-2 text-xs")}
-            >
-              <option value="">All companies</option>
-              {companies.map((company) => (
-                <option key={company} value={company}>
-                  {company}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+            <label className="flex min-w-[12rem] flex-col gap-1">
+              <span className={authLabelClass}>Filter by company</span>
+              <select
+                value={companyFilter}
+                onChange={(e) => handleCompanyFilterChange(e.target.value)}
+                className={cn(authInputClass, "py-2 text-xs")}
+              >
+                <option value="">All companies</option>
+                {companies.map((company) => (
+                  <option key={company} value={company}>
+                    {company}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex min-w-[12rem] flex-1 flex-col gap-1 sm:max-w-xs">
+              <span className={authLabelClass}>Search by name or email</span>
+              <input
+                type="search"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Name or email…"
+                className={cn(authInputClass, "py-2 text-xs")}
+                autoComplete="off"
+              />
+            </label>
+          </div>
           <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            {companyFilter
-              ? `Showing ${agents.length} of ${total} in ${companyFilter}`
+            {filtersActive
+              ? `Showing ${agents.length} of ${total}${companyFilter ? ` in ${companyFilter}` : ""}`
               : `Showing ${agents.length} of ${total}`}
           </p>
         </div>
@@ -166,9 +202,7 @@ export function OnDutyPanel({
       {variant === "cards" ? (
         <div className={cardGridClass}>
           {agents.length === 0 ? (
-            <p className="col-span-full text-sm text-zinc-600 dark:text-zinc-500">
-              {companyFilter ? "No personnel for this company." : "No personnel linked from the merge database."}
-            </p>
+            <p className="col-span-full text-sm text-zinc-600 dark:text-zinc-500">{emptyMessage}</p>
           ) : (
             agents.map((agent) => {
               const onDuty = isAgentOnDuty(agent);
@@ -184,6 +218,9 @@ export function OnDutyPanel({
                       <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-500">
                         {agent.companyName || "General Queue"}
                       </p>
+                      {agent.email ? (
+                        <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-500">{agent.email}</p>
+                      ) : null}
                     </div>
                     <span
                       className={cn(
@@ -216,9 +253,7 @@ export function OnDutyPanel({
       ) : (
         <div className={cardGridClass}>
           {agents.length === 0 ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-500">
-              {companyFilter ? "No personnel for this company." : "No personnel linked from the merge database."}
-            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500">{emptyMessage}</p>
           ) : (
             agents.map((agent) => {
               const onDuty = isAgentOnDuty(agent);

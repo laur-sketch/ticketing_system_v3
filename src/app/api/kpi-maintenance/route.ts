@@ -28,7 +28,7 @@ import {
   resetAllSubKpiDone,
   setPillarScreenshots,
   setSubKpiItemAssignee,
-  setSubKpiItemAssistanceRequested,
+  setSubKpiItemsAssistanceRequested,
   setSubKpiItemDone,
   setSubKpiItemScreenshots,
   setSubKpiItemWorkMeta,
@@ -61,7 +61,7 @@ import {
   parseItProjectSubKpis,
   setItProjectActivePhase,
   setItProjectSubKpiAssignee,
-  setItProjectSubKpiAssistanceRequested,
+  setItProjectSubKpiItemsAssistanceRequested,
   setItProjectSubKpiDone,
   setItProjectSubKpiLifecycle,
   setItProjectSubKpiProjectMeta,
@@ -812,6 +812,7 @@ export async function PATCH(req: Request) {
     };
     seekAssistance?: {
       subKpiId?: string;
+      subKpiIds?: string[];
     };
     subKpiScreenshot?: {
       subKpiId?: string;
@@ -1367,13 +1368,21 @@ export async function PATCH(req: Request) {
         { status: 403 },
       );
     }
-    const subKpiIdSeek = String(body.seekAssistance.subKpiId ?? "").trim();
-    if (!subKpiIdSeek) {
-      return NextResponse.json({ error: "seekAssistance.subKpiId is required." }, { status: 400 });
+    const fromArray = Array.isArray(body.seekAssistance.subKpiIds)
+      ? body.seekAssistance.subKpiIds.map((x) => String(x ?? "").trim()).filter(Boolean)
+      : [];
+    const single = String(body.seekAssistance.subKpiId ?? "").trim();
+    const seekIds = [...new Set([...fromArray, ...(single ? [single] : [])])];
+    if (seekIds.length === 0) {
+      return NextResponse.json(
+        { error: "seekAssistance.subKpiId or seekAssistance.subKpiIds is required." },
+        { status: 400 },
+      );
     }
-    const targetSeek = subKpiItems.find((it) => it.id === subKpiIdSeek);
-    if (!targetSeek) {
-      return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+    for (const seekId of seekIds) {
+      if (!subKpiItems.find((it) => it.id === seekId)) {
+        return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
+      }
     }
     if (kpiRow.enableSubtaskAssignees) {
       return NextResponse.json(
@@ -1381,14 +1390,18 @@ export async function PATCH(req: Request) {
         { status: 400 },
       );
     }
-    if (targetSeek.assistanceRequested) {
+    const pendingIds = seekIds.filter((seekId) => {
+      const target = subKpiItems.find((it) => it.id === seekId);
+      return Boolean(target && !target.assistanceRequested);
+    });
+    if (pendingIds.length === 0) {
       const updated = await prisma.kpiMaintenance.findUnique({ where: { id } });
       return NextResponse.json(updated);
     }
     const byAgentId = perms.operator!.id;
     const updatedJson = isItProjectImplementationPillar(kpiRow.title)
-      ? setItProjectSubKpiAssistanceRequested(kpiRow.subKpis, subKpiIdSeek, byAgentId)
-      : setSubKpiItemAssistanceRequested(kpiRow.subKpis, subKpiIdSeek, byAgentId);
+      ? setItProjectSubKpiItemsAssistanceRequested(kpiRow.subKpis, pendingIds, byAgentId)
+      : setSubKpiItemsAssistanceRequested(kpiRow.subKpis, pendingIds, byAgentId);
     if (!updatedJson) {
       return NextResponse.json({ error: "Sub-task not found." }, { status: 404 });
     }

@@ -23,6 +23,8 @@ import {
 export type OnDutyAgentSnapshot = {
   id: string;
   name: string;
+  /** Merged HRIS email when available (used for search). */
+  email?: string;
   companyName: string;
   /** @deprecated Prefer `dutyStatus` / `isOnDuty` — kept for older clients. */
   isOnline: boolean;
@@ -47,6 +49,8 @@ type LoadOnDutyOptions = {
   page?: number;
   pageSize?: number;
   companyFilter?: string;
+  /** Case-insensitive name or email substring. */
+  searchQuery?: string;
   /** When true, only return personnel who are On Duty today. */
   onDutyOnly?: boolean;
 };
@@ -84,6 +88,7 @@ export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promi
   const pageSize = Math.min(48, Math.max(1, options.pageSize ?? 6));
   const pageRaw = Math.max(1, options.page ?? 1);
   const companyFilter = options.companyFilter?.trim() ?? "";
+  const searchQuery = options.searchQuery?.trim().toLowerCase() ?? "";
   const sourceTags = new Set(resolveHrisSourceTags());
 
   const [mergedRows, portals, agents] = await Promise.all([
@@ -158,6 +163,7 @@ export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promi
     allAgents.push({
       id,
       name: row.name,
+      email: (row.email ?? "").trim().toLowerCase(),
       companyName: companyLabel(row.company_name),
       isOnline: isOnDuty,
       dutyStatus,
@@ -179,6 +185,14 @@ export async function loadOnDutySnapshot(options: LoadOnDutyOptions = {}): Promi
   let filtered = companyFilter
     ? allAgents.filter((agent) => agent.companyName === companyFilter)
     : allAgents;
+
+  if (searchQuery) {
+    filtered = filtered.filter(
+      (agent) =>
+        agent.name.toLowerCase().includes(searchQuery) ||
+        (agent.email ?? "").toLowerCase().includes(searchQuery),
+    );
+  }
 
   if (options.onDutyOnly) {
     filtered = filtered.filter((agent) => agent.isOnDuty);

@@ -14,10 +14,11 @@ export async function GET(req: Request) {
   const pageSize = Math.min(48, Math.max(1, pageSizeRaw));
   const pageRaw = Number.parseInt(searchParams.get("page") ?? "1", 10) || 1;
   const companyFilter = searchParams.get("company")?.trim() ?? "";
+  const searchQuery = searchParams.get("q")?.trim() ?? "";
 
-  const cacheKey = `on-duty:${pageRaw}:${pageSize}:${companyFilter}`;
+  const cacheKey = `on-duty:${pageRaw}:${pageSize}:${companyFilter}:${searchQuery.toLowerCase()}`;
   const result = await withTtlCache(cacheKey, 10_000, () =>
-    loadOnDutySnapshot({ page: pageRaw, pageSize, companyFilter }),
+    loadOnDutySnapshot({ page: pageRaw, pageSize, companyFilter, searchQuery }),
   );
 
   return NextResponse.json(result, {
