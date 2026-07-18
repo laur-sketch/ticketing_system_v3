@@ -241,6 +241,10 @@ model MergedUserEfficiencyBreakdown {
   /// Ticket counts backing ticketEfficiency (closed ÷ closed+pending).
   ticketsClosed             Int      @default(0) @map("tickets_closed")
   ticketsPending            Int      @default(0) @map("tickets_pending")
+  /// Sum of delay penalty points applied to taskEfficiency for this period.
+  delayPenaltyTotal         Int      @default(0) @map("delay_penalty_total")
+  /// Task efficiency before delay penalty deduction (null when no task work).
+  taskEfficiencyBeforePenalty Decimal? @map("task_efficiency_before_penalty") @db.Decimal(6, 2)
   onTimeCompletionRate      Decimal? @map("on_time_completion_rate") @db.Decimal(6, 2)
   /// Mean (completedAt − createdAt) in hours for DONE tasks in the window.
   averageTaskCompletionHours Decimal? @map("average_task_completion_hours") @db.Decimal(10, 2)
@@ -265,15 +269,17 @@ model MergedUserEfficiencyBreakdown {
 model MergedUserEfficiencyTaskDetail {
   id                       String    @id @default(cuid()) @db.VarChar(191)
   breakdownId              String    @map("breakdown_id") @db.VarChar(191)
-  /// Primary PG TaskItem.id when source = TASK_ITEM.
+  /// Primary PG TaskItem.id when source = TASK_ITEM; KPI/IT subtask id otherwise.
   taskId                   String?   @map("task_id") @db.VarChar(191)
-  /// TASK_ITEM | KPI_CHECKLIST | TICKET_SUMMARY
+  /// TASK_ITEM | KPI_CHECKLIST | IT_PROJECT_SUBTASK | TICKET_SUMMARY
   taskSource               String    @default("TASK_ITEM") @map("task_source") @db.VarChar(32)
   taskTitle                String    @map("task_title") @db.VarChar(512)
   status                   String    @map("status") @db.VarChar(20)
   dueAt                    DateTime? @map("due_at") @db.DateTime(3)
   completedAt              DateTime? @map("completed_at") @db.DateTime(3)
   efficiencyContribution   Decimal?  @map("efficiency_contribution") @db.Decimal(8, 2)
+  /// Accrued delay penalty points attributed to this detail row.
+  delayPenaltyAccrued      Int       @default(0) @map("delay_penalty_accrued")
   notes                    String?   @map("notes") @db.Text
   createdAt                DateTime  @default(now()) @map("created_at")
 

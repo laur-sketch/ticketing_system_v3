@@ -18,9 +18,10 @@ import {
 } from "@/components/metrics/MetricsCharts";
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { PersonnelTaskMetricsGrid } from "@/components/metrics/PersonnelTaskMetricsGrid";
-import type {
-  PersonnelCombinedMetricCard,
-  PersonnelDelayPenaltyRow,
+import {
+  applyPenaltyToTaskEfficiency,
+  type PersonnelCombinedMetricCard,
+  type PersonnelDelayPenaltyRow,
 } from "@/lib/task-personnel-metrics";
 import type { PersonnelTicketMetric } from "@/lib/kpis";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
@@ -761,6 +762,8 @@ function TaskMetricsPanel({
     ticketEfficiency: number | null;
     overallEfficiency: number;
     onTimeCompletionRate: number | null;
+    delayPenaltyTotal?: number;
+    taskEfficiencyBeforePenalty?: number | null;
     computedAt: string;
   };
   const [mergedPersonnelLoading, setMergedPersonnelLoading] = useState(false);
@@ -815,29 +818,54 @@ function TaskMetricsPanel({
         return rowCompany.toLowerCase() === target.toLowerCase();
       });
     }
-    return rows.map((row) => ({
-      id: row.sourceUserId,
-      name: row.name,
-      role: "Assignee",
-      tickets:
-        row.ticketEfficiency != null || row.ticketsClosed + row.ticketsPending > 0
-          ? {
-              closed: row.ticketsClosed,
-              pending: row.ticketsPending,
-              efficiency: Math.round(row.ticketEfficiency ?? 0),
-            }
-          : null,
-      tasks:
-        row.totalTasks > 0 || row.taskEfficiency != null
-          ? {
-              closed: row.completedTasks,
-              pending: Math.max(0, row.totalTasks - row.completedTasks),
-              efficiency: Math.round(row.taskEfficiency ?? 0),
-              pillarsContributed: 0,
-            }
-          : null,
-    }));
-  }, [mergedPersonnelRows, selectedCompanyName]);
+
+    const penaltyById = new Map(personnelDelayPenalties.map((row) => [row.id, row.deduction]));
+    const penaltyByName = new Map(
+      personnelDelayPenalties.map((row) => [row.name.trim().toLowerCase(), row.deduction]),
+    );
+
+    return rows.map((row) => {
+      const livePenalty =
+        penaltyById.get(row.sourceUserId) ??
+        penaltyByName.get(row.name.trim().toLowerCase()) ??
+        0;
+      const storedPenalty = row.delayPenaltyTotal ?? 0;
+      const penaltyDeduction = Math.max(livePenalty, storedPenalty);
+      const efficiencyBeforePenalty = Math.round(
+        row.taskEfficiencyBeforePenalty ?? row.taskEfficiency ?? 0,
+      );
+      const taskEfficiency =
+        penaltyDeduction > 0
+          ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
+          : Math.round(row.taskEfficiency ?? 0);
+
+      return {
+        id: row.sourceUserId,
+        name: row.name,
+        role: "Assignee",
+        tickets:
+          row.ticketEfficiency != null || row.ticketsClosed + row.ticketsPending > 0
+            ? {
+                closed: row.ticketsClosed,
+                pending: row.ticketsPending,
+                efficiency: Math.round(row.ticketEfficiency ?? 0),
+              }
+            : null,
+        tasks:
+          row.totalTasks > 0 || row.taskEfficiency != null
+            ? {
+                closed: row.completedTasks,
+                pending: Math.max(0, row.totalTasks - row.completedTasks),
+                efficiency: taskEfficiency,
+                pillarsContributed: 0,
+                ...(penaltyDeduction > 0
+                  ? { penaltyDeduction, efficiencyBeforePenalty }
+                  : {}),
+              }
+            : null,
+      };
+    });
+  }, [mergedPersonnelRows, selectedCompanyName, personnelDelayPenalties]);
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">

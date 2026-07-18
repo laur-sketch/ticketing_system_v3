@@ -55,7 +55,7 @@ export function PersonnelTaskMetricsGrid({
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
           ) : null}
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
-            Each card shows Tickets (Closed, Pending, Efficiency) and Tasks (Done, Pending, Efficiency).
+            Each card shows Tickets (Closed, Pending, Efficiency) and Tasks (Done, Missed, Efficiency).
             Task efficiency shows the net rate after delay penalties when applicable, with a note for penalty points.
             The center badge averages ticket and task efficiency.
             Mon–Sat task periods; Sundays excluded.

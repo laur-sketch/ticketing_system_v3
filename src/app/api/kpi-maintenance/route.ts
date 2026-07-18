@@ -34,6 +34,7 @@ import {
   setSubKpiItemWorkMeta,
   setTaskCount,
   setTaskDailyPenaltyAmount,
+  setTaskDelayPenaltyFrequency,
   setTaskPriority,
   syncScreenshotOnlySubKpiDone,
   syncSubKpiDoneFromRequirements,
@@ -64,6 +65,7 @@ import {
   setItProjectSubKpiItemsAssistanceRequested,
   setItProjectSubKpiDone,
   setItProjectSubKpiLifecycle,
+  setItProjectSubKpiPenalty,
   setItProjectSubKpiProjectMeta,
   setItProjectSubKpiSchedule,
   updateItProjectPhases,
@@ -72,6 +74,8 @@ import {
   type ItProjectData,
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
+import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-efficiency-recompute";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { isAgentOnDutyFromMergedDb } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
@@ -419,6 +423,7 @@ export async function POST(req: Request) {
     mainTask?: string;
     pillarDueDate?: string;
     taskDailyPenaltyAmount?: number | null;
+    taskDelayPenaltyFrequency?: string | null;
     enableSubtaskAssignees?: boolean;
   };
   const title = body.title?.trim() ?? "";
@@ -627,6 +632,20 @@ export async function POST(req: Request) {
       typeof rawPenalty === "number" && Number.isFinite(rawPenalty) ? Math.max(0, rawPenalty) : null,
     );
   }
+  if (body.taskDelayPenaltyFrequency !== undefined) {
+    if (!isItProject && isRecurring) {
+      return NextResponse.json(
+        { error: "Delay penalty frequency applies only to one-off (non-recurring) tasks." },
+        { status: 400 },
+      );
+    }
+    subKpisPersist = setTaskDelayPenaltyFrequency(
+      subKpisPersist,
+      body.taskDelayPenaltyFrequency == null
+        ? null
+        : normalizeDelayPenaltyFrequency(body.taskDelayPenaltyFrequency),
+    );
+  }
 
   const timeZone = normalizeTimeZone(body.timeZone);
   const periodKey = isRecurring
@@ -781,6 +800,7 @@ export async function PATCH(req: Request) {
     itProjectPhase?: string | null;
     taskPriority?: string | null;
     taskDailyPenaltyAmount?: number | null;
+    taskDelayPenaltyFrequency?: string | null;
     itProjectState?: { activePhaseId?: string; phases?: ItProjectData["phases"] };
     subKpiSchedule?: {
       subKpiId?: string;
@@ -848,6 +868,7 @@ export async function PATCH(req: Request) {
       completionMode?: SubKpiCompletionMode;
       numericalTarget?: number | null;
       dailyPenaltyAmount?: number | null;
+      delayPenaltyFrequency?: string | null;
     };
     removeSubKpi?: {
       subKpiId?: string;
@@ -1069,6 +1090,31 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: updatedJson },
     });
+    triggerEfficiencyRecomputeBackground();
+    return NextResponse.json(updated);
+  }
+
+  if (body.taskDelayPenaltyFrequency !== undefined) {
+    if (kpiRow.isRecurring && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Delay penalty frequency applies only to one-off (non-recurring) tasks." },
+        { status: 400 },
+      );
+    }
+    if (!perms.isAdminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const updatedJson = setTaskDelayPenaltyFrequency(
+      kpiRow.subKpis,
+      body.taskDelayPenaltyFrequency == null
+        ? null
+        : normalizeDelayPenaltyFrequency(body.taskDelayPenaltyFrequency),
+    );
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: updatedJson },
+    });
+    triggerEfficiencyRecomputeBackground();
     return NextResponse.json(updated);
   }
 
@@ -1740,12 +1786,6 @@ export async function PATCH(req: Request) {
     if (!perms.isAdminRole) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (isItProjectImplementationPillar(kpiRow.title)) {
-      return NextResponse.json(
-        { error: "Use task management to edit IT Project Implementation checklists." },
-        { status: 400 },
-      );
-    }
     const subKpiIdUpdate = String(body.updateSubKpi.subKpiId ?? "").trim();
     if (!subKpiIdUpdate) {
       return NextResponse.json({ error: "updateSubKpi.subKpiId is required." }, { status: 400 });
@@ -1758,6 +1798,48 @@ export async function PATCH(req: Request) {
     const hasCompletionMode = body.updateSubKpi.completionMode !== undefined;
     const hasNumericalTarget = body.updateSubKpi.numericalTarget !== undefined;
     const hasDailyPenalty = body.updateSubKpi.dailyPenaltyAmount !== undefined;
+    const hasDelayFrequency = body.updateSubKpi.delayPenaltyFrequency !== undefined;
+    const isItProjectRow = isItProjectImplementationPillar(kpiRow.title);
+    if (isItProjectRow) {
+      if (
+        hasTitle ||
+        hasDescription ||
+        hasStartDate ||
+        hasDueDate ||
+        hasPriority ||
+        hasCompletionMode ||
+        hasNumericalTarget
+      ) {
+        return NextResponse.json(
+          { error: "Use task management to edit IT Project Implementation checklists." },
+          { status: 400 },
+        );
+      }
+      if (!hasDailyPenalty && !hasDelayFrequency) {
+        return NextResponse.json(
+          {
+            error:
+              "Provide dailyPenaltyAmount and/or delayPenaltyFrequency to update an IT Project Sub Task.",
+          },
+          { status: 400 },
+        );
+      }
+      const penaltyResult = setItProjectSubKpiPenalty(kpiRow.subKpis, subKpiIdUpdate, {
+        ...(hasDailyPenalty ? { dailyPenaltyAmount: body.updateSubKpi.dailyPenaltyAmount ?? null } : {}),
+        ...(hasDelayFrequency
+          ? { delayPenaltyFrequency: body.updateSubKpi.delayPenaltyFrequency ?? null }
+          : {}),
+      });
+      if (!penaltyResult.ok) {
+        return NextResponse.json({ error: penaltyResult.error }, { status: 400 });
+      }
+      const updated = await prisma.kpiMaintenance.update({
+        where: { id },
+        data: { subKpis: penaltyResult.json },
+      });
+      triggerEfficiencyRecomputeBackground();
+      return NextResponse.json(updated);
+    }
     if (
       !hasTitle &&
       !hasDescription &&
@@ -1766,20 +1848,24 @@ export async function PATCH(req: Request) {
       !hasPriority &&
       !hasCompletionMode &&
       !hasNumericalTarget &&
-      !hasDailyPenalty
+      !hasDailyPenalty &&
+      !hasDelayFrequency
     ) {
       return NextResponse.json(
-        { error: "Provide title, description, startDate, dueDate, projectPriority, completionMode, numericalTarget, and/or dailyPenaltyAmount to update a Sub Task." },
+        {
+          error:
+            "Provide title, description, startDate, dueDate, projectPriority, completionMode, numericalTarget, dailyPenaltyAmount, and/or delayPenaltyFrequency to update a Sub Task.",
+        },
         { status: 400 },
       );
     }
-    if (hasDailyPenalty && kpiRow.isRecurring) {
+    if ((hasDailyPenalty || hasDelayFrequency) && kpiRow.isRecurring) {
       return NextResponse.json(
         { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
         { status: 400 },
       );
     }
-    if (hasStartDate && !isItProjectImplementationPillar(kpiRow.title)) {
+    if (hasStartDate) {
       return NextResponse.json(
         { error: "Sub-task schedule dates are not used for maintenance tasks." },
         { status: 400 },
@@ -1800,6 +1886,14 @@ export async function PATCH(req: Request) {
       ...(hasCompletionMode ? { completionMode: body.updateSubKpi.completionMode as SubKpiCompletionMode } : {}),
       ...(hasNumericalTarget ? { numericalTarget: body.updateSubKpi.numericalTarget ?? null } : {}),
       ...(hasDailyPenalty ? { dailyPenaltyAmount: body.updateSubKpi.dailyPenaltyAmount ?? null } : {}),
+      ...(hasDelayFrequency
+        ? {
+            delayPenaltyFrequency:
+              body.updateSubKpi.delayPenaltyFrequency == null
+                ? null
+                : (body.updateSubKpi.delayPenaltyFrequency as "DAILY" | "WEEKLY" | "MONTHLY"),
+          }
+        : {}),
     });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
@@ -1819,6 +1913,9 @@ export async function PATCH(req: Request) {
       },
     });
     await captureCurrentPeriodSnapshot(result.json);
+    if (hasDailyPenalty || hasDelayFrequency) {
+      triggerEfficiencyRecomputeBackground();
+    }
     return NextResponse.json(updated);
   }
 

@@ -33,6 +33,16 @@ import {
 import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { prisma } from "@/lib/prisma";
+import {
+  applyPenaltiesToAssigneeProgress,
+  applyPenaltyToTaskEfficiency,
+  weightedAssigneeProgressPercent,
+  type PersonnelDelayPenaltyRow,
+} from "@/lib/task-personnel-metrics";
+import {
+  mergePenaltyDeductionMaps,
+  penaltyDeductionsForKpi,
+} from "@/lib/task-delay-penalty";
 
 export type KpiRowForSnapshot = {
   id: string;
@@ -386,6 +396,9 @@ async function computeItProjectImplementationPillarMetric(args: {
     },
     select: {
       subKpis: true,
+      title: true,
+      frequency: true,
+      isRecurring: true,
       assignedAgent: { select: { id: true, name: true } },
     },
   });
@@ -399,8 +412,8 @@ async function computeItProjectImplementationPillarMetric(args: {
     completedOnTime += counts.completedOnTime;
     delayed += counts.delayed;
   }
-  const percent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
-  const assigneeProgress = assigneeProgressForRows(
+  const basePercent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
+  let assigneeProgress = assigneeProgressForRows(
     rows.map((row) => ({
       title: IT_PROJECT_IMPLEMENTATION_TITLE,
       subKpis: row.subKpis,
@@ -409,6 +422,33 @@ async function computeItProjectImplementationPillarMetric(args: {
     })),
     (item) => itProjectStatusProgress(item) === 100,
   );
+
+  const penaltyRows: PersonnelDelayPenaltyRow[] = [
+    ...mergePenaltyDeductionMaps(
+      rows.map((row) =>
+        penaltyDeductionsForKpi(
+          {
+            subKpis: row.subKpis,
+            frequency: row.frequency as KpiFrequencyCode,
+            isRecurring: row.isRecurring,
+            title: row.title,
+            assignedAgent: row.assignedAgent,
+          },
+          { nowMs, timeZone: args.timeZone },
+        ),
+      ),
+    ).values(),
+  ].filter((row) => row.deduction > 0);
+
+  assigneeProgress = applyPenaltiesToAssigneeProgress(assigneeProgress, penaltyRows);
+  const totalPenalty = penaltyRows.reduce((sum, row) => sum + row.deduction, 0);
+  const percent =
+    assigneeProgress.length > 0
+      ? weightedAssigneeProgressPercent(assigneeProgress)
+      : totalPenalty > 0
+        ? applyPenaltyToTaskEfficiency(basePercent, totalPenalty)
+        : basePercent;
+
   return {
     total,
     done: completedOnTime,
@@ -1391,15 +1431,48 @@ export async function computeTaskChecklistPillarMetrics(args: {
             return averaged;
           })();
 
-    const assigneeProgress = syncAssigneeProgressToPillarAgg(
+    let assigneeProgress = syncAssigneeProgressToPillarAgg(
       applyAssigneeDonutView(averageAssigneeProgressAcrossPeriods(assigneeBundles), invert),
       pillarAgg,
       invert,
     );
-    const assigneeProgressAccumulated = applyAssigneeDonutView(
+    let assigneeProgressAccumulated = applyAssigneeDonutView(
       personnelAssigneeProgressAcrossPeriods(assigneeBundles, personnelRoster, rawCheckboxIsDone),
       invert,
     );
+
+    const penaltyRows: PersonnelDelayPenaltyRow[] = [
+      ...mergePenaltyDeductionMaps(
+        pillarKpis.map((kpi) =>
+          penaltyDeductionsForKpi(
+            {
+              subKpis: kpi.subKpis,
+              frequency: kpi.frequency as KpiFrequencyCode,
+              isRecurring: kpi.isRecurring,
+              title: kpi.title,
+              assignedAgent: kpi.assignedAgent ?? null,
+            },
+            { nowMs: Date.now(), timeZone: zone },
+          ),
+        ),
+      ).values(),
+    ].filter((row) => row.deduction > 0);
+
+    let headlinePercent = pillarAgg.percent;
+    if (penaltyRows.length > 0) {
+      assigneeProgress = applyPenaltiesToAssigneeProgress(assigneeProgress, penaltyRows);
+      assigneeProgressAccumulated = applyPenaltiesToAssigneeProgress(
+        assigneeProgressAccumulated,
+        penaltyRows,
+      );
+      headlinePercent =
+        assigneeProgress.length > 0
+          ? weightedAssigneeProgressPercent(assigneeProgress)
+          : applyPenaltyToTaskEfficiency(
+              pillarAgg.percent,
+              penaltyRows.reduce((s, row) => s + row.deduction, 0),
+            );
+    }
 
     const subtaskCsv = buildSubtaskCsvPreviewForPillar({
       pillar,
@@ -1414,6 +1487,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
     result[pillar] = {
       ...pillarAgg,
+      percent: headlinePercent,
       dailyProgressRows,
       assigneeProgress,
       assigneeProgressAccumulated,

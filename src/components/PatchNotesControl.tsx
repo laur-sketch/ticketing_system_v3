@@ -22,6 +22,25 @@ type Props = {
   visible?: boolean;
 };
 
+/** Survives login/logout on this browser until a newer patch id appears. */
+const DISMISSED_LATEST_STORAGE_KEY = "agctek:patchNotes:dismissedLatestId";
+
+function readDismissedLatestId(): string | null {
+  try {
+    return window.localStorage.getItem(DISMISSED_LATEST_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeDismissedLatestId(patchNoteId: string) {
+  try {
+    window.localStorage.setItem(DISMISSED_LATEST_STORAGE_KEY, patchNoteId);
+  } catch {
+    // Ignore quota / private-mode failures; server mark-read is the source of truth.
+  }
+}
+
 function formatReleaseDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
@@ -35,6 +54,7 @@ function formatReleaseDate(iso: string): string {
 export function PatchNotesControl({ visible = true }: Props) {
   const [open, setOpen] = useState(false);
   const [patches, setPatches] = useState<PatchNotePayload[]>([]);
+  const [latestId, setLatestId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,12 +76,25 @@ export function PatchNotesControl({ visible = true }: Props) {
       }
       const data = (await res.json()) as {
         patches?: PatchNotePayload[];
+        latest?: PatchNotePayload | null;
         autoShow?: boolean;
+        hasViewedLatest?: boolean;
       };
       const next = Array.isArray(data.patches) ? data.patches : [];
+      const resolvedLatestId = data.latest?.id ?? next[0]?.id ?? null;
       setPatches(next);
-      if (opts?.autoOpen && data.autoShow && next.length > 0) {
-        setOpen(true);
+      setLatestId(resolvedLatestId);
+
+      if (opts?.autoOpen && next.length > 0 && resolvedLatestId) {
+        const dismissedLocally = readDismissedLatestId() === resolvedLatestId;
+        // Server unread wins unless this browser already dismissed this exact latest release.
+        const shouldAutoOpen = data.autoShow === true && !dismissedLocally;
+        if (shouldAutoOpen) {
+          setOpen(true);
+        } else if (data.hasViewedLatest || dismissedLocally) {
+          // Keep local dismiss in sync when server already knows it's read.
+          writeDismissedLatestId(resolvedLatestId);
+        }
       }
       return data;
     } catch {
@@ -106,10 +139,17 @@ export function PatchNotesControl({ visible = true }: Props) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ markAll: true }),
       });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        latestId?: string | null;
+      };
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "Could not mark as read.");
         return;
+      }
+      const dismissId = body.latestId ?? latestId ?? patches[0]?.id ?? null;
+      if (dismissId) {
+        writeDismissedLatestId(dismissId);
       }
       setPatches((prev) => prev.map((p) => ({ ...p, viewed: true })));
       setOpen(false);

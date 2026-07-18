@@ -65,6 +65,11 @@ export async function GET(req: Request) {
           overallEfficiency: Number(r.overallEfficiency),
           onTimeCompletionRate:
             r.onTimeCompletionRate != null ? Number(r.onTimeCompletionRate) : null,
+          delayPenaltyTotal: r.delayPenaltyTotal ?? 0,
+          taskEfficiencyBeforePenalty:
+            r.taskEfficiencyBeforePenalty != null
+              ? Number(r.taskEfficiencyBeforePenalty)
+              : null,
           computedAt: r.computedAt.toISOString(),
         })),
       });
@@ -140,6 +145,11 @@ export async function GET(req: Request) {
           ? Number(row.averageTaskCompletionHours)
           : null,
       efficiencyScore: row.efficiencyScore != null ? Number(row.efficiencyScore) : null,
+      delayPenaltyTotal: row.delayPenaltyTotal ?? 0,
+      taskEfficiencyBeforePenalty:
+        row.taskEfficiencyBeforePenalty != null
+          ? Number(row.taskEfficiencyBeforePenalty)
+          : null,
     });
   } finally {
     await db.$disconnect();

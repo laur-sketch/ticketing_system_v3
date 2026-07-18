@@ -1,6 +1,12 @@
 import { TaskStatus } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
+import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-efficiency-recompute";
+import {
+  normalizeDelayPenaltyFrequency,
+  penaltyAccrualUnits,
+  type DelayPenaltyFrequency,
+} from "@/lib/delay-penalty-frequency";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { DateTime } from "luxon";
@@ -13,6 +19,7 @@ function taskItemAccruedPenalty(args: {
   completedAt: Date | null;
   status: TaskStatus;
   delayPenaltyAmount: number | null;
+  delayPenaltyFrequency?: DelayPenaltyFrequency | null;
   now?: Date;
 }): number {
   const rate = args.delayPenaltyAmount ?? 0;
@@ -29,7 +36,8 @@ function taskItemAccruedPenalty(args: {
   const delayStart = dueDay.plus({ days: 1 });
   if (endDay < delayStart) return 0;
   const days = Math.floor(endDay.diff(delayStart, "days").days) + 1;
-  return Math.max(0, Math.round(rate * days));
+  const units = penaltyAccrualUnits(days, normalizeDelayPenaltyFrequency(args.delayPenaltyFrequency));
+  return Math.max(0, Math.round(rate * units));
 }
 
 export async function GET() {
@@ -66,6 +74,7 @@ export async function POST(req: Request) {
     dueAt?: string;
     priority?: string;
     delayPenaltyAmount?: number | null;
+    delayPenaltyFrequency?: string | null;
   };
   const title = body.title?.trim() ?? "";
   if (!title || !body.assignedAgentId) {
@@ -81,6 +90,7 @@ export async function POST(req: Request) {
     typeof body.delayPenaltyAmount === "number" && Number.isFinite(body.delayPenaltyAmount)
       ? Math.max(0, Math.round(body.delayPenaltyAmount))
       : null;
+  const delayPenaltyFrequency = normalizeDelayPenaltyFrequency(body.delayPenaltyFrequency);
   const created = await prisma.taskItem.create({
     data: {
       title,
@@ -89,6 +99,7 @@ export async function POST(req: Request) {
       dueAt: dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt : null,
       priority: body.priority?.trim() || null,
       delayPenaltyAmount,
+      delayPenaltyFrequency,
       createdBy: session.user.email ?? session.user.name ?? "unknown",
       createdByRole: session.user.role,
     },
@@ -113,6 +124,9 @@ export async function PATCH(req: Request) {
     id?: string;
     status?: string;
     lifecycle?: "start" | "end";
+    dueAt?: string | null;
+    delayPenaltyAmount?: number | null;
+    delayPenaltyFrequency?: string | null;
   };
   const id = body.id?.trim() ?? "";
   if (!id) {
@@ -129,10 +143,60 @@ export async function PATCH(req: Request) {
       completedAt: true,
       dueAt: true,
       delayPenaltyAmount: true,
+      delayPenaltyFrequency: true,
     },
   });
   if (!task) return NextResponse.json({ error: "Task not found." }, { status: 404 });
   const isAssignee = !!perms.operator && perms.operator.id === task.assignedAgentId;
+
+  /** SuperAdmin/Admin can update schedule/penalty; assignees use lifecycle/status. */
+  const canManage = session.user.role === "Admin" || session.user.role === "SuperAdmin" || perms.canAssignWork;
+  if (
+    body.dueAt !== undefined ||
+    body.delayPenaltyAmount !== undefined ||
+    body.delayPenaltyFrequency !== undefined
+  ) {
+    if (!canManage) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const nextDueAt =
+      body.dueAt === undefined
+        ? task.dueAt
+        : body.dueAt == null || String(body.dueAt).trim() === ""
+          ? null
+          : (() => {
+              const d = new Date(body.dueAt);
+              return Number.isNaN(d.getTime()) ? task.dueAt : d;
+            })();
+    const nextAmount =
+      body.delayPenaltyAmount === undefined
+        ? task.delayPenaltyAmount
+        : typeof body.delayPenaltyAmount === "number" && Number.isFinite(body.delayPenaltyAmount)
+          ? Math.max(0, Math.round(body.delayPenaltyAmount))
+          : null;
+    const nextFrequency =
+      body.delayPenaltyFrequency === undefined
+        ? task.delayPenaltyFrequency
+        : normalizeDelayPenaltyFrequency(body.delayPenaltyFrequency);
+    const accrued = taskItemAccruedPenalty({
+      dueAt: nextDueAt,
+      completedAt: task.completedAt,
+      status: task.status,
+      delayPenaltyAmount: nextAmount,
+      delayPenaltyFrequency: nextFrequency,
+    });
+    const updated = await prisma.taskItem.update({
+      where: { id },
+      data: {
+        dueAt: nextDueAt,
+        delayPenaltyAmount: nextAmount,
+        delayPenaltyFrequency: nextFrequency,
+        delayPenaltyAccrued: accrued,
+      },
+    });
+    triggerEfficiencyRecomputeBackground();
+    return NextResponse.json(updated);
+  }
 
   if (session.user.role === "Admin" || session.user.role === "SuperAdmin") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -173,6 +237,7 @@ export async function PATCH(req: Request) {
       completedAt: now,
       status: "DONE",
       delayPenaltyAmount: task.delayPenaltyAmount,
+      delayPenaltyFrequency: task.delayPenaltyFrequency,
       now,
     });
     const updated = await prisma.taskItem.update({
@@ -192,6 +257,7 @@ export async function PATCH(req: Request) {
         detail: accrued > 0 ? `Completed with ${accrued} delay penalty pts` : now.toISOString(),
       },
     });
+    triggerEfficiencyRecomputeBackground();
     return NextResponse.json(updated);
   }
 
@@ -215,6 +281,7 @@ export async function PATCH(req: Request) {
       completedAt: now,
       status: "DONE",
       delayPenaltyAmount: task.delayPenaltyAmount,
+      delayPenaltyFrequency: task.delayPenaltyFrequency,
       now,
     });
   } else if (task.status === "DONE") {

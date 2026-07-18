@@ -44,6 +44,7 @@ import {
   subKpiAssignedToOperator,
   subKpiProgressMismatchWarning,
   taskDailyPenaltyAmountFromSubKpis,
+  taskDelayPenaltyFrequencyFromSubKpis,
   SUB_KPI_PROGRESS_MISMATCH_WARNING,
   canMutateSubKpiAssignee,
   isSubKpiAssigneeUnlocked,
@@ -54,8 +55,14 @@ import {
   subKpiAccruedPenalty,
   subKpiPenaltyDays,
   resolveSubKpiDailyPenaltyAmount,
+  resolveSubKpiDelayPenaltyFrequency,
   type SubKpiPenaltyContext,
 } from "@/lib/task-delay-penalty";
+import {
+  DELAY_PENALTY_FREQUENCIES,
+  delayPenaltyFrequencyLabel,
+  type DelayPenaltyFrequency,
+} from "@/lib/delay-penalty-frequency";
 import {
   hasBeforeAndAfterScreenshots,
   hasNumericalRecord,
@@ -1039,7 +1046,31 @@ export function AgentKpiKanbanFlow({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(body.error ?? "Could not update daily delay penalty.");
+        setError(body.error ?? "Could not update delay penalty.");
+        return;
+      }
+      const updated = (await res.json()) as KpiRecord;
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function patchTaskDelayPenaltyFrequency(
+    recordId: string,
+    frequency: DelayPenaltyFrequency,
+  ) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: recordId, taskDelayPenaltyFrequency: frequency }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update delay penalty frequency.");
         return;
       }
       const updated = (await res.json()) as KpiRecord;
@@ -1057,6 +1088,7 @@ export function AgentKpiKanbanFlow({
       isRecurring: r.isRecurring !== false,
       title: r.title,
       taskDailyPenaltyAmount: taskDailyPenaltyAmountFromSubKpis(r.subKpis),
+      taskDelayPenaltyFrequency: taskDelayPenaltyFrequencyFromSubKpis(r.subKpis),
     };
   }
 
@@ -1176,6 +1208,7 @@ export function AgentKpiKanbanFlow({
       completionMode?: SubKpiCompletionMode;
       numericalTarget?: number | null;
       dailyPenaltyAmount?: number | null;
+      delayPenaltyFrequency?: DelayPenaltyFrequency | null;
     },
   ) {
     if (!showAdminTaskManagement) return;
@@ -1822,36 +1855,62 @@ export function AgentKpiKanbanFlow({
     if (!canManageSubTasks || r.isRecurring !== false) return null;
     const ctx = penaltyContextForRecord(r);
     const accrued = subKpiAccruedPenalty(s, ctx);
+    const freq = resolveSubKpiDelayPenaltyFrequency(s, ctx);
+    const unitLabel = delayPenaltyFrequencyLabel(freq);
     return (
       <div className="mt-2 space-y-1">
-        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          Daily delay penalty
-          <input
-            type="number"
-            min={0}
-            step="any"
-            value={s.dailyPenaltyAmount ?? ""}
-            disabled={busyId === r.id}
-            placeholder={
-              taskDailyPenaltyAmountFromSubKpis(r.subKpis) != null
-                ? String(taskDailyPenaltyAmountFromSubKpis(r.subKpis))
-                : "Task default"
-            }
-            onChange={(e) => {
-              const raw = e.target.value.trim();
-              void updateSubTask(r.id, s.id, {
-                dailyPenaltyAmount: raw === "" ? null : Number(raw),
-              });
-            }}
-            className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            aria-label={`Daily delay penalty for ${s.title}`}
-          />
-        </label>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Penalty frequency
+            <select
+              value={s.delayPenaltyFrequency ?? ""}
+              disabled={busyId === r.id}
+              onChange={(e) => {
+                const raw = e.target.value;
+                void updateSubTask(r.id, s.id, {
+                  delayPenaltyFrequency: raw === "" ? null : (raw as DelayPenaltyFrequency),
+                });
+              }}
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              aria-label={`Delay penalty frequency for ${s.title}`}
+            >
+              <option value="">Task default ({taskDelayPenaltyFrequencyFromSubKpis(r.subKpis)})</option>
+              {DELAY_PENALTY_FREQUENCIES.map((option) => (
+                <option key={option} value={option}>
+                  {option.charAt(0) + option.slice(1).toLowerCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Penalty per {unitLabel}
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={s.dailyPenaltyAmount ?? ""}
+              disabled={busyId === r.id}
+              placeholder={
+                taskDailyPenaltyAmountFromSubKpis(r.subKpis) != null
+                  ? String(taskDailyPenaltyAmountFromSubKpis(r.subKpis))
+                  : "Task default"
+              }
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                void updateSubTask(r.id, s.id, {
+                  dailyPenaltyAmount: raw === "" ? null : Number(raw),
+                });
+              }}
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              aria-label={`Delay penalty for ${s.title}`}
+            />
+          </label>
+        </div>
         {accrued > 0 ? (
           <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
             Accrued penalty: {accrued} · {subKpiPenaltyDays(s, ctx)} day
-            {subKpiPenaltyDays(s, ctx) === 1 ? "" : "s"} ×{" "}
-            {resolveSubKpiDailyPenaltyAmount(s, ctx)}/day
+            {subKpiPenaltyDays(s, ctx) === 1 ? "" : "s"} → {freq.toLowerCase()} units ×{" "}
+            {resolveSubKpiDailyPenaltyAmount(s, ctx)}/{unitLabel}
           </p>
         ) : null}
       </div>
@@ -1863,29 +1922,50 @@ export function AgentKpiKanbanFlow({
     if (!virtual) return null;
     const ctx = penaltyContextForRecord(r);
     const accrued = subKpiAccruedPenalty(virtual, ctx);
+    const freq = taskDelayPenaltyFrequencyFromSubKpis(r.subKpis);
+    const unitLabel = delayPenaltyFrequencyLabel(freq);
     return (
       <div className="mt-2 space-y-1">
-        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          Daily delay penalty (main task)
-          <input
-            type="number"
-            min={0}
-            step="any"
-            value={taskDailyPenaltyAmountFromSubKpis(r.subKpis) ?? ""}
-            disabled={busyId === r.id}
-            onChange={(e) => {
-              const raw = e.target.value.trim();
-              void patchTaskDailyPenalty(r.id, raw === "" ? null : Math.max(0, Number(raw)));
-            }}
-            className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            aria-label={`Daily delay penalty for ${taskLabel(r)}`}
-          />
-        </label>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Penalty frequency
+            <select
+              value={freq}
+              disabled={busyId === r.id}
+              onChange={(e) =>
+                void patchTaskDelayPenaltyFrequency(r.id, e.target.value as DelayPenaltyFrequency)
+              }
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            >
+              {DELAY_PENALTY_FREQUENCIES.map((option) => (
+                <option key={option} value={option}>
+                  {option.charAt(0) + option.slice(1).toLowerCase()}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Penalty per {unitLabel} (main task)
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={taskDailyPenaltyAmountFromSubKpis(r.subKpis) ?? ""}
+              disabled={busyId === r.id}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                void patchTaskDailyPenalty(r.id, raw === "" ? null : Math.max(0, Number(raw)));
+              }}
+              className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              aria-label={`Delay penalty for ${taskLabel(r)}`}
+            />
+          </label>
+        </div>
         {accrued > 0 ? (
           <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
             Accrued penalty: {accrued} · {subKpiPenaltyDays(virtual, ctx)} day
-            {subKpiPenaltyDays(virtual, ctx) === 1 ? "" : "s"} ×{" "}
-            {resolveSubKpiDailyPenaltyAmount(virtual, ctx)}/day
+            {subKpiPenaltyDays(virtual, ctx) === 1 ? "" : "s"} → {freq.toLowerCase()} units ×{" "}
+            {resolveSubKpiDailyPenaltyAmount(virtual, ctx)}/{unitLabel}
           </p>
         ) : null}
       </div>
@@ -2312,15 +2392,75 @@ export function AgentKpiKanbanFlow({
             isRecurring: false as const,
             title: r.title,
             taskDailyPenaltyAmount: taskDailyPenaltyAmountFromSubKpis(r.subKpis),
+            taskDelayPenaltyFrequency: taskDelayPenaltyFrequencyFromSubKpis(r.subKpis),
             phaseDueDate: phaseDueDate ?? null,
           };
           const penalty = subKpiAccruedPenalty(s, penaltyCtx);
-          if (penalty <= 0) return null;
-          const days = subKpiPenaltyDays(s, penaltyCtx);
+          const canManagePenalty = showAdminTaskManagement;
           return (
-            <p className="mt-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400">
-              Delay penalty: −{penalty} pts{days > 0 ? ` (${days}d overdue)` : ""}
-            </p>
+            <div className="mt-2 space-y-1">
+              {canManagePenalty ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    Penalty frequency
+                    <select
+                      value={s.delayPenaltyFrequency ?? ""}
+                      disabled={busyId === r.id}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        void updateSubTask(r.id, s.id, {
+                          delayPenaltyFrequency:
+                            raw === "" ? null : (raw as DelayPenaltyFrequency),
+                        });
+                      }}
+                      className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    >
+                      <option value="">
+                        Task default ({taskDelayPenaltyFrequencyFromSubKpis(r.subKpis)})
+                      </option>
+                      {DELAY_PENALTY_FREQUENCIES.map((option) => (
+                        <option key={option} value={option}>
+                          {option.charAt(0) + option.slice(1).toLowerCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    Penalty per{" "}
+                    {delayPenaltyFrequencyLabel(
+                      resolveSubKpiDelayPenaltyFrequency(s, penaltyCtx),
+                    )}
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={s.dailyPenaltyAmount ?? ""}
+                      disabled={busyId === r.id}
+                      placeholder={
+                        taskDailyPenaltyAmountFromSubKpis(r.subKpis) != null
+                          ? String(taskDailyPenaltyAmountFromSubKpis(r.subKpis))
+                          : "Task default"
+                      }
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        void updateSubTask(r.id, s.id, {
+                          dailyPenaltyAmount: raw === "" ? null : Number(raw),
+                        });
+                      }}
+                      className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    />
+                  </label>
+                </div>
+              ) : null}
+              {penalty > 0 ? (
+                <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-400">
+                  Delay penalty: −{penalty} pts
+                  {subKpiPenaltyDays(s, penaltyCtx) > 0
+                    ? ` (${subKpiPenaltyDays(s, penaltyCtx)}d overdue)`
+                    : ""}
+                </p>
+              ) : null}
+            </div>
           );
         })()}
       </div>
@@ -3060,30 +3200,59 @@ export function AgentKpiKanbanFlow({
                   </select>
                 </label>
               ) : null}
-              {showAdminTaskManagement && !itProject && activeTask.isRecurring === false ? (
-                <label className="block rounded-lg border border-zinc-200 bg-white p-3 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-500">
-                  Daily delay penalty (task default)
-                  <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={taskDailyPenaltyAmountFromSubKpis(activeTask.subKpis) ?? ""}
-                    disabled={busyId === activeTask.id}
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
-                      void patchTaskDailyPenalty(
-                        activeTask.id,
-                        raw === "" ? null : Math.max(0, Number(raw)),
-                      );
-                    }}
-                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
+              {showAdminTaskManagement &&
+              (itProject || activeTask.isRecurring === false) ? (
+                <div className="block space-y-2 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                      Penalty frequency
+                      <select
+                        value={taskDelayPenaltyFrequencyFromSubKpis(activeTask.subKpis)}
+                        disabled={busyId === activeTask.id}
+                        onChange={(e) =>
+                          void patchTaskDelayPenaltyFrequency(
+                            activeTask.id,
+                            e.target.value as DelayPenaltyFrequency,
+                          )
+                        }
+                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                      >
+                        {DELAY_PENALTY_FREQUENCIES.map((option) => (
+                          <option key={option} value={option}>
+                            {option.charAt(0) + option.slice(1).toLowerCase()}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                      Penalty per{" "}
+                      {delayPenaltyFrequencyLabel(
+                        taskDelayPenaltyFrequencyFromSubKpis(activeTask.subKpis),
+                      )}{" "}
+                      (task default)
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={taskDailyPenaltyAmountFromSubKpis(activeTask.subKpis) ?? ""}
+                        disabled={busyId === activeTask.id}
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          void patchTaskDailyPenalty(
+                            activeTask.id,
+                            raw === "" ? null : Math.max(0, Number(raw)),
+                          );
+                        }}
+                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                      />
+                    </label>
+                  </div>
                   {accruedPenaltyForRecord(activeTask) > 0 ? (
-                    <span className="mt-1 block text-[11px] font-semibold normal-case tracking-normal text-rose-700 dark:text-rose-300">
+                    <span className="block text-[11px] font-semibold normal-case tracking-normal text-rose-700 dark:text-rose-300">
                       Total accrued on this task: {accruedPenaltyForRecord(activeTask)}
                     </span>
                   ) : null}
-                </label>
+                </div>
               ) : null}
               {itProject ? (
                 <div className="space-y-2 rounded-lg border border-orange-400/35 bg-orange-500/[0.07] p-3 dark:border-orange-500/30 dark:bg-orange-500/10">

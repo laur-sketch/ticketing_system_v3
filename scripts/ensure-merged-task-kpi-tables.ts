@@ -233,6 +233,20 @@ export async function ensureUserEfficiencyBreakdownTables(
     `);
   }
 
+  const penaltyCols = await db.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'merged_user_efficiency_breakdowns'
+       AND COLUMN_NAME = 'delay_penalty_total'`,
+    targetDb,
+  );
+  if (Number(penaltyCols[0]?.n ?? 0) === 0) {
+    await db.$executeRawUnsafe(`
+      ALTER TABLE ${target}.merged_user_efficiency_breakdowns
+        ADD COLUMN delay_penalty_total INT NOT NULL DEFAULT 0 AFTER tickets_pending,
+        ADD COLUMN task_efficiency_before_penalty DECIMAL(6,2) NULL AFTER delay_penalty_total
+    `);
+  }
+
   await db.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS ${target}.merged_user_efficiency_task_details (
       id                          VARCHAR(191) NOT NULL,
@@ -244,6 +258,7 @@ export async function ensureUserEfficiencyBreakdownTables(
       due_at                      DATETIME(3) NULL,
       completed_at                DATETIME(3) NULL,
       efficiency_contribution     DECIMAL(8,2) NULL,
+      delay_penalty_accrued       INT NOT NULL DEFAULT 0,
       notes                       TEXT NULL,
       created_at                  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       PRIMARY KEY (id),
@@ -254,6 +269,19 @@ export async function ensureUserEfficiencyBreakdownTables(
         ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  const detailPenaltyCols = await db.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'merged_user_efficiency_task_details'
+       AND COLUMN_NAME = 'delay_penalty_accrued'`,
+    targetDb,
+  );
+  if (Number(detailPenaltyCols[0]?.n ?? 0) === 0) {
+    await db.$executeRawUnsafe(`
+      ALTER TABLE ${target}.merged_user_efficiency_task_details
+        ADD COLUMN delay_penalty_accrued INT NOT NULL DEFAULT 0 AFTER efficiency_contribution
+    `);
+  }
 }
 
 /** @deprecated Use ensureMergedPortalWorkTables */

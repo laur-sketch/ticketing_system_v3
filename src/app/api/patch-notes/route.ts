@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {
-  getViewedPatchNoteIds,
+  getViewedPatchNoteIdsForKeys,
   listPatchNotes,
-  resolvePatchNotesUserId,
+  resolvePatchNotesUserKeys,
 } from "@/lib/patch-notes";
 
 /** Full patch history (newest first) + whether the latest is unread for auto-show. */
@@ -24,9 +24,9 @@ export async function GET() {
       });
     }
 
-    const userId = await resolvePatchNotesUserId(session.user.id);
+    const keys = await resolvePatchNotesUserKeys(session.user.id);
     const latest = patches[0]!;
-    if (!userId) {
+    if (!keys) {
       return NextResponse.json({
         patches,
         latest,
@@ -35,8 +35,9 @@ export async function GET() {
       });
     }
 
-    const viewedIds = await getViewedPatchNoteIds(
-      userId,
+    const lookupIds = [keys.primaryUserId, ...keys.legacyUserIds];
+    const viewedIds = await getViewedPatchNoteIdsForKeys(
+      lookupIds,
       patches.map((p) => p.id),
     );
     const patchesWithView = patches.map((p) => ({
@@ -49,6 +50,7 @@ export async function GET() {
       patches: patchesWithView,
       latest,
       hasViewedLatest,
+      /** Auto-open only when the newest release has never been marked read for this user. */
       autoShow: !hasViewedLatest,
     });
   } catch (err) {

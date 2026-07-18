@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client/primary";
 import { DateTime } from "luxon";
+import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
 import {
   collectAllSubKpiItems,
   kpiChecklistProgress,
@@ -70,6 +71,14 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     typeof r?.assistanceRequestedAt === "string" ? r.assistanceRequestedAt.trim() : "";
   const assistanceRequestedBy =
     typeof r?.assistanceRequestedBy === "string" ? r.assistanceRequestedBy.trim() : "";
+  const dailyPenaltyRaw = r?.dailyPenaltyAmount;
+  const dailyPenaltyAmount =
+    typeof dailyPenaltyRaw === "number" && Number.isFinite(dailyPenaltyRaw) && dailyPenaltyRaw >= 0
+      ? dailyPenaltyRaw
+      : null;
+  const delayPenaltyFrequency = r?.delayPenaltyFrequency
+    ? normalizeDelayPenaltyFrequency(r.delayPenaltyFrequency)
+    : null;
   return {
     id,
     title,
@@ -83,6 +92,8 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
+    ...(dailyPenaltyAmount != null ? { dailyPenaltyAmount } : {}),
+    ...(delayPenaltyFrequency ? { delayPenaltyFrequency } : {}),
     ...(assistanceRequested ? { assistanceRequested: true } : {}),
     ...(assistanceRequestedAt ? { assistanceRequestedAt } : {}),
     ...(assistanceRequestedBy ? { assistanceRequestedBy } : {}),
@@ -156,6 +167,7 @@ export function wrapItProjectSubKpis(data: ItProjectData): Prisma.InputJsonValue
         ...(it.dueDate ? { dueDate: it.dueDate } : {}),
         ...(it.actualDate ? { actualDate: it.actualDate } : {}),
         ...(typeof it.dailyPenaltyAmount === "number" ? { dailyPenaltyAmount: it.dailyPenaltyAmount } : {}),
+        ...(it.delayPenaltyFrequency ? { delayPenaltyFrequency: it.delayPenaltyFrequency } : {}),
         ...(it.assistanceRequested ? { assistanceRequested: true } : {}),
         ...(it.assistanceRequestedAt ? { assistanceRequestedAt: it.assistanceRequestedAt } : {}),
         ...(it.assistanceRequestedBy ? { assistanceRequestedBy: it.assistanceRequestedBy } : {}),
@@ -389,22 +401,46 @@ function mapPhases(
   };
 }
 
+/** Keep task-level envelope fields (penalty rate/frequency, priority, etc.) across phase rewrites. */
+function mergeItProjectEnvelopeMeta(
+  raw: unknown,
+  wrapped: Prisma.InputJsonValue,
+): Prisma.InputJsonValue {
+  if (!isPlainObject(raw)) return wrapped;
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (key === "kind" || key === "activePhaseId" || key === "phases") continue;
+    rest[key] = value;
+  }
+  return { ...rest, ...(wrapped as Record<string, unknown>) } as Prisma.InputJsonValue;
+}
+
 export function setItProjectActivePhase(raw: unknown, phaseId: string): Prisma.InputJsonValue {
   const data = parseItProjectSubKpis(raw);
-  if (!data.phases.some((p) => p.id === phaseId)) return wrapItProjectSubKpis(data);
-  return wrapItProjectSubKpis({ ...data, activePhaseId: phaseId });
+  if (!data.phases.some((p) => p.id === phaseId)) {
+    return mergeItProjectEnvelopeMeta(raw, wrapItProjectSubKpis(data));
+  }
+  return mergeItProjectEnvelopeMeta(
+    raw,
+    wrapItProjectSubKpis({ ...data, activePhaseId: phaseId }),
+  );
 }
 
 export function updateItProjectPhases(
   raw: unknown,
   next: ItProjectData,
 ): Prisma.InputJsonValue {
-  if (!next.phases.length) return wrapItProjectSubKpis(parseItProjectSubKpis(raw));
+  if (!next.phases.length) {
+    return mergeItProjectEnvelopeMeta(raw, wrapItProjectSubKpis(parseItProjectSubKpis(raw)));
+  }
   const activeStill = next.phases.some((p) => p.id === next.activePhaseId);
-  return wrapItProjectSubKpis({
-    activePhaseId: activeStill ? next.activePhaseId : next.phases[0]!.id,
-    phases: next.phases,
-  });
+  return mergeItProjectEnvelopeMeta(
+    raw,
+    wrapItProjectSubKpis({
+      activePhaseId: activeStill ? next.activePhaseId : next.phases[0]!.id,
+      phases: next.phases,
+    }),
+  );
 }
 
 export function setItProjectSubKpiSchedule(
@@ -632,6 +668,51 @@ export function setItProjectSubKpiDone(
     };
   }
 
+  return { ok: true, json: updateItProjectPhases(raw, next) };
+}
+
+export function setItProjectSubKpiPenalty(
+  raw: unknown,
+  subKpiId: string,
+  meta: {
+    dailyPenaltyAmount?: number | null;
+    delayPenaltyFrequency?: string | null;
+  },
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const data = parseItProjectSubKpis(raw);
+  let found = false;
+  const touch = (it: SubKpiItem): SubKpiItem => {
+    if (it.id !== subKpiId) return it;
+    found = true;
+    let next = { ...it };
+    if (meta.dailyPenaltyAmount !== undefined) {
+      if (
+        typeof meta.dailyPenaltyAmount === "number" &&
+        Number.isFinite(meta.dailyPenaltyAmount) &&
+        meta.dailyPenaltyAmount >= 0
+      ) {
+        next = { ...next, dailyPenaltyAmount: meta.dailyPenaltyAmount };
+      } else {
+        delete (next as { dailyPenaltyAmount?: number }).dailyPenaltyAmount;
+      }
+    }
+    if (meta.delayPenaltyFrequency !== undefined) {
+      if (meta.delayPenaltyFrequency == null || meta.delayPenaltyFrequency === "") {
+        delete (next as { delayPenaltyFrequency?: string }).delayPenaltyFrequency;
+      } else {
+        next = {
+          ...next,
+          delayPenaltyFrequency: normalizeDelayPenaltyFrequency(meta.delayPenaltyFrequency),
+        };
+      }
+    }
+    return next;
+  };
+  const next = mapPhases(data, (phase) => ({
+    ...phase,
+    items: phase.items.map(touch),
+  }));
+  if (!found) return { ok: false, error: "Sub-task not found." };
   return { ok: true, json: updateItProjectPhases(raw, next) };
 }
 

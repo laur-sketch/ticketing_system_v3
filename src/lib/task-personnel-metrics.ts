@@ -172,6 +172,52 @@ export type PersonnelDelayPenaltyRow = {
   deduction: number;
 };
 
+function penaltyDeductionForPerson(
+  penalties: PersonnelDelayPenaltyRow[],
+  id: string,
+  name: string,
+): number {
+  if (penalties.length === 0) return 0;
+  const byId = new Map(penalties.map((row) => [row.id, row.deduction]));
+  const byName = new Map(
+    penalties.map((row) => [normalizePersonName(row.name).toLowerCase(), row.deduction]),
+  );
+  return (
+    byId.get(id) ??
+    byName.get(normalizePersonName(name).toLowerCase()) ??
+    0
+  );
+}
+
+/** Apply live delay-penalty deductions to assignee progress rows (company pillar donuts). */
+export function applyPenaltiesToAssigneeProgress<
+  T extends { id: string; name: string; percent: number; total: number },
+>(rows: T[], penalties: PersonnelDelayPenaltyRow[]): T[] {
+  if (penalties.length === 0) return rows;
+  return rows.map((row) => {
+    const deduction = penaltyDeductionForPerson(penalties, row.id, row.name);
+    if (deduction <= 0) return row;
+    return {
+      ...row,
+      percent: applyPenaltyToTaskEfficiency(row.percent, deduction),
+    };
+  });
+}
+
+/** Task-weighted headline percent from assignee rows (after penalties when applied). */
+export function weightedAssigneeProgressPercent(
+  rows: Array<{ percent: number; total: number }>,
+): number {
+  let weighted = 0;
+  let weight = 0;
+  for (const row of rows) {
+    if (row.total <= 0) continue;
+    weighted += row.percent * row.total;
+    weight += row.total;
+  }
+  return weight > 0 ? Math.round(weighted / weight) : 0;
+}
+
 export function applyDelayPenaltiesToPersonnelTasks(
   tasks: PersonnelAccumulatedTaskMetric[],
   penalties: PersonnelDelayPenaltyRow[],

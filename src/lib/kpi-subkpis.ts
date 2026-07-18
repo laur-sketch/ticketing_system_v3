@@ -1,4 +1,8 @@
 import type { Prisma } from "@prisma/client/primary";
+import {
+  normalizeDelayPenaltyFrequency,
+  type DelayPenaltyFrequency,
+} from "@/lib/delay-penalty-frequency";
 import { normalizePersonName } from "@/lib/person-name";
 import { DateTime } from "luxon";
 import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis, wrapItProjectSubKpis } from "@/lib/it-project-subkpis";
@@ -56,8 +60,10 @@ export type SubKpiItem = {
   numericalValue?: number | null;
   /** Target number admins set when numerical record completion is enabled. */
   numericalTarget?: number | null;
-  /** Daily penalty amount when this sub-task is delayed (overrides task default). */
+  /** Penalty amount when this sub-task is delayed (overrides task default; per frequency period). */
   dailyPenaltyAmount?: number | null;
+  /** Accrual cadence for dailyPenaltyAmount (inherits task envelope when omitted). */
+  delayPenaltyFrequency?: DelayPenaltyFrequency | null;
   /** Main assignee unlocked helper assignment via Seek Assistance. */
   assistanceRequested?: boolean;
   assistanceRequestedAt?: string | null;
@@ -153,6 +159,9 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     typeof dailyPenaltyRaw === "number" && Number.isFinite(dailyPenaltyRaw) && dailyPenaltyRaw >= 0
       ? dailyPenaltyRaw
       : null;
+  const delayPenaltyFrequency = r?.delayPenaltyFrequency
+    ? normalizeDelayPenaltyFrequency(r.delayPenaltyFrequency)
+    : null;
   const assistanceRequested = r?.assistanceRequested === true;
   const assistanceRequestedAt =
     typeof r?.assistanceRequestedAt === "string" ? r.assistanceRequestedAt.trim() : "";
@@ -179,6 +188,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(numericalValue != null ? { numericalValue } : {}),
     ...(numericalTarget != null ? { numericalTarget } : {}),
     ...(dailyPenaltyAmount != null ? { dailyPenaltyAmount } : {}),
+    ...(delayPenaltyFrequency ? { delayPenaltyFrequency } : {}),
     ...(assistanceRequested ? { assistanceRequested: true } : {}),
     ...(assistanceRequestedAt ? { assistanceRequestedAt } : {}),
     ...(assistanceRequestedBy ? { assistanceRequestedBy } : {}),
@@ -395,6 +405,7 @@ function rawEnvelopeMeta(raw: unknown) {
       archivedTaskScreenshots: [] as ArchivedTaskScreenshotSet[],
       archivedNumericalRecords: [] as ArchivedNumericalRecordSet[],
       taskDailyPenaltyAmount: null as number | null,
+      taskDelayPenaltyFrequency: "DAILY" as DelayPenaltyFrequency,
       pillarCompletionRequirements: null as SubKpiCompletionRequirements | null,
       pillarDone: false,
       pillarNumericalTarget: null as number | null,
@@ -410,6 +421,7 @@ function rawEnvelopeMeta(raw: unknown) {
   const penaltyRaw = raw.taskDailyPenaltyAmount;
   const taskDailyPenaltyAmount =
     typeof penaltyRaw === "number" && Number.isFinite(penaltyRaw) && penaltyRaw >= 0 ? penaltyRaw : null;
+  const taskDelayPenaltyFrequency = normalizeDelayPenaltyFrequency(raw.taskDelayPenaltyFrequency);
   const pillarTargetRaw = raw.pillarNumericalTarget;
   const pillarValueRaw = raw.pillarNumericalValue;
   return {
@@ -426,6 +438,7 @@ function rawEnvelopeMeta(raw: unknown) {
     archivedTaskScreenshots: parseArchivedTaskScreenshotSets(raw.archivedTaskScreenshots),
     archivedNumericalRecords: parseArchivedNumericalRecordSets(raw.archivedNumericalRecords),
     taskDailyPenaltyAmount,
+    taskDelayPenaltyFrequency,
     pillarCompletionRequirements: normalizeCompletionRequirements(raw.pillarCompletionRequirements),
     pillarDone: raw.pillarDone === true,
     pillarNumericalTarget:
@@ -454,6 +467,9 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.archivedTaskScreenshots.length > 0 ? { archivedTaskScreenshots: meta.archivedTaskScreenshots } : {}),
     ...(meta.archivedNumericalRecords.length > 0 ? { archivedNumericalRecords: meta.archivedNumericalRecords } : {}),
     ...(meta.taskDailyPenaltyAmount != null ? { taskDailyPenaltyAmount: meta.taskDailyPenaltyAmount } : {}),
+    ...(meta.taskDelayPenaltyFrequency !== "DAILY"
+      ? { taskDelayPenaltyFrequency: meta.taskDelayPenaltyFrequency }
+      : {}),
     ...(meta.pillarCompletionRequirements
       ? { pillarCompletionRequirements: meta.pillarCompletionRequirements }
       : {}),
@@ -477,6 +493,19 @@ export function setTaskDailyPenaltyAmount(
   const meta = rawEnvelopeMeta(raw);
   meta.taskDailyPenaltyAmount =
     typeof amount === "number" && Number.isFinite(amount) && amount >= 0 ? amount : null;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function taskDelayPenaltyFrequencyFromSubKpis(raw: unknown): DelayPenaltyFrequency {
+  return rawEnvelopeMeta(raw).taskDelayPenaltyFrequency;
+}
+
+export function setTaskDelayPenaltyFrequency(
+  raw: unknown,
+  frequency: DelayPenaltyFrequency | null | undefined,
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.taskDelayPenaltyFrequency = normalizeDelayPenaltyFrequency(frequency);
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
@@ -1466,6 +1495,7 @@ type SubKpiCreateDraft = string | {
   completionRequirements?: SubKpiCompletionRequirements | null;
   numericalTarget?: number | null;
   dailyPenaltyAmount?: number | null;
+  delayPenaltyFrequency?: DelayPenaltyFrequency | null;
 };
 
 function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
@@ -1515,6 +1545,12 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
       : null;
   if (dailyPenaltyAmount != null) {
     item = { ...item, dailyPenaltyAmount };
+  }
+  if (typeof input !== "string" && input.delayPenaltyFrequency) {
+    item = {
+      ...item,
+      delayPenaltyFrequency: normalizeDelayPenaltyFrequency(input.delayPenaltyFrequency),
+    };
   }
   return item;
 }
@@ -1677,6 +1713,7 @@ export type UpdateSubKpiItemInput = {
   completionMode?: SubKpiCompletionMode;
   numericalTarget?: number | null;
   dailyPenaltyAmount?: number | null;
+  delayPenaltyFrequency?: DelayPenaltyFrequency | null;
 };
 
 /** Update Sub Task title and/or schedule fields (preserves other item metadata). */
@@ -1726,6 +1763,12 @@ export function updateSubKpiItem(
       : typeof input.dailyPenaltyAmount === "number" && Number.isFinite(input.dailyPenaltyAmount)
         ? Math.max(0, input.dailyPenaltyAmount)
         : null;
+  const delayPenaltyFrequency =
+    input.delayPenaltyFrequency === undefined
+      ? undefined
+      : input.delayPenaltyFrequency == null
+        ? null
+        : normalizeDelayPenaltyFrequency(input.delayPenaltyFrequency);
 
   const touch = (item: SubKpiItem): SubKpiItem => {
     if (item.id !== id) return item;
@@ -1757,6 +1800,10 @@ export function updateSubKpiItem(
     if (dailyPenaltyAmount !== undefined) {
       if (dailyPenaltyAmount != null) next = { ...next, dailyPenaltyAmount };
       else delete (next as { dailyPenaltyAmount?: number }).dailyPenaltyAmount;
+    }
+    if (delayPenaltyFrequency !== undefined) {
+      if (delayPenaltyFrequency != null) next = { ...next, delayPenaltyFrequency };
+      else delete (next as { delayPenaltyFrequency?: DelayPenaltyFrequency }).delayPenaltyFrequency;
     }
     return next;
   };

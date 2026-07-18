@@ -594,9 +594,9 @@ export function ContributorPersonalKpiCard({
                 tone="green"
               />
               <PersonnelMetricStatBox
-                label="Pending"
+                label="Missed"
                 value={row.tasks.pending}
-                subLabel="tasks pending"
+                subLabel="tasks missed"
                 tone="neutral"
               />
               <PersonnelMetricStatBox

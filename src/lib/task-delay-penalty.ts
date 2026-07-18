@@ -18,9 +18,18 @@ import {
   collectChecklistProgressItems,
   subKpiProgressOwner,
   taskDailyPenaltyAmountFromSubKpis,
+  taskDelayPenaltyFrequencyFromSubKpis,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
+import {
+  normalizeDelayPenaltyFrequency,
+  penaltyAccrualUnits,
+  type DelayPenaltyFrequency,
+} from "@/lib/delay-penalty-frequency";
 import { subKpiRequirementsMet } from "@/lib/sub-kpi-completion-mode";
+
+export type { DelayPenaltyFrequency };
+export { penaltyAccrualUnits, normalizeDelayPenaltyFrequency };
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -31,6 +40,8 @@ export type SubKpiPenaltyContext = {
   isRecurring: boolean;
   title: string;
   taskDailyPenaltyAmount?: number | null;
+  /** Task-level accrual cadence; item.delayPenaltyFrequency overrides when set. */
+  taskDelayPenaltyFrequency?: DelayPenaltyFrequency | null;
   /** Optional phase due (YYYY-MM-DD) when subtask due is missing (IT projects). */
   phaseDueDate?: string | null;
 };
@@ -120,6 +131,16 @@ export function resolveSubKpiDailyPenaltyAmount(
   return 0;
 }
 
+export function resolveSubKpiDelayPenaltyFrequency(
+  item: SubKpiItem,
+  ctx: Pick<SubKpiPenaltyContext, "taskDelayPenaltyFrequency">,
+): DelayPenaltyFrequency {
+  if (item.delayPenaltyFrequency) {
+    return normalizeDelayPenaltyFrequency(item.delayPenaltyFrequency);
+  }
+  return normalizeDelayPenaltyFrequency(ctx.taskDelayPenaltyFrequency);
+}
+
 export function subKpiAccruedPenalty(item: SubKpiItem, ctx: SubKpiPenaltyContext): number {
   // IT projects are non-recurring for penalty purposes even if row flags differ.
   if (!isItProjectImplementationPillar(ctx.title) && ctx.isRecurring !== false) return 0;
@@ -127,7 +148,9 @@ export function subKpiAccruedPenalty(item: SubKpiItem, ctx: SubKpiPenaltyContext
   if (rate <= 0) return 0;
   const days = subKpiPenaltyDays(item, ctx);
   if (days <= 0) return 0;
-  return Math.round(rate * days * 100) / 100;
+  const units = penaltyAccrualUnits(days, resolveSubKpiDelayPenaltyFrequency(item, ctx));
+  if (units <= 0) return 0;
+  return Math.round(rate * units * 100) / 100;
 }
 
 export type KpiPenaltySource = {
@@ -147,6 +170,7 @@ export function penaltyDeductionsForKpi(
   if (!isIt && kpi.isRecurring !== false) return new Map();
 
   const taskDailyPenaltyAmount = taskDailyPenaltyAmountFromSubKpis(kpi.subKpis);
+  const taskDelayPenaltyFrequency = taskDelayPenaltyFrequencyFromSubKpis(kpi.subKpis);
   const byPerson = new Map<string, { id: string; name: string; deduction: number }>();
 
   if (isItProjectEnvelope(kpi.subKpis) || isIt) {
@@ -161,6 +185,7 @@ export function penaltyDeductionsForKpi(
         isRecurring: false,
         title: kpi.title,
         taskDailyPenaltyAmount,
+        taskDelayPenaltyFrequency,
         phaseDueDate: phase?.dueDate ?? null,
       };
       const deduction = subKpiAccruedPenalty(item, penaltyCtx);
@@ -182,6 +207,7 @@ export function penaltyDeductionsForKpi(
     isRecurring: kpi.isRecurring,
     title: kpi.title,
     taskDailyPenaltyAmount,
+    taskDelayPenaltyFrequency,
   };
 
   const items = collectChecklistProgressItems(kpi.subKpis, kpiMainTaskLabel(kpi));

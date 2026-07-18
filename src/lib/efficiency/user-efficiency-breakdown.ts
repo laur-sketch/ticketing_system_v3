@@ -6,24 +6,23 @@
  * For each (merged user × periodKey × frequency):
  *
  * 1. **Board tasks (TaskItem)** in `[periodStart, periodEnd)` assigned to the user's agent:
- *    - `totalTasks` = CURRENT + DONE + DELAYED
- *    - `completedTasks` = DONE
- *    - `delayedTasks` = DELAYED
- *    - `taskEfficiency` = DONE / (DONE + CURRENT) × 100  (DELAYED tracked but not in denom)
- *    - `onTimeCompletionRate` = on-time DONE / DONE × 100
- *      (on-time = completedAt ≤ dueAt, or no dueAt → counts as on-time)
- *    - `averageTaskCompletionHours` = mean (completedAt − createdAt) hours for DONE
- *    - Per-task `efficiencyContribution` = equal share of taskEfficiency across DONE tasks
- *      (CURRENT/DELAYED contribute 0; DELAYED notes include delay flag)
+ *    - Count CURRENT + DONE + DELAYED into total/completed/delayed
+ *    - Accrue delay penalty via `delayPenaltyFrequency` (DAILY / WEEKLY ceil÷7 / MONTHLY ceil÷30)
  *
- * 2. **Ticket efficiency** (Insights parity, tickets stay in primary PG):
+ * 2. **KPI checklist + IT project phase subtasks** (always merged with board tasks):
+ *    - Live non-recurring / IT project items attributed to assignees
+ *    - Recurring checklist progress from period snapshots always merged alongside
+ *      board / IT / live one-off checklist (penalties only reduce efficiency %)
+ *    - Accrue frequency-aware penalties; detail `taskSource` KPI_CHECKLIST | IT_PROJECT_SUBTASK
+ *
+ * 3. Per person: merge TaskItem + project/checklist counts; `taskEfficiencyBeforePenalty` =
+ *    done / (done + current) × 100; then subtract `delayPenaltyTotal` (floor 50%).
+ *
+ * 4. **Ticket efficiency** (Insights parity, tickets stay in primary PG):
  *    - closed / (open_or_in_progress + closed) × 100 in the period window
  *
- * 3. **overallEfficiency** = mean of available {taskEfficiency, ticketEfficiency},
+ * 5. **overallEfficiency** = mean of available {taskEfficiency, ticketEfficiency},
  *    then floor at 50 (see `combinedPersonnelEfficiency` / `PERSONNEL_AVERAGE_EFFICIENCY_FLOOR`).
- *
- * 4. When TaskItem is empty for the window, taskEfficiency / details fall back to
- *    Insights KPI checklist contributor totals for that same period range.
  *
  * Idempotent: unique (sourceUserId, periodKey, frequency); replace-in-place per period.
  */
@@ -35,14 +34,37 @@ import {
   ensureUserEfficiencyBreakdownTables,
   parseMysqlDatabaseName,
 } from "../../../scripts/ensure-merged-task-kpi-tables";
+import {
+  normalizeDelayPenaltyFrequency,
+  penaltyAccrualUnits,
+} from "@/lib/delay-penalty-frequency";
+import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import {
+  findItProjectPhaseForSubKpi,
+  isItProjectEnvelope,
+  isItProjectSubTaskDelayed,
+  itProjectChecklistItems,
+  parseItProjectSubKpis,
+} from "@/lib/it-project-subkpis";
 import { helpdeskSupportPercent } from "@/lib/kpis";
-import { normalizeTimeZone, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
+import { normalizePersonName } from "@/lib/person-name";
+import { DEFAULT_TIME_ZONE, normalizeTimeZone, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import {
+  collectChecklistProgressItems,
+  subKpiProgressOwner,
+  taskDailyPenaltyAmountFromSubKpis,
+  taskDelayPenaltyFrequencyFromSubKpis,
+} from "@/lib/kpi-subkpis";
 import { prismaPrimary } from "@/lib/prisma";
+import { subKpiRequirementsMet } from "@/lib/sub-kpi-completion-mode";
 import {
   buildCanonicalMergedIdMap,
   canonicalMergedId,
 } from "@/lib/sync/merged-person-identity";
+import { subKpiAccruedPenalty, type SubKpiPenaltyContext } from "@/lib/task-delay-penalty";
 import {
+  applyPenaltyToTaskEfficiency,
   applyPersonnelAverageEfficiencyFloor,
   normalizePersonnelTaskTotals,
 } from "@/lib/task-personnel-metrics";
@@ -86,7 +108,33 @@ type TaskRow = {
   startedAt: Date | null;
   completedAt: Date | null;
   delayPenaltyAccrued: number;
+  delayPenaltyAmount: number | null;
+  delayPenaltyFrequency: string;
   assignedAgentId: string | null;
+};
+
+type ChecklistWorkRow = {
+  agentId: string;
+  ownerName: string;
+  taskId: string | null;
+  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK";
+  taskTitle: string;
+  status: "CURRENT" | "DONE" | "DELAYED";
+  dueAt: Date | null;
+  completedAt: Date | null;
+  delayPenaltyAccrued: number;
+};
+
+type ChecklistSnapshotRollup = {
+  total: number;
+  done: number;
+  title: string;
+};
+
+type PersonGroupRef = {
+  mergedSourceUserId: bigint;
+  agentIds: string[];
+  name: string;
 };
 
 type PeriodWindow = {
@@ -288,54 +336,260 @@ async function loadTasksInWindow(start: Date, end: Date): Promise<TaskRow[]> {
       startedAt: true,
       completedAt: true,
       delayPenaltyAccrued: true,
+      delayPenaltyAmount: true,
+      delayPenaltyFrequency: true,
       assignedAgentId: true,
     },
   });
   return rows as TaskRow[];
 }
 
-async function loadTicketCountsByAgent(
+function ymdToDate(ymd: string | null | undefined, timeZone: string): Date | null {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd.trim())) return null;
+  const dt = DateTime.fromISO(ymd.trim(), { zone: normalizeTimeZone(timeZone) }).startOf("day");
+  return dt.isValid ? dt.toJSDate() : null;
+}
+
+/**
+ * Live KPI checklist + IT project subtasks for the window.
+ * Always merged with TaskItem work (not a fallback-only path).
+ */
+async function loadProjectAndChecklistWorkInWindow(
   start: Date,
   end: Date,
-): Promise<Map<string, { closed: number; pending: number }>> {
-  const [closedByAgent, pendingByAgent] = await Promise.all([
-    prismaPrimary.ticket.groupBy({
-      by: ["assignedAgentId"],
-      where: {
-        assignedAgentId: { not: null },
-        closedAt: { gte: start, lt: end },
-      },
-      _count: true,
-    }),
-    prismaPrimary.ticket.groupBy({
-      by: ["assignedAgentId"],
-      where: {
-        assignedAgentId: { not: null },
-        status: { in: ["OPEN", "IN_PROGRESS"] },
-      },
-      _count: true,
-    }),
-  ]);
+  timeZone: string,
+): Promise<Map<string, ChecklistWorkRow[]>> {
+  const nowMs = Math.min(Date.now(), end.getTime() - 1);
+  const kpis = await prismaPrimary.kpiMaintenance.findMany({
+    where: {
+      OR: [
+        { title: "IT PROJECT IMPLEMENTATION" },
+        { isRecurring: false },
+      ],
+    },
+    select: {
+      id: true,
+      title: true,
+      mainTask: true,
+      frequency: true,
+      isRecurring: true,
+      subKpis: true,
+      assignedAgentId: true,
+      assignedAgent: { select: { id: true, name: true } },
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
 
-  const out = new Map<string, { closed: number; pending: number }>();
-  for (const row of closedByAgent) {
-    if (!row.assignedAgentId) continue;
-    const cur = out.get(row.assignedAgentId) ?? { closed: 0, pending: 0 };
-    cur.closed += row._count;
-    out.set(row.assignedAgentId, cur);
+  const byAgent = new Map<string, ChecklistWorkRow[]>();
+
+  for (const kpi of kpis) {
+    const inWindow =
+      (kpi.createdAt >= start && kpi.createdAt < end) ||
+      (kpi.updatedAt >= start && kpi.updatedAt < end) ||
+      isItProjectImplementationPillar(kpi.title) ||
+      kpi.isRecurring === false;
+    if (!inWindow) continue;
+
+    const isIt = isItProjectImplementationPillar(kpi.title) || isItProjectEnvelope(kpi.subKpis);
+    const taskDailyPenaltyAmount = taskDailyPenaltyAmountFromSubKpis(kpi.subKpis);
+    const taskDelayPenaltyFrequency = taskDelayPenaltyFrequencyFromSubKpis(kpi.subKpis);
+    const parentAssignee = kpi.assignedAgent
+      ? { id: kpi.assignedAgent.id, name: kpi.assignedAgent.name }
+      : kpi.assignedAgentId
+        ? { id: kpi.assignedAgentId, name: "Assignee" }
+        : null;
+
+    if (isIt) {
+      const data = parseItProjectSubKpis(kpi.subKpis);
+      for (const item of itProjectChecklistItems(kpi.subKpis)) {
+        if (!item.title.trim()) continue;
+        const owner = subKpiProgressOwner(item, parentAssignee);
+        if (owner.id === "__unassigned__") continue;
+        const phase = findItProjectPhaseForSubKpi(data, item.id);
+        const dueYmd = item.dueDate ?? phase?.dueDate ?? null;
+        const dueAt = ymdToDate(dueYmd, timeZone);
+        const completedAt = ymdToDate(item.actualDate, timeZone);
+        const done = Boolean(item.actualDate) || subKpiRequirementsMet(item);
+        const delayed =
+          !done &&
+          isItProjectSubTaskDelayed(
+            { ...item, dueDate: dueYmd ?? item.dueDate },
+            nowMs,
+            timeZone,
+          );
+        const penaltyCtx: SubKpiPenaltyContext = {
+          nowMs,
+          timeZone,
+          frequency: kpi.frequency as KpiFrequencyCode,
+          isRecurring: false,
+          title: kpi.title,
+          taskDailyPenaltyAmount,
+          taskDelayPenaltyFrequency,
+          phaseDueDate: phase?.dueDate ?? null,
+        };
+        const penalty = subKpiAccruedPenalty(item, penaltyCtx);
+        const row: ChecklistWorkRow = {
+          agentId: owner.id,
+          ownerName: owner.name,
+          taskId: item.id,
+          taskSource: "IT_PROJECT_SUBTASK",
+          taskTitle: `${kpiMainTaskLabel(kpi)} · ${item.title}`.slice(0, 512),
+          status: done ? "DONE" : delayed ? "DELAYED" : "CURRENT",
+          dueAt,
+          completedAt,
+          delayPenaltyAccrued: Math.round(penalty),
+        };
+        const list = byAgent.get(owner.id) ?? [];
+        list.push(row);
+        byAgent.set(owner.id, list);
+      }
+      continue;
+    }
+
+    if (kpi.isRecurring !== false) continue;
+    const items = collectChecklistProgressItems(kpi.subKpis, kpiMainTaskLabel(kpi));
+    for (const item of items) {
+      if (!item.title.trim()) continue;
+      const owner = subKpiProgressOwner(item, parentAssignee);
+      if (owner.id === "__unassigned__") continue;
+      const dueAt = ymdToDate(item.dueDate, timeZone);
+      const completedAt = ymdToDate(item.actualDate, timeZone);
+      const done = subKpiRequirementsMet(item);
+      const penaltyCtx: SubKpiPenaltyContext = {
+        nowMs,
+        timeZone,
+        frequency: kpi.frequency as KpiFrequencyCode,
+        isRecurring: false,
+        title: kpi.title,
+        taskDailyPenaltyAmount,
+        taskDelayPenaltyFrequency,
+      };
+      const delayed = !done && subKpiAccruedPenalty(item, penaltyCtx) > 0;
+      const penalty = subKpiAccruedPenalty(item, penaltyCtx);
+      const row: ChecklistWorkRow = {
+        agentId: owner.id,
+        ownerName: owner.name,
+        taskId: item.id,
+        taskSource: "KPI_CHECKLIST",
+        taskTitle: `${kpiMainTaskLabel(kpi)} · ${item.title}`.slice(0, 512),
+        status: done ? "DONE" : delayed ? "DELAYED" : "CURRENT",
+        dueAt,
+        completedAt,
+        delayPenaltyAccrued: Math.round(penalty),
+      };
+      const list = byAgent.get(owner.id) ?? [];
+      list.push(row);
+      byAgent.set(owner.id, list);
+    }
   }
-  for (const row of pendingByAgent) {
-    if (!row.assignedAgentId) continue;
-    const cur = out.get(row.assignedAgentId) ?? { closed: 0, pending: 0 };
-    cur.pending += row._count;
-    out.set(row.assignedAgentId, cur);
+
+  return byAgent;
+}
+
+function agentIdsForMergedPerson(
+  group: PersonGroupRef,
+  agents: AgentEnrichment[],
+  canonicalIds: Map<string, bigint>,
+): string[] {
+  const key = group.mergedSourceUserId.toString();
+  const ids = new Set(group.agentIds);
+  for (const agent of agents) {
+    if (canonicalMergedId(agent.mergedSourceUserId, canonicalIds).toString() === key) {
+      ids.add(agent.agentId);
+    }
+  }
+  return [...ids];
+}
+
+function dedupeProjectRows(rows: ChecklistWorkRow[]): ChecklistWorkRow[] {
+  const seen = new Set<string>();
+  const out: ChecklistWorkRow[] = [];
+  for (const row of rows) {
+    const key = `${row.taskSource}:${row.taskId ?? row.taskTitle}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
   }
   return out;
 }
 
+/** Pull IT / live checklist rows for a merged person, including duplicate agent rows. */
+function collectProjectRowsForGroup(
+  group: PersonGroupRef,
+  projectWork: Map<string, ChecklistWorkRow[]>,
+  agents: AgentEnrichment[],
+  canonicalIds: Map<string, bigint>,
+): ChecklistWorkRow[] {
+  const linkedIds = new Set(agentIdsForMergedPerson(group, agents, canonicalIds));
+  const rows: ChecklistWorkRow[] = [];
+  for (const id of linkedIds) {
+    const list = projectWork.get(id);
+    if (list?.length) rows.push(...list);
+  }
+
+  const personName = normalizePersonName(group.name).toLowerCase();
+  for (const [agentId, list] of projectWork) {
+    if (linkedIds.has(agentId)) continue;
+    for (const row of list) {
+      if (normalizePersonName(row.ownerName).toLowerCase() !== personName) continue;
+      rows.push(row);
+    }
+  }
+  return dedupeProjectRows(rows);
+}
+
 /**
- * Fallback when board TaskItem is empty: use latest KPI checklist contributor
- * totals from period snapshots overlapping the window.
+ * Recurring KPI checklist totals from period snapshots.
+ * Always additive with board / IT / live one-off rows — penalties only affect efficiency.
+ */
+function collectChecklistSnapshotForGroup(
+  group: PersonGroupRef,
+  checklistFallback: Map<
+    string,
+    {
+      total: number;
+      done: number;
+      details: Array<{ title: string; done: number; total: number }>;
+    }
+  >,
+  agents: AgentEnrichment[],
+  canonicalIds: Map<string, bigint>,
+): ChecklistSnapshotRollup | null {
+  const linkedIds = agentIdsForMergedPerson(group, agents, canonicalIds);
+  const matchedIds = new Set<string>();
+  let total = 0;
+  let done = 0;
+
+  for (const id of linkedIds) {
+    const part = checklistFallback.get(id);
+    if (!part || part.total <= 0) continue;
+    matchedIds.add(id);
+    total += part.total;
+    done += part.done;
+  }
+
+  const personName = normalizePersonName(group.name).toLowerCase();
+  for (const [id, part] of checklistFallback) {
+    if (matchedIds.has(id) || part.total <= 0) continue;
+    const label =
+      part.details.find((d) => d.title.trim())?.title.replace(/^KPI checklist · /i, "").trim() ?? "";
+    if (!label || normalizePersonName(label).toLowerCase() !== personName) continue;
+    matchedIds.add(id);
+    total += part.total;
+    done += part.done;
+  }
+
+  if (total <= 0) return null;
+  return {
+    total,
+    done,
+    title: `KPI checklist · ${group.name}`,
+  };
+}
+
+/**
+ * Snapshot-based recurring checklist contributor totals for the period.
  */
 async function loadChecklistFallbackByAgent(
   start: Date,
@@ -383,6 +637,61 @@ async function loadChecklistFallbackByAgent(
     }
   }
   return byAgent;
+}
+
+function boardTaskPenalty(t: TaskRow, nowMs: number): number {
+  if (t.delayPenaltyAccrued > 0) return t.delayPenaltyAccrued;
+  const rate = t.delayPenaltyAmount ?? 0;
+  if (rate <= 0 || !t.dueAt) return 0;
+  const zone = DEFAULT_TIME_ZONE;
+  const dueDay = DateTime.fromJSDate(t.dueAt, { zone }).startOf("day");
+  const endSource = t.completedAt ?? (t.status === "DONE" ? t.updatedAt : new Date(nowMs));
+  const endDay = DateTime.fromJSDate(endSource, { zone }).startOf("day");
+  if (!dueDay.isValid || !endDay.isValid) return 0;
+  const delayStart = dueDay.plus({ days: 1 });
+  if (endDay < delayStart) return 0;
+  const days = Math.floor(endDay.diff(delayStart, "days").days) + 1;
+  const units = penaltyAccrualUnits(days, normalizeDelayPenaltyFrequency(t.delayPenaltyFrequency));
+  return Math.max(0, Math.round(rate * units));
+}
+
+async function loadTicketCountsByAgent(
+  start: Date,
+  end: Date,
+): Promise<Map<string, { closed: number; pending: number }>> {
+  const [closedByAgent, pendingByAgent] = await Promise.all([
+    prismaPrimary.ticket.groupBy({
+      by: ["assignedAgentId"],
+      where: {
+        assignedAgentId: { not: null },
+        closedAt: { gte: start, lt: end },
+      },
+      _count: true,
+    }),
+    prismaPrimary.ticket.groupBy({
+      by: ["assignedAgentId"],
+      where: {
+        assignedAgentId: { not: null },
+        status: { in: ["OPEN", "IN_PROGRESS"] },
+      },
+      _count: true,
+    }),
+  ]);
+
+  const out = new Map<string, { closed: number; pending: number }>();
+  for (const row of closedByAgent) {
+    if (!row.assignedAgentId) continue;
+    const cur = out.get(row.assignedAgentId) ?? { closed: 0, pending: 0 };
+    cur.closed += row._count;
+    out.set(row.assignedAgentId, cur);
+  }
+  for (const row of pendingByAgent) {
+    if (!row.assignedAgentId) continue;
+    const cur = out.get(row.assignedAgentId) ?? { closed: 0, pending: 0 };
+    cur.pending += row._count;
+    out.set(row.assignedAgentId, cur);
+  }
+  return out;
 }
 
 function computeOverall(
@@ -451,12 +760,19 @@ export async function runComputeUserEfficiencyBreakdowns(
     );
 
     for (const period of periods) {
+      const nowMs = Math.min(Date.now(), period.end.getTime() - 1);
       const tasks = await loadTasksInWindow(period.start, period.end);
       const ticketCounts = await loadTicketCountsByAgent(period.start, period.end);
-      const checklistFallback =
-        tasks.length === 0
-          ? await loadChecklistFallbackByAgent(period.start, period.end)
-          : new Map();
+      const projectWork = await loadProjectAndChecklistWorkInWindow(
+        period.start,
+        period.end,
+        timeZone,
+      );
+      // Always load snapshot checklist progress. Applied per person only when that
+      // person has no TaskItem and no live project/checklist rows (see below).
+      // Do not gate on global `tasks.length` — one board task must not wipe
+      // everyone else's KPI checklist fallback.
+      const checklistFallback = await loadChecklistFallbackByAgent(period.start, period.end);
 
       const tasksByAgent = new Map<string, TaskRow[]>();
       for (const t of tasks) {
@@ -469,6 +785,7 @@ export async function runComputeUserEfficiencyBreakdowns(
       const agentIds = new Set<string>([
         ...tasksByAgent.keys(),
         ...ticketCounts.keys(),
+        ...projectWork.keys(),
         ...checklistFallback.keys(),
       ]);
 
@@ -504,12 +821,27 @@ export async function runComputeUserEfficiencyBreakdowns(
 
       for (const group of groups.values()) {
         const agentTasks = group.agentIds.flatMap((id) => tasksByAgent.get(id) ?? []);
-        let totalTasks = agentTasks.length;
-        let completedTasks = agentTasks.filter((t) => t.status === "DONE").length;
-        let delayedTasks = agentTasks.filter((t) => t.status === "DELAYED").length;
-        let currentTasks = agentTasks.filter((t) => t.status === "CURRENT").length;
+        const projectRows = collectProjectRowsForGroup(
+          group,
+          projectWork,
+          agents,
+          canonicalIds,
+        );
 
+        let totalTasks = agentTasks.length + projectRows.length;
+        let completedTasks =
+          agentTasks.filter((t) => t.status === "DONE").length +
+          projectRows.filter((t) => t.status === "DONE").length;
+        let delayedTasks =
+          agentTasks.filter((t) => t.status === "DELAYED").length +
+          projectRows.filter((t) => t.status === "DELAYED").length;
+        let currentTasks =
+          agentTasks.filter((t) => t.status === "CURRENT").length +
+          projectRows.filter((t) => t.status === "CURRENT").length;
+
+        let taskEfficiencyBeforePenalty: number | null = null;
         let taskEfficiency: number | null = null;
+        let delayPenaltyTotal = 0;
         let onTimeCompletionRate: number | null = null;
         let averageTaskCompletionHours: number | null = null;
         let details: Array<{
@@ -520,85 +852,146 @@ export async function runComputeUserEfficiencyBreakdowns(
           dueAt: Date | null;
           completedAt: Date | null;
           efficiencyContribution: number | null;
+          delayPenaltyAccrued: number;
           notes: string | null;
         }> = [];
 
-        if (agentTasks.length > 0) {
+        if (totalTasks > 0) {
           const activeDenom = completedTasks + currentTasks;
-          taskEfficiency =
+          taskEfficiencyBeforePenalty =
             activeDenom > 0
               ? Math.min(100, Math.round((completedTasks / activeDenom) * 100))
               : delayedTasks > 0
                 ? 0
                 : null;
 
-          const doneTasks = agentTasks.filter((t) => t.status === "DONE");
-          if (doneTasks.length > 0) {
+          for (const t of agentTasks) delayPenaltyTotal += boardTaskPenalty(t, nowMs);
+          for (const t of projectRows) delayPenaltyTotal += t.delayPenaltyAccrued;
+
+          taskEfficiency =
+            taskEfficiencyBeforePenalty != null
+              ? applyPenaltyToTaskEfficiency(taskEfficiencyBeforePenalty, delayPenaltyTotal)
+              : null;
+
+          const doneBoard = agentTasks.filter((t) => t.status === "DONE");
+          if (doneBoard.length > 0) {
             let onTime = 0;
             let hoursSum = 0;
-            for (const t of doneTasks) {
+            for (const t of doneBoard) {
               const completedAt = t.completedAt ?? t.updatedAt;
               if (!t.dueAt || completedAt.getTime() <= t.dueAt.getTime()) onTime++;
               const startAt = t.startedAt ?? t.createdAt;
               hoursSum += Math.max(0, (completedAt.getTime() - startAt.getTime()) / 3_600_000);
             }
-            onTimeCompletionRate = round2((onTime / doneTasks.length) * 100);
-            averageTaskCompletionHours = round2(hoursSum / doneTasks.length);
+            onTimeCompletionRate = round2((onTime / doneBoard.length) * 100);
+            averageTaskCompletionHours = round2(hoursSum / doneBoard.length);
           }
 
           const perDone =
             taskEfficiency != null && completedTasks > 0
               ? round2(taskEfficiency / completedTasks)
               : 0;
-          details = agentTasks.map((t) => ({
-            taskId: t.id,
-            taskSource: "TASK_ITEM",
-            taskTitle: t.title.slice(0, 512),
-            status: t.status,
-            dueAt: t.dueAt,
-            completedAt: t.status === "DONE" ? t.completedAt ?? t.updatedAt : null,
-            efficiencyContribution: t.status === "DONE" ? perDone : 0,
-            notes:
-              t.status === "DELAYED"
-                ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
-                : t.delayPenaltyAccrued > 0
+          details = [
+            ...agentTasks.map((t) => {
+              const penalty = boardTaskPenalty(t, nowMs);
+              return {
+                taskId: t.id,
+                taskSource: "TASK_ITEM",
+                taskTitle: t.title.slice(0, 512),
+                status: t.status,
+                dueAt: t.dueAt,
+                completedAt: t.status === "DONE" ? t.completedAt ?? t.updatedAt : null,
+                efficiencyContribution: t.status === "DONE" ? perDone : 0,
+                delayPenaltyAccrued: penalty,
+                notes:
+                  t.status === "DELAYED"
+                    ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
+                    : penalty > 0
+                      ? `Delay penalty accrued: ${penalty} pts`
+                      : null,
+              };
+            }),
+            ...projectRows.map((t) => ({
+              taskId: t.taskId,
+              taskSource: t.taskSource,
+              taskTitle: t.taskTitle,
+              status: t.status,
+              dueAt: t.dueAt,
+              completedAt: t.completedAt,
+              efficiencyContribution: t.status === "DONE" ? perDone : 0,
+              delayPenaltyAccrued: t.delayPenaltyAccrued,
+              notes:
+                t.delayPenaltyAccrued > 0
                   ? `Delay penalty accrued: ${t.delayPenaltyAccrued} pts`
-                  : null,
-          }));
-        } else {
-          // Sum checklist fallback across all agent rows of this person.
-          const fb = group.agentIds.reduce<{
-            total: number;
-            done: number;
-            details: Array<{ title: string; done: number; total: number }>;
-          } | null>((acc, id) => {
-            const part = checklistFallback.get(id);
-            if (!part || part.total <= 0) return acc;
-            if (!acc) return { total: part.total, done: part.done, details: [...part.details] };
-            acc.total += part.total;
-            acc.done += part.done;
-            acc.details.push(...part.details);
-            return acc;
-          }, null);
-          if (fb && fb.total > 0) {
-            const normalized = normalizePersonnelTaskTotals(fb.total, fb.done);
-            totalTasks = normalized.pending + normalized.closed;
-            completedTasks = normalized.closed;
-            delayedTasks = 0;
-            currentTasks = normalized.pending;
-            taskEfficiency = normalized.efficiency;
-            details = fb.details.map((d: { title: string; done: number; total: number }) => ({
+                  : t.taskSource === "IT_PROJECT_SUBTASK"
+                    ? "IT project subtask"
+                    : "Non-recurring KPI checklist item",
+            })),
+          ];
+        }
+
+        // Recurring KPI checklist snapshots always merge with board / IT / live
+        // one-off rows. Penalties reduce efficiency only — never drop task counts.
+        const snapshotChecklist = collectChecklistSnapshotForGroup(
+          group,
+          checklistFallback,
+          agents,
+          canonicalIds,
+        );
+        if (snapshotChecklist) {
+          const liveChecklistCount = projectRows.filter(
+            (row) => row.taskSource === "KPI_CHECKLIST",
+          ).length;
+          const snapshotTotal = Math.max(0, snapshotChecklist.total - liveChecklistCount);
+          const snapshotDone = Math.max(
+            0,
+            Math.min(snapshotChecklist.done, snapshotTotal),
+          );
+          if (snapshotTotal > 0) {
+            const normalized = normalizePersonnelTaskTotals(snapshotTotal, snapshotDone);
+            totalTasks += normalized.pending + normalized.closed;
+            completedTasks += normalized.closed;
+            currentTasks += normalized.pending;
+            const activeDenom = completedTasks + currentTasks;
+            taskEfficiencyBeforePenalty =
+              activeDenom > 0
+                ? Math.min(100, Math.round((completedTasks / activeDenom) * 100))
+                : delayedTasks > 0
+                  ? 0
+                  : null;
+            taskEfficiency =
+              taskEfficiencyBeforePenalty != null
+                ? applyPenaltyToTaskEfficiency(taskEfficiencyBeforePenalty, delayPenaltyTotal)
+                : null;
+            const perDone =
+              taskEfficiency != null && completedTasks > 0
+                ? round2(taskEfficiency / completedTasks)
+                : 0;
+            details = details.map((d) =>
+              d.taskSource === "TICKET_SUMMARY"
+                ? d
+                : {
+                    ...d,
+                    efficiencyContribution: d.status === "DONE" ? perDone : 0,
+                  },
+            );
+            details.push({
               taskId: null,
               taskSource: "KPI_CHECKLIST",
-              taskTitle: d.title.slice(0, 512),
-              status: d.done >= d.total ? "DONE" : "CURRENT",
+              taskTitle: snapshotChecklist.title.slice(0, 512),
+              status: snapshotDone >= snapshotTotal ? "DONE" : "CURRENT",
               dueAt: null,
               completedAt: null,
               efficiencyContribution:
-                totalTasks > 0 ? round2((d.done / d.total) * (taskEfficiency ?? 0)) : null,
+                snapshotTotal > 0
+                  ? round2((snapshotDone / snapshotTotal) * (taskEfficiency ?? 0))
+                  : null,
+              delayPenaltyAccrued: 0,
               notes:
-                "Board TaskItem empty for this window — efficiency derived from KPI checklist contributor progress.",
-            }));
+                agentTasks.length > 0 || projectRows.length > 0
+                  ? "Merged recurring KPI checklist contributor progress with board/project work."
+                  : "Efficiency includes KPI checklist contributor progress for the period.",
+            });
           }
         }
 
@@ -625,6 +1018,7 @@ export async function runComputeUserEfficiencyBreakdowns(
             dueAt: null,
             completedAt: null,
             efficiencyContribution: round2(ticketEfficiency),
+            delayPenaltyAccrued: 0,
             notes: "Aggregated ticket closed/(open+closed) for the period; ticket rows stay in primary PG.",
           });
         }
@@ -676,6 +1070,11 @@ export async function runComputeUserEfficiencyBreakdowns(
           delayedTasks,
           ticketsClosed: hasTicketData ? ticketClosed : 0,
           ticketsPending: hasTicketData ? ticketPending : 0,
+          delayPenaltyTotal,
+          taskEfficiencyBeforePenalty:
+            taskEfficiencyBeforePenalty != null
+              ? new Prisma.Decimal(round2(taskEfficiencyBeforePenalty))
+              : null,
           onTimeCompletionRate:
             onTimeCompletionRate != null
               ? new Prisma.Decimal(onTimeCompletionRate)
@@ -724,6 +1123,7 @@ export async function runComputeUserEfficiencyBreakdowns(
                 d.efficiencyContribution != null
                   ? new Prisma.Decimal(d.efficiencyContribution)
                   : null,
+              delayPenaltyAccrued: d.delayPenaltyAccrued,
               notes: d.notes,
             })),
           });

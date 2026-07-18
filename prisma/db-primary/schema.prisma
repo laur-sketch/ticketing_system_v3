@@ -58,6 +58,13 @@ enum TaskStatus {
   DELAYED
 }
 
+/// How delay penalty rate accrues after the due date (ceil buckets for WEEKLY/MONTHLY).
+enum DelayPenaltyFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
 model PortalAccount {
   id                        String                 @id @default(cuid())
   username                  String?                @unique @map("username")
@@ -352,10 +359,12 @@ model TaskItem {
   startedAt            DateTime?   @map("started_at")
   /// When the task was completed (End Task). Prefer over updatedAt for efficiency.
   completedAt          DateTime?   @map("completed_at")
-  /// Points deducted per overdue calendar day (null = use default rate).
+  /// Points deducted per penalty period (day/week/month per frequency).
   delayPenaltyAmount   Int?        @map("delay_penalty_amount")
   /// Cached accrued delay penalty points for display.
   delayPenaltyAccrued  Int         @default(0) @map("delay_penalty_accrued")
+  /// Accrual cadence for delayPenaltyAmount (default DAILY preserves legacy math).
+  delayPenaltyFrequency DelayPenaltyFrequency @default(DAILY) @map("delay_penalty_frequency")
   createdBy            String      @map("created_by")
   createdByRole        String      @map("created_by_role")
   createdAt            DateTime    @default(now()) @map("created_at")
