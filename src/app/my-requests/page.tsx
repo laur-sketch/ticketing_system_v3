@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Plus, Search } from "lucide-react";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
+import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { requireSession } from "@/lib/access";
 import {
   customerHasPendingResolvedTicket,
@@ -197,6 +198,7 @@ export default async function MyRequestsPage({
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-5 text-zinc-900 dark:bg-background dark:text-zinc-100 sm:px-5 md:py-8">
       <div className="mx-auto flex max-w-[min(100%,1480px)] flex-col gap-5">
+        <OrchestrationQueueNav />
         {submitted ? (
           <div className="rounded-xl border border-orange-400/50 bg-orange-500/15 px-4 py-3 text-sm text-orange-950 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200">
             Ticket submitted successfully. It appears below in your dashboard.

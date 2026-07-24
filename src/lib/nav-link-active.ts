@@ -1,9 +1,16 @@
 /** Shared active-state logic for sidebar / shell navigation. */
 export function navLinkActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
+  if (href === "/agent/tasks") {
+    return pathname === "/agent/tasks" || pathname.startsWith("/agent/tasks/");
+  }
   if (
     href === "/agent" &&
-    (pathname === "/agent" || pathname.startsWith("/agent/") || pathname === "/admin/manual-assignment")
+    (pathname === "/agent" ||
+      pathname.startsWith("/agent/tickets") ||
+      pathname === "/admin/manual-assignment" ||
+      pathname === "/my-requests" ||
+      pathname.startsWith("/my-requests/"))
   ) {
     return true;
   }

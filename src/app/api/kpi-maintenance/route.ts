@@ -35,6 +35,7 @@ import {
   setTaskCount,
   setTaskDailyPenaltyAmount,
   setTaskDelayPenaltyFrequency,
+  setTaskTargetDueDate,
   setTaskPriority,
   syncScreenshotOnlySubKpiDone,
   syncSubKpiDoneFromRequirements,
@@ -49,7 +50,10 @@ import {
   validateStructuredUpdate,
   wrapForPersist,
   wrapForPersistWithExistingMeta,
+  markProjectTask,
+  canAdjustNumericalTarget,
   canMutateSubKpiAssignee,
+  hasItemsInUnassignedSegment,
 } from "@/lib/kpi-subkpis";
 import {
   buildItProjectFromPhaseDrafts,
@@ -113,6 +117,8 @@ import {
 const allowedFrequencies = new Set(Object.values(KpiFrequency));
 
 function checklistFullyComplete(subKpis: unknown, taskTitle?: string): boolean {
+  // Segmented tasks cannot finalize while cards remain on Unassigned.
+  if (hasItemsInUnassignedSegment(subKpis)) return false;
   const items = isItProjectEnvelope(subKpis)
     ? itProjectAllItems(parseItProjectSubKpis(subKpis))
     : collectChecklistProgressItems(subKpis, taskTitle);
@@ -352,8 +358,15 @@ export async function GET(req: Request) {
     rows = rows.filter((r) => !archivedRowIds.has(r.id));
   }
 
+  const { kpiIdsWithTravelOrders } = await import("@/lib/travel-order-db");
+  const { isFieldAssignmentTask } = await import("@/lib/kpi-subkpis");
+  const fieldAssignmentIds = await kpiIdsWithTravelOrders(rows.map((r) => r.id));
+
   return NextResponse.json({
-    rows,
+    rows: rows.map((r) => ({
+      ...r,
+      isFieldAssignment: fieldAssignmentIds.has(r.id) || isFieldAssignmentTask(r.subKpis),
+    })),
     canAssignWork: perms.canAssignWork,
     canUnassignWork: session.user.role === "SuperAdmin",
     canCompleteUnassignedWork: session.user.role === "SuperAdmin",
@@ -391,6 +404,7 @@ export async function POST(req: Request) {
       screenshotsEnabled?: boolean;
     }>;
     segments?: Array<{
+      id?: string;
       label?: string;
       items?: Array<{
         title?: string;
@@ -425,6 +439,7 @@ export async function POST(req: Request) {
     taskDailyPenaltyAmount?: number | null;
     taskDelayPenaltyFrequency?: string | null;
     enableSubtaskAssignees?: boolean;
+    isProject?: boolean;
   };
   const title = body.title?.trim() ?? "";
   const mainTaskRaw = body.mainTask?.trim() ?? "";
@@ -585,6 +600,7 @@ export async function POST(req: Request) {
     const segmentsInput =
       body.subKpisSegmented === true && Array.isArray(body.segments)
         ? body.segments.map((seg) => ({
+            id: typeof seg.id === "string" ? seg.id.trim() : undefined,
             label: (seg.label ?? "").trim(),
             items: Array.isArray(seg.items)
               ? seg.items.map(mapDraftItem).filter((i) => i.title.length > 0)
@@ -618,6 +634,9 @@ export async function POST(req: Request) {
       numericalTarget,
       dueDate: !isRecurring ? (body.pillarDueDate?.trim() ?? "") : null,
     });
+  } else if (!isItProject && !isRecurring && body.pillarDueDate?.trim()) {
+    // Persist main-task target so subtasks can inherit when they have no custom due date.
+    subKpisPersist = setTaskTargetDueDate(subKpisPersist, body.pillarDueDate.trim());
   }
   if (body.taskDailyPenaltyAmount !== undefined) {
     if (!isItProject && isRecurring) {
@@ -646,6 +665,12 @@ export async function POST(req: Request) {
         : normalizeDelayPenaltyFrequency(body.taskDelayPenaltyFrequency),
     );
   }
+  if (!isItProject && body.isProject === true) {
+    if (isRecurring) {
+      return NextResponse.json({ error: "Projects must be one-off (non-recurring)." }, { status: 400 });
+    }
+    subKpisPersist = markProjectTask(subKpisPersist);
+  }
 
   const timeZone = normalizeTimeZone(body.timeZone);
   const periodKey = isRecurring
@@ -672,8 +697,8 @@ export async function POST(req: Request) {
       ? body.itProjectPhase.trim() || null
       : null;
 
-  // Same task group (title) can hold many tasks — each needs a distinct mainTask
-  // (@@unique([title, mainTask])). Never merge into an existing running row.
+  // Same task group (title) can hold many independent tasks — each needs a distinct mainTask
+  // (@@unique([title, mainTask])). Always create a fresh row; never merge/clone prior subtasks or state.
   if (!isItProject && mainTaskRaw) {
     const duplicateMainTask = await prisma.kpiMaintenance.findFirst({
       where: {
@@ -1143,16 +1168,25 @@ export async function PATCH(req: Request) {
       if (!subKpiRequiresNumerical(req)) {
         return NextResponse.json({ error: "This sub-task does not use numerical records." }, { status: 400 });
       }
-      if (!recurring) {
+      // Target is locked after create; unlock only after the task has recurred once.
+      // The new value applies to the current period only (prior periods remain archived).
+      if (
+        !canAdjustNumericalTarget({
+          isRecurring: recurring,
+          subKpisRaw: kpiRow.subKpis,
+          subKpiId: subKpiIdMeta,
+        })
+      ) {
         return NextResponse.json(
-          { error: "Assignees set cycle targets only on recurring tasks. Use task management to edit one-off targets." },
-          { status: 400 },
+          {
+            error: recurring
+              ? "Target number is locked until this recurring task has completed at least one prior cycle."
+              : "Target number is locked for one-off tasks after creation.",
+          },
+          { status: 403 },
         );
       }
-      const assigneeMaySetTarget =
-        canEditSubKpi(subKpiIdMeta) &&
-        (target.numericalTarget == null || target.numericalValue == null);
-      if (!perms.isAdminRole && !assigneeMaySetTarget) {
+      if (!perms.isAdminRole && !perms.canAssignWork) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       if (
@@ -1336,7 +1370,8 @@ export async function PATCH(req: Request) {
     }
     if (
       !canMutateSubKpiAssignee({
-        enableSubtaskAssignees: kpiRow.enableSubtaskAssignees,
+        // Strict boolean: null/undefined must not unlock assignee controls.
+        enableSubtaskAssignees: kpiRow.enableSubtaskAssignees === true,
         item: target,
         canAssignWork: perms.canAssignWork,
         isMainAssignee: isAssignee,
@@ -1344,9 +1379,10 @@ export async function PATCH(req: Request) {
     ) {
       return NextResponse.json(
         {
-          error: kpiRow.enableSubtaskAssignees
-            ? "Forbidden"
-            : "Subtask assignees are locked. The main assignee must Seek Assistance first.",
+          error:
+            kpiRow.enableSubtaskAssignees === true
+              ? "Forbidden"
+              : "Subtask assignees are locked. Seek Assistance first, then an admin can assign a helper.",
         },
         { status: 403 },
       );
@@ -1876,6 +1912,30 @@ export async function PATCH(req: Request) {
       !isSubKpiCompletionMode(body.updateSubKpi.completionMode)
     ) {
       return NextResponse.json({ error: "Invalid completionMode." }, { status: 400 });
+    }
+    // Numerical target: locked after create; current-period edits only after ≥1 recurrence.
+    if (hasNumericalTarget) {
+      if (
+        !canAdjustNumericalTarget({
+          isRecurring: kpiRow.isRecurring !== false,
+          subKpisRaw: kpiRow.subKpis,
+          subKpiId: subKpiIdUpdate,
+        })
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              kpiRow.isRecurring !== false
+                ? "Target number is locked until this recurring task has completed at least one prior cycle."
+                : "Target number is locked for one-off tasks after creation.",
+          },
+          { status: 403 },
+        );
+      }
+      const nextTarget = body.updateSubKpi.numericalTarget;
+      if (nextTarget != null && (!Number.isFinite(nextTarget) || nextTarget <= 0)) {
+        return NextResponse.json({ error: "numericalTarget must be a positive number." }, { status: 400 });
+      }
     }
     const result = updateSubKpiItem(kpiRow.subKpis, subKpiIdUpdate, {
       ...(hasTitle ? { title: body.updateSubKpi.title } : {}),

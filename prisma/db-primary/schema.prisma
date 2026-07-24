@@ -151,6 +151,9 @@ model Agent {
   tickets   Ticket[] @relation("AssignedAgent")
   kpis      KpiMaintenance[] @relation("AssignedKpi")
   tasks     TaskItem[]       @relation("AssignedTask")
+  approvedTravelOrders TravelOrder[] @relation("TravelOrderApprover")
+  confirmedTravelOrders TravelOrder[] @relation("TravelOrderConfirmer")
+  createdTravelOrders TravelOrder[] @relation("TravelOrderCreator")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([teamId, name])
@@ -300,12 +303,92 @@ model KpiMaintenance {
   createdAt            DateTime     @default(now()) @map("created_at")
   updatedAt            DateTime     @updatedAt @map("updated_at")
   periodSnapshots      KpiMaintenancePeriodSnapshot[]
+  travelOrders         TravelOrder[]
 
   @@index([assignedAgentId, frequency])
   @@index([scopedCompanyTeamId])
   @@index([createdAt])
   @@unique([title, mainTask])
   @@map("kpi_maintenance")
+}
+
+/// Field Assignment — Request for Travel Order linked to a Task Management card.
+model TravelOrder {
+  id                 String                @id @default(cuid())
+  kpiMaintenanceId   String                @map("kpi_maintenance_id")
+  kpiMaintenance     KpiMaintenance        @relation(fields: [kpiMaintenanceId], references: [id], onDelete: Cascade)
+  orderRequest       String                @map("order_request") @db.Text
+  approvedByAgentId  String?               @map("approved_by_agent_id")
+  approvedByAgent    Agent?                @relation("TravelOrderApprover", fields: [approvedByAgentId], references: [id], onDelete: SetNull)
+  /// One or more designated approvers (agent ids). `approvedByAgentId` keeps the primary/first for legacy joins.
+  approvedByAgentIds Json                   @default("[]") @map("approved_by_agent_ids")
+  /// Ordered hierarchical approval chain. Empty = flat multi-approver mode.
+  /// [{ level, agentId, approvedAt, approvedByAgentId }]
+  approvalLevels     Json                   @default("[]") @map("approval_levels")
+  /// Person who confirms the travel order while it is running (after approval).
+  confirmationByAgentId String?            @map("confirmation_by_agent_id")
+  confirmationByAgent   Agent?             @relation("TravelOrderConfirmer", fields: [confirmationByAgentId], references: [id], onDelete: SetNull)
+  /// Requester / owner (auto-assigned on create).
+  createdByAgentId   String?               @map("created_by_agent_id")
+  createdByAgent     Agent?                @relation("TravelOrderCreator", fields: [createdByAgentId], references: [id], onDelete: SetNull)
+  /// Roster company (Team id) used for visibility and picker scoping.
+  companyTeamId      String?               @map("company_team_id")
+  /// Creator + co-travelers (agent ids). Always includes createdByAgentId when set.
+  travelerAgentIds   Json                  @default("[]") @map("traveler_agent_ids")
+  /// Vehicle used for the trip (preset option value, e.g. COMPANY_VAN).
+  vehicle            String?               @map("vehicle")
+  /// Required when status is REJECTED — why the approver/confirmer declined.
+  rejectionReason    String?               @map("rejection_reason") @db.Text
+  /// Who declined the order (approver or confirmer).
+  rejectedByAgentId  String?               @map("rejected_by_agent_id")
+  rejectedAt         DateTime?             @map("rejected_at") @db.Timestamptz(3)
+  /// Approval level that declined (null = declined at confirmation after full approval).
+  rejectedAtLevel    Int?                  @map("rejected_at_level")
+  /// Field Assignment KPI % recorded on Submit as Done: (checked/total)*100.
+  kpiPercent         Int?                  @map("kpi_percent")
+  kpiSubmittedAt     DateTime?             @map("kpi_submitted_at") @db.Timestamptz(3)
+  status             String                @default("SUBMITTED") @map("status")
+  createdBy          String                @map("created_by")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  locations          TravelOrderLocation[]
+
+  @@index([kpiMaintenanceId, createdAt])
+  @@index([approvedByAgentId])
+  @@index([confirmationByAgentId])
+  @@index([createdByAgentId])
+  @@index([companyTeamId])
+  @@map("travel_orders")
+}
+
+model TravelOrderLocation {
+  id            String      @id @default(cuid())
+  travelOrderId String      @map("travel_order_id")
+  travelOrder   TravelOrder @relation(fields: [travelOrderId], references: [id], onDelete: Cascade)
+  /// Location name / address label.
+  label         String      @map("label")
+  /// Legacy / End GPS pin (kept in sync with ended_* when ending a visit).
+  latitude      Float?      @map("latitude")
+  longitude     Float?      @map("longitude")
+  /// Legacy end timestamp (kept in sync with ended_at).
+  checkedAt     DateTime?   @map("checked_at") @db.Timestamptz(3)
+  /// Start visit GPS + time (null until Start is pressed).
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(3)
+  startedLatitude  Float?    @map("started_latitude")
+  startedLongitude Float?    @map("started_longitude")
+  /// End visit GPS + time (null until End is pressed).
+  endedAt          DateTime? @map("ended_at") @db.Timestamptz(3)
+  endedLatitude    Float?    @map("ended_latitude")
+  endedLongitude   Float?    @map("ended_longitude")
+  remarks       String?     @map("remarks") @db.Text
+  /// Image attachment meta: [{ storedFileName, originalName, mimeType, size, uploadedAt }]
+  attachments   Json?       @map("attachments")
+  sortOrder     Int         @default(0) @map("sort_order")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@index([travelOrderId, sortOrder])
+  @@map("travel_order_locations")
 }
 
 model KpiMaintenancePeriodSnapshot {

@@ -3,8 +3,13 @@ import { requireRole } from "@/lib/access";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
-import { removeSubKpiItem, updateSubKpiItem } from "@/lib/kpi-subkpis";
-import { listSubTaskDtos } from "@/lib/kpi-subtasks-rest";
+import {
+  moveSubKpiItemOnBoard,
+  removeSubKpiItem,
+  updateSubKpiItem,
+  type SubKpiBoardColumn,
+} from "@/lib/kpi-subkpis";
+import { listSubTasksPayload } from "@/lib/kpi-subtasks-rest";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { prisma } from "@/lib/prisma";
 import { KPI_ROW_SELECT, type KpiRow, checklistFullyComplete, snapshotIfRecurring } from "../_shared";
@@ -31,11 +36,7 @@ async function loadAdminAndRow(id: string) {
   return { row };
 }
 
-async function persistSubKpis(
-  row: KpiRow,
-  updatedJson: Parameters<typeof listSubTaskDtos>[0],
-  tz: string,
-) {
+async function persistSubKpis(row: KpiRow, updatedJson: unknown, tz: string) {
   const label = kpiMainTaskLabel(row);
   const prevComplete = checklistFullyComplete(row.subKpis, label);
   const nextComplete = checklistFullyComplete(updatedJson, label);
@@ -54,7 +55,12 @@ async function persistSubKpis(
   await snapshotIfRecurring(row, updatedJson, tz);
 }
 
-/** PUT /api/kpi-maintenance/:id/subtasks/:subtaskId — edit a sub-task (admins only). */
+function parseBoardColumn(value: unknown): SubKpiBoardColumn | null {
+  if (value === "todo" || value === "progress" || value === "done") return value;
+  return null;
+}
+
+/** PUT /api/kpi-maintenance/:id/subtasks/:subtaskId — edit or move a sub-task (admins only). */
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string; subtaskId: string }> }) {
   const { id, subtaskId } = await ctx.params;
   const { row, errorResponse } = await loadAdminAndRow(id);
@@ -67,7 +73,47 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
     dueDate?: string | null;
     priority?: string | null;
     done?: boolean;
+    /** Move to this segment (use "__unsegmented__" for the General board). */
+    segmentId?: string | null;
+    /** Kanban column: todo | progress | done */
+    boardColumn?: string | null;
+    /** Optional insert index within the target segment. */
+    index?: number | null;
   };
+
+  const boardColumn = parseBoardColumn(body.boardColumn);
+  const wantsMove =
+    body.segmentId !== undefined || body.boardColumn !== undefined || body.index !== undefined;
+
+  if (wantsMove) {
+    const { normalizeSubKpis, UNSEGMENTED_SEGMENT_ID } = await import("@/lib/kpi-subkpis");
+    const n = normalizeSubKpis(row.subKpis);
+    let currentSeg = UNSEGMENTED_SEGMENT_ID;
+    if (n.segmented) {
+      for (const seg of n.segments) {
+        if (seg.items.some((it) => it.id === subtaskId)) {
+          currentSeg = seg.id;
+          break;
+        }
+      }
+    }
+    const targetSegmentId =
+      body.segmentId === undefined || body.segmentId === null
+        ? currentSeg
+        : String(body.segmentId).trim() || UNSEGMENTED_SEGMENT_ID;
+
+    const result = moveSubKpiItemOnBoard(row.subKpis, subtaskId, {
+      targetSegmentId,
+      boardColumn: boardColumn ?? undefined,
+      index: body.index,
+    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    await persistSubKpis(row, result.json, tz);
+    return NextResponse.json(listSubTasksPayload(row.id, result.json));
+  }
+
   if (
     body.title === undefined &&
     body.description === undefined &&
@@ -75,7 +121,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
     body.priority === undefined
   ) {
     return NextResponse.json(
-      { error: "Provide title, description, dueDate, and/or priority to update a Sub Task." },
+      { error: "Provide title, description, dueDate, priority, segmentId, and/or boardColumn." },
       { status: 400 },
     );
   }
@@ -90,7 +136,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
   await persistSubKpis(row, result.json, tz);
-  return NextResponse.json({ taskId: row.id, subtasks: listSubTaskDtos(result.json) });
+  return NextResponse.json(listSubTasksPayload(row.id, result.json));
 }
 
 /** DELETE /api/kpi-maintenance/:id/subtasks/:subtaskId — remove a sub-task (admins only). */
@@ -105,5 +151,5 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string; 
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
   await persistSubKpis(row, result.json, tz);
-  return NextResponse.json({ taskId: row.id, subtasks: listSubTaskDtos(result.json) });
+  return NextResponse.json(listSubTasksPayload(row.id, result.json));
 }

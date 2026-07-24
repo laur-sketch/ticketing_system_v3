@@ -1,6 +1,6 @@
 import { isItProjectEnvelope, itProjectAllItems, parseItProjectSubKpis } from "@/lib/it-project-subkpis";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
-import { collectChecklistProgressItems } from "@/lib/kpi-subkpis";
+import { collectChecklistProgressItems, hasItemsInUnassignedSegment } from "@/lib/kpi-subkpis";
 import { prisma } from "@/lib/prisma";
 import { subKpiRequirementsMet } from "@/lib/sub-kpi-completion-mode";
 
@@ -28,6 +28,8 @@ export type KpiRow = NonNullable<
 >;
 
 export function checklistFullyComplete(subKpis: unknown, taskTitle?: string): boolean {
+  // Segmented tasks cannot finalize while cards remain on Unassigned.
+  if (hasItemsInUnassignedSegment(subKpis)) return false;
   const items = isItProjectEnvelope(subKpis)
     ? itProjectAllItems(parseItProjectSubKpis(subKpis))
     : collectChecklistProgressItems(subKpis, taskTitle);

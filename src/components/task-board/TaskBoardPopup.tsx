@@ -1,6 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -21,14 +23,29 @@ export function TaskBoardPopup({
   children,
   size = "lg",
 }: TaskBoardPopupProps) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
 
   const maxWidth =
     size === "xl" ? "max-w-6xl" : size === "md" ? "max-w-3xl" : "max-w-4xl";
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-3 py-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 px-3 py-6 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -61,6 +78,7 @@ export function TaskBoardPopup({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

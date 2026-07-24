@@ -14,7 +14,6 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import {
   customerHasPendingResolvedTicket,
   customerPendingTicketHref,
-  listTicketsAwaitingCustomerConfirmation,
 } from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -66,11 +65,6 @@ export default async function Home() {
   }
 
   if (session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin") {
-    const adminEmail = (session.user.email ?? "").trim().toLowerCase();
-    const pendingRequestorTickets = adminEmail
-      ? await listTicketsAwaitingCustomerConfirmation(adminEmail, session.user.authProvider)
-      : [];
-
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const activeStatuses: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"];
@@ -152,89 +146,17 @@ export default async function Home() {
           <header className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
             <div className="min-w-0">
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-                {BRAND_TITLE} Â· Ticket dashboard
+                {BRAND_TITLE} · Dashboard
               </p>
               <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
                 Operational Oversight
               </h1>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} Â·{" "}
+                {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
                 {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
               </p>
             </div>
-            <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              {pendingRequestorTickets.length > 0 ? (
-                <Link
-                  href="/my-requests"
-                  className="inline-flex justify-center rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-4 py-2 text-center text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-emerald-500/25 dark:text-emerald-100"
-                >
-                  Confirm {pendingRequestorTickets.length} request
-                  {pendingRequestorTickets.length === 1 ? "" : "s"}
-                </Link>
-              ) : null}
-              <Link
-                href="/my-requests"
-                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              >
-                My requests
-              </Link>
-              <Link
-                href="/agent"
-                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              >
-                Ticket Queue
-              </Link>
-              <Link
-                href="/admin/ticket-requests"
-                className="inline-flex justify-center rounded-lg bg-orange-600 px-4 py-2 text-center text-sm font-semibold text-white shadow-[0_10px_28px_rgba(234,88,12,0.28)] transition hover:bg-orange-500"
-              >
-                Create requests
-              </Link>
-            </div>
           </header>
-
-          {pendingRequestorTickets.length > 0 ? (
-            <section className="rounded-2xl border border-emerald-500/35 bg-gradient-to-br from-emerald-500/12 via-white to-white p-5 shadow-sm dark:border-emerald-500/30 dark:from-emerald-500/10 dark:via-[#0b1220] dark:to-[#0b1220]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-800 dark:text-emerald-300">
-                Action required
-              </p>
-              <h2 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-                {pendingRequestorTickets.length} of your submitted ticket
-                {pendingRequestorTickets.length === 1 ? " needs" : "s need"} confirmation
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Verify the resolution and submit your star rating to close each request.
-              </p>
-              <ul className="mt-4 space-y-2">
-                {pendingRequestorTickets.slice(0, 4).map((ticket) => (
-                  <li key={ticket.id}>
-                    <Link
-                      href={customerPendingTicketHref(ticket)}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/25 bg-white/80 px-4 py-3 text-sm transition hover:border-emerald-500/50 hover:bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-zinc-950/40 dark:hover:bg-emerald-500/10"
-                    >
-                      <span className="font-mono text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                        {ticket.ticketNumber}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
-                        {ticket.title}
-                      </span>
-                      <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                        Confirm →
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-              {pendingRequestorTickets.length > 4 ? (
-                <Link
-                  href="/my-requests"
-                  className="mt-3 inline-block text-sm font-semibold text-emerald-800 hover:underline dark:text-emerald-300"
-                >
-                  View all on My requests
-                </Link>
-              ) : null}
-            </section>
-          ) : null}
 
           <section className="grid gap-4 md:grid-cols-3">
             <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">

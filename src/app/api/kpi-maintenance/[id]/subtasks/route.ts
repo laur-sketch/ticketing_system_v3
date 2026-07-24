@@ -4,7 +4,7 @@ import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { appendSubKpiItem, hasSubKpiAssignedTo, normalizeSubKpis } from "@/lib/kpi-subkpis";
-import { listSubTaskDtos } from "@/lib/kpi-subtasks-rest";
+import { listSubTaskDtos, listSubTasksPayload } from "@/lib/kpi-subtasks-rest";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { prisma } from "@/lib/prisma";
 import { KPI_ROW_SELECT, checklistFullyComplete, snapshotIfRecurring } from "./_shared";
@@ -25,7 +25,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     hasSubKpiAssignedTo(row.subKpis, perms.operator?.id);
   if (!canAccess) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  return NextResponse.json({ taskId: row.id, subtasks: listSubTaskDtos(row.subKpis) });
+  return NextResponse.json(listSubTasksPayload(row.id, row.subKpis));
 }
 
 /** POST /api/kpi-maintenance/:id/subtasks — add a sub-task (admins only). */
@@ -89,7 +89,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   await snapshotIfRecurring(row, result.json, tz);
 
   return NextResponse.json(
-    { taskId: row.id, subtasks: listSubTaskDtos(result.json) },
+    { ...listSubTasksPayload(row.id, result.json) },
     { status: 201 },
   );
 }

@@ -8,14 +8,19 @@ import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { DEFAULT_TIME_ZONE, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   MIN_SEGMENTED_SUBKPIS_FOR_CREATE,
+  ensureUnsegmentedSegment,
+  isUnsegmentedSegmentId,
+  UNASSIGNED_SEGMENT_BLOCK_MESSAGE,
+  UNSEGMENTED_SEGMENT_ID,
+  UNSEGMENTED_SEGMENT_LABEL,
   type SubKpiItem as SubKpi,
 } from "@/lib/kpi-subkpis";
 import type { SubKpiCompletionRequirements } from "@/lib/sub-kpi-completion-mode";
 import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import { DraftSubTasksPopup } from "@/components/task-board/DraftSubTasksPopup";
+import { TravelOrderRequestModal } from "@/components/task-board/TravelOrderRequestModal";
 import { ListChecks } from "lucide-react";
 
-const MIN_SUB_FOR_SEGMENT_OPTION = 3;
 const INSIGHTS_VIEW_ONLY = false;
 
 function normalizeTaskTitle(value: string) {
@@ -66,6 +71,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [mainTaskTargetDateDraft, setMainTaskTargetDateDraft] = useState("");
   /** Project = one-off work item under a normal task group (no forced IT PROJECT IMPLEMENTATION pillar). */
   const [isProjectMode, setIsProjectMode] = useState(false);
+  /** Field Assignment = one-off travel-order workflow (opens Request for Travel Order). */
+  const [isFieldAssignmentMode, setIsFieldAssignmentMode] = useState(false);
+  const [travelOrderModalOpen, setTravelOrderModalOpen] = useState(false);
   const [titleSuggestions, setTitleSuggestions] = useState<string[]>([]);
   const [maintenanceIsRecurring, setMaintenanceIsRecurring] = useState(true);
   const [maintenanceFrequency, setMaintenanceFrequency] = useState<MaintenanceFrequency>("Daily");
@@ -107,8 +115,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [browseAllOpen, setBrowseAllOpen] = useState(false);
   const [maintenanceRows, setMaintenanceRows] = useState<KpiDefinitionMaintenanceRecord[]>([]);
 
-  /** Effective recurring flag: Projects are always one-off. */
-  const effectiveIsRecurring = isProjectMode ? false : maintenanceIsRecurring;
+  /** Effective recurring flag: Projects and Field Assignments are always one-off. */
+  const effectiveIsRecurring =
+    isProjectMode || isFieldAssignmentMode ? false : maintenanceIsRecurring;
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -212,8 +221,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const draftSubKpiTotal = draftUseSegments
     ? draftSegments.reduce((a, s) => a + s.items.length, 0)
     : subKpisDraft.length;
-  const showSegmentedCreateOption =
-    draftUseSegments || draftSubKpiTotal >= MIN_SUB_FOR_SEGMENT_OPTION;
+  // Always offer "Segment this checklist" in the subtask popup (no min-count gate).
+  const showSegmentedCreateOption = kpiMaintenanceAssignWork;
 
   const completionRequirements = useMemo<SubKpiCompletionRequirements>(
     () => ({
@@ -236,7 +245,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       return [...prev, normalized];
     });
     setMaintenanceTitle(normalized);
-    selectMaintenanceTitle(normalized);
+    selectTaskGroup(normalized);
     setNewPillarDraft("");
     setLocalError(null);
   }
@@ -255,16 +264,56 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     }
     setDraftUseSegments(true);
     if (subKpisDraft.length > 0) {
-      const defaultLabel = maintenanceTitle.trim() || "Checklist";
-      setDraftSegments([{ id: crypto.randomUUID(), label: defaultLabel, items: [...subKpisDraft] }]);
+      // Existing flat items become Unsegmented; user can drag into named segments.
+      setDraftSegments(
+        ensureUnsegmentedSegment([
+          {
+            id: UNSEGMENTED_SEGMENT_ID,
+            label: UNSEGMENTED_SEGMENT_LABEL,
+            items: [...subKpisDraft],
+          },
+        ]),
+      );
       setSubKpisDraft([]);
       return;
     }
     if (draftSegments.length === 0) {
-      setDraftSegments([
-        { id: crypto.randomUUID(), label: maintenanceTitle.trim() || "Segment 1", items: [] },
-      ]);
+      setDraftSegments(
+        ensureUnsegmentedSegment([
+          { id: crypto.randomUUID(), label: maintenanceTitle.trim() || "Segment 1", items: [] },
+        ]),
+      );
+    } else {
+      setDraftSegments(ensureUnsegmentedSegment(draftSegments));
     }
+  }
+
+  /**
+   * Selecting a task group only binds the group title.
+   * Always start a fresh task draft — never clone fields/subtasks from a prior task in that group.
+   */
+  function resetTaskDraftForNewGroup() {
+    setMainTaskDraft("");
+    setMainTaskTargetDateDraft("");
+    setMaintenanceIsRecurring(true);
+    setMaintenanceFrequency("Daily");
+    setRecurrenceWeekday(1);
+    setRecurrenceMonthDay(1);
+    setSubKpisDraft([]);
+    setDraftUseSegments(false);
+    setDraftSegments([]);
+    setDraftSubTasksOpen(false);
+    setCompletionCheckbox(true);
+    setCompletionBeforeAfterScreenshots(false);
+    setCompletionScreenshotUpload(false);
+    setCompletionNumerical(false);
+    setNumericalTargetDraft("");
+    setDailyPenaltyDraft("");
+    setEnableSubtaskAssignees(true);
+    setIsProjectMode(false);
+    setIsFieldAssignmentMode(false);
+    setTravelOrderModalOpen(false);
+    setLocalError(null);
   }
 
   function selectMaintenanceTitle(title: string) {
@@ -272,18 +321,22 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setLocalError(null);
   }
 
-  function handleProjectModeChange(enabled: boolean) {
-    setIsProjectMode(enabled);
+  /** User picked a task group from search/browse — bind title only, reset all other create fields. */
+  function selectTaskGroup(title: string) {
+    const next = title.trim();
+    setMaintenanceTitle(next);
+    resetTaskDraftForNewGroup();
+    if (!next) setLocalError(null);
+  }
+
+  function handleTaskTypeChange(next: "task" | "project" | "field") {
+    setIsProjectMode(next === "project");
+    setIsFieldAssignmentMode(next === "field");
     setLocalError(null);
-    if (enabled) {
+    setTravelOrderModalOpen(false);
+    if (next === "project" || next === "field") {
       setMaintenanceIsRecurring(false);
       setMainTaskTargetDateDraft("");
-      setSubKpisDraft((prev) =>
-        prev.map((item) => {
-          const next = { ...item };
-          return next;
-        }),
-      );
     }
   }
 
@@ -297,6 +350,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
 
   async function createMaintenanceRecord() {
     if (INSIGHTS_VIEW_ONLY) return;
+    if (isFieldAssignmentMode) {
+      if (!maintenanceTitle.trim()) {
+        setError("Select a task group.");
+        return;
+      }
+      if (!mainTaskDraft.trim()) {
+        setError("Enter a Field Assignment label.");
+        return;
+      }
+      setTravelOrderModalOpen(true);
+      return;
+    }
     const title = normalizeTaskTitle(maintenanceTitle);
     if (!maintenanceTitle.trim()) {
       setError("Select a task group.");
@@ -315,20 +380,26 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     ) as KpiFrequencyCode;
 
     if (draftUseSegments) {
-      for (const seg of draftSegments) {
+      const ensured = ensureUnsegmentedSegment(draftSegments);
+      const unassignedCount =
+        ensured.find((seg) => isUnsegmentedSegmentId(seg.id))?.items.length ?? 0;
+      if (unassignedCount > 0) {
+        setError(UNASSIGNED_SEGMENT_BLOCK_MESSAGE);
+        return;
+      }
+      for (const seg of ensured) {
+        if (isUnsegmentedSegmentId(seg.id)) continue;
         if (!seg.label.trim()) {
           setError('Each checklist segment needs a label (or turn off "Segment this checklist").');
           return;
         }
-        if (seg.items.length === 0) {
-          setError(`Add at least one sub-task under "${seg.label.trim()}" or remove that segment.`);
-          return;
-        }
       }
-      const segmentedTotal = draftSegments.reduce((a, s) => a + s.items.length, 0);
-      if (segmentedTotal < MIN_SEGMENTED_SUBKPIS_FOR_CREATE) {
+      const namedTotal = ensured
+        .filter((seg) => !isUnsegmentedSegmentId(seg.id))
+        .reduce((a, s) => a + s.items.length, 0);
+      if (namedTotal < MIN_SEGMENTED_SUBKPIS_FOR_CREATE) {
         setError(
-          `Segmented checklists need at least ${MIN_SEGMENTED_SUBKPIS_FOR_CREATE} sub-tasks in total, or turn off "Segment this checklist".`,
+          `Assign at least ${MIN_SEGMENTED_SUBKPIS_FOR_CREATE} sub-task${MIN_SEGMENTED_SUBKPIS_FOR_CREATE === 1 ? "" : "s"} to a segment before creating the task.`,
         );
         return;
       }
@@ -364,6 +435,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       enableSubtaskAssignees: enableSubtaskAssignees === true,
       mainTask: mainTaskDraft.trim(),
       completionRequirements,
+      isProject: isProjectMode === true,
     };
     if (scopedCompanyTeamId) body.scopedCompanyTeamId = scopedCompanyTeamId;
     if (completionRequirements.numerical) {
@@ -386,12 +458,15 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     if (draftUseSegments) {
       body.subKpisSegmented = true;
       body.segments = draftSegments.map((s) => ({
+        id: s.id,
         label: s.label.trim(),
         items: s.items.map((it) => ({
           title: it.title.trim(),
           description: it.description ?? null,
           dueDate: effectiveIsRecurring ? "" : it.dueDate ?? "",
           projectPriority: it.projectPriority ?? null,
+          projectStatus: it.projectStatus ?? null,
+          done: it.done === true,
         })),
       }));
     } else {
@@ -401,9 +476,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         dueDate: effectiveIsRecurring ? "" : s.dueDate ?? "",
         projectPriority: s.projectPriority ?? null,
       }));
-      if (subKpisDraft.length === 0 && !effectiveIsRecurring && mainTaskTargetDateDraft.trim()) {
-        body.pillarDueDate = mainTaskTargetDateDraft.trim();
-      }
+    }
+    if (!effectiveIsRecurring && mainTaskTargetDateDraft.trim()) {
+      body.pillarDueDate = mainTaskTargetDateDraft.trim();
     }
 
     if (effectiveIsRecurring && freqUpper === "WEEKLY") {
@@ -440,6 +515,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         return [...prev, title].sort();
       });
       setIsProjectMode(false);
+      setIsFieldAssignmentMode(false);
+      setTravelOrderModalOpen(false);
       setMaintenanceTitle("");
       setMainTaskDraft("");
       setMainTaskTargetDateDraft("");
@@ -512,12 +589,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
             maintenanceTitle={maintenanceTitle}
             companyName={adminDesignatedCompanyName}
             onSelect={(next) => {
-              setMaintenanceTitle(next);
-              selectMaintenanceTitle(next);
-              if (!next.trim()) {
-                setIsProjectMode(false);
-              }
-              setLocalError(null);
+              selectTaskGroup(next);
             }}
             onBlur={handleMaintenanceTitleBlur}
             onBrowseAll={() => setBrowseAllOpen(true)}
@@ -550,11 +622,11 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         {kpiMaintenanceAssignWork && hasTaskGroupSelected ? (
           <fieldset className="flex flex-col gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
             <legend className="mb-1 px-0">Task type</legend>
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               <label
                 className={cn(
                   "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:text-zinc-100",
-                  !isProjectMode
+                  !isProjectMode && !isFieldAssignmentMode
                     ? "border-orange-500 bg-orange-50/80 ring-1 ring-orange-500/30 dark:border-orange-500/60 dark:bg-orange-950/20"
                     : "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950",
                 )}
@@ -562,8 +634,8 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
                 <input
                   type="radio"
                   name="maintenance-task-type"
-                  checked={!isProjectMode}
-                  onChange={() => handleProjectModeChange(false)}
+                  checked={!isProjectMode && !isFieldAssignmentMode}
+                  onChange={() => handleTaskTypeChange("task")}
                 />
                 Task
               </label>
@@ -579,19 +651,37 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
                   type="radio"
                   name="maintenance-task-type"
                   checked={isProjectMode}
-                  onChange={() => handleProjectModeChange(true)}
+                  onChange={() => handleTaskTypeChange("project")}
                 />
                 Project
               </label>
+              <label
+                className={cn(
+                  "flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:text-zinc-100",
+                  isFieldAssignmentMode
+                    ? "border-orange-500 bg-orange-50/80 ring-1 ring-orange-500/30 dark:border-orange-500/60 dark:bg-orange-950/20"
+                    : "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="maintenance-task-type"
+                  checked={isFieldAssignmentMode}
+                  onChange={() => handleTaskTypeChange("field")}
+                />
+                Field Assignment
+              </label>
             </div>
             <p className="text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
-              {isProjectMode
-                ? "Projects are one-off (non-recurring) and use the same sub-task manager, assignees, and completion conditions as tasks."
-                : "Tasks can be recurring or one-off under any task group."}
+              {isFieldAssignmentMode
+                ? "Field Assignment opens a Request for Travel Order with locations, GPS pins, approver, and remarks."
+                : isProjectMode
+                  ? "Projects are one-off (non-recurring) and use the same sub-task manager, assignees, and completion conditions as tasks."
+                  : "Tasks can be recurring or one-off under any task group."}
             </p>
           </fieldset>
         ) : null}
-        {kpiMaintenanceAssignWork && hasTaskGroupSelected ? (
+        {kpiMaintenanceAssignWork && hasTaskGroupSelected && !isFieldAssignmentMode ? (
           <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 md:col-span-2">
             <input
               type="checkbox"
@@ -612,7 +702,11 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         {hasTaskGroupSelected ? (
           <div className="grid gap-3 md:col-span-2 md:grid-cols-[minmax(220px,1fr)_180px]">
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              {isProjectMode ? "Project name" : "Main Task"}
+              {isFieldAssignmentMode
+                ? "Field Assignment label"
+                : isProjectMode
+                  ? "Project name"
+                  : "Main Task"}
               <input
                 type="text"
                 value={mainTaskDraft}
@@ -620,12 +714,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
                   setMainTaskDraft(e.target.value);
                   setLocalError(null);
                 }}
-                placeholder={isProjectMode ? "Name of the project" : "e.g. Reroute Connections"}
+                placeholder={
+                  isFieldAssignmentMode
+                    ? "e.g. Site survey — Client HQ"
+                    : isProjectMode
+                      ? "Name of the project"
+                      : "e.g. Reroute Connections"
+                }
                 required
                 className={TASK_TITLE_INPUT_CLASS}
               />
             </label>
-            {!effectiveIsRecurring ? (
+            {!effectiveIsRecurring && !isFieldAssignmentMode ? (
               <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
                 Target date
                 <DatePickerField
@@ -637,16 +737,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
               </label>
             ) : null}
             <p className="text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 md:col-span-2">
-              {isProjectMode
-                ? "The project work item under the task group. With no sub-tasks, completion conditions apply on this project on the Task Board."
-                : "The specific work item under the task group. Works for recurring and one-off schedules — with no sub-tasks, completion conditions apply on this main task on the Task Board."}
-              {!effectiveIsRecurring
+              {isFieldAssignmentMode
+                ? "Shown as a label on the Field Assignment card. Work is tracked on the Travel Order (not as a main-task checklist)."
+                : isProjectMode
+                  ? "The project work item under the task group. With no sub-tasks, completion conditions apply on this project on the Task Board."
+                  : "The specific work item under the task group. Works for recurring and one-off schedules — with no sub-tasks, completion conditions apply on this main task on the Task Board."}
+              {!effectiveIsRecurring && !isFieldAssignmentMode
                 ? " Target date applies when there are no sub-tasks (delayed the day after if incomplete)."
                 : null}
             </p>
           </div>
         ) : null}
-        {hasTaskGroupSelected && !isProjectMode ? (
+        {hasTaskGroupSelected && !isProjectMode && !isFieldAssignmentMode ? (
           <div className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Task schedule type
             <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
@@ -685,12 +787,18 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
             </label>
           </div>
         ) : null}
+        {hasTaskGroupSelected && isFieldAssignmentMode ? (
+          <div className="rounded-xl border border-dashed border-orange-400/50 bg-orange-500/[0.04] px-3 py-3 text-xs text-zinc-700 dark:border-orange-500/35 dark:bg-orange-500/[0.07] dark:text-zinc-300 md:col-span-2">
+            Field Assignment creates a one-off task card with a <strong>Request for Travel Order</strong>. Use that
+            button to add locations, approver, and approval confirmation.
+          </div>
+        ) : null}
         {hasTaskGroupSelected && isProjectMode ? (
           <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
             Projects are always one-off (non-recurring).
           </div>
         ) : null}
-        {hasTaskGroupSelected && !isProjectMode && maintenanceIsRecurring ? (
+        {hasTaskGroupSelected && !isProjectMode && !isFieldAssignmentMode && maintenanceIsRecurring ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Frequency
             <select
@@ -727,7 +835,11 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
             </select>
           </label>
         ) : null}
-        {hasTaskGroupSelected && !isProjectMode && maintenanceIsRecurring && maintenanceFrequency === "Weekly" ? (
+        {hasTaskGroupSelected &&
+        !isProjectMode &&
+        !isFieldAssignmentMode &&
+        maintenanceIsRecurring &&
+        maintenanceFrequency === "Weekly" ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Week starts on ({recurrenceTz})
             <select
@@ -747,6 +859,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         ) : null}
         {hasTaskGroupSelected &&
         !isProjectMode &&
+        !isFieldAssignmentMode &&
         maintenanceIsRecurring &&
         (maintenanceFrequency === "Monthly" || maintenanceFrequency === "Quarterly") ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
@@ -765,6 +878,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
             </select>
           </label>
         ) : null}
+        {!isFieldAssignmentMode ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-3 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p>
@@ -788,12 +902,13 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
                   {draftSubKpiTotal}
                 </span>
               </button>
-            ) : null}
+              ) : null}
           </div>
         </div>
+        ) : null}
       </div>
 
-      {hasTaskGroupSelected ? (
+      {hasTaskGroupSelected && !isFieldAssignmentMode ? (
         <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-300">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Completion conditions
@@ -896,22 +1011,27 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       {hasTaskGroupSelected ? (
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setDraftSubTasksOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-orange-500/60 bg-orange-500/10 px-4 py-2 text-sm font-semibold text-orange-800 hover:bg-orange-500/20 dark:border-orange-500/40 dark:text-orange-200 dark:hover:bg-orange-950/40"
-            >
-              <ListChecks className="size-4" aria-hidden />
-              Add Sub Tasks
-              <span className="rounded-full bg-orange-600 px-1.5 py-px text-[10px] font-bold text-white">
-                {draftSubKpiTotal}
-              </span>
-            </button>
-            <Button type="button" onClick={() => void createMaintenanceRecord()} className="rounded-xl px-4">
-              Apply
-            </Button>
+            {isFieldAssignmentMode ? (
+              <Button
+                type="button"
+                className="rounded-xl px-4"
+                onClick={() => void createMaintenanceRecord()}
+                disabled={!mainTaskDraft.trim()}
+              >
+                Request for Travel Order
+              </Button>
+            ) : (
+              <Button type="button" onClick={() => void createMaintenanceRecord()} className="rounded-xl px-4">
+                Apply
+              </Button>
+            )}
           </div>
-          {draftSubKpiTotal > 0 ? (
+          {isFieldAssignmentMode ? (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              Opens the Request for Travel Order form. Saving there creates the Field Assignment task and travel
+              order together.
+            </p>
+          ) : draftSubKpiTotal > 0 ? (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               {draftSubKpiTotal} sub-task{draftSubKpiTotal === 1 ? "" : "s"} ready
               {draftUseSegments ? ` in ${draftSegments.length} segment${draftSegments.length === 1 ? "" : "s"}` : ""} — open{" "}
@@ -922,11 +1042,11 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
               >
                 Add Sub Tasks
               </button>{" "}
-              to edit details, or click a chip below to remove.
+              above to edit details, or click a chip below to remove.
             </p>
           ) : (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Optional. Open Add Sub Tasks to build a checklist, or Apply with none to use{" "}
+              Optional. Use Add Sub Tasks above to build a checklist, or Apply with none to use{" "}
               {isProjectMode ? "project" : "main-task"} completion.
             </p>
           )}
@@ -957,13 +1077,36 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         items={subKpisDraft}
         segmented={draftUseSegments}
         segments={draftSegments}
-        canSegment={showSegmentedCreateOption && kpiMaintenanceAssignWork}
-        minimumSegmentItems={MIN_SUB_FOR_SEGMENT_OPTION}
+        canSegment={showSegmentedCreateOption}
+        minimumSegmentItems={MIN_SEGMENTED_SUBKPIS_FOR_CREATE}
         hideDueDate={effectiveIsRecurring && maintenanceFrequency === "Daily"}
+        parentDueDate={mainTaskTargetDateDraft}
         onChange={setSubKpisDraft}
         onSegmentedChange={setDraftSegmentedMode}
         onSegmentsChange={setDraftSegments}
         onClose={() => setDraftSubTasksOpen(false)}
+      />
+
+      <TravelOrderRequestModal
+        open={travelOrderModalOpen}
+        taskGroupTitle={normalizeTaskTitle(maintenanceTitle)}
+        mainTaskName={mainTaskDraft.trim()}
+        scopedCompanyTeamId={scopedCompanyTeamId || adminDesignatedCompanyId}
+        companyScopeAgentId={null}
+        onClose={() => setTravelOrderModalOpen(false)}
+        onCreated={async () => {
+          setOk("Field Assignment and travel order created.");
+          setTravelOrderModalOpen(false);
+          resetTaskDraftForNewGroup();
+          setMaintenanceTitle("");
+          setScopedCompanyTeamId("");
+          const reload = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, { cache: "no-store" });
+          if (reload.ok) {
+            const payload = (await reload.json()) as { rows: KpiDefinitionMaintenanceRecord[] };
+            setMaintenanceRows(payload.rows);
+            onMaintenanceRecordsUpdated?.(payload.rows);
+          }
+        }}
       />
 
       <TaskBoardPopup
@@ -977,9 +1120,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
           rows={maintenanceRows}
           selectedTitle={maintenanceTitle}
           onSelect={(title) => {
-            setMaintenanceTitle(title);
-            selectMaintenanceTitle(title);
-            setLocalError(null);
+            selectTaskGroup(title);
             setBrowseAllOpen(false);
           }}
         />
@@ -1001,18 +1142,30 @@ function TaskGroupBrowser({
   const [page, setPage] = useState(0);
   const pageSize = 10;
 
-  const filtered = useMemo(
-    () =>
-      rows.filter((r) => {
-        const q = browseQuery.toLowerCase();
-        return (
-          !q ||
-          r.title.toLowerCase().includes(q) ||
-          (r.mainTask ?? "").toLowerCase().includes(q)
-        );
-      }),
-    [rows, browseQuery],
-  );
+  const filtered = useMemo(() => {
+    // Dedupe to unique task groups (title). Each create binds only the group name —
+    // never a specific prior task row's fields/subtasks.
+    const byTitle = new Map<string, { title: string; taskCount: number; createdAt: string | null }>();
+    for (const r of rows) {
+      const title = r.title?.trim();
+      if (!title) continue;
+      const key = title.toLowerCase();
+      const prev = byTitle.get(key);
+      if (prev) {
+        prev.taskCount += 1;
+        if (r.createdAt && (!prev.createdAt || r.createdAt < prev.createdAt)) {
+          prev.createdAt = r.createdAt;
+        }
+      } else {
+        byTitle.set(key, { title, taskCount: 1, createdAt: r.createdAt ?? null });
+      }
+    }
+    const groups = Array.from(byTitle.values());
+    const q = browseQuery.toLowerCase();
+    return groups
+      .filter((g) => !q || g.title.toLowerCase().includes(q))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [rows, browseQuery]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -1024,18 +1177,6 @@ function TaskGroupBrowser({
   useEffect(() => {
     setPage(0);
   }, [browseQuery]);
-
-  function countTasks(row: KpiDefinitionMaintenanceRecord): number {
-    if (Array.isArray(row.subKpis)) return row.subKpis.length;
-    if (row.subKpis && typeof row.subKpis === "object") {
-      const env = row.subKpis as Record<string, unknown>;
-      if (env.segmented === true && Array.isArray(env.segments)) {
-        return (env.segments as Array<{ items?: unknown[] }>).reduce((sum, seg) => sum + (seg.items?.length ?? 0), 0);
-      }
-      if (Array.isArray(env.items)) return env.items.length;
-    }
-    return 0;
-  }
 
   return (
     <div className="space-y-4">
@@ -1051,10 +1192,9 @@ function TaskGroupBrowser({
         </p>
       ) : (
         <div className="space-y-2">
-          {pageItems.map((row) => {
-            const taskCount = countTasks(row);
-            const created = row.createdAt
-              ? new Date(row.createdAt).toLocaleDateString("en-PH", {
+          {pageItems.map((group) => {
+            const created = group.createdAt
+              ? new Date(group.createdAt).toLocaleDateString("en-PH", {
                   year: "numeric",
                   month: "short",
                   day: "numeric",
@@ -1062,12 +1202,12 @@ function TaskGroupBrowser({
               : "—";
             return (
               <button
-                key={row.id}
+                key={group.title}
                 type="button"
-                onClick={() => onSelect(row.title)}
+                onClick={() => onSelect(group.title)}
                 className={cn(
                   "w-full rounded-xl border px-4 py-3 text-left transition",
-                  selectedTitle === row.title
+                  selectedTitle === group.title
                     ? "border-orange-300 bg-orange-50 dark:border-orange-600/50 dark:bg-orange-500/10"
                     : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600 dark:hover:bg-zinc-800",
                 )}
@@ -1075,7 +1215,10 @@ function TaskGroupBrowser({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      {row.title} <span className="font-normal text-zinc-500">({taskCount} task{taskCount !== 1 ? "s" : ""})</span>
+                      {group.title}{" "}
+                      <span className="font-normal text-zinc-500">
+                        ({group.taskCount} task{group.taskCount !== 1 ? "s" : ""})
+                      </span>
                     </p>
                     <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">Created: {created}</p>
                   </div>

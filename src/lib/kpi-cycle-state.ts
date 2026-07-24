@@ -1,7 +1,12 @@
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { itProjectHasAnyDelay, itProjectMaxDelayMs } from "@/lib/it-project-subkpis";
-import { collectChecklistProgressItems, type SubKpiItem } from "@/lib/kpi-subkpis";
+import {
+  collectChecklistProgressItems,
+  getTaskTargetDueDate,
+  resolveEffectiveSubKpiDueDate,
+  type SubKpiItem,
+} from "@/lib/kpi-subkpis";
 import { subKpiRequirementsMet } from "@/lib/sub-kpi-completion-mode";
 import {
   getPeriodEndExclusiveFromCycleStart,
@@ -30,8 +35,10 @@ export function isNonRecurringSubKpiDelayed(
   item: SubKpiItem,
   nowMs: number,
   timeZone: string,
+  parentDueYmd?: string | null,
 ): boolean {
-  const due = parseSubKpiYmd(item.dueDate, timeZone);
+  const effective = resolveEffectiveSubKpiDueDate(item, parentDueYmd).dueDate;
+  const due = parseSubKpiYmd(effective, timeZone);
   if (!due) return false;
   const delayStart = nonRecurringDelayStartExclusive(due.toISODate()!, timeZone);
   if (!delayStart) return false;
@@ -50,8 +57,9 @@ export function nonRecurringTaskHasDelay(
   nowMs: number,
   timeZone: string,
 ): boolean {
+  const parentDue = getTaskTargetDueDate(subKpis);
   return collectChecklistProgressItems(subKpis).some((item) =>
-    isNonRecurringSubKpiDelayed(item, nowMs, timeZone),
+    isNonRecurringSubKpiDelayed(item, nowMs, timeZone, parentDue),
   );
 }
 
@@ -61,9 +69,11 @@ export function nonRecurringTaskMaxDelayMs(
   timeZone: string,
 ): number {
   const zone = normalizeTimeZone(timeZone);
+  const parentDue = getTaskTargetDueDate(subKpis);
   let maxDelay = 0;
   for (const item of collectChecklistProgressItems(subKpis)) {
-    const due = parseSubKpiYmd(item.dueDate, zone);
+    const effective = resolveEffectiveSubKpiDueDate(item, parentDue).dueDate;
+    const due = parseSubKpiYmd(effective, zone);
     if (!due) continue;
     const delayStart = nonRecurringDelayStartExclusive(due.toISODate()!, zone);
     if (!delayStart) continue;
@@ -82,10 +92,12 @@ export function nonRecurringTaskMaxDelayMs(
 
 /** Earliest delay boundary among incomplete sub-tasks (for board cycle copy). */
 export function nonRecurringTaskDelayDeadline(subKpis: unknown, timeZone: string): Date | null {
+  const parentDue = getTaskTargetDueDate(subKpis);
   let earliestMs: number | null = null;
   for (const item of collectChecklistProgressItems(subKpis)) {
     if (subKpiRequirementsMet(item)) continue;
-    const due = parseSubKpiYmd(item.dueDate, timeZone);
+    const effective = resolveEffectiveSubKpiDueDate(item, parentDue).dueDate;
+    const due = parseSubKpiYmd(effective, timeZone);
     if (!due) continue;
     const delayStart = nonRecurringDelayStartExclusive(due.toISODate()!, timeZone);
     if (!delayStart) continue;

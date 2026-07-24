@@ -1,13 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Plus } from "lucide-react";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
-import {
-  customerHasPendingResolvedTicket,
-  customerPendingTicketHref,
-} from "@/lib/customer-pending-resolution";
 import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board";
 import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
 import { prisma } from "@/lib/prisma";
@@ -16,6 +11,11 @@ import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignme
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
+import {
+  getOperatorActionableApprovalLevel,
+  hasHierarchicalApprovals,
+} from "@/lib/travel-order";
+import { listPendingTravelApprovalsForAgent } from "@/lib/travel-order-db";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AutoSubmitForm } from "@/components/AutoSubmitForm";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
@@ -90,8 +90,9 @@ export default async function AgentHome({
     notifications?: string | string[];
     view?: string | string[];
     assigned?: string | string[];
-      board?: string | string[];
+    board?: string | string[];
     company?: string | string[];
+    task?: string | string[];
   }>;
 }) {
   const session = await requireSession();
@@ -103,8 +104,16 @@ export default async function AgentHome({
   if (rawBoard === "department") {
     redirect("/agent?board=company");
   }
-  if (rawBoard === "it-tasks") {
-    redirect("/agent?board=kpi");
+  if (rawBoard === "kpi" || rawBoard === "it-tasks") {
+    const qs = new URLSearchParams();
+    const company = firstQuery(params.company);
+    const assigned = firstQuery(params.assigned);
+    const task = firstQuery(params.task);
+    if (company) qs.set("company", company);
+    if (assigned) qs.set("assigned", assigned);
+    if (task) qs.set("task", task);
+    const s = qs.toString();
+    redirect(s ? `/agent/tasks?${s}` : "/agent/tasks");
   }
   /** Personnel cannot view the Company Board: force them back to the Ticket Board. */
   if (rawBoard === "company" && session.user.role === "Personnel") {
@@ -112,13 +121,6 @@ export default async function AgentHome({
   }
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
-  let personnelRequestorIntakeBlock: Awaited<ReturnType<typeof customerHasPendingResolvedTicket>> = null;
-  if (session.user.role === "Personnel") {
-    const em = (session.user.email ?? "").trim().toLowerCase();
-    personnelRequestorIntakeBlock = em
-      ? await customerHasPendingResolvedTicket(em, session.user.authProvider)
-      : null;
-  }
   // Personnel must use board view to be able to drag cards and change status inline.
   const requestedViewMode = firstQuery(params.view) === "table" ? "table" : "board";
   const boardTab = rawBoard === "kpi" ? "kpi" : rawBoard === "company" ? "company" : "ticket";
@@ -135,6 +137,7 @@ export default async function AgentHome({
   const page = Math.max(1, Number.parseInt(firstQuery(params.page) ?? "1", 10) || 1);
   const companyLogPage = Math.max(1, Number.parseInt(firstQuery(params.logsPage) ?? "1", 10) || 1);
   const notificationsOpen = firstQuery(params.notifications) === "1";
+  const focusTaskId = firstQuery(params.task)?.trim() || null;
   const boardTicketsPerStatus = 5;
   const pageSize = isBoard && boardTab === "ticket" ? boardTicketsPerStatus : 20;
   const companyLogPageSize = 10;
@@ -384,6 +387,11 @@ export default async function AgentHome({
       : Promise.resolve([]),
   ]);
 
+  const pendingTravelApprovals =
+    notificationsOpen && operator?.id
+      ? await listPendingTravelApprovalsForAgent(operator.id)
+      : [];
+
   const pipelineRows = [...ticketsTable, ...ticketsBoard];
   const assigneeColorIdentities = [
     ...pipelineRows.map((t) => ({ email: t.assignedAgent?.email, name: t.assignedAgent?.name })),
@@ -621,11 +629,48 @@ export default async function AgentHome({
                 </Link>
               </div>
               <div className="mt-3 space-y-2">
-                {recentUpdated.length === 0 ? (
+                {pendingTravelApprovals.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+                      Travel order approvals
+                    </p>
+                    {pendingTravelApprovals.map((order) => {
+                      const levels = order.approvalLevels ?? [];
+                      const pending = hasHierarchicalApprovals(levels)
+                        ? getOperatorActionableApprovalLevel(levels, operator?.id ?? null)
+                        : null;
+                      const label = order.kpiMainTask || order.kpiTitle || "Travel Order";
+                      return (
+                        <Link
+                          key={`to-approve-${order.id}`}
+                          href={`/agent/tasks?task=${encodeURIComponent(order.kpiMaintenanceId)}`}
+                          className="block rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 hover:bg-orange-500/15 dark:border-orange-500/30 dark:bg-orange-500/10 dark:hover:bg-orange-500/15"
+                        >
+                          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                            Pending approval
+                            {pending?.level != null
+                              ? ` · Level ${pending.level}${pending.optional ? " (optional)" : ""}`
+                              : ""}
+                          </p>
+                          <p className="text-xs text-zinc-700 dark:text-zinc-300">{label}</p>
+                          {order.orderRequest ? (
+                            <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                              {order.orderRequest}
+                            </p>
+                          ) : null}
+                          <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                            Awaiting you · {relativeTime(order.updatedAt)}
+                          </p>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {recentUpdated.length === 0 && pendingTravelApprovals.length === 0 ? (
                   <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
                     No recent queue activity.
                   </p>
-                ) : (
+                ) : recentUpdated.length === 0 ? null : (
                   recentUpdated.map((item) => {
                     const notifyAssigneeKey = item.assignedAgent?.email
                       ? (assigneeColorByEmail.get(item.assignedAgent.email.trim().toLowerCase()) ?? null)
@@ -660,10 +705,15 @@ export default async function AgentHome({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-                  {BRAND_TITLE} · Orchestration
+                  {BRAND_TITLE} ·{" "}
+                  {isCompanyBoard ? "Company" : boardTab === "kpi" ? "Tasks" : "Tickets"}
                 </p>
                 <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                  {isCompanyBoard ? "Company overview" : "Orchestration Board"}
+                  {isCompanyBoard
+                    ? "Company overview"
+                    : boardTab === "kpi"
+                      ? "Task Board"
+                      : "Ticket Board"}
                 </h1>
                 <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                   <span className="font-semibold text-orange-700 dark:text-orange-400">
@@ -675,35 +725,17 @@ export default async function AgentHome({
                 </p>
               </div>
               <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
-                {session.user.role === "Personnel" && !isCompanyBoard && boardTab === "ticket" ? (
-                  personnelRequestorIntakeBlock != null ? (
-                    <Link
-                      href={customerPendingTicketHref(personnelRequestorIntakeBlock)}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-500/25 dark:text-amber-100"
-                      title="Finish your own request before opening another."
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      Resume {personnelRequestorIntakeBlock.ticketNumber}
-                    </Link>
-                  ) : (
-                    <Link
-                      href="/tickets/new"
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-background"
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      Create ticket
-                    </Link>
-                  )
+                {boardTab !== "kpi" ? (
+                  <div className="flex flex-wrap gap-3">
+                    <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
+                    <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
+                    <StatCard
+                      label={isCompanyBoard ? "Transfer pending" : "SLA at Risk"}
+                      value={statSla}
+                      valueClass="text-amber-400"
+                    />
+                  </div>
                 ) : null}
-                <div className="flex flex-wrap gap-3">
-                  <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
-                  <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
-                  <StatCard
-                    label={isCompanyBoard ? "Transfer pending" : "SLA at Risk"}
-                    value={statSla}
-                    valueClass="text-amber-400"
-                  />
-                </div>
               </div>
             </div>
           </div>
@@ -983,6 +1015,7 @@ export default async function AgentHome({
                   showAdminTaskManagement={
                     session.user.role === "SuperAdmin" || session.user.role === "Admin"
                   }
+                  focusTaskId={focusTaskId}
                 />
               </>
             ) : (

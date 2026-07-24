@@ -9,12 +9,12 @@ const adminTabs = [
   { id: "assignment", label: "Assignment Board" },
   { id: "company", label: "Company Board" },
   { id: "ticket", label: "Ticket Board" },
-  { id: "kpi", label: "Task Board" },
+  { id: "my-requests", label: "My requests" },
 ];
 
 const personnelTabs = [
   { id: "ticket", label: "Ticket Board" },
-  { id: "kpi", label: "Task Board" },
+  { id: "my-requests", label: "My requests" },
 ];
 
 export function OrchestrationQueueNav() {
@@ -25,6 +25,7 @@ export function OrchestrationQueueNav() {
   const role = data?.user?.role;
   const onOrchestration = pathname === "/agent";
   const onAssignment = pathname === "/admin/manual-assignment";
+  const onMyRequests = pathname === "/my-requests" || pathname.startsWith("/my-requests/");
 
   const isAdmin = role === "SuperAdmin" || role === "Admin";
   const [fetchedAllow, setFetchedAllow] = useState<boolean | null>(null);
@@ -52,11 +53,17 @@ export function OrchestrationQueueNav() {
   const canAccessAssignmentBoard = isAdmin || fetchedAllow === true;
   const board = searchParams.get("board") ?? "ticket";
   const onCompanyBoard = onOrchestration && board === "company";
-  const onKpiBoard = onOrchestration && board === "kpi";
 
-  if (!onOrchestration && !onAssignment) return null;
+  if (!onOrchestration && !onAssignment && !onMyRequests) return null;
 
-  const activeTab = onAssignment ? "assignment" : onCompanyBoard ? "company" : onKpiBoard ? "kpi" : "ticket";
+  const activeTab = onMyRequests
+    ? "my-requests"
+    : onAssignment
+      ? "assignment"
+      : onCompanyBoard
+        ? "company"
+        : "ticket";
+
   const goToTab = (tabId: string) => {
     if (tabId === "assignment") {
       router.push("/admin/manual-assignment");
@@ -66,8 +73,8 @@ export function OrchestrationQueueNav() {
       router.push("/agent?board=company");
       return;
     }
-    if (tabId === "kpi") {
-      router.push("/agent?board=kpi");
+    if (tabId === "my-requests") {
+      router.push("/my-requests");
       return;
     }
     router.push("/agent?board=ticket");
@@ -83,7 +90,6 @@ export function OrchestrationQueueNav() {
 
   if (onAssignment) return null;
 
-  /** Personnel see only Ticket Board + Task Board; Company Board is admin-only. */
   return (
     <nav className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
       <Tabs tabs={personnelTabs} activeTab={activeTab} onTabChange={goToTab} />

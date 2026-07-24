@@ -24,7 +24,7 @@ import {
 import { navLinkActive } from "@/lib/nav-link-active";
 import { BrandLockup } from "@/components/BrandLockup";
 
-type NavChild = { href: string; label: string; matchBoard?: "ticket" | "kpi" };
+type NavChild = { href: string; label: string };
 type NavItem =
   | { kind: "link"; href: string; label: string }
   | { kind: "group"; label: string; children: NavChild[] };
@@ -32,15 +32,15 @@ type NavItem =
 function linksForRole(role: string | undefined): NavItem[] {
   if (role === "SuperAdmin") {
     return [
+      { kind: "link", href: "/", label: "Dashboard" },
       {
         kind: "group",
-        label: "Tickets",
+        label: "Operations",
         children: [
-          { href: "/", label: "Ticket Dashboard" },
-          { href: "/my-requests", label: "My requests" },
+          { href: "/agent", label: "Tickets" },
+          { href: "/agent/tasks", label: "Tasks" },
         ],
       },
-      { kind: "group", label: "Operations", children: [{ href: "/agent", label: "Board" }] },
       {
         kind: "group",
         label: "Management",
@@ -56,15 +56,15 @@ function linksForRole(role: string | undefined): NavItem[] {
   }
   if (role === "Admin") {
     return [
+      { kind: "link", href: "/", label: "Dashboard" },
       {
         kind: "group",
-        label: "Tickets",
+        label: "Operations",
         children: [
-          { href: "/", label: "Ticket Dashboard" },
-          { href: "/my-requests", label: "My requests" },
+          { href: "/agent", label: "Tickets" },
+          { href: "/agent/tasks", label: "Tasks" },
         ],
       },
-      { kind: "group", label: "Operations", children: [{ href: "/agent", label: "Board" }] },
       {
         kind: "group",
         label: "Management",
@@ -80,12 +80,13 @@ function linksForRole(role: string | undefined): NavItem[] {
   }
   if (role === "Personnel") {
     return [
+      { kind: "link", href: "/", label: "Dashboard" },
       {
         kind: "group",
-        label: "Tickets",
+        label: "Operations",
         children: [
-          { href: "/my-requests", label: "Ticket Dashboard" },
-          { href: "/agent", label: "Board" },
+          { href: "/agent", label: "Tickets" },
+          { href: "/agent/tasks", label: "Tasks" },
         ],
       },
       { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
@@ -100,8 +101,10 @@ function linksForRole(role: string | undefined): NavItem[] {
 
 function iconForLink(label: string) {
   const key = label.toLowerCase();
+  if (key === "dashboard") return LayoutDashboard;
   if (key.includes("my request")) return LayoutDashboard;
-  if (key === "board") return Ticket;
+  if (key === "tickets") return Ticket;
+  if (key === "tasks") return CheckSquare;
   if (key.includes("ticket board")) return Ticket;
   if (key.includes("task board")) return CheckSquare;
   if (key.includes("home") || key.includes("dashboard")) return Home;
@@ -122,19 +125,8 @@ function iconForLink(label: string) {
   return Home;
 }
 
-function agentBoardActive(
-  pathname: string,
-  searchParams: URLSearchParams | null,
-  match: "ticket" | "kpi",
-): boolean {
-  if (!(pathname === "/agent" || pathname.startsWith("/agent/"))) return false;
-  const board = searchParams?.get("board") ?? "";
-  if (match === "kpi") return board === "kpi";
-  return board === "" || board === "ticket" || board === "company";
-}
-
-function navChildActive(pathname: string, searchParams: URLSearchParams | null, child: NavChild): boolean {
-  return child.matchBoard ? agentBoardActive(pathname, searchParams, child.matchBoard) : navLinkActive(pathname, child.href);
+function navChildActive(pathname: string, _searchParams: URLSearchParams | null, child: NavChild): boolean {
+  return navLinkActive(pathname, child.href);
 }
 
 function navGroupActive(pathname: string, searchParams: URLSearchParams | null, item: Extract<NavItem, { kind: "group" }>) {

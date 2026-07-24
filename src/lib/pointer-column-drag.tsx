@@ -69,7 +69,7 @@ export function usePointerColumnDrag<T extends string>(options: {
         if (disabled) return;
         if (e.pointerType === "mouse" && e.button !== 0) return;
         const target = e.target as HTMLElement;
-        if (target.closest("a[href], input, select, textarea")) return;
+        if (target.closest("a[href], button, input, select, textarea, label")) return;
 
         const el = e.currentTarget as HTMLElement;
         const rect = el.getBoundingClientRect();

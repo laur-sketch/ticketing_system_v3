@@ -78,17 +78,24 @@ export function isSubKpiAssigneeUnlocked(
   return enableSubtaskAssignees === true || item.assistanceRequested === true;
 }
 
-/** Who may set a subtask assignee once unlocked. */
+/**
+ * Who may set a subtask assignee once unlocked.
+ * When `enableSubtaskAssignees` is OFF, only assign-work roles (admins) may use the
+ * dropdown after Seek Assistance — assigned personnel never see assignee controls.
+ */
 export function canMutateSubKpiAssignee(opts: {
   enableSubtaskAssignees: boolean;
   item: Pick<SubKpiItem, "assistanceRequested">;
   canAssignWork: boolean;
   isMainAssignee: boolean;
 }): boolean {
-  return (
-    isSubKpiAssigneeUnlocked(opts.enableSubtaskAssignees, opts.item) &&
-    (opts.canAssignWork || opts.isMainAssignee)
-  );
+  if (!isSubKpiAssigneeUnlocked(opts.enableSubtaskAssignees, opts.item)) return false;
+  // Flag ON: admins or the main assignee can set helpers.
+  if (opts.enableSubtaskAssignees === true) {
+    return opts.canAssignWork || opts.isMainAssignee;
+  }
+  // Flag OFF (Seek Assistance unlock only): admins assign helpers; hide dropdown from personnel.
+  return opts.canAssignWork === true;
 }
 
 const SUB_KPI_PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
@@ -197,6 +204,75 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
 
 export type SubKpiSegment = { id: string; label: string; items: SubKpiItem[] };
 
+/** Reserved segment id for the General / Unsegmented Kanban board. */
+export const UNSEGMENTED_SEGMENT_ID = "__unsegmented__";
+/** Pool column for subtasks not yet assigned to a named segment (Trello "Unassigned"). */
+export const UNSEGMENTED_SEGMENT_LABEL = "Unassigned";
+
+export function isUnsegmentedSegmentId(id: string | null | undefined): boolean {
+  return (id ?? "").trim() === UNSEGMENTED_SEGMENT_ID;
+}
+
+/** Sub-tasks still waiting on the Unassigned column (segmented checklists only). */
+export function getUnassignedSegmentItems(raw: unknown): SubKpiItem[] {
+  const n = normalizeSubKpis(raw);
+  if (!n.segmented) return [];
+  const general = n.segments.find((seg) => isUnsegmentedSegmentId(seg.id));
+  return general?.items ?? [];
+}
+
+/** True when Unassigned still has cards — blocks create/finalize until they are moved into a segment. */
+export function hasItemsInUnassignedSegment(raw: unknown): boolean {
+  return getUnassignedSegmentItems(raw).length > 0;
+}
+
+export const UNASSIGNED_SEGMENT_BLOCK_MESSAGE =
+  "Move all sub-tasks out of Unassigned into a segment before finalizing.";
+
+
+/** Ensure segmented checklists always include the Unassigned column (at the end). */
+export function ensureUnsegmentedSegment(segments: SubKpiSegment[]): SubKpiSegment[] {
+  const without = segments.filter((seg) => !isUnsegmentedSegmentId(seg.id));
+  // Merge every reserved-id column (defensive) so items are never dropped.
+  const existingItems = segments
+    .filter((seg) => isUnsegmentedSegmentId(seg.id))
+    .flatMap((seg) => seg.items);
+  const existing = segments.find((seg) => isUnsegmentedSegmentId(seg.id));
+  return [
+    ...without,
+    {
+      id: UNSEGMENTED_SEGMENT_ID,
+      label: existing?.label?.trim() || UNSEGMENTED_SEGMENT_LABEL,
+      // Always copy so callers cannot accidentally share/mutate the same array.
+      items: [...existingItems],
+    },
+  ];
+}
+
+/** Kanban column within a segment board. */
+export type SubKpiBoardColumn = "todo" | "progress" | "done";
+
+export function subKpiBoardColumn(item: Pick<SubKpiItem, "done" | "projectStatus">): SubKpiBoardColumn {
+  if (item.done === true || item.projectStatus === "Done") return "done";
+  if (item.projectStatus === "On Going" || item.projectStatus === "Finalizing") return "progress";
+  return "todo";
+}
+
+export function applySubKpiBoardColumn(item: SubKpiItem, column: SubKpiBoardColumn): SubKpiItem {
+  const next: SubKpiItem = { ...item };
+  if (column === "done") {
+    next.done = true;
+    next.projectStatus = "Done";
+  } else if (column === "progress") {
+    next.done = false;
+    next.projectStatus = "On Going";
+  } else {
+    next.done = false;
+    next.projectStatus = "Pending";
+  }
+  return next;
+}
+
 /** Stored JSON: legacy flat array or wrapped envelope. */
 export type SubKpisStoredEnvelope = {
   segmented: boolean;
@@ -270,7 +346,7 @@ export function normalizeSubKpis(raw: unknown): NormalizedSubKpis {
           : [];
         return { id, label, items };
       });
-      return { segmented: true, segments };
+      return { segmented: true, segments: ensureUnsegmentedSegment(segments) };
     }
     if (Array.isArray(raw.items)) {
       const flat = (raw.items as unknown[]).map((x) =>
@@ -388,7 +464,10 @@ export function incidentMetricPercents(agg: KpiChecklistProgress): {
 
 export function wrapForPersist(norm: NormalizedSubKpis): Prisma.InputJsonValue {
   if (norm.segmented) {
-    return { segmented: true, segments: norm.segments } as Prisma.InputJsonValue;
+    return {
+      segmented: true,
+      segments: ensureUnsegmentedSegment(norm.segments),
+    } as Prisma.InputJsonValue;
   }
   return { segmented: false, items: norm.flat } as Prisma.InputJsonValue;
 }
@@ -413,6 +492,8 @@ function rawEnvelopeMeta(raw: unknown) {
       pillarDueDate: null as string | null,
       pillarActualDate: null as string | null,
       taskCount: null as number | null,
+      isFieldAssignment: false,
+      isProject: false,
     };
   }
   const pillarBeforeScreenshot = parseTaskScreenshotMetaList(raw.pillarBeforeScreenshot);
@@ -451,6 +532,8 @@ function rawEnvelopeMeta(raw: unknown) {
       typeof raw.taskCount === "number" && Number.isFinite(raw.taskCount) && Number.isInteger(raw.taskCount) && raw.taskCount >= 0
         ? raw.taskCount
         : null,
+    isFieldAssignment: raw.isFieldAssignment === true,
+    isProject: raw.isProject === true,
   };
 }
 
@@ -479,7 +562,44 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.pillarDueDate ? { pillarDueDate: meta.pillarDueDate } : {}),
     ...(meta.pillarActualDate ? { pillarActualDate: meta.pillarActualDate } : {}),
     ...(meta.taskCount != null ? { taskCount: meta.taskCount } : {}),
+    ...(meta.isFieldAssignment ? { isFieldAssignment: true } : {}),
+    ...(meta.isProject ? { isProject: true } : {}),
   } as Prisma.InputJsonValue;
+}
+
+export function getTaskTargetDueDate(raw: unknown): string | null {
+  return rawEnvelopeMeta(raw).pillarDueDate;
+}
+
+/** Persist the main-task target date on the checklist envelope (used when subtasks inherit). */
+export function setTaskTargetDueDate(raw: unknown, dueYmd: string | null | undefined): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.pillarDueDate = dueYmd ? normalizeOptionalSubKpiYmd(dueYmd) : null;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function subKpiHasCustomDueDate(item: Pick<SubKpiItem, "dueDate">): boolean {
+  const due = item.dueDate?.trim() ?? "";
+  return Boolean(due && YMD.test(due));
+}
+
+/**
+ * Effective target date for a sub-task:
+ * - custom `dueDate` when set
+ * - otherwise inherits the main task target (`pillarDueDate` / parentDueYmd)
+ */
+export function resolveEffectiveSubKpiDueDate(
+  item: Pick<SubKpiItem, "dueDate">,
+  parentDueYmd: string | null | undefined,
+): { dueDate: string | null; inherits: boolean } {
+  if (subKpiHasCustomDueDate(item)) {
+    return { dueDate: (item.dueDate ?? "").trim(), inherits: false };
+  }
+  const parent = typeof parentDueYmd === "string" ? parentDueYmd.trim() : "";
+  if (parent && YMD.test(parent)) {
+    return { dueDate: parent, inherits: true };
+  }
+  return { dueDate: null, inherits: true };
 }
 
 export function taskDailyPenaltyAmountFromSubKpis(raw: unknown): number | null {
@@ -519,6 +639,28 @@ export function setTaskCount(raw: unknown, count: number | null): Prisma.InputJs
     typeof count === "number" && Number.isFinite(count) && Number.isInteger(count) && count >= 0
       ? count
       : null;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function isFieldAssignmentTask(raw: unknown): boolean {
+  return rawEnvelopeMeta(raw).isFieldAssignment;
+}
+
+export function markFieldAssignmentTask(raw: unknown): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.isFieldAssignment = true;
+  meta.isProject = false;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function isProjectTask(raw: unknown): boolean {
+  return rawEnvelopeMeta(raw).isProject;
+}
+
+export function markProjectTask(raw: unknown): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.isProject = true;
+  meta.isFieldAssignment = false;
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 
@@ -729,6 +871,28 @@ export function archivedNumericalEntriesForSubKpi(
     out.push({ archivedAt: archive.archivedAt, numericalTarget: target, numericalValue: value });
   }
   return out;
+}
+
+/**
+ * True when this checklist has completed at least one prior numerical cycle
+ * (archives written on rollover). Used to unlock target edits for the current period only.
+ * Detection is task-level: any archive means the task has recurred.
+ */
+export function hasRecurredNumericalCycle(raw: unknown, _subKpiId?: string): boolean {
+  return getArchivedNumericalRecords(raw).length > 0;
+}
+
+/**
+ * Whether the numerical target may be changed after create.
+ * Locked by default; unlocked only for recurring tasks that have already rolled over once.
+ * Edits apply to the current period only (prior periods stay in archives).
+ */
+export function canAdjustNumericalTarget(opts: {
+  isRecurring: boolean;
+  subKpisRaw: unknown;
+  subKpiId?: string;
+}): boolean {
+  return opts.isRecurring === true && hasRecurredNumericalCycle(opts.subKpisRaw, opts.subKpiId);
 }
 
 export function setPillarScreenshots(
@@ -966,9 +1130,7 @@ function archiveNumericalRecordsForReset(
 function clearPillarForReset(meta: ReturnType<typeof rawEnvelopeMeta>): ReturnType<typeof rawEnvelopeMeta> {
   meta.pillarDone = false;
   meta.pillarNumericalValue = null;
-  if (meta.pillarCompletionRequirements && subKpiRequiresNumerical(meta.pillarCompletionRequirements)) {
-    meta.pillarNumericalTarget = null;
-  }
+  // Keep pillarNumericalTarget across cycles — it stays locked until post-recurrence admin adjust.
   return meta;
 }
 
@@ -979,8 +1141,8 @@ function clearActiveSubKpiForReset(it: SubKpiItem): SubKpiItem {
   delete next.uploadScreenshot;
   const req = resolveSubKpiCompletionRequirements(it);
   if (subKpiRequiresNumerical(req)) {
+    // Clear actual only; target carries into the next period (adjustable after ≥1 recurrence).
     delete next.numericalValue;
-    delete next.numericalTarget;
   }
   return next;
 }
@@ -1479,8 +1641,11 @@ export function buildItProjectSubKpis(
   return { ok: true, norm: { segmented: false, flat } };
 }
 
-/** Exported for client-side save validation (must match segmented KPI rules). */
-export const MIN_SEGMENTED_SUBKPIS_FOR_CREATE = 3;
+/**
+ * Minimum sub-tasks required to persist a segmented checklist.
+ * Segment UI is available from the first sub-task; persist still needs at least one item.
+ */
+export const MIN_SEGMENTED_SUBKPIS_FOR_CREATE = 1;
 const MIN_SEGMENTED_SUBKPIS = MIN_SEGMENTED_SUBKPIS_FOR_CREATE;
 
 type SubKpiCreateDraft = string | {
@@ -1558,7 +1723,7 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
 export function validateSegmentStructureForPersist(
   segmented: boolean,
   flatInput: SubKpiCreateDraft[],
-  segmentsInput: Array<{ label: string; items: SubKpiCreateDraft[] }> | undefined,
+  segmentsInput: Array<{ id?: string; label: string; items: SubKpiCreateDraft[] }> | undefined,
   options?: { allowPillarOnly?: boolean },
 ): { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string } {
   if (!segmented) {
@@ -1574,38 +1739,50 @@ export function validateSegmentStructureForPersist(
     return { ok: true, norm: { segmented: false, flat } };
   }
 
-  const total =
-    segmentsInput?.reduce(
-      (acc, seg) => acc + seg.items.map(subKpiFromCreateDraft).filter(Boolean).length,
-      0,
-    ) ?? 0;
-  if (total < MIN_SEGMENTED_SUBKPIS) {
-    return {
-      ok: false,
-      error: `Segmented checklists require at least ${MIN_SEGMENTED_SUBKPIS} sub-tasks across segments.`,
-    };
-  }
-
   if (!segmentsInput || segmentsInput.length === 0) {
     return { ok: false, error: "Add at least one segment with a label before adding sub-tasks." };
   }
 
   const segments: SubKpiSegment[] = [];
   for (const seg of segmentsInput) {
-    const label = seg.label.trim();
+    const rawId = typeof seg.id === "string" ? seg.id.trim() : "";
+    const isGeneral = isUnsegmentedSegmentId(rawId);
+    const label = isGeneral ? UNSEGMENTED_SEGMENT_LABEL : seg.label.trim();
     if (!label) {
       return { ok: false, error: "Each segment needs a label before saving." };
     }
     const items = seg.items
       .map(subKpiFromCreateDraft)
       .filter((item): item is SubKpiItem => item != null);
-    segments.push({ id: crypto.randomUUID(), label, items });
-    if (items.length === 0) {
-      return { ok: false, error: `Segment "${label}" has no sub-tasks; add titles or remove the segment.` };
+    // Empty named segments are allowed; Unassigned must be empty to finalize.
+    if (isGeneral && items.length > 0) {
+      return { ok: false, error: UNASSIGNED_SEGMENT_BLOCK_MESSAGE };
     }
+    segments.push({
+      id: isGeneral ? UNSEGMENTED_SEGMENT_ID : rawId || crypto.randomUUID(),
+      label,
+      items,
+    });
   }
 
-  return { ok: true, norm: { segmented: true, segments } };
+  const ensured = ensureUnsegmentedSegment(segments);
+  const unassignedCount =
+    ensured.find((seg) => isUnsegmentedSegmentId(seg.id))?.items.length ?? 0;
+  if (unassignedCount > 0) {
+    return { ok: false, error: UNASSIGNED_SEGMENT_BLOCK_MESSAGE };
+  }
+
+  const namedItemCount = ensured
+    .filter((seg) => !isUnsegmentedSegmentId(seg.id))
+    .reduce((acc, seg) => acc + seg.items.length, 0);
+  if (namedItemCount < MIN_SEGMENTED_SUBKPIS) {
+    return {
+      ok: false,
+      error: `Assign at least ${MIN_SEGMENTED_SUBKPIS} sub-task${MIN_SEGMENTED_SUBKPIS === 1 ? "" : "s"} to a segment (Unassigned must be empty).`,
+    };
+  }
+
+  return { ok: true, norm: { segmented: true, segments: ensured } };
 }
 
 export function validateStructuredUpdate(
@@ -1619,12 +1796,17 @@ export function validateStructuredUpdate(
       return { ok: false, error: "segmented payloads require segments array." };
     }
     const segmentsOut: SubKpiSegment[] = [];
-    let totalItems = 0;
+    let namedItemCount = 0;
     for (const s of segs) {
       if (!isPlainObject(s)) continue;
-      const label = typeof s.label === "string" ? s.label.trim() : "";
-      if (!label) return { ok: false, error: "Each segment must have a label." };
       const sid = typeof s.id === "string" && s.id.trim() ? s.id.trim() : crypto.randomUUID();
+      const isGeneral = isUnsegmentedSegmentId(sid);
+      const label = isGeneral
+        ? UNSEGMENTED_SEGMENT_LABEL
+        : typeof s.label === "string"
+          ? s.label.trim()
+          : "";
+      if (!label) return { ok: false, error: "Each segment must have a label." };
       const rawItems = Array.isArray(s.items) ? s.items : [];
       const items: SubKpiItem[] = [];
       for (const it of rawItems) {
@@ -1632,19 +1814,27 @@ export function validateStructuredUpdate(
         const row = subKpiFromStructuredItem(it);
         if (row) items.push(row);
       }
-      if (items.length === 0) {
-        return { ok: false, error: `Segment "${label}" cannot be empty.` };
+      if (isGeneral && items.length > 0) {
+        return { ok: false, error: UNASSIGNED_SEGMENT_BLOCK_MESSAGE };
       }
-      totalItems += items.length;
-      segmentsOut.push({ id: sid, label, items });
+      if (!isGeneral) namedItemCount += items.length;
+      segmentsOut.push({
+        id: isGeneral ? UNSEGMENTED_SEGMENT_ID : sid,
+        label,
+        items,
+      });
     }
-    if (totalItems < MIN_SEGMENTED_SUBKPIS) {
+    const ensured = ensureUnsegmentedSegment(segmentsOut);
+    if ((ensured.find((seg) => isUnsegmentedSegmentId(seg.id))?.items.length ?? 0) > 0) {
+      return { ok: false, error: UNASSIGNED_SEGMENT_BLOCK_MESSAGE };
+    }
+    if (namedItemCount < MIN_SEGMENTED_SUBKPIS) {
       return {
         ok: false,
-        error: `Segmented tasks must keep at least ${MIN_SEGMENTED_SUBKPIS} sub-tasks in total.`,
+        error: `Segmented tasks must keep at least ${MIN_SEGMENTED_SUBKPIS} sub-tasks assigned to segments.`,
       };
     }
-    return { ok: true, norm: { segmented: true, segments: segmentsOut } };
+    return { ok: true, norm: { segmented: true, segments: ensured } };
   }
   const rawItems = Array.isArray(body.items) ? body.items : [];
   const flat: SubKpiItem[] = [];
@@ -1687,12 +1877,12 @@ export function appendSubKpiItem(
   const n = normalizeSubKpis(raw);
   if (n.segmented) {
     const segmentId = typeof input.segmentId === "string" ? input.segmentId.trim() : "";
-    if (!segmentId) {
-      return { ok: false, error: "Choose a segment before adding a Sub Task." };
-    }
-    const segIdx = n.segments.findIndex((seg) => seg.id === segmentId);
+    // New subtasks land on the Unsegmented board when no segment is chosen.
+    const targetId = segmentId || UNSEGMENTED_SEGMENT_ID;
+    let segments = ensureUnsegmentedSegment(n.segments);
+    const segIdx = segments.findIndex((seg) => seg.id === targetId);
     if (segIdx < 0) return { ok: false, error: "Segment not found." };
-    const segments = n.segments.map((seg, idx) =>
+    segments = segments.map((seg, idx) =>
       idx === segIdx ? { ...seg, items: [...seg.items, item] } : seg,
     );
     return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: true, segments }, raw) };
@@ -1701,6 +1891,198 @@ export function appendSubKpiItem(
   return {
     ok: true,
     json: wrapForPersistWithExistingMeta({ segmented: false, flat: [...n.flat, item] }, raw),
+  };
+}
+
+export type CopySubKpiToSegmentsInput = {
+  sourceIds: string[];
+  targetSegmentIds: string[];
+  /** Keep due/start dates on copies (default true). */
+  keepDueDate?: boolean;
+  /** Keep assignee on copies (default false — new copies start unassigned). */
+  keepAssignee?: boolean;
+  /** Keep priority on copies (default true). */
+  keepPriority?: boolean;
+};
+
+function cloneSubKpiItemForCopy(
+  source: SubKpiItem,
+  options: { keepDueDate: boolean; keepAssignee: boolean; keepPriority: boolean },
+): SubKpiItem {
+  const clone: SubKpiItem = {
+    id: crypto.randomUUID(),
+    title: source.title,
+    done: false,
+  };
+  if (source.description?.trim()) clone.description = source.description.trim();
+  if (options.keepPriority && source.projectPriority) clone.projectPriority = source.projectPriority;
+  if (options.keepDueDate) {
+    if (source.startDate) clone.startDate = source.startDate;
+    if (source.dueDate) clone.dueDate = source.dueDate;
+  }
+  if (options.keepAssignee && source.assignedAgentId?.trim()) {
+    clone.assignedAgentId = source.assignedAgentId.trim();
+    if (source.assignedAgentName?.trim()) clone.assignedAgentName = source.assignedAgentName.trim();
+  }
+  if (source.completionMode) clone.completionMode = source.completionMode;
+  if (source.completionRequirements) {
+    clone.completionRequirements = { ...source.completionRequirements };
+  }
+  if (source.screenshotsEnabled != null) clone.screenshotsEnabled = source.screenshotsEnabled;
+  if (source.numericalTarget != null) clone.numericalTarget = source.numericalTarget;
+  if (source.dailyPenaltyAmount != null) clone.dailyPenaltyAmount = source.dailyPenaltyAmount;
+  return clone;
+}
+
+/**
+ * Copy one or more sub-tasks into other segments of the same segmented checklist.
+ * Originals stay in place. Copies always start Pending (done: false) without screenshots/assistance.
+ */
+export function copySubKpiItemsToSegments(
+  raw: unknown,
+  input: CopySubKpiToSegmentsInput,
+): { ok: true; json: Prisma.InputJsonValue; copiedCount: number } | { ok: false; error: string } {
+  const n = normalizeSubKpis(raw);
+  if (!n.segmented) {
+    return { ok: false, error: "Copy to segment is only available for segmented checklists." };
+  }
+
+  const sourceIds = [...new Set((input.sourceIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean))];
+  if (sourceIds.length === 0) {
+    return { ok: false, error: "Select at least one sub-task to copy." };
+  }
+
+  const requestedTargets = [
+    ...new Set((input.targetSegmentIds ?? []).map((id) => String(id ?? "").trim()).filter(Boolean)),
+  ];
+  if (requestedTargets.length === 0) {
+    return { ok: false, error: "Choose at least one target segment." };
+  }
+
+  const segmentById = new Map(n.segments.map((seg) => [seg.id, seg] as const));
+  for (const targetId of requestedTargets) {
+    if (!segmentById.has(targetId)) {
+      return { ok: false, error: "Target segment not found." };
+    }
+  }
+
+  type Located = { item: SubKpiItem; segmentId: string };
+  const located: Located[] = [];
+  for (const sourceId of sourceIds) {
+    let hit: Located | null = null;
+    for (const seg of n.segments) {
+      const item = seg.items.find((it) => it.id === sourceId);
+      if (item) {
+        hit = { item, segmentId: seg.id };
+        break;
+      }
+    }
+    if (!hit) return { ok: false, error: "Sub-task not found." };
+    located.push(hit);
+  }
+
+  const keepDueDate = input.keepDueDate !== false;
+  const keepAssignee = input.keepAssignee === true;
+  const keepPriority = input.keepPriority !== false;
+
+  let segments = n.segments.map((seg) => ({ ...seg, items: [...seg.items] }));
+  let copiedCount = 0;
+
+  for (const { item, segmentId: sourceSegmentId } of located) {
+    const targets = requestedTargets.filter((id) => id !== sourceSegmentId);
+    for (const targetId of targets) {
+      const clone = cloneSubKpiItemForCopy(item, { keepDueDate, keepAssignee, keepPriority });
+      segments = segments.map((seg) =>
+        seg.id === targetId ? { ...seg, items: [...seg.items, clone] } : seg,
+      );
+      copiedCount += 1;
+    }
+  }
+
+  if (copiedCount === 0) {
+    return {
+      ok: false,
+      error: "Choose a different segment — cannot copy a sub-task into its current segment.",
+    };
+  }
+
+  return {
+    ok: true,
+    json: wrapForPersistWithExistingMeta({ segmented: true, segments }, raw),
+    copiedCount,
+  };
+}
+
+export type MoveSubKpiOnBoardInput = {
+  /** Target segment id, or {@link UNSEGMENTED_SEGMENT_ID}. */
+  targetSegmentId: string;
+  /** Optional Kanban status column on the target board. */
+  boardColumn?: SubKpiBoardColumn;
+  /** Optional insert index within the target segment's item list (after column grouping apply). */
+  index?: number | null;
+};
+
+/**
+ * Move a sub-task to another segment (or Unsegmented) and optionally set its board column.
+ * Preserves item identity and metadata. Empty source segments are allowed.
+ */
+export function moveSubKpiItemOnBoard(
+  raw: unknown,
+  subKpiId: string,
+  input: MoveSubKpiOnBoardInput,
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const id = subKpiId.trim();
+  if (!id) return { ok: false, error: "Sub Task id is required." };
+
+  const n = normalizeSubKpis(raw);
+  if (!n.segmented) {
+    // Flat checklist: only board-column changes apply (no segment move).
+    if (input.boardColumn == null) {
+      return { ok: false, error: "Segment moves require a segmented checklist." };
+    }
+    const flat = n.flat.map((item) =>
+      item.id === id ? applySubKpiBoardColumn(item, input.boardColumn!) : item,
+    );
+    if (!n.flat.some((item) => item.id === id)) {
+      return { ok: false, error: "Sub Task not found." };
+    }
+    return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: false, flat }, raw) };
+  }
+
+  const targetSegmentId = String(input.targetSegmentId ?? "").trim() || UNSEGMENTED_SEGMENT_ID;
+  let segments = ensureUnsegmentedSegment(n.segments.map((seg) => ({ ...seg, items: [...seg.items] })));
+  if (!segments.some((seg) => seg.id === targetSegmentId)) {
+    return { ok: false, error: "Target segment not found." };
+  }
+
+  let moved: SubKpiItem | null = null;
+  segments = segments.map((seg) => {
+    const idx = seg.items.findIndex((item) => item.id === id);
+    if (idx < 0) return seg;
+    moved = seg.items[idx]!;
+    return { ...seg, items: seg.items.filter((item) => item.id !== id) };
+  });
+  if (!moved) return { ok: false, error: "Sub Task not found." };
+
+  let item: SubKpiItem = moved;
+  if (input.boardColumn) {
+    item = applySubKpiBoardColumn(item, input.boardColumn);
+  }
+
+  segments = segments.map((seg) => {
+    if (seg.id !== targetSegmentId) return seg;
+    const nextItems = [...seg.items];
+    const insertAt =
+      typeof input.index === "number" && Number.isFinite(input.index)
+        ? Math.max(0, Math.min(nextItems.length, Math.floor(input.index)))
+        : nextItems.length;
+    nextItems.splice(insertAt, 0, item);
+    return { ...seg, items: nextItems };
+  });
+
+  return {
+    ok: true,
+    json: wrapForPersistWithExistingMeta({ segmented: true, segments: ensureUnsegmentedSegment(segments) }, raw),
   };
 }
 
@@ -1834,9 +2216,6 @@ export function removeSubKpiItem(
   if (n.segmented) {
     const targetSegment = n.segments.find((seg) => seg.items.some((item) => item.id === id));
     if (!targetSegment) return { ok: false, error: "Sub Task not found." };
-    if (targetSegment.items.length <= 1) {
-      return { ok: false, error: "Each segment must keep at least one Sub Task." };
-    }
     const totalAfter = collectAllSubKpiItems(n).length - 1;
     if (totalAfter < MIN_SEGMENTED_SUBKPIS) {
       return {
@@ -1844,10 +2223,13 @@ export function removeSubKpiItem(
         error: `Segmented checklists must keep at least ${MIN_SEGMENTED_SUBKPIS} Sub Tasks in total.`,
       };
     }
-    const segments = n.segments.map((seg) => ({
-      ...seg,
-      items: seg.items.filter((item) => item.id !== id),
-    }));
+    // Empty segments are allowed (Kanban boards can be empty).
+    const segments = ensureUnsegmentedSegment(
+      n.segments.map((seg) => ({
+        ...seg,
+        items: seg.items.filter((item) => item.id !== id),
+      })),
+    );
     return { ok: true, json: wrapForPersistWithExistingMeta({ segmented: true, segments }, raw) };
   }
 

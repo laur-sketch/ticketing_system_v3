@@ -26,12 +26,21 @@ describe("subtask assignee unlock helpers", () => {
 
   it("allows mutate when unlocked and assigner or main assignee", () => {
     const unlockedItem: Pick<SubKpiItem, "assistanceRequested"> = { assistanceRequested: true };
+    // Flag OFF + Seek Assistance: only assign-work roles may set helpers (not main assignee alone).
     expect(
       canMutateSubKpiAssignee({
         enableSubtaskAssignees: false,
         item: unlockedItem,
         canAssignWork: false,
         isMainAssignee: true,
+      }),
+    ).toBe(false);
+    expect(
+      canMutateSubKpiAssignee({
+        enableSubtaskAssignees: false,
+        item: unlockedItem,
+        canAssignWork: true,
+        isMainAssignee: false,
       }),
     ).toBe(true);
     expect(
@@ -40,6 +49,14 @@ describe("subtask assignee unlock helpers", () => {
         item: {},
         canAssignWork: true,
         isMainAssignee: false,
+      }),
+    ).toBe(true);
+    expect(
+      canMutateSubKpiAssignee({
+        enableSubtaskAssignees: true,
+        item: {},
+        canAssignWork: false,
+        isMainAssignee: true,
       }),
     ).toBe(true);
     expect(

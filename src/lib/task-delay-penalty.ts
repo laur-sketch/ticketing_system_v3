@@ -16,6 +16,8 @@ import {
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import {
   collectChecklistProgressItems,
+  getTaskTargetDueDate,
+  resolveEffectiveSubKpiDueDate,
   subKpiProgressOwner,
   taskDailyPenaltyAmountFromSubKpis,
   taskDelayPenaltyFrequencyFromSubKpis,
@@ -44,6 +46,8 @@ export type SubKpiPenaltyContext = {
   taskDelayPenaltyFrequency?: DelayPenaltyFrequency | null;
   /** Optional phase due (YYYY-MM-DD) when subtask due is missing (IT projects). */
   phaseDueDate?: string | null;
+  /** Main-task target date used when a subtask inherits (non-IT). */
+  taskDueDate?: string | null;
 };
 
 function parseSubKpiYmd(value: unknown, timeZone: string): DateTime | null {
@@ -62,11 +66,14 @@ export function penaltyAccrualDays(delayStartMs: number, endMs: number, timeZone
 }
 
 function effectiveDueYmd(item: SubKpiItem, ctx: SubKpiPenaltyContext): string | null {
-  const due = item.dueDate?.trim();
-  if (due && YMD.test(due)) return due;
-  const phaseDue = ctx.phaseDueDate?.trim();
-  if (phaseDue && YMD.test(phaseDue)) return phaseDue;
-  return null;
+  if (isItProjectImplementationPillar(ctx.title)) {
+    const due = item.dueDate?.trim();
+    if (due && YMD.test(due)) return due;
+    const phaseDue = ctx.phaseDueDate?.trim();
+    if (phaseDue && YMD.test(phaseDue)) return phaseDue;
+    return null;
+  }
+  return resolveEffectiveSubKpiDueDate(item, ctx.taskDueDate).dueDate;
 }
 
 export function subKpiPenaltyDelayStartMs(
@@ -91,7 +98,7 @@ export function isSubKpiInDelayPenaltyScope(item: SubKpiItem, ctx: SubKpiPenalty
   }
   if (ctx.isRecurring !== false) return false;
   const zone = normalizeTimeZone(ctx.timeZone);
-  return isNonRecurringSubKpiDelayed(item, ctx.nowMs, zone);
+  return isNonRecurringSubKpiDelayed(item, ctx.nowMs, zone, ctx.taskDueDate);
 }
 
 export function subKpiPenaltyDays(item: SubKpiItem, ctx: SubKpiPenaltyContext): number {
