@@ -106,6 +106,8 @@ async function ensureSchema(
       employment_status    VARCHAR(255) NOT NULL,
       is_active            TINYINT(1) NOT NULL DEFAULT 1,
       hire_date            DATE NULL,
+      profile_image        VARCHAR(255) NULL,
+      face_image           LONGTEXT NULL,
       created_at           TIMESTAMP NULL,
       updated_at           TIMESTAMP NULL,
       merged_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -183,7 +185,7 @@ async function mergeUsers(args: {
     INSERT INTO ${target}.merged_users (
       source_user_id, source_database, employee_code, username, password_hash, name, email, phone_number, role,
       company_id, company_name, department, position, employment_status,
-      is_active, hire_date, created_at, updated_at
+      is_active, hire_date, profile_image, face_image, created_at, updated_at
     )
     SELECT
       u.id,
@@ -202,6 +204,8 @@ async function mergeUsers(args: {
       u.employment_status,
       u.is_active,
       u.hire_date,
+      u.profile_image,
+      u.face_image,
       u.created_at,
       u.updated_at
     FROM ${source}.users u
@@ -229,6 +233,8 @@ async function mergeUsers(args: {
       employment_status = VALUES(employment_status),
       is_active = VALUES(is_active),
       hire_date = VALUES(hire_date),
+      profile_image = COALESCE(VALUES(profile_image), profile_image),
+      face_image = COALESCE(VALUES(face_image), face_image),
       created_at = VALUES(created_at),
       updated_at = VALUES(updated_at),
       merged_at = CURRENT_TIMESTAMP

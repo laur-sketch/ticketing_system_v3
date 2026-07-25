@@ -85,16 +85,44 @@ export async function PATCH(req: Request) {
     WHERE source_user_id = ${mergedSourceUserId}
   `;
 
-  let portal = await prismaPrimary.portalAccount.findFirst({
-    where: { mergedSourceUserId },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      staffDesignatedCompanyId: true,
-    },
-  });
+  const portalSelect = {
+    id: true,
+    email: true,
+    name: true,
+    role: true,
+    staffDesignatedCompanyId: true,
+  } as const;
+  const emailNeedle = merged.email?.trim().toLowerCase() || null;
+  const usernameNeedle = merged.username?.trim().toLowerCase() || null;
+
+  // Prefer HRIS-linked portal; fall back to email/username (merge may lag the link).
+  let portal =
+    (await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId, accountStatus: { not: "LEGACY_CONFLICT" } },
+      select: portalSelect,
+    })) ??
+    (await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId },
+      select: portalSelect,
+    })) ??
+    (emailNeedle
+      ? await prismaPrimary.portalAccount.findFirst({
+          where: {
+            email: { equals: emailNeedle, mode: "insensitive" },
+            accountStatus: { not: "LEGACY_CONFLICT" },
+          },
+          select: portalSelect,
+        })
+      : null) ??
+    (usernameNeedle
+      ? await prismaPrimary.portalAccount.findFirst({
+          where: {
+            username: { equals: usernameNeedle, mode: "insensitive" },
+            accountStatus: { not: "LEGACY_CONFLICT" },
+          },
+          select: portalSelect,
+        })
+      : null);
 
   if (!portal) {
     const profile = canonicalProfileFromMerged({
@@ -107,27 +135,45 @@ export async function PATCH(req: Request) {
       position: merged.position,
       department: merged.department,
     });
-    await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
+    try {
+      await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
+    } catch (e) {
+      console.error("syncPortalProfile (role route) failed", e);
+      return NextResponse.json(
+        { error: "Could not create a portal profile for this HRIS user." },
+        { status: 500 },
+      );
+    }
     portal = await prismaPrimary.portalAccount.findFirst({
       where: {
         OR: [
           { mergedSourceUserId },
-          ...(merged.email
-            ? [{ email: { equals: merged.email.trim().toLowerCase(), mode: "insensitive" as const } }]
+          ...(emailNeedle
+            ? [{ email: { equals: emailNeedle, mode: "insensitive" as const } }]
+            : []),
+          ...(usernameNeedle
+            ? [{ username: { equals: usernameNeedle, mode: "insensitive" as const } }]
             : []),
         ],
       },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        staffDesignatedCompanyId: true,
-      },
+      select: portalSelect,
     });
   }
 
   if (portal) {
+    try {
+      await prismaPrimary.portalAccount.updateMany({
+        where: { mergedSourceUserId, NOT: { id: portal.id } },
+        data: { mergedSourceUserId: null },
+      });
+      await prismaPrimary.portalAccount.update({
+        where: { id: portal.id },
+        data: { mergedSourceUserId },
+      });
+    } catch (e) {
+      console.warn("role route: could not link mergedSourceUserId", e);
+    }
+
     const wasSuper = isPlatformSuperAdminPortalRole(portal.role);
     // Always apply the SuperAdmin-chosen portal role (HRIS mapping alone treats
     // merged "admin" as Personnel unless the job title says head/leader).

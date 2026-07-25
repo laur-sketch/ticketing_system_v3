@@ -8,7 +8,7 @@ export const CONFIRMATION_REMINDER_ACTIVITY = "Confirmation reminder sent";
 let sweepRunning = false;
 
 function reminderTimeZone() {
-  return normalizeTimeZone(process.env.CONFIRMATION_REMINDER_TZ ?? process.env.REPORT_TZ ?? "Asia/Manila");
+  return normalizeTimeZone(process.env.CONFIRMATION_REMINDER_TZ ?? process.env.REPORT_TZ ?? "Asia/Taipei");
 }
 
 function startOfTodayUtc(now = new Date()) {

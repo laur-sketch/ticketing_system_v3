@@ -47,4 +47,19 @@ export async function ensureMergedConsolidationSchema(
       KEY idx_merged_username_aliases_user (source_user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  // Profile photos from HRIS (path + optional face capture blob).
+  for (const col of [
+    { name: "profile_image", ddl: "VARCHAR(255) NULL AFTER hire_date" },
+    { name: "face_image", ddl: "LONGTEXT NULL AFTER profile_image" },
+  ] as const) {
+    const cols = await db.$queryRawUnsafe<Array<{ Field: string }>>(
+      `SHOW COLUMNS FROM ${target}.merged_users LIKE '${col.name}'`,
+    );
+    if (cols.length === 0) {
+      await db.$executeRawUnsafe(
+        `ALTER TABLE ${target}.merged_users ADD COLUMN ${col.name} ${col.ddl}`,
+      );
+    }
+  }
 }

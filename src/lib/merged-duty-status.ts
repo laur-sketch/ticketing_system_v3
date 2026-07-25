@@ -1,13 +1,19 @@
 /**
- * On Duty / Offline from mergeddatabase-dev attendance (HRIS clock-in).
+ * On Duty / Offline from mergeddatabase attendance (HRIS clock-in).
  *
  * Source of truth: `merged_attendance_clock_in` via `prismaSecondary`.
  * There is no clock-out table in the merge schema today — On Duty means the
  * employee has at least one clock-in whose `clock_in_at` falls on the current
- * Philippine calendar day. Offline otherwise.
+ * Asia/Taipei (GMT+8) calendar day. Offline otherwise.
+ *
+ * Important: HRIS/MySQL stores `clock_in_at` as a naive DATETIME in **UTC**
+ * (e.g. 00:29 UTC = 08:29 GMT+8). Prisma exposes those UTC components as a JS
+ * Date. Day filters must use the app timezone's midnight converted to UTC
+ * DATETIME strings; display must format in Asia/Taipei (not UTC / wall-clock).
  */
 
 import { DateTime } from "luxon";
+import { Prisma } from "@prisma/client/secondary";
 import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import { prismaSecondary } from "@/lib/prisma";
 
@@ -18,7 +24,7 @@ export type MergedDutyClockIn = {
   clockInAt: Date;
 };
 
-/** Inclusive start / exclusive end of "today" in Asia/Manila (UTC instants). */
+/** Inclusive start / exclusive end of "today" in the app zone as real UTC instants. */
 export function philippineDayBounds(now: Date = new Date(), timeZone = DEFAULT_TIME_ZONE): {
   start: Date;
   endExclusive: Date;
@@ -30,6 +36,58 @@ export function philippineDayBounds(now: Date = new Date(), timeZone = DEFAULT_T
     endExclusive: day.plus({ days: 1 }).toJSDate(),
     ymd: day.toISODate() ?? "",
   };
+}
+
+/**
+ * MySQL DATETIME strings for "today" in `timeZone`, when `clock_in_at` stores UTC.
+ * Example (Asia/Taipei): start `YYYY-MM-DD 16:00:00` previous day → end next 16:00:00.
+ */
+export function philippineMysqlDayBounds(
+  now: Date = new Date(),
+  timeZone = DEFAULT_TIME_ZONE,
+): {
+  start: string;
+  endExclusive: string;
+  ymd: string;
+} {
+  const day = DateTime.fromJSDate(now, { zone: timeZone }).startOf("day");
+  return {
+    start: day.toUTC().toFormat("yyyy-MM-dd HH:mm:ss"),
+    endExclusive: day.plus({ days: 1 }).toUTC().toFormat("yyyy-MM-dd HH:mm:ss"),
+    ymd: day.toISODate() ?? "",
+  };
+}
+
+/** App-zone calendar YMD for a UTC-stored HRIS/MySQL DATETIME (Prisma Date). */
+export function mysqlDatetimeAppZoneYmd(value: Date, timeZone = DEFAULT_TIME_ZONE): string {
+  return DateTime.fromJSDate(value, { zone: "utc" }).setZone(timeZone).toISODate() ?? "";
+}
+
+/** @deprecated Use mysqlDatetimeAppZoneYmd — kept for older imports. */
+export function mysqlDatetimeWallClockYmd(value: Date): string {
+  return mysqlDatetimeAppZoneYmd(value);
+}
+
+/** Format a UTC-stored clock-in for display in the app timezone (GMT+8). */
+export function formatClockInLocalTime(
+  value: Date,
+  timeZone = DEFAULT_TIME_ZONE,
+  options?: Intl.DateTimeFormatOptions,
+): string {
+  return value.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+    ...options,
+  });
+}
+
+/** @deprecated Use formatClockInLocalTime. */
+export function formatMysqlDatetimeWallClockTime(
+  value: Date,
+  options?: Intl.DateTimeFormatOptions,
+): string {
+  return formatClockInLocalTime(value, DEFAULT_TIME_ZONE, options);
 }
 
 export function dutyStatusFromLatestClockIn(
@@ -90,6 +148,18 @@ export async function loadTodayClockInsBySourceUserId(
   sourceUserIds: ReadonlyArray<bigint | number | string>,
   now: Date = new Date(),
 ): Promise<Map<string, Date>> {
+  // Keep merge attendance close to live HRIS (callers poll frequently).
+  try {
+    const { runHrisAttendanceSync } = await import("@/lib/auth/hris-attendance-sync");
+    const { withTtlCache } = await import("@/lib/ttl-cache");
+    await withTtlCache("hris-attendance-sync", 30_000, async () => {
+      await runHrisAttendanceSync();
+      return true as const;
+    });
+  } catch (e) {
+    console.error("[merged-duty-status] attendance sync failed", e);
+  }
+
   const ids = [
     ...new Set(
       sourceUserIds
@@ -105,22 +175,25 @@ export async function loadTodayClockInsBySourceUserId(
   ];
   if (ids.length === 0) return new Map();
 
-  const { start, endExclusive } = philippineDayBounds(now);
+  // UTC DATETIME strings for the Asia/Taipei (GMT+8) calendar day.
+  const { start, endExclusive } = philippineMysqlDayBounds(now);
 
-  const rows = await prismaSecondary.mergedAttendanceClockIn.findMany({
-    where: {
-      sourceUserId: { in: ids },
-      clockInAt: { gte: start, lt: endExclusive },
-    },
-    orderBy: { clockInAt: "desc" },
-    select: { sourceUserId: true, clockInAt: true },
-  });
+  const rows = await prismaSecondary.$queryRaw<
+    Array<{ source_user_id: bigint; clock_in_at: Date }>
+  >`
+    SELECT source_user_id, clock_in_at
+    FROM merged_attendance_clock_in
+    WHERE source_user_id IN (${Prisma.join(ids)})
+      AND clock_in_at >= ${start}
+      AND clock_in_at < ${endExclusive}
+    ORDER BY clock_in_at DESC
+  `;
 
   const latest = new Map<string, Date>();
   for (const row of rows) {
-    const key = row.sourceUserId.toString();
+    const key = row.source_user_id.toString();
     if (!latest.has(key)) {
-      latest.set(key, row.clockInAt);
+      latest.set(key, row.clock_in_at);
     }
   }
   return latest;
@@ -135,7 +208,7 @@ export async function listMergedPersonnelDutyStatuses(options?: {
   now?: Date;
 }) {
   const now = options?.now ?? new Date();
-  const { start, endExclusive } = philippineDayBounds(now);
+  const { start, endExclusive } = philippineMysqlDayBounds(now);
 
   const users = await prismaSecondary.mergedUser.findMany({
     where: {
@@ -153,19 +226,24 @@ export async function listMergedPersonnelDutyStatuses(options?: {
     },
   });
 
-  const clockIns = await prismaSecondary.mergedAttendanceClockIn.findMany({
-    where: {
-      sourceUserId: { in: users.map((u) => u.sourceUserId) },
-      clockInAt: { gte: start, lt: endExclusive },
-    },
-    orderBy: { clockInAt: "desc" },
-    select: { sourceUserId: true, clockInAt: true },
-  });
+  const clockIns =
+    users.length === 0
+      ? []
+      : await prismaSecondary.$queryRaw<
+          Array<{ source_user_id: bigint; clock_in_at: Date }>
+        >`
+          SELECT source_user_id, clock_in_at
+          FROM merged_attendance_clock_in
+          WHERE source_user_id IN (${Prisma.join(users.map((u) => u.sourceUserId))})
+            AND clock_in_at >= ${start}
+            AND clock_in_at < ${endExclusive}
+          ORDER BY clock_in_at DESC
+        `;
 
   const latestByUser = new Map<string, Date>();
   for (const row of clockIns) {
-    const key = row.sourceUserId.toString();
-    if (!latestByUser.has(key)) latestByUser.set(key, row.clockInAt);
+    const key = row.source_user_id.toString();
+    if (!latestByUser.has(key)) latestByUser.set(key, row.clock_in_at);
   }
 
   return users.map((u) => {

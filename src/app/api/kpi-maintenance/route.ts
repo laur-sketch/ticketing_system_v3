@@ -144,6 +144,16 @@ function subKpiScreenshotList(item: SubKpiItem, slot: TaskScreenshotSlot): TaskS
   return item.uploadScreenshot ?? [];
 }
 
+/** Visible when the agent is the main assignee or any sub-task assignee. */
+function kpiRowVisibleToAgent(
+  row: { assignedAgentId: string | null; subKpis: unknown },
+  agentId: string | null | undefined,
+): boolean {
+  const id = agentId?.trim();
+  if (!id) return false;
+  return row.assignedAgentId === id || hasSubKpiAssignedTo(row.subKpis, id);
+}
+
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
   if (unauthorized || !session) return unauthorized;
@@ -169,12 +179,11 @@ export async function GET(req: Request) {
     };
   }
 
+  // Assigned filter is applied in memory so sub-task assignees are included
+  // (sub-assignee ids live in JSON, not assigned_agent_id).
   const assignedFilterId = searchParams.get("assigned")?.trim();
-  if (perms.canAssignWork && assignedFilterId && assignedFilterId !== "ALL") {
-    where = {
-      AND: [where, { assignedAgentId: assignedFilterId }],
-    };
-  }
+  const filterByAssigned =
+    perms.canAssignWork && assignedFilterId && assignedFilterId !== "ALL" ? assignedFilterId : null;
 
   let rows = await prisma.kpiMaintenance.findMany({
     where,
@@ -185,7 +194,9 @@ export async function GET(req: Request) {
   });
   if (!perms.canAssignWork) {
     const operatorId = perms.operator?.id ?? null;
-    rows = rows.filter((row) => row.assignedAgentId === operatorId);
+    rows = rows.filter((row) => kpiRowVisibleToAgent(row, operatorId));
+  } else if (filterByAssigned) {
+    rows = rows.filter((row) => kpiRowVisibleToAgent(row, filterByAssigned));
   }
 
   const now = new Date();
@@ -319,7 +330,9 @@ export async function GET(req: Request) {
     });
     if (!perms.canAssignWork) {
       const operatorId = perms.operator?.id ?? null;
-      rows = rows.filter((row) => row.assignedAgentId === operatorId);
+      rows = rows.filter((row) => kpiRowVisibleToAgent(row, operatorId));
+    } else if (filterByAssigned) {
+      rows = rows.filter((row) => kpiRowVisibleToAgent(row, filterByAssigned));
     }
   }
 
@@ -397,6 +410,7 @@ export async function POST(req: Request) {
     subKpis?: Array<{
       title?: string;
       description?: string | null;
+      remarks?: string | null;
       startDate?: string;
       endDate?: string;
       dueDate?: string;
@@ -409,6 +423,7 @@ export async function POST(req: Request) {
       items?: Array<{
         title?: string;
         description?: string | null;
+        remarks?: string | null;
         startDate?: string;
         endDate?: string;
         dueDate?: string;
@@ -575,6 +590,7 @@ export async function POST(req: Request) {
     const mapDraftItem = (s: {
       title?: string;
       description?: string | null;
+      remarks?: string | null;
       startDate?: string;
       dueDate?: string;
       endDate?: string;
@@ -584,6 +600,7 @@ export async function POST(req: Request) {
     }) => ({
       title: (s.title ?? "").trim(),
       description: typeof s.description === "string" ? s.description : "",
+      remarks: typeof s.remarks === "string" ? s.remarks : "",
       startDate: "",
       dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
       actualDate: isRecurring ? "" : (s.actualDate ?? "").trim(),
@@ -845,6 +862,7 @@ export async function PATCH(req: Request) {
       projectPriority?: string | null;
       numericalValue?: number | null;
       numericalTarget?: number | null;
+      remarks?: string | null;
     };
     subKpiProjectMeta?: {
       subKpiId?: string;
@@ -878,6 +896,7 @@ export async function PATCH(req: Request) {
     addSubKpi?: {
       title?: string;
       description?: string | null;
+      remarks?: string | null;
       segmentId?: string | null;
       startDate?: string | null;
       dueDate?: string | null;
@@ -887,6 +906,7 @@ export async function PATCH(req: Request) {
       subKpiId?: string;
       title?: string;
       description?: string | null;
+      remarks?: string | null;
       startDate?: string | null;
       dueDate?: string | null;
       projectPriority?: string | null;
@@ -1218,6 +1238,7 @@ export async function PATCH(req: Request) {
       projectPriority: meta.projectPriority,
       numericalValue: meta.numericalValue,
       numericalTarget: meta.numericalTarget,
+      remarks: meta.remarks,
     });
     updatedJson = syncSubKpiDoneFromRequirements(updatedJson, subKpiIdMeta);
     const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
@@ -1792,6 +1813,7 @@ export async function PATCH(req: Request) {
     const result = appendSubKpiItem(kpiRow.subKpis, {
       title,
       description: body.addSubKpi.description,
+      remarks: body.addSubKpi.remarks,
       segmentId: body.addSubKpi.segmentId,
       startDate: body.addSubKpi.startDate,
       dueDate: body.addSubKpi.dueDate,
@@ -1828,6 +1850,7 @@ export async function PATCH(req: Request) {
     }
     const hasTitle = body.updateSubKpi.title !== undefined;
     const hasDescription = body.updateSubKpi.description !== undefined;
+    const hasRemarks = body.updateSubKpi.remarks !== undefined;
     const hasStartDate = body.updateSubKpi.startDate !== undefined;
     const hasDueDate = body.updateSubKpi.dueDate !== undefined;
     const hasPriority = body.updateSubKpi.projectPriority !== undefined;
@@ -1840,6 +1863,7 @@ export async function PATCH(req: Request) {
       if (
         hasTitle ||
         hasDescription ||
+        hasRemarks ||
         hasStartDate ||
         hasDueDate ||
         hasPriority ||
@@ -1879,6 +1903,7 @@ export async function PATCH(req: Request) {
     if (
       !hasTitle &&
       !hasDescription &&
+      !hasRemarks &&
       !hasStartDate &&
       !hasDueDate &&
       !hasPriority &&
@@ -1890,7 +1915,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json(
         {
           error:
-            "Provide title, description, startDate, dueDate, projectPriority, completionMode, numericalTarget, dailyPenaltyAmount, and/or delayPenaltyFrequency to update a Sub Task.",
+            "Provide title, description, remarks, startDate, dueDate, projectPriority, completionMode, numericalTarget, dailyPenaltyAmount, and/or delayPenaltyFrequency to update a Sub Task.",
         },
         { status: 400 },
       );
@@ -1940,6 +1965,7 @@ export async function PATCH(req: Request) {
     const result = updateSubKpiItem(kpiRow.subKpis, subKpiIdUpdate, {
       ...(hasTitle ? { title: body.updateSubKpi.title } : {}),
       ...(hasDescription ? { description: body.updateSubKpi.description ?? null } : {}),
+      ...(hasRemarks ? { remarks: body.updateSubKpi.remarks ?? null } : {}),
       ...(hasStartDate ? { startDate: body.updateSubKpi.startDate } : {}),
       ...(hasDueDate ? { dueDate: body.updateSubKpi.dueDate } : {}),
       ...(hasPriority ? { projectPriority: body.updateSubKpi.projectPriority ?? null } : {}),

@@ -10,9 +10,8 @@ import {
   redirectToSignIn,
   sessionExpiresAtMs,
 } from "@/lib/session-expiry-client";
-import { isMidnightLogoutRole } from "@/lib/session-expiry-policy";
 
-/** Signs the user out when the session lifetime ends (midnight for Admin/SuperAdmin, 30 min idle for others). */
+/** Signs the user out when the session reaches local midnight (all roles). */
 export function SessionExpiryGuard() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -22,8 +21,7 @@ export function SessionExpiryGuard() {
   function logoutOnce() {
     if (loggingOutRef.current) return;
     loggingOutRef.current = true;
-    const reason = isMidnightLogoutRole(session?.user?.role) ? "midnight" : "idle";
-    logoutExpiredSession(reason);
+    logoutExpiredSession("midnight");
   }
 
   useLayoutEffect(() => {

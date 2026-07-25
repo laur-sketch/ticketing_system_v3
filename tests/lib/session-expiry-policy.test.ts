@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  SESSION_IDLE_MAX_AGE_SECONDS,
   computeSessionExpiresAt,
   nextMidnightUnixSeconds,
 } from "@/lib/session-expiry-policy";
@@ -15,33 +14,24 @@ describe("nextMidnightUnixSeconds", () => {
 });
 
 describe("computeSessionExpiresAt", () => {
-  it("uses midnight expiry for SuperAdmin and Admin", () => {
+  it("uses midnight expiry for every role", () => {
     const now = Math.floor(new Date("2026-06-17T07:00:00.000Z").getTime() / 1000);
-    expect(computeSessionExpiresAt({ role: "SuperAdmin", nowUnixSeconds: now, isNewLogin: true })).toBe(
-      nextMidnightUnixSeconds(now),
-    );
-    expect(computeSessionExpiresAt({ role: "Admin", nowUnixSeconds: now, isNewLogin: true })).toBe(
-      nextMidnightUnixSeconds(now),
-    );
+    const midnight = nextMidnightUnixSeconds(now);
+    for (const role of ["SuperAdmin", "Admin", "Personnel", "Customer"] as const) {
+      expect(computeSessionExpiresAt({ role, nowUnixSeconds: now, isNewLogin: true })).toBe(midnight);
+    }
   });
 
-  it("keeps idle timeout for Personnel", () => {
-    const now = 1_700_000_000;
-    expect(computeSessionExpiresAt({ role: "Personnel", nowUnixSeconds: now, isNewLogin: true })).toBe(
-      now + SESSION_IDLE_MAX_AGE_SECONDS,
-    );
-  });
-
-  it("preserves existing admin expiry until midnight passes", () => {
-    const now = 1_700_000_000;
-    const existing = now + 3600;
+  it("always pins to next midnight even when an older idle expiry exists", () => {
+    const now = Math.floor(new Date("2026-06-17T07:00:00.000Z").getTime() / 1000);
+    const idleExpiry = now + 1800;
     expect(
       computeSessionExpiresAt({
-        role: "Admin",
+        role: "Personnel",
         nowUnixSeconds: now,
-        existingSessionExpiresAt: existing,
+        existingSessionExpiresAt: idleExpiry,
         isNewLogin: false,
       }),
-    ).toBe(existing);
+    ).toBe(nextMidnightUnixSeconds(now));
   });
 });

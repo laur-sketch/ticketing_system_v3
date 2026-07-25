@@ -463,6 +463,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
         items: s.items.map((it) => ({
           title: it.title.trim(),
           description: it.description ?? null,
+          remarks: it.remarks ?? null,
           dueDate: effectiveIsRecurring ? "" : it.dueDate ?? "",
           projectPriority: it.projectPriority ?? null,
           projectStatus: it.projectStatus ?? null,
@@ -473,6 +474,7 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       body.subKpis = subKpisDraft.map((s) => ({
         title: s.title,
         description: s.description ?? null,
+        remarks: s.remarks ?? null,
         dueDate: effectiveIsRecurring ? "" : s.dueDate ?? "",
         projectPriority: s.projectPriority ?? null,
       }));

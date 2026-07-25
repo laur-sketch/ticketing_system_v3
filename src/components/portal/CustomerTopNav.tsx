@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CUSTOMER_PORTAL_NAV_ITEMS, customerPortalNavItemActive } from "@/components/portal/customer-portal-nav";
 import { useHash } from "@/components/portal/useHash";
+import { SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
 
 const tabs: { href: string; label: string }[] = [
   { href: "/", label: "Dashboard" },
@@ -27,6 +28,12 @@ export function CustomerTopNav() {
   const [navOpen, setNavOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifBusy, setNotifBusy] = useState(false);
+  const avatarEmail = data?.user?.email?.trim().toLowerCase() ?? "";
+  const avatarSrc = data?.user
+    ? data.user.image && /^https?:\/\//i.test(data.user.image)
+      ? data.user.image
+      : `${SESSION_PROFILE_IMAGE_ROUTE}?u=${encodeURIComponent(avatarEmail || data.user.id || "me")}`
+    : undefined;
   type NotifRow = {
     id: string;
     ticketId: string;
@@ -296,7 +303,7 @@ export function CustomerTopNav() {
           <div className="flex items-center gap-2 pl-1">
             <div className="flex max-w-[12rem] items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-1.5 py-1 shadow-sm dark:border-zinc-800 dark:bg-[#181716]">
               <Avatar className="size-8 rounded-md border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
-                <AvatarImage src={data?.user?.image ?? undefined} alt={data?.user?.name ?? "Profile"} />
+                <AvatarImage src={avatarSrc} alt={data?.user?.name ?? "Profile"} />
                 <AvatarFallback className="rounded-md bg-transparent">
                   <UserRound className="size-4" aria-hidden />
                 </AvatarFallback>

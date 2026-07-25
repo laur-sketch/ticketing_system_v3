@@ -21,7 +21,7 @@ export default async function ReportsPage() {
   const kpiScope = session.user.role === "Admin" ? { teamId: scopedTeamId ?? "__none__" } : {};
   const resolvedScopeSql =
     session.user.role === "Admin"
-      ? Prisma.sql`AND "teamId" = ${scopedTeamId ?? "__none__"}`
+      ? Prisma.sql`AND team_id = ${scopedTeamId ?? "__none__"}`
       : Prisma.empty;
 
   const [kpis, transferPending, openByPriority, resolvedToday, statusMix, openByTeam, recentClosed] = await Promise.all([
@@ -34,8 +34,8 @@ export default async function ReportsPage() {
     }),
     prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::bigint AS count
-      FROM "Ticket"
-      WHERE "resolvedAt" >= NOW() - INTERVAL '24 hours'
+      FROM tickets
+      WHERE resolved_at >= NOW() - INTERVAL '24 hours'
       ${resolvedScopeSql}
     `,
     prisma.ticket.groupBy({

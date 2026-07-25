@@ -1,7 +1,10 @@
 import { DateTime } from "luxon";
 import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 
+/** App display timezone (GMT+8 Taiwan via DEFAULT_TIME_ZONE / env). */
 export const PHILIPPINE_TIME_ZONE = DEFAULT_TIME_ZONE;
+
+const TIME_ZONE_LABEL = "GMT+8";
 
 export function philippineDateTimeFromEpoch(epochMs: number): DateTime {
   return DateTime.fromMillis(epochMs, { zone: PHILIPPINE_TIME_ZONE });
@@ -16,7 +19,7 @@ export function formatPhilippineClock(epochMs: number): {
   return {
     time: dt.toFormat("h:mm:ss a"),
     date: dt.toFormat("EEE, MMM d, yyyy"),
-    timeZoneLabel: "PHT",
+    timeZoneLabel: TIME_ZONE_LABEL,
   };
 }
 
@@ -45,8 +48,8 @@ export function formatPhilippineWidgetClock(epochMs: number): {
     dayOfWeek,
     dayNumber,
     month,
-    timeZoneLabel: "PHT",
-    ariaLabel: `Time ${hours}:${minutes}:${seconds}, ${date}`,
+    timeZoneLabel: TIME_ZONE_LABEL,
+    ariaLabel: `Time ${hours}:${minutes}:${seconds}, ${date} (${TIME_ZONE_LABEL})`,
   };
 }
 
@@ -64,6 +67,6 @@ export function formatPhilippineBarClock(epochMs: number): {
     hours,
     minutes,
     seconds,
-    ariaLabel: `Time ${hours}:${minutes}:${seconds}`,
+    ariaLabel: `Time ${hours}:${minutes}:${seconds} (${TIME_ZONE_LABEL})`,
   };
 }

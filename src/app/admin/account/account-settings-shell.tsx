@@ -172,9 +172,9 @@ export function AccountSettingsShell() {
   }
 
   async function uploadProfileImage(file: File) {
-    const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+    const allowed = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
     if (!allowed.includes(file.type)) {
-      setProfileImageMessage("Only PNG, JPG, and WEBP are supported.");
+      setProfileImageMessage("Only PNG, JPG, WEBP, and GIF are supported.");
       return;
     }
     if (file.size > MAX_PROFILE_IMAGE_FILE_BYTES) {
@@ -224,6 +224,7 @@ export function AccountSettingsShell() {
     setImagePosY(payload.profileImagePosY ?? 50);
     setIsFramingEditMode(true);
     setProfileImageMessage("Image uploaded. Adjust it, then click Save framing to lock it.");
+    await updateSession();
   }
 
   async function removeProfileImage() {
@@ -247,6 +248,7 @@ export function AccountSettingsShell() {
     setIsFramingEditMode(false);
     setProfileImageMessage("Profile image removed.");
     if (imageInputRef.current) imageInputRef.current.value = "";
+    await updateSession();
   }
 
   async function saveProfileImageFraming() {
@@ -556,7 +558,7 @@ export function AccountSettingsShell() {
                   <input
                     ref={imageInputRef}
                     type="file"
-                    accept="image/png,image/jpeg,image/webp"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
                     disabled={profileImageBusy}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
@@ -565,7 +567,7 @@ export function AccountSettingsShell() {
                     className="block w-full text-xs text-zinc-700 file:mr-3 file:rounded-full file:border file:border-zinc-300 file:bg-zinc-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-zinc-800 hover:file:bg-zinc-200 dark:text-zinc-300 dark:file:border-zinc-700 dark:file:bg-zinc-900 dark:file:text-zinc-200"
                   />
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                    PNG, JPG, or WEBP — up to 10 MB.
+                    PNG, JPG, WEBP, or GIF — up to 10 MB.
                   </p>
                   <div className="flex items-center gap-2">
                     <Button

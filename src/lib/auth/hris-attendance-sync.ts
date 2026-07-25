@@ -94,7 +94,6 @@ export async function runHrisAttendanceSync(): Promise<HrisAttendanceSyncResult>
       al.created_at
     FROM ${source}.attendance_logs al
     INNER JOIN ${source}.users u ON u.id = al.user_id
-    INNER JOIN merged_users mu ON mu.source_user_id = al.user_id
     LEFT JOIN ${source}.companies c ON c.id = u.company_id
     WHERE al.type = 'clock_in'
       AND al.time_in_clicked_at IS NOT NULL

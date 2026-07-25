@@ -16,6 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PatchNotesControl } from "@/components/PatchNotesControl";
 import { TravelOrderApprovalModal } from "@/components/task-board/TravelOrderApprovalModal";
 import { cn } from "@/lib/cn";
+import { SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
 
 function notifSeenTsKey(email: string) {
   return `notif-open-seen-ts:${email}`;
@@ -83,6 +84,12 @@ export function Nav() {
   const userEmail = data?.user?.email ?? "unknown";
   const showUtilities =
     role === "SuperAdmin" || role === "Admin" || role === "Personnel";
+  const avatarEmail = data?.user?.email?.trim().toLowerCase() ?? "";
+  const avatarSrc = data?.user
+    ? data.user.image && /^https?:\/\//i.test(data.user.image)
+      ? data.user.image
+      : `${SESSION_PROFILE_IMAGE_ROUTE}?u=${encodeURIComponent(avatarEmail || data.user.id || "me")}`
+    : undefined;
 
   const refreshUnreadOpenCount = useCallback(async (lastSeenMs: number, email: string) => {
     try {
@@ -485,7 +492,7 @@ export function Nav() {
                 title={data.user.email ?? role ?? undefined}
               >
                 <Avatar className="size-7 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
-                  <AvatarImage src={data.user.image ?? undefined} alt={data.user.name ?? "Profile"} />
+                  <AvatarImage src={avatarSrc} alt={data.user.name ?? "Profile"} />
                   <AvatarFallback className="bg-transparent">
                     <UserRound className="size-3.5" aria-hidden />
                   </AvatarFallback>

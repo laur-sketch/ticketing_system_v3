@@ -115,12 +115,13 @@ describe("deep check: requestor API routes", () => {
 });
 
 describe("deep check: session max age constant", () => {
-  it("auth uses the 24h JWT cap with a 30 minute idle timeout", async () => {
+  it("auth uses the 24h JWT cap with midnight session expiry for all roles", async () => {
     const auth = await import("@/lib/auth");
     const policy = await import("@/lib/session-expiry-policy");
     expect(auth.authOptions.session?.maxAge).toBe(policy.SESSION_JWT_MAX_AGE_SECONDS);
     expect(auth.authOptions.jwt?.maxAge).toBe(policy.SESSION_JWT_MAX_AGE_SECONDS);
     expect(policy.SESSION_JWT_MAX_AGE_SECONDS).toBe(24 * 60 * 60);
-    expect(policy.SESSION_IDLE_MAX_AGE_SECONDS).toBe(30 * 60);
+    expect(policy.isMidnightLogoutRole("Personnel")).toBe(true);
+    expect(policy.isMidnightLogoutRole("Customer")).toBe(true);
   });
 });

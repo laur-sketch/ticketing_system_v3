@@ -6,19 +6,29 @@
 import { DateTime } from "luxon";
 
 export type KpiFrequencyCode = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY";
-export const DEFAULT_TIME_ZONE = "Asia/Manila";
+
+/** Fallback IANA zone: GMT+8 Taiwan. */
+const FALLBACK_TIME_ZONE = "Asia/Taipei";
+
+export function normalizeTimeZone(tz: string | null | undefined): string {
+  const raw = (tz ?? "").trim();
+  if (!raw) return FALLBACK_TIME_ZONE;
+  const probe = DateTime.now().setZone(raw);
+  return probe.isValid ? raw : FALLBACK_TIME_ZONE;
+}
+
+/**
+ * App-wide calendar timezone (sessions, Activities duty day, KPI reporting).
+ * Prefer APP_TIME_ZONE, then REPORT_TZ / KPI_SNAPSHOT_TZ from env.
+ */
+export const DEFAULT_TIME_ZONE = normalizeTimeZone(
+  process.env.APP_TIME_ZONE ?? process.env.REPORT_TZ ?? process.env.KPI_SNAPSHOT_TZ,
+);
 
 /** @returns true for keys from the pre-timezone format, e.g. `D:2026-04-29`. */
 export function isLegacyPeriodKey(key: string | null | undefined): boolean {
   if (!key) return false;
   return /^(D|W|M|Q):\d{4}-\d{2}-\d{2}$/.test(key);
-}
-
-export function normalizeTimeZone(tz: string | null | undefined): string {
-  const raw = (tz ?? "").trim();
-  if (!raw) return DEFAULT_TIME_ZONE;
-  const probe = DateTime.now().setZone(raw);
-  return probe.isValid ? raw : DEFAULT_TIME_ZONE;
 }
 
 function atZone(now: Date, timeZone: string): DateTime {

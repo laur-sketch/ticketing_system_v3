@@ -8,10 +8,12 @@ import { pickCanonicalAgentForPortal } from "@/lib/admin-roster";
 import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import {
   dutyStatusFromLatestClockIn,
+  formatClockInLocalTime,
   isOnDutyStatus,
   loadTodayClockInsBySourceUserId,
   type DutyStatus,
 } from "@/lib/merged-duty-status";
+import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
 import { prisma, prismaSecondary } from "@/lib/prisma";
 import { isStaffPortalRole } from "@/lib/staff-role";
@@ -57,11 +59,8 @@ type LoadOnDutyOptions = {
 
 function formatLastActivity(clockInAt: Date | null, dutyStatus: DutyStatus): string {
   if (!clockInAt || dutyStatus === "OFFLINE") return "No clock-in today";
-  return `Clocked in ${clockInAt.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "Asia/Manila",
-  })}`;
+  // HRIS stores UTC; show Asia/Taipei (GMT+8) local time.
+  return `Clocked in ${formatClockInLocalTime(clockInAt, DEFAULT_TIME_ZONE)}`;
 }
 
 /** Company label straight from merged_users.company_name (personnel source of truth). */

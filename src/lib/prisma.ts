@@ -12,8 +12,7 @@ const logLevels: ("error" | "warn")[] =
   process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"];
 
 /** Cap Prisma pools so three clients (primary/secondary/auth) cannot exhaust Postgres. */
-function withPoolLimit(url: string | undefined, limit: number): string | undefined {
-  if (!url?.trim()) return url;
+function withPoolLimit(url: string, limit: number): string {
   try {
     const u = new URL(url);
     if (!u.searchParams.has("connection_limit")) {
@@ -28,12 +27,26 @@ function withPoolLimit(url: string | undefined, limit: number): string | undefin
   }
 }
 
+function requireDbUrl(envName: string, ...fallbacks: Array<string | undefined>): string {
+  for (const candidate of [process.env[envName], ...fallbacks]) {
+    const url = candidate?.trim();
+    if (url) return url;
+  }
+  throw new Error(
+    `Missing ${envName} (and no usable fallback). Set it in .env — see .env.example.`,
+  );
+}
+
+const primaryUrl = requireDbUrl("DATABASE_URL_PRIMARY", process.env.DATABASE_URL);
+const secondaryUrl = requireDbUrl("DATABASE_URL_SECONDARY");
+const authUrl = requireDbUrl("DATABASE_URL_AUTH");
+
 export const prismaPrimary =
   globalForPrisma.prismaPrimary ??
   new PrismaClientPrimary({
     log: logLevels,
     datasources: {
-      db: { url: withPoolLimit(process.env.DATABASE_URL_PRIMARY, 10) },
+      db: { url: withPoolLimit(primaryUrl, 10) },
     },
   });
 
@@ -43,7 +56,7 @@ export const prismaSecondary =
   new PrismaClientSecondary({
     log: logLevels,
     datasources: {
-      db: { url: withPoolLimit(process.env.DATABASE_URL_SECONDARY, 10) },
+      db: { url: withPoolLimit(secondaryUrl, 10) },
     },
   });
 
@@ -53,7 +66,7 @@ export const prismaAuth =
   new PrismaClientAuth({
     log: logLevels,
     datasources: {
-      db: { url: withPoolLimit(process.env.DATABASE_URL_AUTH, 5) },
+      db: { url: withPoolLimit(authUrl, 5) },
     },
   });
 

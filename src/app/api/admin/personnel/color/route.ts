@@ -82,8 +82,8 @@ export async function PATCH(req: Request) {
     );
   }
 
-  // Prefer an already-linked ACTIVE portal; fall back to a LEGACY_CONFLICT one
-  // (users whose duplicate accounts were merged only have conflict portals left).
+  // Prefer an already-linked ACTIVE portal; fall back to LEGACY_CONFLICT, then
+  // email/username match (HRIS id may not be linked yet after roster merge).
   const portalSelect = {
     id: true,
     email: true,
@@ -91,6 +91,8 @@ export async function PATCH(req: Request) {
     role: true,
     staffDesignatedCompanyId: true,
   } as const;
+  const emailNeedle = merged.email?.trim().toLowerCase() || null;
+  const usernameNeedle = merged.username?.trim().toLowerCase() || null;
   let portal =
     (await prismaPrimary.portalAccount.findFirst({
       where: { mergedSourceUserId, accountStatus: { not: "LEGACY_CONFLICT" } },
@@ -99,7 +101,25 @@ export async function PATCH(req: Request) {
     (await prismaPrimary.portalAccount.findFirst({
       where: { mergedSourceUserId },
       select: portalSelect,
-    }));
+    })) ??
+    (emailNeedle
+      ? await prismaPrimary.portalAccount.findFirst({
+          where: {
+            email: { equals: emailNeedle, mode: "insensitive" },
+            accountStatus: { not: "LEGACY_CONFLICT" },
+          },
+          select: portalSelect,
+        })
+      : null) ??
+    (usernameNeedle
+      ? await prismaPrimary.portalAccount.findFirst({
+          where: {
+            username: { equals: usernameNeedle, mode: "insensitive" },
+            accountStatus: { not: "LEGACY_CONFLICT" },
+          },
+          select: portalSelect,
+        })
+      : null);
 
   if (!portal) {
     const profile = canonicalProfileFromMerged({
@@ -126,8 +146,11 @@ export async function PATCH(req: Request) {
       where: {
         OR: [
           { mergedSourceUserId },
-          ...(merged.email
-            ? [{ email: { equals: merged.email.trim().toLowerCase(), mode: "insensitive" as const } }]
+          ...(emailNeedle
+            ? [{ email: { equals: emailNeedle, mode: "insensitive" as const } }]
+            : []),
+          ...(usernameNeedle
+            ? [{ username: { equals: usernameNeedle, mode: "insensitive" as const } }]
             : []),
         ],
       },
@@ -142,12 +165,23 @@ export async function PATCH(req: Request) {
     );
   }
 
-  // Ensure mergedSourceUserId link is set (profile sync may have matched by email).
-  await prismaPrimary.portalAccount.update({
-    where: { id: portal.id },
-    data: { mergedSourceUserId },
-  });
-
+  // Ensure mergedSourceUserId link is set (profile sync / email match may lag the HRIS id).
+  if (portal) {
+    try {
+      // Free the HRIS id if another portal still holds a stale link.
+      await prismaPrimary.portalAccount.updateMany({
+        where: { mergedSourceUserId, NOT: { id: portal.id } },
+        data: { mergedSourceUserId: null },
+      });
+      await prismaPrimary.portalAccount.update({
+        where: { id: portal.id },
+        data: { mergedSourceUserId },
+      });
+    } catch (e) {
+      // Unique conflict — keep color save working.
+      console.warn("color route: could not link mergedSourceUserId", e);
+    }
+  }
   // If company_name maps to a known team and portal has no designated company, attach it.
   if (!portal.staffDesignatedCompanyId && merged.company_name?.trim()) {
     const companyKey = merged.company_name.trim().toLowerCase();
@@ -155,7 +189,7 @@ export async function PATCH(req: Request) {
       where: { name: { equals: merged.company_name.trim(), mode: "insensitive" } },
       select: { id: true },
     });
-    // loose match for HRIS names like MCHISI vs MCONPINCO is left to SuperAdmin company picker
+    // loose match for HRIS names like MCONPINCO vs MCHISI is left to SuperAdmin company picker
     if (team || companyKey) {
       if (team) {
         await prismaPrimary.portalAccount.update({

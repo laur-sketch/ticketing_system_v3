@@ -27,6 +27,10 @@ model MergedUser {
   employmentStatus  String    @map("employment_status")
   isActive          Boolean   @default(true) @map("is_active")
   hireDate          DateTime? @map("hire_date") @db.Date
+  /// Relative HRIS storage path (e.g. profiles/….jpg|png|gif).
+  profileImage      String?   @map("profile_image") @db.VarChar(255)
+  /// Raw HRIS face capture (usually JPEG base64 without data: prefix).
+  faceImage         String?   @map("face_image") @db.LongText
   createdAt         DateTime? @map("created_at")
   updatedAt         DateTime? @map("updated_at")
   mergedAt          DateTime  @default(now()) @map("merged_at")
