@@ -12,6 +12,7 @@ const PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
 type SubTaskFormDraft = {
   title: string;
   description: string;
+  remarks: string;
   dueDate: string;
   priority: string;
   segmentId: string;
@@ -20,6 +21,7 @@ type SubTaskFormDraft = {
 const EMPTY_DRAFT: SubTaskFormDraft = {
   title: "",
   description: "",
+  remarks: "",
   dueDate: "",
   priority: "",
   segmentId: "",
@@ -149,6 +151,7 @@ export function SubTasksManagerPopup({
           body: JSON.stringify({
             title,
             description: addDraft.description.trim() || null,
+            remarks: addDraft.remarks.trim() || null,
             dueDate: hideDueDate ? null : addDraft.dueDate || null,
             priority: addDraft.priority || null,
             segmentId: addDraft.segmentId || null,
@@ -164,6 +167,7 @@ export function SubTasksManagerPopup({
     setEditDraft({
       title: s.title,
       description: s.description ?? "",
+      remarks: s.remarks ?? "",
       dueDate: s.dueDate ?? "",
       priority: s.priority ?? "",
       segmentId: s.segmentId ?? "",
@@ -187,6 +191,7 @@ export function SubTasksManagerPopup({
             body: JSON.stringify({
               title,
               description: editDraft.description.trim() || null,
+              remarks: editDraft.remarks.trim() || null,
               ...(hideDueDate ? {} : { dueDate: editDraft.dueDate || null }),
               priority: editDraft.priority || null,
             }),
@@ -235,6 +240,20 @@ export function SubTasksManagerPopup({
             rows={2}
             placeholder="Optional details about this sub-task"
             onChange={(e) => patch({ description: e.target.value })}
+            className="mt-1 resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+          />
+        </label>
+        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500 sm:col-span-2">
+          Remarks
+          <span className="mt-0.5 text-[10px] font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
+            Optional
+          </span>
+          <textarea
+            value={draft.remarks}
+            disabled={busy}
+            rows={2}
+            placeholder="Optional remarks or notes"
+            onChange={(e) => patch({ remarks: e.target.value })}
             className="mt-1 resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
           />
         </label>
@@ -365,6 +384,12 @@ export function SubTasksManagerPopup({
                           {s.description ? (
                             <p className="mt-0.5 whitespace-pre-wrap text-xs text-zinc-600 dark:text-zinc-400">
                               {s.description}
+                            </p>
+                          ) : null}
+                          {s.remarks ? (
+                            <p className="mt-0.5 whitespace-pre-wrap text-xs text-zinc-500 dark:text-zinc-500">
+                              <span className="font-semibold text-zinc-600 dark:text-zinc-400">Remarks: </span>
+                              {s.remarks}
                             </p>
                           ) : null}
                           {s.segmentLabel ? (

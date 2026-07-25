@@ -171,6 +171,62 @@ function buildPortalRoleUpdate(
   return update;
 }
 
+/** portal_ticketing merge ids are synthetic (9e9+); HRIS source ids are real employee ids. */
+function isSyntheticHrisSourceId(id: bigint | null | undefined): boolean {
+  return id != null && id >= 9000000000n;
+}
+
+function canReclaimAuthRow(
+  row: { hrisSourceUserId: bigint | null },
+  incomingHrisId: bigint | null,
+): boolean {
+  if (row.hrisSourceUserId == null) return true;
+  if (incomingHrisId != null && row.hrisSourceUserId === incomingHrisId) return true;
+  return isSyntheticHrisSourceId(row.hrisSourceUserId);
+}
+
+async function freeAuthUniqueFields(opts: {
+  keepAuthUserId?: string;
+  email?: string | null;
+  username?: string | null;
+  portalAccountId?: string | null;
+  hrisSourceUserId?: bigint | null;
+}) {
+  const notKeep = opts.keepAuthUserId ? { NOT: { id: opts.keepAuthUserId } } : {};
+
+  if (opts.username) {
+    await prismaAuth.user.updateMany({
+      where: { username: opts.username, ...notKeep },
+      data: { username: null },
+    });
+  }
+  if (opts.portalAccountId) {
+    await prismaAuth.user.updateMany({
+      where: { portalAccountId: opts.portalAccountId, ...notKeep },
+      data: { portalAccountId: null },
+    });
+  }
+  if (opts.hrisSourceUserId != null) {
+    await prismaAuth.user.updateMany({
+      where: { hrisSourceUserId: opts.hrisSourceUserId, ...notKeep },
+      data: { hrisSourceUserId: null },
+    });
+  }
+  if (opts.email) {
+    const owners = await prismaAuth.user.findMany({
+      where: { email: opts.email, ...notKeep },
+      select: { id: true, hrisSourceUserId: true },
+    });
+    for (const owner of owners) {
+      if (!canReclaimAuthRow(owner, opts.hrisSourceUserId ?? null)) continue;
+      await prismaAuth.user.update({
+        where: { id: owner.id },
+        data: { email: `freed+${owner.id}@portal.local` },
+      });
+    }
+  }
+}
+
 async function upsertAuthUser(
   profile: CanonicalUserProfile,
   portalAccountId: string | null,
@@ -179,23 +235,63 @@ async function upsertAuthUser(
 ) {
   const email = normalizeCanonicalEmail(profile.email);
   const username = profile.username?.trim().toLowerCase() || null;
+  const hrisId = profile.hrisSourceUserId ?? null;
 
-  let authUser = await prismaAuth.user.findUnique({ where: { email } });
+  // Prefer HRIS / portal link over email — email can belong to a stale
+  // portal_ticketing auth row while username login resolves the real HRIS user.
+  let authUser =
+    (hrisId != null
+      ? await prismaAuth.user.findUnique({ where: { hrisSourceUserId: hrisId } })
+      : null) ??
+    (portalAccountId
+      ? await prismaAuth.user.findUnique({ where: { portalAccountId } })
+      : null);
 
-  if (!authUser && profile.hrisSourceUserId != null) {
-    authUser = await prismaAuth.user.findUnique({
-      where: { hrisSourceUserId: profile.hrisSourceUserId },
-    });
+  if (!authUser && username) {
+    const byUsername = await prismaAuth.user.findUnique({ where: { username } });
+    if (byUsername && canReclaimAuthRow(byUsername, hrisId)) authUser = byUsername;
   }
 
+  if (!authUser) {
+    const byEmail = await prismaAuth.user.findUnique({ where: { email } });
+    if (byEmail && canReclaimAuthRow(byEmail, hrisId)) authUser = byEmail;
+  }
+
+  let emailToWrite = email;
+  const emailOwner = await prismaAuth.user.findUnique({
+    where: { email },
+    select: { id: true, hrisSourceUserId: true },
+  });
+  if (emailOwner && (!authUser || emailOwner.id !== authUser.id)) {
+    if (canReclaimAuthRow(emailOwner, hrisId)) {
+      await prismaAuth.user.update({
+        where: { id: emailOwner.id },
+        data: { email: `freed+${emailOwner.id}@portal.local` },
+      });
+    } else if (authUser) {
+      // Real other HRIS user owns this email — keep the row's current address.
+      emailToWrite = authUser.email;
+    } else {
+      // Cannot create under a taken email; fall back to username-derived address.
+      emailToWrite = fallbackEmailFromUsername(username) || `user+${randomUUID()}@portal.local`;
+    }
+  }
+
+  await freeAuthUniqueFields({
+    keepAuthUserId: authUser?.id,
+    username,
+    portalAccountId,
+    hrisSourceUserId: hrisId,
+  });
+
   const data = {
-    email,
+    email: emailToWrite,
     name: profile.name,
     username,
     image: profile.image ?? null,
     emailVerified: profile.emailVerified ? new Date() : undefined,
     portalAccountId: portalAccountId ?? undefined,
-    hrisSourceUserId: profile.hrisSourceUserId ?? undefined,
+    hrisSourceUserId: hrisId ?? undefined,
     hrisRole: profile.hrisRole ?? undefined,
     portalRole: mapped.portalRole,
     headPrivileges: mapped.headPrivileges,
@@ -203,19 +299,43 @@ async function upsertAuthUser(
     lastSyncedAt: new Date(),
   };
 
-  if (!authUser) {
-    authUser = await prismaAuth.user.create({ data });
-  } else {
-    authUser = await prismaAuth.user.update({
-      where: { id: authUser.id },
-      data: {
-        ...data,
-        emailVerified: profile.emailVerified
-          ? authUser.emailVerified ?? new Date()
-          : authUser.emailVerified,
-        portalAccountId: authUser.portalAccountId ?? portalAccountId ?? undefined,
-      },
+  try {
+    if (!authUser) {
+      authUser = await prismaAuth.user.create({ data });
+    } else {
+      authUser = await prismaAuth.user.update({
+        where: { id: authUser.id },
+        data: {
+          ...data,
+          emailVerified: profile.emailVerified
+            ? authUser.emailVerified ?? new Date()
+            : authUser.emailVerified,
+          portalAccountId: authUser.portalAccountId ?? portalAccountId ?? undefined,
+        },
+      });
+    }
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code !== "P2002") throw e;
+    // Last-resort reclaim after a race / missed stale unique, then retry once.
+    await freeAuthUniqueFields({
+      keepAuthUserId: authUser?.id,
+      email: emailToWrite,
+      username,
+      portalAccountId,
+      hrisSourceUserId: hrisId,
     });
+    if (!authUser) {
+      authUser = await prismaAuth.user.create({ data });
+    } else {
+      authUser = await prismaAuth.user.update({
+        where: { id: authUser.id },
+        data: {
+          ...data,
+          portalAccountId: authUser.portalAccountId ?? portalAccountId ?? undefined,
+        },
+      });
+    }
   }
 
   if (profile.oauth) {
@@ -330,9 +450,37 @@ async function upsertPortalAccount(
           username: { equals: username, mode: "insensitive" },
           NOT: { id: existing.id },
         },
+        select: { id: true, mergedSourceUserId: true },
+      });
+      if (conflict) {
+        const conflictHris = conflict.mergedSourceUserId;
+        const canTake =
+          conflictHris == null ||
+          isSyntheticHrisSourceId(conflictHris) ||
+          (profile.hrisSourceUserId != null && conflictHris === profile.hrisSourceUserId);
+        if (canTake) {
+          await prismaPrimary.portalAccount.update({
+            where: { id: conflict.id },
+            data: { username: null },
+          });
+          usernameUpdate = username;
+        } else {
+          usernameUpdate = existing.username ?? undefined;
+        }
+      }
+    }
+
+    // Keep portal email aligned with merged_users when the address is free.
+    let emailUpdate: string | undefined;
+    if (email && existing.email.trim().toLowerCase() !== email) {
+      const emailConflict = await prismaPrimary.portalAccount.findFirst({
+        where: {
+          email: { equals: email, mode: "insensitive" },
+          NOT: { id: existing.id },
+        },
         select: { id: true },
       });
-      if (conflict) usernameUpdate = existing.username ?? undefined;
+      if (!emailConflict) emailUpdate = email;
     }
 
     await prismaPrimary.portalAccount.update({
@@ -340,6 +488,7 @@ async function upsertPortalAccount(
       data: {
         name: profile.name,
         username: usernameUpdate,
+        ...(emailUpdate ? { email: emailUpdate } : {}),
         authUserId,
         mergedSourceUserId: profile.hrisSourceUserId ?? undefined,
         emailVerifiedAt: profile.emailVerified ? new Date() : undefined,
@@ -464,6 +613,11 @@ export async function syncPortalProfile(
     );
 
     if (authUser.portalAccountId !== portal.id) {
+      // portal_account_id is unique on auth_users — free it from any other row first.
+      await prismaAuth.user.updateMany({
+        where: { portalAccountId: portal.id, NOT: { id: authUser.id } },
+        data: { portalAccountId: null },
+      });
       await prismaAuth.user.update({
         where: { id: authUser.id },
         data: { portalAccountId: portal.id },

@@ -82,6 +82,8 @@ type HrisUserRow = {
   employment_status: string;
   is_active: number | boolean;
   hire_date: Date | null;
+  profile_image: string | null;
+  face_image: string | null;
   created_at: Date | null;
   updated_at: Date | null;
 };
@@ -138,6 +140,8 @@ async function fetchAllHrisUsers(db: PrismaClientSecondary, sourceDb: string): P
       u.employment_status,
       u.is_active,
       u.hire_date,
+      u.profile_image,
+      u.face_image,
       u.created_at,
       u.updated_at
     FROM ${source}.users u
@@ -199,7 +203,7 @@ async function upsertUsersBatch(
           ${esc(u.name)}, ${esc(u.email)}, ${esc(u.phone_number)}, ${esc(u.role)},
           ${u.company_id ?? "NULL"}, ${esc(u.company_name)},
           ${esc(u.department)}, ${esc(u.position)}, ${esc(u.employment_status)},
-          ${escBool(u.is_active)}, ${escDate(u.hire_date)},
+          ${escBool(u.is_active)}, ${escDate(u.hire_date)}, ${esc(u.profile_image)},
           ${escDate(u.created_at)}, ${escDate(u.updated_at)}
         )`;
       })
@@ -209,12 +213,12 @@ async function upsertUsersBatch(
       INSERT INTO ${target}.merged_users (
         source_user_id, source_database, employee_code, username, password_hash, name, email, phone_number, role,
         company_id, company_name, department, position, employment_status,
-        is_active, hire_date, created_at, updated_at
+        is_active, hire_date, profile_image, created_at, updated_at
       ) VALUES ${values}
       ON DUPLICATE KEY UPDATE
         employee_code = VALUES(employee_code),
         username = VALUES(username),
-        password_hash = COALESCE(VALUES(password_hash), password_hash),
+        password_hash = VALUES(password_hash),
         name = VALUES(name),
         email = VALUES(email),
         phone_number = VALUES(phone_number),
@@ -226,10 +230,26 @@ async function upsertUsersBatch(
         employment_status = VALUES(employment_status),
         is_active = VALUES(is_active),
         hire_date = VALUES(hire_date),
+        profile_image = COALESCE(VALUES(profile_image), profile_image),
         updated_at = VALUES(updated_at),
         merged_at = CURRENT_TIMESTAMP
     `);
     affected += Number(n);
+  }
+
+  // Face images are large — update with parameterized queries (avoid SQL string escaping).
+  for (const u of users) {
+    if (u.face_image == null && u.profile_image == null) continue;
+    await db.$executeRawUnsafe(
+      `UPDATE ${target}.merged_users
+       SET profile_image = COALESCE(?, profile_image),
+           face_image = COALESCE(?, face_image),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE source_user_id = ?`,
+      u.profile_image,
+      u.face_image,
+      u.id,
+    );
   }
   return affected;
 }

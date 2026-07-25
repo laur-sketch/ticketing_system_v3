@@ -1,6 +1,7 @@
 /** Canonical upstream database names stored on merged_* rows (`source_database`). */
 export const MERGED_SOURCE_DATABASE = {
   HRIS: "hris-dev",
+  HRIS_LIVE: "hris",
   HRIS_DEMO: "hrisdemo",
   TICKETING: "ticketing_system",
   TICKETING_DEMO: "ticketing_system_v3-DEMO",
@@ -12,6 +13,7 @@ export type MergedSourceDatabase =
 /** Common HRIS ETL provenance tags seen in merged_users.source_database. */
 export const HRIS_SOURCE_DATABASE_TAGS = [
   MERGED_SOURCE_DATABASE.HRIS,
+  MERGED_SOURCE_DATABASE.HRIS_LIVE,
   MERGED_SOURCE_DATABASE.HRIS_DEMO,
 ] as const;
 

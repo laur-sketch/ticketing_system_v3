@@ -3,7 +3,7 @@ import { MAX_PROFILE_IMAGE_DATA_URL_CHARS } from "@/lib/profile-image-limits";
 import { prisma } from "@/lib/prisma";
 import { parseProfileImageDataUrl } from "@/lib/session-profile-image";
 import { safeGetServerSession } from "@/lib/server-session";
-const IMAGE_DATA_URL_RE = /^data:image\/(png|jpe?g|webp);base64,/i;
+const IMAGE_DATA_URL_RE = /^data:image\/(png|jpe?g|webp|gif);base64,/i;
 
 export async function GET() {
   const session = await safeGetServerSession();
@@ -12,10 +12,21 @@ export async function GET() {
   }
 
   const email = session.user.email.toLowerCase();
-  const portal = await prisma.portalAccount.findUnique({
-    where: { email },
-    select: { profileImage: true },
-  });
+  const username =
+    typeof session.user.username === "string" ? session.user.username.trim() : "";
+
+  const portal =
+    (await prisma.portalAccount.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: { profileImage: true },
+    })) ??
+    (username
+      ? await prisma.portalAccount.findFirst({
+          where: { username: { equals: username, mode: "insensitive" } },
+          select: { profileImage: true },
+        })
+      : null);
+
   const profileImage = portal?.profileImage?.trim();
   if (!profileImage) {
     return new NextResponse(null, { status: 404 });
@@ -29,7 +40,7 @@ export async function GET() {
     return new NextResponse(new Uint8Array(parsed.bytes), {
       headers: {
         "Content-Type": parsed.mime,
-        "Cache-Control": "private, max-age=300",
+        "Cache-Control": "private, no-store",
       },
     });
   }
@@ -56,11 +67,11 @@ export async function PATCH(req: Request) {
   const imageDataUrlRaw = body.imageDataUrl?.trim();
   if (imageDataUrlRaw) {
     if (!IMAGE_DATA_URL_RE.test(imageDataUrlRaw)) {
-      return NextResponse.json({ error: "Unsupported image format. Use PNG, JPG, or WEBP." }, { status: 400 });
+      return NextResponse.json({ error: "Unsupported image format. Use PNG, JPG, WEBP, or GIF." }, { status: 400 });
     }
     if (imageDataUrlRaw.length > MAX_PROFILE_IMAGE_DATA_URL_CHARS) {
       return NextResponse.json(
-        { error: "Image is too large. Please upload up to 10MB (PNG, JPG, or WEBP)." },
+        { error: "Image is too large. Please upload up to 10MB (PNG, JPG, WEBP, or GIF)." },
         { status: 400 },
       );
     }

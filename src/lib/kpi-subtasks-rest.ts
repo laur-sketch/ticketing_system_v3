@@ -7,6 +7,8 @@ export type SubTaskDto = {
   id: string;
   title: string;
   description: string | null;
+  /** Optional free-text remarks / notes (never required). */
+  remarks: string | null;
   /** Derived board status ("Done" / "Pending"), or the IT-project projectStatus when set. */
   status: string;
   done: boolean;
@@ -28,6 +30,7 @@ export function subTaskToDto(
     id: item.id,
     title: item.title,
     description: item.description?.trim() ? item.description.trim() : null,
+    remarks: item.remarks?.trim() ? item.remarks.trim() : null,
     status: item.projectStatus ?? (done ? "Done" : "Pending"),
     done,
     assignee:

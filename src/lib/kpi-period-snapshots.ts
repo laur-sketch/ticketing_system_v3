@@ -364,9 +364,9 @@ export function snapshotTimeZoneForTaskMetrics(clientTz?: string | null): string
   const fromEnv = process.env.KPI_SNAPSHOT_TZ ?? process.env.REPORT_TZ;
   if (fromEnv) return normalizeTimeZone(fromEnv);
   const client = clientTz?.trim();
-  // Imported snapshots use Asia/Manila keys; UTC is the SSR/hydration default, not the data zone.
+  // Imported snapshots use Asia/Taipei (GMT+8) keys; UTC is the SSR/hydration default, not the data zone.
   if (client && client !== "UTC") return normalizeTimeZone(client);
-  return "Asia/Manila";
+  return "Asia/Taipei";
 }
 
 /** Task metrics checklist rows: admins see all; personnel see their assignments plus org-wide (unassigned) KPIs. */

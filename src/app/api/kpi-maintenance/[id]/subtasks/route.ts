@@ -51,6 +51,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = (await req.json().catch(() => ({}))) as {
     title?: string;
     description?: string | null;
+    remarks?: string | null;
     segmentId?: string | null;
     dueDate?: string | null;
     priority?: string | null;
@@ -63,6 +64,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const result = appendSubKpiItem(row.subKpis, {
     title,
     description: body.description,
+    remarks: body.remarks,
     segmentId: normalized.segmented ? body.segmentId : null,
     dueDate: body.dueDate,
     projectPriority: body.priority,

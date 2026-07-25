@@ -1,4 +1,4 @@
--- HRIS-linked accounts authenticate via merged_users; portal password is optional/legacy.
+-- HRIS-linked accounts authenticate via merged_users. Portal password is optional/legacy.
 ALTER TABLE portal_accounts ALTER COLUMN password_hash DROP NOT NULL;
 
 -- Add columns required by current Prisma schema (post PascalCase rename).

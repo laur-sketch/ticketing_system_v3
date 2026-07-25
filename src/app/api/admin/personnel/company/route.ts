@@ -69,16 +69,47 @@ export async function PATCH(req: Request) {
   `;
 
   // Keep linked portal profile + agent queue aligned when present.
-  const portal = await prismaPrimary.portalAccount.findFirst({
-    where: { mergedSourceUserId },
-    select: { id: true, email: true, name: true, role: true },
-  });
+  // Prefer HRIS-linked portal; fall back to email (merge may lag the link).
+  const emailNeedle = existing[0].email?.trim().toLowerCase() || null;
+  let portal =
+    (await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId, accountStatus: { not: "LEGACY_CONFLICT" } },
+      select: { id: true, email: true, name: true, role: true },
+    })) ??
+    (await prismaPrimary.portalAccount.findFirst({
+      where: { mergedSourceUserId },
+      select: { id: true, email: true, name: true, role: true },
+    })) ??
+    (emailNeedle
+      ? await prismaPrimary.portalAccount.findFirst({
+          where: {
+            email: { equals: emailNeedle, mode: "insensitive" },
+            accountStatus: { not: "LEGACY_CONFLICT" },
+          },
+          select: { id: true, email: true, name: true, role: true },
+        })
+      : null);
 
   if (portal) {
-    await prismaPrimary.portalAccount.update({
-      where: { id: portal.id },
-      data: { staffDesignatedCompanyId: teamId },
-    });
+    try {
+      await prismaPrimary.portalAccount.updateMany({
+        where: { mergedSourceUserId, NOT: { id: portal.id } },
+        data: { mergedSourceUserId: null },
+      });
+      await prismaPrimary.portalAccount.update({
+        where: { id: portal.id },
+        data: {
+          mergedSourceUserId,
+          staffDesignatedCompanyId: teamId,
+        },
+      });
+    } catch (e) {
+      console.warn("company route: could not link mergedSourceUserId", e);
+      await prismaPrimary.portalAccount.update({
+        where: { id: portal.id },
+        data: { staffDesignatedCompanyId: teamId },
+      });
+    }
 
     if (teamId && isStaffPortalRole(portal.role)) {
       try {

@@ -6,6 +6,7 @@ import {
 } from "@/lib/merged-database-sources";
 import { mapHrisToPortalRole } from "@/lib/auth/role-mapping";
 import type { UserRole } from "@/lib/auth";
+import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import { normalizePersonName } from "@/lib/person-name";
 import { normalizePortalRole } from "@/lib/staff-role";
@@ -68,7 +69,8 @@ function matchTeamId(
   companyName: string | null,
   teams: Array<{ id: string; name: string }>,
 ): { teamId: string; teamName: string } {
-  const display = companyName?.trim() || "Unassigned";
+  const roster = resolveRosterCompanyName(companyName);
+  const display = roster ?? (companyName?.trim() || "Unassigned");
   const key = companyKey(display);
   if (!key || key === "unassigned") {
     return { teamId: "company:unassigned", teamName: "Unassigned" };

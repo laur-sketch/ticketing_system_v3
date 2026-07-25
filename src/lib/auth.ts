@@ -6,16 +6,16 @@ import GoogleProvider from "next-auth/providers/google";
 import bcrypt from "bcryptjs";
 import { findPortalByEmailOnly, findPortalByLogin } from "@/lib/portal-account";
 import {
+  findMergedUserByEmail,
   findMergedUserByLogin,
-  verifyMergedPassword,
+  verifyMergedUserPassword,
 } from "@/lib/auth/merged-credentials";
 import { useMergedCredentials } from "@/lib/auth/credentials-source";
 import { ensurePortalFromMergedUser } from "@/lib/auth/ensure-portal-from-merged";
 import { normalizePortalRole } from "@/lib/staff-role";
 import { applyOAuthSignupIntent, readOAuthSignupIntentFromCookies, clearOAuthSignupIntentCookie } from "@/lib/auth/oauth-signup-intent";
 import { syncOAuthUser } from "@/lib/auth/sync-oauth-user";
-import { findMergedUserByEmail } from "@/lib/auth/merged-credentials";
-import { compactSessionPicture } from "@/lib/session-profile-image";
+import { compactSessionPicture, SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
 import { sanitizeCallbackUrl } from "@/lib/session-expiry";
 import {
   SESSION_JWT_MAX_AGE_SECONDS,
@@ -164,7 +164,7 @@ export const authOptions: NextAuthOptions = {
         if (useMergedCredentials()) {
           const merged = await findMergedUserByLogin(loginId);
           if (merged?.passwordHash) {
-            const mergedOk = await verifyMergedPassword(merged.passwordHash, password);
+            const mergedOk = await verifyMergedUserPassword(merged, password);
             if (!mergedOk) return null;
             try {
               const portal = await ensurePortalFromMergedUser(merged);
@@ -179,6 +179,15 @@ export const authOptions: NextAuthOptions = {
               });
             } catch (e) {
               console.error("ensurePortalFromMergedUser failed", e);
+              // Password already verified — allow login via an existing portal row
+              // so auth unique-constraint races never lock users out.
+              const fallback =
+                (await findPortalByLogin(loginId)) ??
+                (merged.email ? await findPortalByEmailOnly(merged.email) : null) ??
+                (merged.username ? await findPortalByLogin(merged.username) : null);
+              if (fallback && fallback.accountStatus !== "LEGACY_CONFLICT") {
+                return sessionFromPortal(fallback);
+              }
               return null;
             }
           }
@@ -211,7 +220,7 @@ export const authOptions: NextAuthOptions = {
 
         const merged = await findMergedUserByLogin(loginId);
         if (merged?.passwordHash) {
-          const mergedOk = await verifyMergedPassword(merged.passwordHash, password);
+          const mergedOk = await verifyMergedUserPassword(merged, password);
           if (mergedOk) {
             try {
               const portal = await ensurePortalFromMergedUser(merged);
@@ -226,6 +235,15 @@ export const authOptions: NextAuthOptions = {
               });
             } catch (e) {
               console.error("ensurePortalFromMergedUser failed", e);
+              // Password already verified — allow login via an existing portal row
+              // so auth unique-constraint races never lock users out.
+              const fallback =
+                (await findPortalByLogin(loginId)) ??
+                (merged.email ? await findPortalByEmailOnly(merged.email) : null) ??
+                (merged.username ? await findPortalByLogin(merged.username) : null);
+              if (fallback && fallback.accountStatus !== "LEGACY_CONFLICT") {
+                return sessionFromPortal(fallback);
+              }
               return null;
             }
           }
@@ -351,9 +369,11 @@ export const authOptions: NextAuthOptions = {
         if (portal) {
           token.sub = portal.id;
           token.name = portal.name;
-          token.picture =
-            compactSessionPicture(portal.profileImage) ??
-            compactSessionPicture(typeof token.picture === "string" ? token.picture : undefined);
+          token.picture = portal.profileImage?.trim()
+            ? SESSION_PROFILE_IMAGE_ROUTE
+            : compactSessionPicture(
+                typeof token.picture === "string" ? token.picture : undefined,
+              );
           token.companyId = portal.companyId;
           token.companyName = portal.companyName;
           token.customerOrgRole = portal.customerOrgRole;
@@ -417,8 +437,10 @@ export const authOptions: NextAuthOptions = {
       if (typeof token.name === "string") {
         session.user.name = token.name;
       }
-      if (typeof token.picture === "string") {
+      if (typeof token.picture === "string" && token.picture.trim()) {
         session.user.image = token.picture;
+      } else {
+        session.user.image = undefined;
       }
       if (typeof token.authProvider === "string") {
         session.user.authProvider = token.authProvider;

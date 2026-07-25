@@ -39,6 +39,8 @@ export type SubKpiItem = {
   title: string;
   /** Optional free-text details shown in the Sub Tasks manager. */
   description?: string | null;
+  /** Optional free-text remarks / notes for the sub-task (never required). */
+  remarks?: string | null;
   done?: boolean;
   assignedAgentId?: string | null;
   assignedAgentName?: string | null;
@@ -107,15 +109,21 @@ export function normalizeOptionalSubKpiYmd(v: unknown): string | null {
 }
 
 const SUB_KPI_DESCRIPTION_MAX = 600;
+const SUB_KPI_REMARKS_MAX = 1000;
 
 function normalizeSubKpiDescription(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, SUB_KPI_DESCRIPTION_MAX) : "";
+}
+
+function normalizeSubKpiRemarks(value: unknown): string {
+  return typeof value === "string" ? value.trim().slice(0, SUB_KPI_REMARKS_MAX) : "";
 }
 
 function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const id = String(r?.id ?? "");
   const title = String(r?.title ?? "");
   const description = normalizeSubKpiDescription(r?.description);
+  const remarks = normalizeSubKpiRemarks(r?.remarks);
   const done = Boolean(r?.done);
   const assignedAgentId = typeof r?.assignedAgentId === "string" ? r.assignedAgentId.trim() : "";
   const assignedAgentName = typeof r?.assignedAgentName === "string" ? r.assignedAgentName.trim() : "";
@@ -171,6 +179,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     id,
     title,
     ...(description ? { description } : {}),
+    ...(remarks ? { remarks } : {}),
     done,
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
@@ -1324,6 +1333,7 @@ export function setSubKpiItemWorkMeta(
     projectPriority?: string | null;
     numericalValue?: number | null;
     numericalTarget?: number | null;
+    remarks?: string | null;
   },
 ): Prisma.InputJsonValue {
   if (subKpiId === PILLAR_ONLY_VIRTUAL_SUBKPI_ID && isPillarOnlyTask(raw)) {
@@ -1386,6 +1396,11 @@ export function setSubKpiItemWorkMeta(
         delete (next as { numericalTarget?: number }).numericalTarget;
       }
     }
+    if (meta.remarks !== undefined) {
+      const remarks = normalizeSubKpiRemarks(meta.remarks);
+      if (remarks) next = { ...next, remarks };
+      else delete (next as { remarks?: string }).remarks;
+    }
     return next;
   };
   if (n.segmented) {
@@ -1420,6 +1435,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
   if (!title) return null;
   const id = typeof it.id === "string" && it.id.trim() ? it.id.trim() : crypto.randomUUID();
   const description = normalizeSubKpiDescription(it.description);
+  const remarks = normalizeSubKpiRemarks(it.remarks);
   const assignedAgentId = typeof it.assignedAgentId === "string" ? it.assignedAgentId.trim() : "";
   const assignedAgentName = typeof it.assignedAgentName === "string" ? it.assignedAgentName.trim() : "";
   const beforeScreenshot = parseTaskScreenshotMetaList(it.beforeScreenshot);
@@ -1440,6 +1456,7 @@ function subKpiFromStructuredItem(it: Record<string, unknown>): SubKpiItem | nul
     id,
     title,
     ...(description ? { description } : {}),
+    ...(remarks ? { remarks } : {}),
     done: Boolean(it.done),
     ...(assignedAgentId ? { assignedAgentId } : {}),
     ...(assignedAgentName ? { assignedAgentName } : {}),
@@ -1486,6 +1503,7 @@ const MIN_SEGMENTED_SUBKPIS = MIN_SEGMENTED_SUBKPIS_FOR_CREATE;
 type SubKpiCreateDraft = string | {
   title?: string | null;
   description?: string | null;
+  remarks?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
   endDate?: string | null;
@@ -1503,6 +1521,7 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
   const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
   if (!title) return null;
   const description = typeof input === "string" ? "" : normalizeSubKpiDescription(input.description);
+  const remarks = typeof input === "string" ? "" : normalizeSubKpiRemarks(input.remarks);
   const projectPriority =
     typeof input === "string" ? null : normalizeSubKpiPriority(input.projectPriority);
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
@@ -1518,6 +1537,7 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
     id: crypto.randomUUID(),
     title,
     ...(description ? { description } : {}),
+    ...(remarks ? { remarks } : {}),
     done: false,
     ...(projectPriority ? { projectPriority } : {}),
     ...(startDate ? { startDate } : {}),
@@ -1662,6 +1682,7 @@ export function validateStructuredUpdate(
 export type AppendSubKpiInput = {
   title: string;
   description?: string | null;
+  remarks?: string | null;
   segmentId?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
@@ -1677,6 +1698,7 @@ export function appendSubKpiItem(
   const item = subKpiFromCreateDraft({
     title: input.title,
     description: input.description,
+    remarks: input.remarks,
     startDate: input.startDate,
     dueDate: input.dueDate,
     projectPriority: input.projectPriority,
@@ -1707,6 +1729,7 @@ export function appendSubKpiItem(
 export type UpdateSubKpiItemInput = {
   title?: string;
   description?: string | null;
+  remarks?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
   projectPriority?: string | null;
@@ -1739,6 +1762,8 @@ export function updateSubKpiItem(
 
   const description =
     input.description === undefined ? undefined : normalizeSubKpiDescription(input.description);
+  const remarks =
+    input.remarks === undefined ? undefined : normalizeSubKpiRemarks(input.remarks);
   const projectPriority =
     input.projectPriority === undefined ? undefined : normalizeSubKpiPriority(input.projectPriority);
   const startDate =
@@ -1777,6 +1802,10 @@ export function updateSubKpiItem(
     if (description !== undefined) {
       if (description) next = { ...next, description };
       else delete (next as { description?: string }).description;
+    }
+    if (remarks !== undefined) {
+      if (remarks) next = { ...next, remarks };
+      else delete (next as { remarks?: string }).remarks;
     }
     if (projectPriority !== undefined) {
       if (projectPriority) next = { ...next, projectPriority };

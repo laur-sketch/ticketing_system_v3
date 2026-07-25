@@ -48,21 +48,33 @@ export async function listRecentMergedClockIns(limit = 50) {
  * `@/lib/merged-duty-status` for bulk status maps.
  */
 export async function listMergedClockInsToday(limit = 500) {
-  const { philippineDayBounds } = await import("@/lib/merged-duty-status");
-  const { start, endExclusive } = philippineDayBounds();
-  return prismaSecondary.mergedAttendanceClockIn.findMany({
-    where: { clockInAt: { gte: start, lt: endExclusive } },
-    orderBy: { clockInAt: "desc" },
-    take: limit,
-    select: {
-      sourceLogId: true,
-      sourceUserId: true,
-      employeeName: true,
-      companyName: true,
-      clockInAt: true,
-      geofenceStatus: true,
-    },
-  });
+  const { philippineMysqlDayBounds } = await import("@/lib/merged-duty-status");
+  const { Prisma } = await import("@prisma/client/secondary");
+  const { start, endExclusive } = philippineMysqlDayBounds();
+  const take = Math.min(2000, Math.max(1, limit));
+  return prismaSecondary.$queryRaw<
+    Array<{
+      sourceLogId: bigint;
+      sourceUserId: bigint;
+      employeeName: string | null;
+      companyName: string | null;
+      clockInAt: Date;
+      geofenceStatus: string | null;
+    }>
+  >`
+    SELECT
+      source_log_id AS sourceLogId,
+      source_user_id AS sourceUserId,
+      employee_name AS employeeName,
+      company_name AS companyName,
+      clock_in_at AS clockInAt,
+      geofence_status AS geofenceStatus
+    FROM merged_attendance_clock_in
+    WHERE clock_in_at >= ${start}
+      AND clock_in_at < ${endExclusive}
+    ORDER BY clock_in_at DESC
+    LIMIT ${Prisma.raw(String(take))}
+  `;
 }
 
 /** Task/KPI rows synced from ticketing_system into mergeddatabase-dev. */

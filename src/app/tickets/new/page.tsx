@@ -498,7 +498,7 @@ export default function NewTicketPage() {
                     maxLength={500}
                     autoComplete="organization"
                     defaultValue={portalCustomer?.companyName?.trim() ?? ""}
-                    placeholder="Type your company / SBU (e.g. AGC, ALI, MCONPINCO)"
+                    placeholder="Type your company / SBU (e.g. AGC, ALI, MCHISI)"
                     className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   />
                 </label>

@@ -6,7 +6,7 @@ export const COMPANY_ROSTER = [
   "APMC",
   "AGOC",
   "AWIC",
-  "MCONPINCO",
+  "MCHISI",
   "EAZYGAZ",
   /** Triage queue for customer text that does not match a roster SBU. */
   "OUTSIDE COMPANY",

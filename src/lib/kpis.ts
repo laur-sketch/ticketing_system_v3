@@ -328,11 +328,11 @@ function emptyTaskMetricsHelpdesk(
 }
 
 /**
- * Reporting timezone — defaults to Asia/Manila so volume trends line up with
+ * Reporting timezone — defaults to Asia/Taipei (GMT+8) so volume trends line up with
  * what operators see locally instead of UTC midnights. Can be overridden with
  * the REPORT_TZ env var.
  */
-const REPORT_TZ = process.env.REPORT_TZ || "Asia/Manila";
+const REPORT_TZ = process.env.REPORT_TZ || "Asia/Taipei";
 
 function kpiRangeToYmd(range: KpiRange): { fromYmd: string; toYmd: string } {
   const ymd = (d: Date) =>

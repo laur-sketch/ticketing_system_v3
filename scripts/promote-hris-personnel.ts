@@ -2,7 +2,7 @@
  * Promote HRIS merged_users onto Personnel roster and move PostgreSQL-only progress
  * onto the matching HRIS-linked agents.
  *
- * - Assign staffDesignatedCompanyId from merged company (MCHISI→MCONPINCO, etc.)
+ * - Assign staffDesignatedCompanyId from merged company (MCONPINCO→MCHISI, etc.)
  * - Ensure Agent rows for every ACTIVE HRIS-linked staff portal
  * - Remap tickets / KPIs / tasks from unlinked PG portal agents → HRIS agents
  *

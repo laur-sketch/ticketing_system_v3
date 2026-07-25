@@ -12,7 +12,7 @@ type Props = {
   variant?: "inline" | "display" | "terminal";
 };
 
-/** Live clock synced to server time, displayed in Asia/Manila (PHT). */
+/** Live clock synced to server time, displayed in GMT+8 (Asia/Taipei). */
 export function PhilippineTimeClock({ className, compact = false, variant = "inline" }: Props) {
   const displayMs = usePhilippineTimeSync();
 

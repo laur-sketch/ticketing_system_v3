@@ -1,4 +1,5 @@
 import { runHrisAttendanceSync } from "@/lib/auth/hris-attendance-sync";
+import { syncHrisPasswordsIntoMerged } from "@/lib/auth/merged-credentials";
 import {
   canonicalProfileFromMerged,
   syncPortalProfile,
@@ -23,6 +24,7 @@ export type HrisSyncResult = {
   failed: number;
   durationMs: number;
   attendanceUpserted?: number;
+  passwordsUpdated?: number;
 };
 
 export async function runHrisPortalSync(): Promise<HrisSyncResult> {
@@ -38,6 +40,14 @@ export async function runHrisPortalSync(): Promise<HrisSyncResult> {
     }
   } catch (e) {
     console.error("[hris-sync-job] attendance sync failed", e);
+  }
+
+  let passwordsUpdated = 0;
+  try {
+    const pw = await syncHrisPasswordsIntoMerged();
+    passwordsUpdated = pw.updated;
+  } catch (e) {
+    console.error("[hris-sync-job] password sync failed", e);
   }
 
   const lastSync = await prismaAuth.user.aggregate({
@@ -85,5 +95,12 @@ export async function runHrisPortalSync(): Promise<HrisSyncResult> {
     }
   }
 
-  return { total: rows.length, synced, failed, durationMs: Date.now() - start, attendanceUpserted };
+  return {
+    total: rows.length,
+    synced,
+    failed,
+    durationMs: Date.now() - start,
+    attendanceUpserted,
+    passwordsUpdated,
+  };
 }

@@ -993,6 +993,7 @@ export function AgentKpiKanbanFlow({
       projectPriority?: string | null;
       numericalValue?: number | null;
       numericalTarget?: number | null;
+      remarks?: string | null;
     },
   ) {
     setBusyId(recordId);
@@ -1329,10 +1330,6 @@ export function AgentKpiKanbanFlow({
     let list = rows;
     if (companyFilterTeamId && companyFilterTeamId !== "ALL") {
       list = list.filter((row) => Boolean(row.assignedAgent?.id));
-      list = list.filter((row) => {
-        const status = statusOf(row);
-        return status === "CURRENT" || status === "DELAYED";
-      });
     }
     return list;
   }, [rows, companyFilterTeamId, nowMs, tz]);
@@ -2082,6 +2079,36 @@ export function AgentKpiKanbanFlow({
           <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-600 dark:text-zinc-400">
             {s.description}
           </p>
+        ) : null}
+        {!pillarOnlyMode ? (
+          canEditWorkDetails ? (
+            <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Remarks
+              <span className="mt-0.5 text-[10px] font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
+                Optional
+              </span>
+              <textarea
+                key={`remarks-${r.id}-${s.id}-${s.remarks ?? ""}`}
+                defaultValue={s.remarks ?? ""}
+                rows={2}
+                disabled={busyId === r.id}
+                placeholder="Optional remarks or notes"
+                onBlur={(e) => {
+                  const next = e.target.value.trim();
+                  const prev = (s.remarks ?? "").trim();
+                  if (next === prev) return;
+                  void patchSubKpiWorkMeta(r.id, s.id, { remarks: next || null });
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="mt-1 resize-y rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </label>
+          ) : s.remarks ? (
+            <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-500 dark:text-zinc-500">
+              <span className="font-semibold text-zinc-600 dark:text-zinc-400">Remarks: </span>
+              {s.remarks}
+            </p>
+          ) : null
         ) : null}
         {needsScreenshotsForCheckbox ? (
           <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">

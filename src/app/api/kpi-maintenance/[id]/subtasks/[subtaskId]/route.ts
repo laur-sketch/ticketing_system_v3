@@ -64,6 +64,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
   const body = (await req.json().catch(() => ({}))) as {
     title?: string;
     description?: string | null;
+    remarks?: string | null;
     dueDate?: string | null;
     priority?: string | null;
     done?: boolean;
@@ -71,11 +72,12 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
   if (
     body.title === undefined &&
     body.description === undefined &&
+    body.remarks === undefined &&
     body.dueDate === undefined &&
     body.priority === undefined
   ) {
     return NextResponse.json(
-      { error: "Provide title, description, dueDate, and/or priority to update a Sub Task." },
+      { error: "Provide title, description, remarks, dueDate, and/or priority to update a Sub Task." },
       { status: 400 },
     );
   }
@@ -83,6 +85,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
   const result = updateSubKpiItem(row.subKpis, subtaskId, {
     ...(body.title !== undefined ? { title: body.title } : {}),
     ...(body.description !== undefined ? { description: body.description ?? null } : {}),
+    ...(body.remarks !== undefined ? { remarks: body.remarks ?? null } : {}),
     ...(body.dueDate !== undefined ? { dueDate: body.dueDate } : {}),
     ...(body.priority !== undefined ? { projectPriority: body.priority ?? null } : {}),
   });

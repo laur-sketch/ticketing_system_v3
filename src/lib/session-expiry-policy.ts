@@ -1,14 +1,15 @@
 import { DateTime } from "luxon";
 import { DEFAULT_TIME_ZONE, normalizeTimeZone } from "@/lib/kpi-recurrence";
 
-/** Idle timeout for Personnel, Customer, and other non-admin staff sessions. */
+/** @deprecated Idle timeout removed — all roles expire at local midnight. Kept for older imports/tests. */
 export const SESSION_IDLE_MAX_AGE_SECONDS = 30 * 60;
 
-/** JWT cookie upper bound (admin sessions may run until midnight). */
+/** JWT cookie upper bound (sessions run until next local midnight). */
 export const SESSION_JWT_MAX_AGE_SECONDS = 24 * 60 * 60;
 
-export function isMidnightLogoutRole(role: string | null | undefined): boolean {
-  return role === "SuperAdmin" || role === "Admin";
+/** All authenticated roles end their session at local midnight. */
+export function isMidnightLogoutRole(_role?: string | null | undefined): boolean {
+  return true;
 }
 
 /** Next local midnight (start of tomorrow) in the app timezone, as Unix seconds. */
@@ -21,6 +22,10 @@ export function nextMidnightUnixSeconds(
   return Math.floor(now.startOf("day").plus({ days: 1 }).toSeconds());
 }
 
+/**
+ * Session lifetime ends at the next Asia/Taipei (GMT+8) midnight for every role.
+ * Recomputed on each JWT refresh so the expiry stays pinned to that midnight.
+ */
 export function computeSessionExpiresAt(args: {
   role: string | null | undefined;
   nowUnixSeconds: number;
@@ -28,26 +33,5 @@ export function computeSessionExpiresAt(args: {
   isNewLogin: boolean;
   timeZone?: string;
 }): number {
-  const { role, nowUnixSeconds, existingSessionExpiresAt, isNewLogin, timeZone } = args;
-
-  if (isMidnightLogoutRole(role)) {
-    if (
-      !isNewLogin &&
-      typeof existingSessionExpiresAt === "number" &&
-      nowUnixSeconds < existingSessionExpiresAt
-    ) {
-      return existingSessionExpiresAt;
-    }
-    return nextMidnightUnixSeconds(nowUnixSeconds, timeZone);
-  }
-
-  if (isNewLogin) {
-    return nowUnixSeconds + SESSION_IDLE_MAX_AGE_SECONDS;
-  }
-
-  if (typeof existingSessionExpiresAt === "number") {
-    return existingSessionExpiresAt;
-  }
-
-  return nowUnixSeconds + SESSION_IDLE_MAX_AGE_SECONDS;
+  return nextMidnightUnixSeconds(args.nowUnixSeconds, args.timeZone);
 }

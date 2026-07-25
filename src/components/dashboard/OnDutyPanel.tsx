@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
 import { cn } from "@/lib/cn";
+import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import type { OnDutyAgentSnapshot } from "@/lib/load-on-duty-snapshot";
 
 type Props = {
@@ -149,7 +150,7 @@ export function OnDutyPanel({
             Personnel activity
           </h3>
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            Status from merged DB clock-in (today, Asia/Manila)
+            Status from merged DB clock-in (today, {DEFAULT_TIME_ZONE} · GMT+8)
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">

@@ -35,13 +35,22 @@ export async function loadStaffAssignmentColorsForAgents(
 
   let emailRows: Array<{ e: string; c: string | null; r: string }> = [];
   try {
+    // Current primary schema (snake_case after PascalCase → snake migration).
     emailRows = await prisma.$queryRaw<Array<{ e: string; c: string | null; r: string }>>(
-      Prisma.sql`SELECT LOWER(TRIM(email)) AS e, "staffAssignmentColor" AS c, role AS r FROM "PortalAccount" WHERE LOWER(TRIM(email)) IN (${Prisma.join(
+      Prisma.sql`SELECT LOWER(TRIM(email)) AS e, staff_assignment_color AS c, role AS r FROM portal_accounts WHERE LOWER(TRIM(email)) IN (${Prisma.join(
         uniqueEmails.map((x) => Prisma.sql`${x}`),
       )})`,
     );
   } catch {
-    return new Map();
+    try {
+      emailRows = await prisma.$queryRaw<Array<{ e: string; c: string | null; r: string }>>(
+        Prisma.sql`SELECT LOWER(TRIM(email)) AS e, "staffAssignmentColor" AS c, role AS r FROM "PortalAccount" WHERE LOWER(TRIM(email)) IN (${Prisma.join(
+          uniqueEmails.map((x) => Prisma.sql`${x}`),
+        )})`,
+      );
+    } catch {
+      emailRows = [];
+    }
   }
   const byEmail = new Map(emailRows.map((r) => [r.e, r]));
 

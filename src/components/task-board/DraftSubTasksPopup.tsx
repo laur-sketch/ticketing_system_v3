@@ -12,12 +12,20 @@ const PRIORITY_OPTIONS = ["High", "Medium", "Low"] as const;
 type DraftForm = {
   title: string;
   description: string;
+  remarks: string;
   dueDate: string;
   priority: string;
   segmentId: string;
 };
 
-const EMPTY: DraftForm = { title: "", description: "", dueDate: "", priority: "", segmentId: "" };
+const EMPTY: DraftForm = {
+  title: "",
+  description: "",
+  remarks: "",
+  dueDate: "",
+  priority: "",
+  segmentId: "",
+};
 
 type DraftSegment = { id: string; label: string; items: SubKpiItem[] };
 
@@ -87,6 +95,7 @@ export function DraftSubTasksPopup({
       id: crypto.randomUUID(),
       title,
       ...(addDraft.description.trim() ? { description: addDraft.description.trim() } : {}),
+      ...(addDraft.remarks.trim() ? { remarks: addDraft.remarks.trim() } : {}),
       ...(!hideDueDate && addDraft.dueDate ? { dueDate: addDraft.dueDate } : {}),
       ...(addDraft.priority === "High" || addDraft.priority === "Medium" || addDraft.priority === "Low"
         ? { projectPriority: addDraft.priority }
@@ -112,6 +121,7 @@ export function DraftSubTasksPopup({
     setEditDraft({
       title: item.title,
       description: item.description ?? "",
+      remarks: item.remarks ?? "",
       dueDate: item.dueDate ?? "",
       priority: item.projectPriority ?? "",
       segmentId:
@@ -133,6 +143,9 @@ export function DraftSubTasksPopup({
         const desc = editDraft.description.trim();
         if (desc) next.description = desc;
         else delete (next as { description?: string }).description;
+        const remarks = editDraft.remarks.trim();
+        if (remarks) next.remarks = remarks;
+        else delete (next as { remarks?: string }).remarks;
         if (!hideDueDate) {
           if (editDraft.dueDate) next.dueDate = editDraft.dueDate;
           else delete (next as { dueDate?: string }).dueDate;
@@ -203,6 +216,19 @@ export function DraftSubTasksPopup({
             rows={2}
             placeholder="Optional details"
             onChange={(e) => patch({ description: e.target.value })}
+            className="mt-1 resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+          />
+        </label>
+        <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500 sm:col-span-2">
+          Remarks
+          <span className="mt-0.5 text-[10px] font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
+            Optional
+          </span>
+          <textarea
+            value={draft.remarks}
+            rows={2}
+            placeholder="Optional remarks or notes"
+            onChange={(e) => patch({ remarks: e.target.value })}
             className="mt-1 resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
           />
         </label>
@@ -383,6 +409,12 @@ export function DraftSubTasksPopup({
                         {s.description ? (
                           <p className="mt-0.5 whitespace-pre-wrap text-xs text-zinc-600 dark:text-zinc-400">
                             {s.description}
+                          </p>
+                        ) : null}
+                        {s.remarks ? (
+                          <p className="mt-0.5 whitespace-pre-wrap text-xs text-zinc-500 dark:text-zinc-500">
+                            <span className="font-semibold text-zinc-600 dark:text-zinc-400">Remarks: </span>
+                            {s.remarks}
                           </p>
                         ) : null}
                       </div>

@@ -13,6 +13,6 @@ export async function GET() {
     iso: dt.toISO(),
     time: formatted.time,
     date: formatted.date,
-    label: "Philippine Standard Time",
+    label: "GMT+8 Taiwan (Asia/Taipei)",
   });
 }

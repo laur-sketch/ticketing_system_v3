@@ -13,7 +13,7 @@ export function compactSessionPicture(value: string | null | undefined): string 
 }
 
 export function parseProfileImageDataUrl(dataUrl: string): { mime: string; bytes: Buffer } | null {
-  const match = dataUrl.match(/^data:(image\/(?:png|jpe?g|webp));base64,([a-z0-9+/=\s]+)$/i);
+  const match = dataUrl.match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([a-z0-9+/=\s]+)$/i);
   if (!match) return null;
   try {
     return { mime: match[1].toLowerCase(), bytes: Buffer.from(match[2], "base64") };

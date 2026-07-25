@@ -49,9 +49,9 @@ export const PATCH_NOTE_SEEDS: PatchNoteSeed[] = [
       ],
       improvements: [
         {
-          title: "AGCTek LaunchPad BETA branding",
+          title: "AGCTek LaunchPad LIVE branding",
           description:
-            "Staff surfaces rebrand to AGCTek LaunchPad BETA with a simpler admin header and sidebar chrome.",
+            "Staff surfaces rebrand to AGCTek LaunchPad LIVE with a simpler admin header and sidebar chrome.",
         },
         {
           title: "On Duty panel clarity",
