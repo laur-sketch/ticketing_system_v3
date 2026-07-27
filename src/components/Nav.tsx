@@ -476,7 +476,7 @@ export function Nav() {
               >
                 <SlidersHorizontal size={15} />
               </Link>
-              <PatchNotesControl visible={showUtilities} />
+              <PatchNotesControl visible={role === "SuperAdmin"} />
             </div>
           </>
         ) : null}
