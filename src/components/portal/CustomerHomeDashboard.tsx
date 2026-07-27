@@ -93,16 +93,24 @@ export async function CustomerHomeDashboard({
               Welcome back, {firstName}.
             </h1>
           </div>
-          {!canCreateTickets ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {canCreateTickets ? null : (
+              <Link
+                href={pendingVerificationHref ?? "/my-tickets"}
+                className="inline-flex items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/25"
+              >
+                {pendingVerificationHref?.includes("/verification")
+                  ? "Confirm or close Issue/Concern"
+                  : "View active Issue/Concern"}
+              </Link>
+            )}
             <Link
-              href={pendingVerificationHref ?? "/my-tickets"}
-              className="inline-flex items-center justify-center rounded-lg border border-amber-500/40 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/25"
+              href="/tickets/new"
+              className="inline-flex items-center justify-center rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-500"
             >
-              {pendingVerificationHref?.includes("/verification")
-                ? "Confirm or close ticket"
-                : "View active ticket"}
+              + Create Request
             </Link>
-          ) : null}
+          </div>
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[1fr,260px]">

@@ -3,11 +3,13 @@ import { requireSession } from "@/lib/access";
 import {
   customerHasPendingResolvedTicket,
   customerPendingTicketHref,
+  issueConcernIntakeLockMessage,
 } from "@/lib/customer-pending-resolution";
 import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 
 /**
- * Whether the signed-in user may open another request as **requestor** (same rules as POST /api/tickets).
+ * Whether the signed-in user may open another **Issue/Concern** ticket as requestor.
+ * Other request types are never locked by this endpoint.
  */
 export async function GET() {
   const session = await requireSession();
@@ -19,8 +21,10 @@ export async function GET() {
   if (!isTicketRequestorRole(role)) {
     return NextResponse.json({
       canCreateTickets: true,
+      canCreateIssueConcern: true,
       authProvider: session.user.authProvider ?? null,
       pendingConfirmation: null,
+      message: null,
     });
   }
 
@@ -29,8 +33,12 @@ export async function GET() {
     ? await customerHasPendingResolvedTicket(email, session.user.authProvider)
     : null;
 
+  const canCreateIssueConcern = !pending;
+
   return NextResponse.json({
-    canCreateTickets: !pending,
+    /** @deprecated Prefer `canCreateIssueConcern` — false only blocks Issue/Concern. */
+    canCreateTickets: canCreateIssueConcern,
+    canCreateIssueConcern,
     authProvider: session.user.authProvider ?? null,
     pendingConfirmation: pending
       ? {
@@ -39,5 +47,6 @@ export async function GET() {
           verificationHref: customerPendingTicketHref(pending),
         }
       : null,
+    message: pending ? issueConcernIntakeLockMessage(pending.ticketNumber) : null,
   });
 }

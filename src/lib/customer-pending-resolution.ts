@@ -3,16 +3,29 @@ import { prisma } from "@/lib/prisma";
 import { resolveTicketContactFields } from "@/lib/ticket-intake-contact";
 
 /**
- * Requestor cannot open another ticket while any ticket tied to them (contact or requestor email)
- * is in one of these states. They may submit again once the ticket is **CLOSED** (or never opened
- * a conflicting one). Unassigned `OPEN` tickets are allowed, but assigned `OPEN` tickets block intake.
+ * Issue/Concern intake lock statuses.
+ *
+ * A requestor cannot create another **ISSUE/CONCERN TICKET** while they already have one that is:
+ * - **Assigned** (has an assignee, still in the open pipeline), or
+ * - **In Progress**, or
+ * - **For Confirmation**.
+ *
+ * Other request types (RFP, IRS, FTR, Job Order, …) are never blocked by this rule.
+ * Unassigned Issue/Concern tickets (waiting on the Assignment Board) do not lock intake.
  */
+export const ISSUE_CONCERN_INTAKE_LOCK_ASSIGNED_STATUSES: TicketStatus[] = [
+  "OPEN",
+  "PENDING_INFO",
+  "ESCALATED",
+];
+
+/** @deprecated Prefer {@link ISSUE_CONCERN_INTAKE_LOCK_ASSIGNED_STATUSES} — kept for callers that listed all lock statuses. */
 export const CUSTOMER_INTAKE_LOCK_STATUSES: TicketStatus[] = [
+  "OPEN",
   "IN_PROGRESS",
   "PENDING_INFO",
   "ESCALATED",
   "FOR_CONFIRMATION",
-  "RESOLVED",
 ];
 
 export function isAwaitingCustomerConfirmation(status: TicketStatus) {
@@ -56,15 +69,23 @@ export function requestorIdentityWhereForEmails(emails: Iterable<string>): Prism
   };
 }
 
-const intakeBlockingWhere = (emails: Iterable<string>): Prisma.TicketWhereInput => ({
+/**
+ * Prisma where: Issue/Concern tickets that block creating another Issue/Concern.
+ * Does not match RFP / IRS / FTR / Job Order.
+ */
+export const intakeBlockingWhere = (emails: Iterable<string>): Prisma.TicketWhereInput => ({
   AND: [
     requestorIdentityWhereForEmails(emails),
+    { requestType: "ISSUE_CONCERN_TICKET" },
     {
       OR: [
-        { status: { in: [...CUSTOMER_INTAKE_LOCK_STATUSES] } },
+        { status: "IN_PROGRESS" },
+        { status: "FOR_CONFIRMATION" },
         {
-          status: { not: "CLOSED" },
-          assignedAgentId: { not: null },
+          AND: [
+            { assignedAgentId: { not: null } },
+            { status: { in: ISSUE_CONCERN_INTAKE_LOCK_ASSIGNED_STATUSES } },
+          ],
         },
       ],
     },
@@ -72,8 +93,8 @@ const intakeBlockingWhere = (emails: Iterable<string>): Prisma.TicketWhereInput 
 });
 
 /**
- * Any ticket for this identity set that blocks a new submission (in progress or awaiting
- * customer confirmation / closure).
+ * Any Issue/Concern ticket for this identity that blocks a new Issue/Concern submission.
+ * Unassigned Issue/Concern tickets and all other request types never block.
  */
 export async function requestorHasIntakeBlockingTicket(identityEmails: Iterable<string>) {
   const normalized = [
@@ -181,3 +202,5 @@ export async function listTicketsAwaitingCustomerConfirmation(
     },
   });
 }
+
+export { issueConcernIntakeLockMessage } from "@/lib/issue-concern-intake-lock";

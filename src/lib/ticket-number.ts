@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 
 export async function nextTicketNumber(): Promise<string> {
   const year = new Date().getUTCFullYear();
-  const prefix = `TKT-${year}-`;
+  const prefix = `REQ-${year}-`;
   const latest = await prisma.ticket.findFirst({
     where: { ticketNumber: { startsWith: prefix } },
     orderBy: { ticketNumber: "desc" },

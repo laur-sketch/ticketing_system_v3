@@ -90,21 +90,22 @@ export async function StaffHomeDashboard({
               Welcome back, {firstName}.
             </h1>
           </div>
-          {canCreateTickets ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {!canCreateTickets && pendingVerificationHref ? (
+              <Link
+                href={pendingVerificationHref}
+                className="inline-flex items-center justify-center rounded-xl border border-amber-500/60 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-500/25 dark:text-amber-200"
+              >
+                View active Issue/Concern
+              </Link>
+            ) : null}
             <Link
               href="/tickets/new"
               className="inline-flex items-center justify-center rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-500"
             >
               + Create Request
             </Link>
-          ) : (
-            <Link
-              href={pendingVerificationHref ?? "/my-tickets"}
-              className="inline-flex items-center justify-center rounded-xl border border-amber-500/60 bg-amber-500/15 px-4 py-2.5 text-sm font-semibold text-amber-950 transition hover:bg-amber-500/25 dark:text-amber-200"
-            >
-              Confirm resolved ticket
-            </Link>
-          )}
+          </div>
         </section>
 
         <section className="grid gap-5 md:gap-6 lg:grid-cols-[1fr,280px]">

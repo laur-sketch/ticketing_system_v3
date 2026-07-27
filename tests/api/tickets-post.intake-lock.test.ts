@@ -1,12 +1,12 @@
 /**
- * Intake lock: POST /api/tickets returns 409 when the requestor already has a ticket
- * in CUSTOMER_INTAKE_LOCK_STATUSES (see `src/lib/customer-pending-resolution.ts`).
+ * Intake lock: POST /api/tickets returns 409 when the requestor already has an
+ * **assigned** non-CLOSED ticket (see `src/lib/customer-pending-resolution.ts`).
+ * Unassigned tickets do not block a new submission.
  *
  * Manual smoke checklist (customer portal, signed in as requestor A):
- * 1. Create ticket T1 as A; have staff move T1 to IN_PROGRESS → A opens /tickets/new → submit blocked (409 / UI banner); bell shows PENDING_INTAKE_LOCK linking to T1.
- * 2. Move T1 to FOR_CONFIRMATION (or RESOLVED pending verify) → still blocked; link goes to /tickets/{id}/verification where applicable.
- * 3. Close T1 (customer confirms / staff closes per your workflow) → A can submit T2 successfully.
- * 4. Optional: ticket OPEN only → A can open a second ticket (OPEN is not a lock status).
+ * 1. Create ticket T1 as A; have staff assign T1 → A opens /tickets/new → submit blocked (409 / UI banner).
+ * 2. Unassign T1 (e.g. between RFP approval steps) → A can submit a new request.
+ * 3. Close T1 while assigned → A can submit again.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -74,7 +74,7 @@ describe("POST /api/tickets intake lock", () => {
     const updatedAt = new Date("2026-01-15T12:00:00.000Z");
     requestorHasIntakeBlockingTicketMock.mockResolvedValue({
       id: "ticket-blocking-1",
-      ticketNumber: "TKT-1001",
+      ticketNumber: "REQ-1001",
       updatedAt,
       status: "IN_PROGRESS",
     });
@@ -90,9 +90,9 @@ describe("POST /api/tickets intake lock", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.error).toBeTypeOf("string");
-    expect(String(body.error)).toContain("assigned or active ticket");
+    expect(String(body.error)).toContain("assigned active ticket");
     expect(body.pendingTicketId).toBe("ticket-blocking-1");
-    expect(body.pendingTicketNumber).toBe("TKT-1001");
+    expect(body.pendingTicketNumber).toBe("REQ-1001");
 
     expect(requestorHasIntakeBlockingTicketMock).toHaveBeenCalledTimes(1);
     expect(requestorHasIntakeBlockingTicketMock).toHaveBeenCalledWith(["requestor@example.test"]);
@@ -112,7 +112,7 @@ describe("POST /api/tickets intake lock", () => {
 
     requestorHasIntakeBlockingTicketMock.mockResolvedValue({
       id: "ticket-blocking-2",
-      ticketNumber: "TKT-2002",
+      ticketNumber: "REQ-2002",
       updatedAt: new Date(),
       status: "FOR_CONFIRMATION",
     });
@@ -128,6 +128,6 @@ describe("POST /api/tickets intake lock", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.pendingTicketId).toBe("ticket-blocking-2");
-    expect(String(body.error)).toContain("assigned or active ticket");
+    expect(String(body.error)).toContain("assigned active ticket");
   });
 });

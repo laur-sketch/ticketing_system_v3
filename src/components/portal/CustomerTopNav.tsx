@@ -207,21 +207,15 @@ export function CustomerTopNav() {
         </div>
         <div className="flex flex-wrap items-center justify-start gap-2 lg:min-w-0 lg:flex-1">
           <Link
-            href={
-              intake.canCreateTickets
-                ? "/tickets/new"
-                : (intake.pendingConfirmation?.verificationHref ?? "/my-tickets")
-            }
+            href="/tickets/new"
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold shadow-sm md:hidden",
-              intake.canCreateTickets
-                ? "bg-orange-600 text-white hover:bg-orange-500"
-                : "border border-amber-500/50 bg-amber-500/15 text-amber-950 hover:bg-amber-500/25 dark:text-amber-100",
+              "bg-orange-600 text-white hover:bg-orange-500",
             )}
             title={
               intake.canCreateTickets
                 ? "Submit a new request"
-                : "You have a ticket in progress or awaiting confirmation. Finish it before submitting a new request."
+                : "Issue/Concern may be locked — you can still submit other request types"
             }
           >
             <Plus className="size-4" />

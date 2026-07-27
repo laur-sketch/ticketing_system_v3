@@ -152,6 +152,8 @@ type KpiRecord = {
   enableSubtaskAssignees?: boolean;
   /** True when this card has a linked Request for Travel Order. */
   isFieldAssignment?: boolean;
+  /** Job Orders linked to this Task Board project. */
+  linkedJobOrders?: Array<{ id: string; ticketNumber: string; title: string }>;
 };
 
 function isFieldAssignmentRecord(r: KpiRecord): boolean {
@@ -305,6 +307,7 @@ export function AgentKpiKanbanFlow({
   currentCompanyFilter = "ALL",
   showAdminTaskManagement = false,
   focusTaskId = null,
+  fromJobOrderTicketId = null,
 }: {
   /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
   companyFilterTeamId?: string | null;
@@ -314,10 +317,12 @@ export function AgentKpiKanbanFlow({
   companyFilterOptions?: CompanyFilterOption[];
   /** Current company query value. */
   currentCompanyFilter?: string;
-  /** SuperAdmin / Admin: KPI definition form (moved from Ticket Metrics and Reports). */
+  /** SuperAdmin / Admin: KPI definition form (moved from Request Metrics and Reports). */
   showAdminTaskManagement?: boolean;
   /** Open this task's details once rows are loaded (e.g. notification deep link). */
   focusTaskId?: string | null;
+  /** Open Task management prefilled from a Job Order. */
+  fromJobOrderTicketId?: string | null;
 } = {}) {
   const [rows, setRows] = useState<KpiRecord[]>([]);
   const [agents, setAgents] = useState<AssignableAgent[]>([]);
@@ -345,6 +350,9 @@ export function AgentKpiKanbanFlow({
     candidates: { id: string; title: string }[];
   } | null>(null);
   const [taskManagementOpen, setTaskManagementOpen] = useState(false);
+  const [fromJobOrderId, setFromJobOrderId] = useState<string | null>(
+    fromJobOrderTicketId?.trim() || null,
+  );
   const [assignmentBoardOpen, setAssignmentBoardOpen] = useState(false);
   const [travelOrdersOpen, setTravelOrdersOpen] = useState(false);
   const [createTravelOrderOpen, setCreateTravelOrderOpen] = useState(false);
@@ -497,6 +505,14 @@ export function AgentKpiKanbanFlow({
       setScheduleDraft(null);
     }
   }, [focusTaskId, rows, showAdminTaskManagement]);
+
+  useEffect(() => {
+    const joId = fromJobOrderTicketId?.trim() || null;
+    setFromJobOrderId(joId);
+    if (joId && showAdminTaskManagement) {
+      setTaskManagementOpen(true);
+    }
+  }, [fromJobOrderTicketId, showAdminTaskManagement]);
 
   function openActiveTask(taskId: string) {
     setActiveTaskId(taskId);
@@ -3378,6 +3394,23 @@ export function AgentKpiKanbanFlow({
                 Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"} ·{" "}
                 {taskTypeBadgeLabel(activeTask, itProject)}
               </p>
+              {(activeTask.linkedJobOrders?.length ?? 0) > 0 ? (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                    Linked J.O.
+                  </span>
+                  {activeTask.linkedJobOrders!.map((jo) => (
+                    <a
+                      key={jo.id}
+                      href={`/agent/tickets/${jo.id}`}
+                      className="inline-flex rounded-md border border-orange-400/45 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold text-orange-900 hover:underline dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {jo.ticketNumber}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="flex shrink-0 items-start gap-2">
               {showAdminTaskManagement ? (
@@ -3816,6 +3849,12 @@ export function AgentKpiKanbanFlow({
                                   </p>
                                 </>
                               )}
+                              {(r.linkedJobOrders?.length ?? 0) > 0 ? (
+                                <p className="mt-1 truncate text-[11px] font-medium text-orange-800 dark:text-orange-200">
+                                  J.O.{" "}
+                                  {r.linkedJobOrders!.map((jo) => jo.ticketNumber).join(", ")}
+                                </p>
+                              ) : null}
                             </div>
                             <span className="rounded-full border border-zinc-200 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-200">
                               {taskTypeBadgeLabel(r, itProject)}
@@ -4020,7 +4059,15 @@ export function AgentKpiKanbanFlow({
         onClose={() => setTaskManagementOpen(false)}
         size="xl"
       >
-        <KpiDefinitionConsole embedded onMaintenanceRecordsUpdated={() => void load()} />
+        <KpiDefinitionConsole
+          embedded
+          fromJobOrderTicketId={fromJobOrderId}
+          onFromJobOrderConsumed={() => {
+            setFromJobOrderId(null);
+            void load();
+          }}
+          onMaintenanceRecordsUpdated={() => void load()}
+        />
       </TaskBoardPopup>
       <TaskBoardPopup
         open={assignmentBoardOpen}

@@ -8,12 +8,12 @@ import { Tabs } from "@/components/ui/vercel-tabs";
 const adminTabs = [
   { id: "assignment", label: "Assignment Board" },
   { id: "company", label: "Company Board" },
-  { id: "ticket", label: "Ticket Board" },
+  { id: "ticket", label: "Request Board" },
   { id: "my-requests", label: "My requests" },
 ];
 
 const personnelTabs = [
-  { id: "ticket", label: "Ticket Board" },
+  { id: "ticket", label: "Request Board" },
   { id: "my-requests", label: "My requests" },
 ];
 

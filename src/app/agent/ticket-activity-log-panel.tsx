@@ -30,7 +30,7 @@ export function TicketActivityLogPanel({
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800">
         <div>
           <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-zinc-700 dark:text-zinc-300">
-            Ticket activity log
+            Request activity log
           </h2>
         </div>
       </div>

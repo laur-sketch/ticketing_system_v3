@@ -47,6 +47,7 @@ import {
   parseItProjectSubKpis,
 } from "@/lib/it-project-subkpis";
 import { helpdeskSupportPercent } from "@/lib/kpis";
+import { OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { normalizePersonName } from "@/lib/person-name";
 import { DEFAULT_TIME_ZONE, normalizeTimeZone, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
@@ -659,6 +660,7 @@ async function loadTicketCountsByAgent(
   start: Date,
   end: Date,
 ): Promise<Map<string, { closed: number; pending: number }>> {
+  // Same helpdesk pending rules as Issue/Concern — all request types, no requestType filter.
   const [closedByAgent, pendingByAgent] = await Promise.all([
     prismaPrimary.ticket.groupBy({
       by: ["assignedAgentId"],
@@ -672,7 +674,7 @@ async function loadTicketCountsByAgent(
       by: ["assignedAgentId"],
       where: {
         assignedAgentId: { not: null },
-        status: { in: ["OPEN", "IN_PROGRESS"] },
+        status: { in: OPEN_PIPELINE_STATUSES },
       },
       _count: true,
     }),

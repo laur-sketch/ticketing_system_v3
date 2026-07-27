@@ -99,8 +99,8 @@ export default async function ReportsPage() {
           <ReportCard label="Transfer pending" value={String(transferPending)} />
           <ReportCard label="Resolved in last 24 hours" value={resolvedN} />
           <ReportCard label="Open priority bands" value={openBands} />
-          <ReportCard label="30-day ticket volume" value={String(kpis.operational.ticketVolume)} />
-          <ReportCard label="Open backlog" value={String(kpis.operational.backlogSize)} />
+          <ReportCard label="30-day request volume" value={String(kpis.operational.ticketVolume)} />
+          <ReportCard label="Active requests" value={String(kpis.operational.backlogSize)} />
           <ReportCard label="For confirmation" value={String(kpis.operational.forConfirmationSize)} />
           <ReportCard label="Resolution SLA compliance" value={kpis.sla.resolutionComplianceRate === null ? "—" : `${Math.round(kpis.sla.resolutionComplianceRate * 100)}%`} />
         </section>
@@ -110,7 +110,7 @@ export default async function ReportsPage() {
             <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Open queue by priority</h2>
             <div className="mt-4 space-y-2">
               {openByPriority.length === 0 ? (
-                <p className="text-sm text-zinc-500">No open tickets across priorities.</p>
+                <p className="text-sm text-zinc-500">No open requests across priorities.</p>
               ) : (
                 openByPriority.map((row) => (
                   <div key={row.priority} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">
@@ -164,7 +164,7 @@ export default async function ReportsPage() {
             <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500">Recent closures</h2>
             <div className="mt-4 space-y-2">
               {recentClosed.length === 0 ? (
-                <p className="text-sm text-zinc-500">No recently closed tickets.</p>
+                <p className="text-sm text-zinc-500">No recently closed requests.</p>
               ) : (
                 recentClosed.map((row) => (
                   <div key={row.id} className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">

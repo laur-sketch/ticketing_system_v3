@@ -199,7 +199,14 @@ export async function GET() {
     }),
     prisma.taskItem.findMany({
       orderBy: { updatedAt: "desc" },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        status: true,
+        priority: true,
+        createdAt: true,
+        dueAt: true,
         assignedAgent: { select: { id: true, name: true, email: true } },
       },
     }),

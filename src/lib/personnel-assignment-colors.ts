@@ -1,8 +1,8 @@
 import type { CSSProperties } from "react";
 
 /**
- * Registry keys for `PortalAccount.staffAssignmentColor`.
- * Actual fill colors come from CSS variables in `globals.css` (saturated in light and dark).
+ * Legacy named keys for `PortalAccount.staffAssignmentColor`.
+ * New assignments prefer free-form hex (`#RRGGBB`). Named keys remain readable for existing rows.
  */
 export const PERSONNEL_ASSIGNMENT_COLORS = [
   { key: "RED", label: "Red" },
@@ -18,30 +18,7 @@ export type PersonnelAssignmentColorKey = (typeof PERSONNEL_ASSIGNMENT_COLORS)[n
 
 const KEY_SET = new Set<string>(PERSONNEL_ASSIGNMENT_COLORS.map((c) => c.key));
 
-export function isPersonnelAssignmentColorKey(
-  s: string | null | undefined,
-): s is PersonnelAssignmentColorKey {
-  return s != null && s !== "" && KEY_SET.has(s);
-}
-
-/** CSS custom properties from `globals.css`. */
-export function personnelAssignmentCssVars(key: string | null | undefined): {
-  bg: string;
-  fg: string;
-} | null {
-  if (!isPersonnelAssignmentColorKey(key)) return null;
-  const k = key.toLowerCase();
-  return {
-    bg: `var(--personnel-assign-${k})`,
-    fg: `var(--personnel-assign-${k}-fg)`,
-  };
-}
-
-/**
- * Resolved hex for native `<option>` / select chrome where CSS variables are unreliable.
- * Same saturated palette as `globals.css`. The `theme` parameter is ignored (kept for call sites).
- * Prefer {@link personnelAssignmentCssVars} for chips and highlights.
- */
+/** Resolved hex for legacy named keys (same palette as `globals.css`). */
 const HEX_SATURATED: Record<PersonnelAssignmentColorKey, string> = {
   RED: "#e53935",
   ORANGE: "#fb8c00",
@@ -52,16 +29,91 @@ const HEX_SATURATED: Record<PersonnelAssignmentColorKey, string> = {
   VIOLET: "#8e24aa",
 };
 
+const HEX6 = /^#([0-9a-f]{6})$/i;
+const HEX3 = /^#([0-9a-f]{3})$/i;
+
+export function isPersonnelAssignmentColorKey(
+  s: string | null | undefined,
+): s is PersonnelAssignmentColorKey {
+  return s != null && s !== "" && KEY_SET.has(s);
+}
+
+/** Expand `#RGB` → `#RRGGBB` and normalize casing. */
+export function normalizeAssignmentColorHex(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  let s = String(raw).trim();
+  if (!s) return null;
+  if (!s.startsWith("#")) s = `#${s}`;
+  const m6 = HEX6.exec(s);
+  if (m6) return `#${m6[1]!.toLowerCase()}`;
+  const m3 = HEX3.exec(s);
+  if (m3) {
+    const [r, g, b] = m3[1]!.toLowerCase().split("");
+    return `#${r}${r}${g}${g}${b}${b}`;
+  }
+  return null;
+}
+
+/**
+ * Normalize a stored or typed assignment color for persistence.
+ * Accepts legacy keys (RED…) or hex (`#f00`, `#ff0000`). Returns `#rrggbb` or null.
+ */
+export function normalizePersonnelAssignmentColor(
+  raw: string | null | undefined,
+): string | null {
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const asKey = trimmed.toUpperCase();
+  if (isPersonnelAssignmentColorKey(asKey)) {
+    return HEX_SATURATED[asKey];
+  }
+  return normalizeAssignmentColorHex(trimmed);
+}
+
+export function isValidPersonnelAssignmentColor(raw: string | null | undefined): boolean {
+  if (raw == null || String(raw).trim() === "") return true; // empty clears
+  return normalizePersonnelAssignmentColor(raw) != null;
+}
+
+/** CSS custom properties from `globals.css`, or direct hex when a free-form code is stored. */
+export function personnelAssignmentCssVars(key: string | null | undefined): {
+  bg: string;
+  fg: string;
+} | null {
+  const hex = personnelAssignmentHex(key);
+  if (!hex) return null;
+  if (isPersonnelAssignmentColorKey(key)) {
+    const k = key.toLowerCase();
+    return {
+      bg: `var(--personnel-assign-${k})`,
+      fg: `var(--personnel-assign-${k}-fg)`,
+    };
+  }
+  return {
+    bg: hex,
+    fg: personnelAssignmentContrastText(hex),
+  };
+}
+
+/**
+ * Resolved hex for chips / inputs. Supports legacy named keys and free-form hex.
+ * The unused `theme` parameter is kept for call-site compatibility where present.
+ */
 export function personnelAssignmentHex(key: string | null | undefined): string | null {
-  if (!isPersonnelAssignmentColorKey(key)) return null;
-  return HEX_SATURATED[key];
+  if (key == null || String(key).trim() === "") return null;
+  const trimmed = String(key).trim();
+  if (isPersonnelAssignmentColorKey(trimmed.toUpperCase())) {
+    return HEX_SATURATED[trimmed.toUpperCase() as PersonnelAssignmentColorKey];
+  }
+  return normalizeAssignmentColorHex(trimmed);
 }
 
 /** Readable text on top of a solid `hex` chip (used with {@link personnelAssignmentHex}). */
 export function personnelAssignmentContrastText(hex: string): string {
-  const raw = hex.trim();
-  const normalized = raw.startsWith("#") ? raw : `#${raw}`;
-  const m = /^#([0-9a-f]{6})$/i.exec(normalized);
+  const normalized = normalizeAssignmentColorHex(hex);
+  if (!normalized) return "#fafafa";
+  const m = HEX6.exec(normalized);
   if (!m) return "#fafafa";
   const n = (s: string) => parseInt(s, 16) / 255;
   const r = n(m[1].slice(0, 2));
@@ -72,14 +124,24 @@ export function personnelAssignmentContrastText(hex: string): string {
   return L > 0.42 ? "#0f172a" : "#fafafa";
 }
 
-/** Full-surface highlight for ticket rows/cards (tint from assignment CSS variables). */
+/** Full-surface highlight for ticket rows/cards (tint from assignment color). */
 export function personnelAssigneeHighlightStyleFromKey(
   key: string | null | undefined,
 ): CSSProperties | undefined {
-  if (!isPersonnelAssignmentColorKey(key)) return undefined;
-  const v = `var(--personnel-assign-${key.toLowerCase()})`;
-  const wash = `color-mix(in srgb, ${v} 48%, transparent)`;
-  const frame = `color-mix(in srgb, ${v} 76%, transparent)`;
+  const hex = personnelAssignmentHex(key);
+  if (!hex) return undefined;
+  if (isPersonnelAssignmentColorKey(key)) {
+    const v = `var(--personnel-assign-${key.toLowerCase()})`;
+    const wash = `color-mix(in srgb, ${v} 48%, transparent)`;
+    const frame = `color-mix(in srgb, ${v} 76%, transparent)`;
+    return {
+      backgroundImage: `linear-gradient(${wash}, ${wash})`,
+      outline: `1px solid ${frame}`,
+      outlineOffset: -1,
+    };
+  }
+  const wash = `color-mix(in srgb, ${hex} 48%, transparent)`;
+  const frame = `color-mix(in srgb, ${hex} 76%, transparent)`;
   return {
     backgroundImage: `linear-gradient(${wash}, ${wash})`,
     outline: `1px solid ${frame}`,
@@ -87,7 +149,7 @@ export function personnelAssigneeHighlightStyleFromKey(
   };
 }
 
-/** @deprecated Use {@link personnelAssigneeHighlightStyleFromKey} with a registry key. */
+/** @deprecated Use {@link personnelAssigneeHighlightStyleFromKey}. */
 export function personnelAssigneeHighlightStyle(hex: string | null): CSSProperties | undefined {
   if (!hex) return undefined;
   const wash = `color-mix(in srgb, ${hex} 48%, transparent)`;

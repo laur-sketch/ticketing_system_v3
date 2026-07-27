@@ -9,7 +9,9 @@ import {
   resolveHrisSourceTags,
   resolveSecondaryDatabaseName,
 } from "@/lib/merged-database-sources";
-import { isPersonnelAssignmentColorKey } from "@/lib/personnel-assignment-colors";
+import {
+  normalizePersonnelAssignmentColor,
+} from "@/lib/personnel-assignment-colors";
 import {
   buildCanonicalMergedIdMap,
   canonicalMergedId,
@@ -48,11 +50,14 @@ export async function PATCH(req: Request) {
 
   let colorNext: string | null = null;
   if (body.staffAssignmentColor != null && String(body.staffAssignmentColor).trim() !== "") {
-    const key = String(body.staffAssignmentColor).trim().toUpperCase();
-    if (!isPersonnelAssignmentColorKey(key)) {
-      return NextResponse.json({ error: "Invalid assignment color." }, { status: 400 });
+    const normalized = normalizePersonnelAssignmentColor(String(body.staffAssignmentColor));
+    if (!normalized) {
+      return NextResponse.json(
+        { error: "Invalid assignment color. Use a hex code like #FF5733." },
+        { status: 400 },
+      );
     }
-    colorNext = key;
+    colorNext = normalized;
   }
 
   const mergedRows = await prismaSecondary.$queryRaw<

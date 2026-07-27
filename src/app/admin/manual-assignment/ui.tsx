@@ -6,9 +6,15 @@ import { ChevronDown, GripVertical } from "lucide-react";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
+import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
 import { cn } from "@/lib/cn";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import { BRAND_TITLE } from "@/lib/brand";
+import { extractPaymentAccountTitle } from "@/lib/request-for-payment";
+import { parseItemRequisitionDescription } from "@/lib/item-requisition";
+import { extractFundTransferPreview } from "@/lib/fund-transfer-request";
+import { extractJobOrderPreview } from "@/lib/job-order";
+import { requestTypeAcronym, requestTypeLabel } from "@/lib/request-types";
 import {
   cleanIssuePreview,
   extractDepartmentFromDescription,
@@ -23,7 +29,30 @@ type TicketCard = {
   description: string;
   priority: string;
   updatedAt: string;
+  /** Intake request type id — same as ticket board (ISSUE_CONCERN_TICKET, REQUEST_FOR_PAYMENT, …). */
+  requestType?: string | null;
 };
+
+/** Match ticket-board card title (RFP → account title; IRS → purpose; otherwise cleaned description/title). */
+function assignmentCardPreview(ticket: TicketCard): string {
+  if (ticket.requestType === "REQUEST_FOR_PAYMENT") {
+    const accountTitle = extractPaymentAccountTitle(ticket.description);
+    if (accountTitle) return accountTitle;
+  }
+  if (ticket.requestType === "ITEM_REQUISITION_SLIP") {
+    const purpose = parseItemRequisitionDescription(ticket.description)?.purposeOfRequest?.trim();
+    if (purpose) return purpose.slice(0, 120);
+  }
+  if (ticket.requestType === "FUND_TRANSFER_REQUEST") {
+    const preview = extractFundTransferPreview(ticket.description);
+    if (preview) return preview;
+  }
+  if (ticket.requestType === "JOB_ORDER") {
+    const preview = extractJobOrderPreview(ticket.description);
+    if (preview) return preview;
+  }
+  return cleanIssuePreview(ticket.description || ticket.title);
+}
 
 type PersonnelColumn = {
   agentId: string;
@@ -58,6 +87,17 @@ function sortPersonnelByRole(list: PersonnelColumn[]): PersonnelColumn[] {
     return a.name.localeCompare(b.name);
   });
 }
+
+function matchesAssignmentPersonnelSearch(col: PersonnelColumn, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const name = (col.name ?? "").trim().toLowerCase();
+  const role = (col.role ?? "").trim().toLowerCase();
+  const team = (col.teamLabel ?? "").trim().toLowerCase();
+  return name.includes(q) || role.includes(q) || team.includes(q);
+}
+
+const personnelSearchInputClass = cn(authInputClass, "min-w-[12rem] py-1.5 text-xs sm:min-w-[14rem]");
 
 function assignmentCompanyDropTarget(companyId: string): string {
   return `${ASSIGNMENT_COMPANY_DROP_PREFIX}${companyId}`;
@@ -100,6 +140,7 @@ export function ManualAssignmentBoard({
   const [openCompanyId, setOpenCompanyId] = useState<string | null>(null);
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [companyFilter, setCompanyFilter] = useState<string>(ASSIGNMENT_COMPANY_ALL);
+  const [personnelSearchQuery, setPersonnelSearchQuery] = useState("");
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -107,6 +148,12 @@ export function ManualAssignmentBoard({
       setColumns(personnel);
     });
   }, [unassigned, personnel]);
+
+  const filteredColumns = useMemo(
+    () => columns.filter((col) => matchesAssignmentPersonnelSearch(col, personnelSearchQuery)),
+    [columns, personnelSearchQuery],
+  );
+  const personnelSearchActive = Boolean(personnelSearchQuery.trim());
 
   async function assign(ticket: TicketCard, agentId: string) {
     setBusyTicketId(ticket.id);
@@ -119,7 +166,7 @@ export function ManualAssignmentBoard({
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        setError(data.error ?? "Could not assign ticket.");
+        setError(data.error ?? "Could not assign request.");
         return;
       }
       setCards((prev) => prev.filter((t) => t.id !== ticket.id));
@@ -175,7 +222,7 @@ export function ManualAssignmentBoard({
 
   const columnsByCompany = useMemo(() => {
     const grouped = new Map<string, PersonnelColumn[]>();
-    for (const col of columns) {
+    for (const col of filteredColumns) {
       const key = personnelCompanyKey(col);
       const list = grouped.get(key);
       if (list) list.push(col);
@@ -185,7 +232,7 @@ export function ManualAssignmentBoard({
       grouped.set(key, sortPersonnelByRole(list));
     }
     return grouped;
-  }, [columns]);
+  }, [filteredColumns]);
 
   const companyOptions = useMemo(() => {
     const nameByCompany = new Map<string, string>();
@@ -229,13 +276,22 @@ export function ManualAssignmentBoard({
   }
 
   function renderTicketCard(t: TicketCard, assigneeColorKey?: string | null, compact?: boolean) {
+    const preview = assignmentCardPreview(t);
     const inner = (
       <>
         <div className="flex items-center justify-between gap-2">
           <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">{t.ticketNumber}</p>
-          <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", priorityPillClass(t.priority))}>
-            {t.priority}
-          </span>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <span
+              className="rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+              title={requestTypeLabel(t.requestType)}
+            >
+              {requestTypeAcronym(t.requestType)}
+            </span>
+            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold uppercase", priorityPillClass(t.priority))}>
+              {t.priority}
+            </span>
+          </div>
         </div>
         <Link
           href={`/agent/tickets/${t.id}`}
@@ -244,7 +300,7 @@ export function ManualAssignmentBoard({
             compact ? "text-sm" : "text-base line-clamp-2",
           )}
         >
-          {cleanIssuePreview(t.description || t.title)}
+          {preview}
         </Link>
         {extractDepartmentFromDescription(t.description) ? (
           <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">
@@ -313,14 +369,14 @@ export function ManualAssignmentBoard({
             <div className="max-h-[38dvh] space-y-2 overflow-y-auto overflow-x-hidden pr-1 sm:max-h-[70vh]">
               {cards.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-                  No unassigned tickets.
+                  No unassigned requests.
                 </div>
               ) : (
                 cards.map((t) => (
                   <div
                     key={t.id}
                     {...laneDrag.getCardPointerProps(t.id, {
-                      getLabel: () => `${t.ticketNumber} · ${cleanIssuePreview(t.description || t.title).slice(0, 72)}`,
+                      getLabel: () => `${t.ticketNumber} · ${assignmentCardPreview(t).slice(0, 72)}`,
                     })}
                     className={cn(
                       "touch-pan-y select-none rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 shadow-sm dark:border-zinc-700 dark:bg-[#101a2f]",
@@ -345,7 +401,7 @@ export function ManualAssignmentBoard({
                   Personnel group
                 </h2>
                 <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Tap a company to expand, or drag a ticket over it to reveal admins and personnel.
+                  Tap a company to expand, or drag a request over it to reveal admins and personnel.
                 </p>
               </div>
               {showCompanyFilter && companyOptions.length > 0 ? (
@@ -371,9 +427,33 @@ export function ManualAssignmentBoard({
               ) : null}
             </div>
 
+            <div className="mb-3 flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800/90 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-end">
+              <label className="flex min-w-[12rem] flex-1 flex-col gap-1 sm:max-w-xs">
+                <span className={authLabelClass}>Search by name</span>
+                <input
+                  type="search"
+                  value={personnelSearchQuery}
+                  onChange={(e) => setPersonnelSearchQuery(e.target.value)}
+                  placeholder="Name…"
+                  className={personnelSearchInputClass}
+                  autoComplete="off"
+                  aria-label="Search personnel by name"
+                />
+              </label>
+              <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
+                {personnelSearchActive
+                  ? `Showing ${filteredColumns.length} of ${columns.length} user${columns.length === 1 ? "" : "s"}`
+                  : `${columns.length} user${columns.length === 1 ? "" : "s"}`}
+              </p>
+            </div>
+
             {columns.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
                 No personnel — designate staff to a company/SBU in Personnel (Portal Accounts).
+              </div>
+            ) : filteredColumns.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                No users match “{personnelSearchQuery.trim()}”.
               </div>
             ) : visibleCompanyOptions.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
@@ -384,7 +464,10 @@ export function ManualAssignmentBoard({
                 {visibleCompanyOptions.map((company) => {
                   const targetId = assignmentCompanyDropTarget(company.id);
                   const isSelected = openCompanyId === company.id;
-                  const isRevealed = activeCompanyId === company.id;
+                  const isRevealed =
+                    activeCompanyId === company.id ||
+                    (personnelSearchActive && !laneDrag.draggingItemId);
+                  const showRevealRing = activeCompanyId === company.id;
                   const companyColumns = columnsByCompany.get(company.id) ?? [];
                   const adminColumns = companyColumns.filter((c) => personnelRoleLabel(c.role) === "Admin");
                   const personnelColumns = companyColumns.filter((c) => personnelRoleLabel(c.role) === "Personnel");
@@ -396,7 +479,7 @@ export function ManualAssignmentBoard({
                       className={cn(
                         "touch-pan-y rounded-xl border border-zinc-200 bg-zinc-50/80 p-2 transition dark:border-zinc-700 dark:bg-zinc-900/40",
                         isSelected && "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
-                        isRevealed && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
+                        showRevealRing && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
                       )}
                     >
                       <button
@@ -468,7 +551,7 @@ export function ManualAssignmentBoard({
                                       <div className="max-h-40 space-y-1.5 overflow-y-auto pr-0.5">
                                         {col.cards.length === 0 ? (
                                           <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-                                            Drop tickets here to assign.
+                                            Drop requests here to assign.
                                           </div>
                                         ) : (
                                           col.cards.map((t) => renderTicketCard(t, col.assigneeColorKey, true))

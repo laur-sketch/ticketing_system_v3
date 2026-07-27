@@ -187,6 +187,8 @@ model Ticket {
   title               String           @map("title")
   description         String           @map("description")
   category            TicketCategory   @map("category")
+  /// Intake form kind: ISSUE_CONCERN_TICKET, REQUEST_FOR_PAYMENT, etc.
+  requestType         String           @default("ISSUE_CONCERN_TICKET") @map("request_type")
   priority            TicketPriority   @default(UNSET) @map("priority")
   status              TicketStatus     @default(OPEN) @map("status")
   contactName         String           @map("contact_name")
@@ -207,12 +209,22 @@ model Ticket {
   reopenCount         Int              @default(0) @map("reopen_count")
   resolutionNotes     String?          @map("resolution_notes")
   intakeScreenshotMeta Json?           @map("intake_screenshot_meta")
+  /// Request-for-payment approval assignees + procedural step (JSON).
+  paymentApprovalMeta Json?            @map("payment_approval_meta")
+  /// Item requisition slip approval assignees + procedural step (JSON).
+  itemRequisitionApprovalMeta Json?    @map("item_requisition_approval_meta")
+  /// Fund transfer request approval assignees + procedural step (JSON).
+  fundTransferApprovalMeta Json?       @map("fund_transfer_approval_meta")
+  /// Job Order (J.O.) → Task Board project link (`KpiMaintenance` with isProject).
+  linkedKpiMaintenanceId String?       @map("linked_kpi_maintenance_id")
+  linkedKpiMaintenance   KpiMaintenance? @relation("JobOrderProject", fields: [linkedKpiMaintenanceId], references: [id], onDelete: SetNull)
   createdAt           DateTime         @default(now()) @map("created_at")
   updatedAt           DateTime         @updatedAt @map("updated_at")
   activities          TicketActivity[]
   messages            TicketMessage[]
   feedback            TicketFeedback?
 
+  @@index([linkedKpiMaintenanceId])
   @@index([status, updatedAt])
   @@index([status, createdAt])
   @@index([contactEmail, updatedAt])
@@ -231,6 +243,7 @@ model Ticket {
   @@index([createdAt])
   @@index([priority, status])
   @@index([status, priority, updatedAt])
+  @@index([requestType])
   @@map("tickets")
 }
 
@@ -304,6 +317,7 @@ model KpiMaintenance {
   updatedAt            DateTime     @updatedAt @map("updated_at")
   periodSnapshots      KpiMaintenancePeriodSnapshot[]
   travelOrders         TravelOrder[]
+  linkedJobOrderTickets Ticket[]    @relation("JobOrderProject")
 
   @@index([assignedAgentId, frequency])
   @@index([scopedCompanyTeamId])

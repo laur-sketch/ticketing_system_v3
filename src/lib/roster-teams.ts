@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 const LEGACY_ACI_APMC_NAME = "ACI/APMC";
 /** Legacy queue labels; canonical roster name is MCHISI. */
 const LEGACY_MCONPINCO_NAMES = ["MCONPINCO", "M.CONPINCO", "M Conpinco"] as const;
+/** Legacy roster label; canonical roster name is now EAZYGAZ. */
+const LEGACY_EAZZYGAS_NAME = "EAZZYGAS";
 
 /** One-time split: combined ACI/APMC queue → APMC + roster ACI. */
 async function migrateLegacyAciApmcTeam(): Promise<void> {
@@ -78,6 +80,31 @@ async function migrateLegacyMconpincoTeam(): Promise<void> {
   }
 }
 
+/** One-time: legacy EAZZYGAS queue label → roster EAZYGAZ. */
+async function migrateLegacyEazzygasTeam(): Promise<void> {
+  const legacy = await prisma.team.findFirst({
+    where: { name: LEGACY_EAZZYGAS_NAME },
+    select: { id: true },
+  });
+  if (!legacy) return;
+
+  const canonical = await prisma.team.findFirst({
+    where: { name: "EAZYGAZ" },
+    select: { id: true },
+  });
+  if (!canonical) {
+    await prisma.team.update({
+      where: { id: legacy.id },
+      data: { name: "EAZYGAZ" },
+    });
+    return;
+  }
+  if (canonical.id !== legacy.id) {
+    await reassignTeamReferences(legacy.id, canonical.id);
+    await prisma.team.delete({ where: { id: legacy.id } });
+  }
+}
+
 /** Merge duplicate Team rows that share a roster company name (e.g. two MCHISI). */
 async function dedupeRosterTeamsByName(): Promise<void> {
   for (const name of COMPANY_ROSTER) {
@@ -115,6 +142,7 @@ async function dedupeRosterTeamsByName(): Promise<void> {
 export async function ensureRosterTeamsInDb(): Promise<void> {
   await migrateLegacyAciApmcTeam();
   await migrateLegacyMconpincoTeam();
+  await migrateLegacyEazzygasTeam();
 
   for (const name of COMPANY_ROSTER) {
     const existing = await prisma.team.findFirst({

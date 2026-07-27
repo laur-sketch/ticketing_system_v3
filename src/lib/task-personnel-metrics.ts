@@ -21,6 +21,18 @@ export type PersonnelCombinedMetricCard = {
     pending: number;
     efficiency: number;
   } | null;
+  /** RFP Received By (Accounting) role KPI. */
+  rfpAccounting: {
+    closed: number;
+    pending: number;
+    efficiency: number;
+  } | null;
+  /** RFP Received By (Finance) role KPI. */
+  rfpFinance: {
+    closed: number;
+    pending: number;
+    efficiency: number;
+  } | null;
   tasks: {
     closed: number;
     pending: number;
@@ -45,9 +57,12 @@ export function applyPersonnelAverageEfficiencyFloor(efficiency: number): number
 }
 
 export function combinedPersonnelEfficiency(row: PersonnelCombinedMetricCard): number | null {
-  const values = [row.tickets?.efficiency, row.tasks?.efficiency].filter(
-    (value): value is number => value != null,
-  );
+  const values = [
+    row.tickets?.efficiency,
+    row.rfpAccounting?.efficiency,
+    row.rfpFinance?.efficiency,
+    row.tasks?.efficiency,
+  ].filter((value): value is number => value != null);
   if (values.length === 0) return null;
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
   return applyPersonnelAverageEfficiencyFloor(average);
@@ -150,7 +165,7 @@ export function normalizePersonnelTaskTotals(
   };
 }
 
-function normalizePersonName(name: string): string {
+export function normalizePersonName(name: string): string {
   return name.trim().toLowerCase();
 }
 
@@ -250,6 +265,8 @@ export function mergePersonnelMetricCards(
       name: ticket.name.trim(),
       role: "Assignee",
       tickets: null,
+      rfpAccounting: null,
+      rfpFinance: null,
       tasks: null,
     };
     // The same person can own several agent rows (legacy emails, duplicate
@@ -274,6 +291,8 @@ export function mergePersonnelMetricCards(
       name: task.name.trim(),
       role: task.role,
       tickets: null,
+      rfpAccounting: null,
+      rfpFinance: null,
       tasks: null,
     };
     const normalized = normalizePersonnelTaskTotals(task.total, task.done);

@@ -12,6 +12,7 @@ import {
 } from "@/lib/merged-database-sources";
 import { setPortalStaffAssignmentColor } from "@/lib/portal-staff-assignment-color-sql";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
+import { withSecondaryWriteClient } from "@/lib/prisma-secondary-write";
 import { Prisma } from "@prisma/client/secondary";
 import {
   isPlatformSuperAdminPortalRole,
@@ -25,142 +26,143 @@ const MANAGEABLE = new Set<string>(PORTAL_ROLES);
 
 /**
  * PATCH /api/admin/personnel/role
- * SuperAdmin: set portal role on an HRIS merged user (updates merged_users + portal).
+ * SuperAdmin: set portal role on an HRIS merged user (updates portal; syncs merged_users when allowed).
  * Body: { mergedSourceUserId: string, role: PortalRole }
  */
 export async function PATCH(req: Request) {
   const { unauthorized } = await requireRole(["SuperAdmin"]);
   if (unauthorized) return unauthorized;
 
-  const body = (await req.json().catch(() => ({}))) as {
-    mergedSourceUserId?: string;
-    role?: string;
-  };
+  try {
+    const body = (await req.json().catch(() => ({}))) as {
+      mergedSourceUserId?: string;
+      role?: string;
+    };
 
-  const mergedIdRaw = body.mergedSourceUserId?.trim() ?? "";
-  if (!/^\d+$/.test(mergedIdRaw)) {
-    return NextResponse.json({ error: "mergedSourceUserId is required." }, { status: 400 });
-  }
+    const mergedIdRaw = body.mergedSourceUserId?.trim() ?? "";
+    if (!/^\d+$/.test(mergedIdRaw)) {
+      return NextResponse.json({ error: "mergedSourceUserId is required." }, { status: 400 });
+    }
 
-  const roleRaw = body.role?.trim() ?? "";
-  const portalRole = normalizePortalRole(roleRaw);
-  if (!portalRole || !MANAGEABLE.has(portalRole)) {
-    return NextResponse.json({ error: "Invalid role." }, { status: 400 });
-  }
+    const roleRaw = body.role?.trim() ?? "";
+    const portalRole = normalizePortalRole(roleRaw);
+    if (!portalRole || !MANAGEABLE.has(portalRole)) {
+      return NextResponse.json({ error: "Invalid role." }, { status: 400 });
+    }
 
-  const mergedSourceUserId = BigInt(mergedIdRaw);
-  const sourceTags = resolveHrisSourceTags();
-  const mergedHrisRole = mapPortalRoleToMergedHrisRole(portalRole);
+    const mergedSourceUserId = BigInt(mergedIdRaw);
+    const sourceTags = resolveHrisSourceTags();
+    const mergedHrisRole = mapPortalRoleToMergedHrisRole(portalRole);
 
-  const mergedRows = await prismaSecondary.$queryRaw<
-    Array<{
-      source_user_id: bigint;
-      name: string;
-      username: string | null;
-      email: string | null;
-      role: string;
-      company_name: string | null;
-      position: string | null;
-      department: string | null;
-    }>
-  >`
-    SELECT source_user_id, name, username, email, role, company_name, position, department
-    FROM merged_users
-    WHERE source_user_id = ${mergedSourceUserId}
-      AND (source_database IN (${Prisma.join(sourceTags)}) OR source_user_id >= 9000000000)
-      AND is_active = 1
-    LIMIT 1
-  `;
-  const merged = mergedRows[0];
-  if (!merged) {
-    return NextResponse.json(
-      { error: `HRIS user not found in ${resolveSecondaryDatabaseName()}.` },
-      { status: 404 },
-    );
-  }
-
-  await prismaSecondary.$executeRaw`
-    UPDATE merged_users
-    SET role = ${mergedHrisRole}, updated_at = CURRENT_TIMESTAMP
-    WHERE source_user_id = ${mergedSourceUserId}
-  `;
-
-  const portalSelect = {
-    id: true,
-    email: true,
-    name: true,
-    role: true,
-    staffDesignatedCompanyId: true,
-  } as const;
-  const emailNeedle = merged.email?.trim().toLowerCase() || null;
-  const usernameNeedle = merged.username?.trim().toLowerCase() || null;
-
-  // Prefer HRIS-linked portal; fall back to email/username (merge may lag the link).
-  let portal =
-    (await prismaPrimary.portalAccount.findFirst({
-      where: { mergedSourceUserId, accountStatus: { not: "LEGACY_CONFLICT" } },
-      select: portalSelect,
-    })) ??
-    (await prismaPrimary.portalAccount.findFirst({
-      where: { mergedSourceUserId },
-      select: portalSelect,
-    })) ??
-    (emailNeedle
-      ? await prismaPrimary.portalAccount.findFirst({
-          where: {
-            email: { equals: emailNeedle, mode: "insensitive" },
-            accountStatus: { not: "LEGACY_CONFLICT" },
-          },
-          select: portalSelect,
-        })
-      : null) ??
-    (usernameNeedle
-      ? await prismaPrimary.portalAccount.findFirst({
-          where: {
-            username: { equals: usernameNeedle, mode: "insensitive" },
-            accountStatus: { not: "LEGACY_CONFLICT" },
-          },
-          select: portalSelect,
-        })
-      : null);
-
-  if (!portal) {
-    const profile = canonicalProfileFromMerged({
-      sourceUserId: merged.source_user_id,
-      username: merged.username,
-      name: merged.name,
-      email: merged.email,
-      role: mergedHrisRole,
-      companyName: merged.company_name,
-      position: merged.position,
-      department: merged.department,
-    });
-    try {
-      await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
-    } catch (e) {
-      console.error("syncPortalProfile (role route) failed", e);
+    const mergedRows = await prismaSecondary.$queryRaw<
+      Array<{
+        source_user_id: bigint;
+        name: string;
+        username: string | null;
+        email: string | null;
+        role: string;
+        company_name: string | null;
+        position: string | null;
+        department: string | null;
+      }>
+    >`
+      SELECT source_user_id, name, username, email, role, company_name, position, department
+      FROM merged_users
+      WHERE source_user_id = ${mergedSourceUserId}
+        AND (source_database IN (${Prisma.join(sourceTags)}) OR source_user_id >= 9000000000)
+        AND is_active = 1
+      LIMIT 1
+    `;
+    const merged = mergedRows[0];
+    if (!merged) {
       return NextResponse.json(
-        { error: "Could not create a portal profile for this HRIS user." },
+        { error: `HRIS user not found in ${resolveSecondaryDatabaseName()}.` },
+        { status: 404 },
+      );
+    }
+
+    const portalSelect = {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      staffDesignatedCompanyId: true,
+    } as const;
+    const emailNeedle = merged.email?.trim().toLowerCase() || null;
+    const usernameNeedle = merged.username?.trim().toLowerCase() || null;
+
+    // Prefer HRIS-linked portal; fall back to email/username (merge may lag the link).
+    let portal =
+      (await prismaPrimary.portalAccount.findFirst({
+        where: { mergedSourceUserId, accountStatus: { not: "LEGACY_CONFLICT" } },
+        select: portalSelect,
+      })) ??
+      (await prismaPrimary.portalAccount.findFirst({
+        where: { mergedSourceUserId },
+        select: portalSelect,
+      })) ??
+      (emailNeedle
+        ? await prismaPrimary.portalAccount.findFirst({
+            where: {
+              email: { equals: emailNeedle, mode: "insensitive" },
+              accountStatus: { not: "LEGACY_CONFLICT" },
+            },
+            select: portalSelect,
+          })
+        : null) ??
+      (usernameNeedle
+        ? await prismaPrimary.portalAccount.findFirst({
+            where: {
+              username: { equals: usernameNeedle, mode: "insensitive" },
+              accountStatus: { not: "LEGACY_CONFLICT" },
+            },
+            select: portalSelect,
+          })
+        : null);
+
+    if (!portal) {
+      const profile = canonicalProfileFromMerged({
+        sourceUserId: merged.source_user_id,
+        username: merged.username,
+        name: merged.name,
+        email: merged.email,
+        role: mergedHrisRole,
+        companyName: merged.company_name,
+        position: merged.position,
+        department: merged.department,
+      });
+      try {
+        await syncPortalProfile(profile, "hris", { forceRoleRefresh: true });
+      } catch (e) {
+        console.error("syncPortalProfile (role route) failed", e);
+        return NextResponse.json(
+          { error: "Could not create a portal profile for this HRIS user." },
+          { status: 500 },
+        );
+      }
+      portal = await prismaPrimary.portalAccount.findFirst({
+        where: {
+          OR: [
+            { mergedSourceUserId },
+            ...(emailNeedle
+              ? [{ email: { equals: emailNeedle, mode: "insensitive" as const } }]
+              : []),
+            ...(usernameNeedle
+              ? [{ username: { equals: usernameNeedle, mode: "insensitive" as const } }]
+              : []),
+          ],
+        },
+        select: portalSelect,
+      });
+    }
+
+    if (!portal) {
+      return NextResponse.json(
+        { error: "Could not create or find a portal account for this user." },
         { status: 500 },
       );
     }
-    portal = await prismaPrimary.portalAccount.findFirst({
-      where: {
-        OR: [
-          { mergedSourceUserId },
-          ...(emailNeedle
-            ? [{ email: { equals: emailNeedle, mode: "insensitive" as const } }]
-            : []),
-          ...(usernameNeedle
-            ? [{ username: { equals: usernameNeedle, mode: "insensitive" as const } }]
-            : []),
-        ],
-      },
-      select: portalSelect,
-    });
-  }
 
-  if (portal) {
     try {
       await prismaPrimary.portalAccount.updateMany({
         where: { mergedSourceUserId, NOT: { id: portal.id } },
@@ -175,8 +177,7 @@ export async function PATCH(req: Request) {
     }
 
     const wasSuper = isPlatformSuperAdminPortalRole(portal.role);
-    // Always apply the SuperAdmin-chosen portal role (HRIS mapping alone treats
-    // merged "admin" as Personnel unless the job title says head/leader).
+    // Portal is the live role SoT for sessions; apply SuperAdmin choice first.
     await prismaPrimary.portalAccount.update({
       where: { id: portal.id },
       data: {
@@ -190,6 +191,24 @@ export async function PATCH(req: Request) {
           : {}),
       },
     });
+
+    // Best-effort sync to merged_users via write URL (merge_app is SELECT-only).
+    let mergedSynced = false;
+    try {
+      await withSecondaryWriteClient(async (db) => {
+        await db.$executeRaw`
+          UPDATE merged_users
+          SET role = ${mergedHrisRole}, updated_at = CURRENT_TIMESTAMP
+          WHERE source_user_id = ${mergedSourceUserId}
+        `;
+      });
+      mergedSynced = true;
+    } catch (e) {
+      console.warn(
+        "merged_users role sync skipped (portal role still updated):",
+        e instanceof Error ? e.message : e,
+      );
+    }
 
     if (wasSuper || portalRole === "SuperAdmin") {
       try {
@@ -209,13 +228,20 @@ export async function PATCH(req: Request) {
         console.error("ensureAgentRowForPortalStaff after role update failed", e);
       }
     }
-  }
 
-  return NextResponse.json({
-    ok: true,
-    mergedSourceUserId: mergedIdRaw,
-    role: portalRole as PortalRole,
-    mergedRole: mergedHrisRole,
-    portalAccountId: portal?.id ?? null,
-  });
+    return NextResponse.json({
+      ok: true,
+      mergedSourceUserId: mergedIdRaw,
+      role: portalRole as PortalRole,
+      mergedRole: mergedHrisRole,
+      portalAccountId: portal.id,
+      mergedSynced,
+    });
+  } catch (e) {
+    console.error("PATCH /api/admin/personnel/role failed", e);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Could not update role." },
+      { status: 500 },
+    );
+  }
 }

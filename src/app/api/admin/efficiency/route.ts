@@ -51,27 +51,35 @@ export async function GET(req: Request) {
         periodKey,
         frequency,
         source: "mergedatabase",
-        rows: rows.map((r) => ({
-          sourceUserId: r.sourceUserId.toString(),
-          name: r.user?.name?.trim() || r.displayName,
-          companyName: r.user?.companyName ?? null,
-          totalTasks: r.totalTasks,
-          completedTasks: r.completedTasks,
-          delayedTasks: r.delayedTasks,
-          ticketsClosed: r.ticketsClosed,
-          ticketsPending: r.ticketsPending,
-          taskEfficiency: r.taskEfficiency != null ? Number(r.taskEfficiency) : null,
-          ticketEfficiency: r.ticketEfficiency != null ? Number(r.ticketEfficiency) : null,
-          overallEfficiency: Number(r.overallEfficiency),
-          onTimeCompletionRate:
-            r.onTimeCompletionRate != null ? Number(r.onTimeCompletionRate) : null,
-          delayPenaltyTotal: r.delayPenaltyTotal ?? 0,
-          taskEfficiencyBeforePenalty:
-            r.taskEfficiencyBeforePenalty != null
-              ? Number(r.taskEfficiencyBeforePenalty)
-              : null,
-          computedAt: r.computedAt.toISOString(),
-        })),
+        rows: rows.map((r) => {
+          const row = r as typeof r & {
+            ticketsClosed?: number;
+            ticketsPending?: number;
+            delayPenaltyTotal?: number;
+            taskEfficiencyBeforePenalty?: unknown;
+          };
+          return {
+            sourceUserId: row.sourceUserId.toString(),
+            name: row.user?.name?.trim() || row.displayName,
+            companyName: row.user?.companyName ?? null,
+            totalTasks: row.totalTasks,
+            completedTasks: row.completedTasks,
+            delayedTasks: row.delayedTasks,
+            ticketsClosed: Number(row.ticketsClosed ?? 0),
+            ticketsPending: Number(row.ticketsPending ?? 0),
+            taskEfficiency: row.taskEfficiency != null ? Number(row.taskEfficiency) : null,
+            ticketEfficiency: row.ticketEfficiency != null ? Number(row.ticketEfficiency) : null,
+            overallEfficiency: Number(row.overallEfficiency),
+            onTimeCompletionRate:
+              row.onTimeCompletionRate != null ? Number(row.onTimeCompletionRate) : null,
+            delayPenaltyTotal: Number(row.delayPenaltyTotal ?? 0),
+            taskEfficiencyBeforePenalty:
+              row.taskEfficiencyBeforePenalty != null
+                ? Number(row.taskEfficiencyBeforePenalty)
+                : null,
+            computedAt: row.computedAt.toISOString(),
+          };
+        }),
       });
     }
 

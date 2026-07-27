@@ -372,14 +372,42 @@ export async function GET(req: Request) {
   }
 
   const { kpiIdsWithTravelOrders } = await import("@/lib/travel-order-db");
-  const { isFieldAssignmentTask } = await import("@/lib/kpi-subkpis");
+  const { isFieldAssignmentTask, getLinkedJobOrderFromSubKpis } = await import("@/lib/kpi-subkpis");
+  const { loadJobOrdersLinkedToProjects } = await import("@/lib/job-order-project");
   const fieldAssignmentIds = await kpiIdsWithTravelOrders(rows.map((r) => r.id));
 
+  const linkedJobOrders = await loadJobOrdersLinkedToProjects(rows.map((r) => r.id));
+  const linkedByProjectId = new Map<string, Array<{ id: string; ticketNumber: string; title: string }>>();
+  for (const jo of linkedJobOrders) {
+    const projectId = jo.linkedKpiMaintenanceId;
+    if (!projectId) continue;
+    const list = linkedByProjectId.get(projectId) ?? [];
+    list.push({ id: jo.id, ticketNumber: jo.ticketNumber, title: jo.title });
+    linkedByProjectId.set(projectId, list);
+  }
+
   return NextResponse.json({
-    rows: rows.map((r) => ({
-      ...r,
-      isFieldAssignment: fieldAssignmentIds.has(r.id) || isFieldAssignmentTask(r.subKpis),
-    })),
+    rows: rows.map((r) => {
+      const fromDb = linkedByProjectId.get(r.id) ?? [];
+      const fromEnvelope = getLinkedJobOrderFromSubKpis(r.subKpis);
+      const linkedJobOrdersForRow =
+        fromDb.length > 0
+          ? fromDb
+          : fromEnvelope
+            ? [
+                {
+                  id: fromEnvelope.ticketId,
+                  ticketNumber: fromEnvelope.ticketNumber ?? "J.O.",
+                  title: "Linked Job Order",
+                },
+              ]
+            : [];
+      return {
+        ...r,
+        isFieldAssignment: fieldAssignmentIds.has(r.id) || isFieldAssignmentTask(r.subKpis),
+        linkedJobOrders: linkedJobOrdersForRow,
+      };
+    }),
     canAssignWork: perms.canAssignWork,
     canUnassignWork: session.user.role === "SuperAdmin",
     canCompleteUnassignedWork: session.user.role === "SuperAdmin",
@@ -455,6 +483,8 @@ export async function POST(req: Request) {
     taskDelayPenaltyFrequency?: string | null;
     enableSubtaskAssignees?: boolean;
     isProject?: boolean;
+    /** When creating a Project from a Job Order, auto-link after save. */
+    linkedJobOrderTicketId?: string | null;
   };
   const title = body.title?.trim() ?? "";
   const mainTaskRaw = body.mainTask?.trim() ?? "";
@@ -689,6 +719,44 @@ export async function POST(req: Request) {
     subKpisPersist = markProjectTask(subKpisPersist);
   }
 
+  const linkedJobOrderTicketId =
+    typeof body.linkedJobOrderTicketId === "string" ? body.linkedJobOrderTicketId.trim() : "";
+  if (linkedJobOrderTicketId) {
+    if (!(body.isProject === true || isItProject)) {
+      return NextResponse.json(
+        { error: "A Job Order can only be linked when creating a Project." },
+        { status: 400 },
+      );
+    }
+    const joTicket = await prisma.ticket.findUnique({
+      where: { id: linkedJobOrderTicketId },
+      select: {
+        id: true,
+        ticketNumber: true,
+        requestType: true,
+      },
+    });
+    if (!joTicket || joTicket.requestType !== "JOB_ORDER") {
+      return NextResponse.json({ error: "Linked Job Order was not found." }, { status: 404 });
+    }
+    const { getTicketLinkedKpiMaintenanceId } = await import("@/lib/job-order-project");
+    const alreadyLinked = await getTicketLinkedKpiMaintenanceId(joTicket.id);
+    if (alreadyLinked) {
+      return NextResponse.json(
+        {
+          error:
+            "This Job Order is already linked to a project. Unlink it first before creating another related project.",
+        },
+        { status: 409 },
+      );
+    }
+    const { setLinkedJobOrderOnSubKpis } = await import("@/lib/kpi-subkpis");
+    subKpisPersist = setLinkedJobOrderOnSubKpis(subKpisPersist, {
+      ticketId: joTicket.id,
+      ticketNumber: joTicket.ticketNumber,
+    });
+  }
+
   const timeZone = normalizeTimeZone(body.timeZone);
   const periodKey = isRecurring
     ? computePeriodKey(
@@ -816,9 +884,31 @@ export async function POST(req: Request) {
     : titleAlreadyUsed
       ? `New task '${mainTaskRaw}' added under group '${created.title}' on ${createdDate}.`
       : `New task group '${created.title}' created on ${createdDate}.`;
+
+  if (linkedJobOrderTicketId) {
+    const { attachCreatedProjectToJobOrder } = await import("@/lib/job-order-project");
+    const linked = await attachCreatedProjectToJobOrder({
+      ticketId: linkedJobOrderTicketId,
+      kpiMaintenanceId: created.id,
+    });
+    if (!linked.ok) {
+      // Project exists; surface the link failure so the operator can link manually.
+      return NextResponse.json(
+        {
+          message: `${message} Could not auto-link Job Order: ${linked.error}`,
+          taskGroup: created,
+          linkedJobOrderError: linked.error,
+        },
+        { status: 201 },
+      );
+    }
+  }
+
   return NextResponse.json(
     {
-      message,
+      message: linkedJobOrderTicketId
+        ? `${message} Linked to Job Order.`
+        : message,
       taskGroup: created,
     },
     { status: 201 },

@@ -1,5 +1,7 @@
 import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { DateTime } from "luxon";
+import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
+import { loadRfpRolePersonnelMetrics } from "@/lib/rfp-role-kpis";
 import {
   computeTaskChecklistPillarMetrics,
   enumerateYmdDaysInRange,
@@ -448,6 +450,10 @@ export type TaskMetricsPayload = {
   taskMetricsUserSupport: TaskMetricsUserSupportTickets;
   taskChecklistPillars: TaskChecklistPillarMetrics;
   personnelTicketMetrics: PersonnelTicketMetric[];
+  /** RFP Received By (Accounting) — closed/pending/efficiency per agent. */
+  personnelRfpAccountingMetrics: PersonnelTicketMetric[];
+  /** RFP Received By (Finance) — closed/pending/efficiency per agent. */
+  personnelRfpFinanceMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
 };
 
@@ -547,6 +553,11 @@ export async function computeTaskMetrics(
       ? await loadPersonnelTicketMetrics(scoped, workingDays)
       : [];
 
+  const rfpRoleMetrics =
+    workingDays.length > 0
+      ? await loadRfpRolePersonnelMetrics(scoped, workingDays)
+      : { accounting: [], finance: [] };
+
   const personnelDelayPenalties = await loadPersonnelDelayPenalties(
     kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
     helpdeskTz,
@@ -558,6 +569,8 @@ export async function computeTaskMetrics(
     taskMetricsUserSupport,
     taskChecklistPillars,
     personnelTicketMetrics,
+    personnelRfpAccountingMetrics: rfpRoleMetrics.accounting,
+    personnelRfpFinanceMetrics: rfpRoleMetrics.finance,
     personnelDelayPenalties,
   };
 }
@@ -606,6 +619,9 @@ async function loadPersonnelTicketMetrics(
 ): Promise<PersonnelTicketMetric[]> {
   // Keep the agent scope (company / personnel) — a plain `assignedAgentId: { not: null }`
   // key would silently replace the scoped filter spread before it.
+  // Counts Issue/Concern, IRS, FTR, Job Order, etc. RFP Accounting / Finance
+  // use dedicated role KPIs ({@link loadRfpRolePersonnelMetrics}) so those steps
+  // are not double-counted here.
   const assignedAgentFilter =
     (scoped as { assignedAgentId?: unknown }).assignedAgentId ?? ({ not: null } as const);
   const [closedByAgent, pendingByAgent] = await Promise.all([
@@ -614,6 +630,7 @@ async function loadPersonnelTicketMetrics(
       where: {
         ...scoped,
         assignedAgentId: assignedAgentFilter,
+        NOT: { requestType: "REQUEST_FOR_PAYMENT" },
         AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDayIntervals)],
       },
       _count: true,
@@ -623,7 +640,8 @@ async function loadPersonnelTicketMetrics(
       where: {
         ...scoped,
         assignedAgentId: assignedAgentFilter,
-        status: { in: ["OPEN", "IN_PROGRESS"] },
+        NOT: { requestType: "REQUEST_FOR_PAYMENT" },
+        status: { in: OPEN_PIPELINE_STATUSES },
       },
       _count: true,
     }),
@@ -700,7 +718,7 @@ export async function computeKpis(
 
   const [
     volume,
-    backlogOpen,
+    backlogActive,
     forConfirmationBacklog,
     transferRequestsInRange,
     reopened,
@@ -718,7 +736,7 @@ export async function computeKpis(
   ] = await Promise.all([
     prisma.ticket.count({ where: createdInRange }),
     prisma.ticket.count({
-      where: { status: "OPEN", ...scoped },
+      where: { status: { in: ACTIVE_REQUEST_STATUSES }, ...scoped },
     }),
     prisma.ticket.count({
       where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED"] }, ...scoped },
@@ -913,8 +931,8 @@ export async function computeKpis(
     range,
     operational: {
       ticketVolume: volume,
-      /** OPEN status only (active intake queue). */
-      backlogSize: backlogOpen,
+      /** Active request pipeline (non-CLOSED) — matches Request / Company board totals. */
+      backlogSize: backlogActive,
       forConfirmationSize: forConfirmationBacklog,
       firstResponseTimeMsAvg: avgFrtMs,
       resolutionTimeMsAvg: avgArtMs,

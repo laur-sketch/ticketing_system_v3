@@ -22,6 +22,7 @@ export default async function AgentTasksPage({
     company?: string | string[];
     assigned?: string | string[];
     task?: string | string[];
+    fromJobOrder?: string | string[];
   }>;
 }) {
   const session = await requireSession();
@@ -32,6 +33,7 @@ export default async function AgentTasksPage({
   const selectedCompany = firstQuery(params.company) ?? "ALL";
   const selectedAssigned = firstQuery(params.assigned) ?? "ALL";
   const focusTaskId = firstQuery(params.task)?.trim() || null;
+  const fromJobOrderTicketId = firstQuery(params.fromJobOrder)?.trim() || null;
 
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const showKpiCompanyFilter =
@@ -181,6 +183,7 @@ export default async function AgentTasksPage({
                 session.user.role === "SuperAdmin" || session.user.role === "Admin"
               }
               focusTaskId={focusTaskId}
+              fromJobOrderTicketId={fromJobOrderTicketId}
             />
           </section>
         </section>

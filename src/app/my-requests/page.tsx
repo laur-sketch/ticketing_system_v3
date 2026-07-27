@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Plus, Search } from "lucide-react";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
+import { CancelRequestButton } from "@/components/tickets/CancelRequestButton";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { requireSession } from "@/lib/access";
 import {
@@ -201,7 +202,7 @@ export default async function MyRequestsPage({
         <OrchestrationQueueNav />
         {submitted ? (
           <div className="rounded-xl border border-orange-400/50 bg-orange-500/15 px-4 py-3 text-sm text-orange-950 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200">
-            Ticket submitted successfully. It appears below in your dashboard.
+            Request submitted successfully. It appears below in your dashboard.
           </div>
         ) : null}
         {/* Hero */}
@@ -230,7 +231,7 @@ export default async function MyRequestsPage({
                   type="search"
                   name="q"
                   defaultValue={query}
-                  placeholder="Search ticket # or title"
+                  placeholder="Search request # or title"
                   className="h-10 w-full rounded-lg border border-zinc-300 bg-white pl-9 pr-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-500 focus:border-orange-500/60 focus:ring-2 focus:ring-orange-500/25 dark:border-zinc-700/70 dark:bg-zinc-900/55 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                 />
               </form>
@@ -263,7 +264,7 @@ export default async function MyRequestsPage({
                 type="search"
                 name="q"
                 defaultValue={query}
-                placeholder="Search ticket # or title"
+                placeholder="Search request # or title"
                 className="h-10 w-full rounded-lg border border-zinc-300 bg-white pl-9 pr-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-500 focus:border-orange-500/60 focus:ring-2 focus:ring-orange-500/25 dark:border-zinc-700/70 dark:bg-zinc-900/55 dark:text-zinc-100 dark:placeholder:text-zinc-500"
               />
             </div>
@@ -320,7 +321,7 @@ export default async function MyRequestsPage({
                   {list.length === 0 ? (
                     <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-zinc-200 px-3 py-8 text-center text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-500">
                       {col.id === "open"
-                        ? "No open tickets. Submit a request to get started."
+                        ? "No open requests. Submit a request to get started."
                         : col.id === "inProgress"
                           ? "Nothing being worked on right now."
                           : "Nothing waiting on your confirmation."}
@@ -338,7 +339,7 @@ export default async function MyRequestsPage({
                       <AssigneeColorHighlight
                         key={t.id}
                         assigneeColorKey={assigneeKey}
-                        className="group block rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#181716] dark:hover:border-orange-500/40 dark:hover:bg-[#201f1d]"
+                        className="group rounded-xl border border-zinc-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-orange-50/40 hover:shadow-md dark:border-zinc-700/80 dark:bg-[#181716] dark:hover:border-orange-500/40 dark:hover:bg-[#201f1d]"
                       >
                       <Link
                         href={ticketHref}
@@ -403,6 +404,15 @@ export default async function MyRequestsPage({
                           </p>
                         ) : null}
                       </Link>
+                      {!t.assignedAgentId && t.status !== "CLOSED" ? (
+                        <div className="border-t border-zinc-200 px-3.5 pb-3.5 pt-2 dark:border-zinc-700/80">
+                          <CancelRequestButton
+                            ticketId={t.id}
+                            ticketNumber={t.ticketNumber}
+                            stopPropagation
+                          />
+                        </div>
+                      ) : null}
                       </AssigneeColorHighlight>
                       );
                     })

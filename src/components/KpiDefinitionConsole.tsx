@@ -62,9 +62,18 @@ type Props = {
   onMaintenanceRecordsUpdated?: (rows: KpiDefinitionMaintenanceRecord[]) => void;
   /** When true, omit outer card chrome (for use inside a popup). */
   embedded?: boolean;
+  /** Prefill + auto-link when creating a Project from a Job Order. */
+  fromJobOrderTicketId?: string | null;
+  /** Called after a successful create that consumed a Job Order link. */
+  onFromJobOrderConsumed?: () => void;
 };
 
-export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = false }: Props) {
+export function KpiDefinitionConsole({
+  onMaintenanceRecordsUpdated,
+  embedded = false,
+  fromJobOrderTicketId = null,
+  onFromJobOrderConsumed,
+}: Props) {
   const [recurrenceTz, setRecurrenceTz] = useState(DEFAULT_TIME_ZONE);
   const [maintenanceTitle, setMaintenanceTitle] = useState("");
   const [mainTaskDraft, setMainTaskDraft] = useState("");
@@ -114,10 +123,79 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
   const [adminDesignatedCompanyName, setAdminDesignatedCompanyName] = useState<string | null>(null);
   const [browseAllOpen, setBrowseAllOpen] = useState(false);
   const [maintenanceRows, setMaintenanceRows] = useState<KpiDefinitionMaintenanceRecord[]>([]);
+  const [linkedJobOrderTicketId, setLinkedJobOrderTicketId] = useState<string | null>(null);
+  const [jobOrderPrefillBanner, setJobOrderPrefillBanner] = useState<string | null>(null);
 
   /** Effective recurring flag: Projects and Field Assignments are always one-off. */
   const effectiveIsRecurring =
     isProjectMode || isFieldAssignmentMode ? false : maintenanceIsRecurring;
+
+  useEffect(() => {
+    const joId = fromJobOrderTicketId?.trim() || null;
+    if (!joId) {
+      setLinkedJobOrderTicketId(null);
+      setJobOrderPrefillBanner(null);
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(async () => {
+      try {
+        const res = await fetch(`/api/tickets/${joId}/job-order-project`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          prefill?: {
+            ticketNumber?: string;
+            suggestedProjectName?: string;
+            suggestedTargetDate?: string;
+            suggestedDescription?: string;
+            teamId?: string | null;
+            alreadyLinkedProjectId?: string | null;
+          };
+          linkedProject?: { displayName?: string } | null;
+        };
+        if (cancelled) return;
+        const p = data.prefill;
+        if (!p) return;
+        if (p.alreadyLinkedProjectId) {
+          setJobOrderPrefillBanner(
+            `Job Order ${p.ticketNumber ?? ""} is already linked to “${data.linkedProject?.displayName ?? "a project"}”. Unlink it first to create another.`,
+          );
+          setLinkedJobOrderTicketId(null);
+          return;
+        }
+        setIsProjectMode(true);
+        setIsFieldAssignmentMode(false);
+        setMaintenanceIsRecurring(false);
+        setMainTaskDraft(p.suggestedProjectName?.trim() || `Job Order ${p.ticketNumber ?? ""}`);
+        if (p.suggestedTargetDate?.trim()) {
+          setMainTaskTargetDateDraft(p.suggestedTargetDate.trim());
+        }
+        if (p.teamId) {
+          setScopedCompanyTeamId(p.teamId);
+        }
+        const desc = p.suggestedDescription?.trim();
+        if (desc) {
+          setSubKpisDraft([
+            {
+              id: `jo-prefill-${Date.now()}`,
+              title: "Job Order details",
+              description: desc,
+              done: false,
+            },
+          ]);
+        }
+        setLinkedJobOrderTicketId(joId);
+        setJobOrderPrefillBanner(
+          `Creating a project from Job Order ${p.ticketNumber ?? ""}. Fields are pre-filled — save to link automatically.`,
+        );
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fromJobOrderTicketId]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -334,9 +412,24 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
     setIsFieldAssignmentMode(next === "field");
     setLocalError(null);
     setTravelOrderModalOpen(false);
+    if (next === "project") {
+      if (fromJobOrderTicketId?.trim()) {
+        setLinkedJobOrderTicketId(fromJobOrderTicketId.trim());
+        setJobOrderPrefillBanner(
+          "Project mode restored — saving will link this Job Order automatically.",
+        );
+      }
+    } else {
+      setLinkedJobOrderTicketId(null);
+      if (fromJobOrderTicketId) {
+        setJobOrderPrefillBanner(
+          "Switched away from Project mode — Job Order auto-link will not apply until you select Project again.",
+        );
+      }
+    }
     if (next === "project" || next === "field") {
       setMaintenanceIsRecurring(false);
-      setMainTaskTargetDateDraft("");
+      if (next === "field") setMainTaskTargetDateDraft("");
     }
   }
 
@@ -438,6 +531,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       isProject: isProjectMode === true,
     };
     if (scopedCompanyTeamId) body.scopedCompanyTeamId = scopedCompanyTeamId;
+    if (isProjectMode && linkedJobOrderTicketId) {
+      body.linkedJobOrderTicketId = linkedJobOrderTicketId;
+    }
     if (completionRequirements.numerical) {
       const targetRaw = numericalTargetDraft.trim();
       if (targetRaw !== "") {
@@ -539,6 +635,9 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       setScopedCompanyTeamId("");
       setNewPillarDraft("");
       setDraftSegments([]);
+      setLinkedJobOrderTicketId(null);
+      setJobOrderPrefillBanner(null);
+      onFromJobOrderConsumed?.();
       const reload = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, { cache: "no-store" });
       if (reload.ok) {
         const payload = (await reload.json()) as { rows: KpiDefinitionMaintenanceRecord[] };
@@ -581,6 +680,11 @@ export function KpiDefinitionConsole({ onMaintenanceRecordsUpdated, embedded = f
       {successMessage ? (
         <p className="mt-2 rounded-lg border border-emerald-500/35 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200">
           {successMessage}
+        </p>
+      ) : null}
+      {jobOrderPrefillBanner ? (
+        <p className="mt-2 rounded-lg border border-orange-400/40 bg-orange-500/10 px-3 py-2 text-xs text-orange-950 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100">
+          {jobOrderPrefillBanner}
         </p>
       ) : null}
 

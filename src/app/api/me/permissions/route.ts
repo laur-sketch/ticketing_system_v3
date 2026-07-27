@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
-import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 
 export async function GET() {
   const session = await requireSession();
@@ -11,10 +10,9 @@ export async function GET() {
 
   const role = session.user.role;
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
-  const coord = await portalCompanyAdminPrivilegesForEmail(session.user.email);
 
-  const canAccessAssignmentBoard =
-    role === "SuperAdmin" || role === "Admin" || coord;
+  /** Assignment board is SuperAdmin / Admin only; Personnel use request-approval on tickets. */
+  const canAccessAssignmentBoard = role === "SuperAdmin" || role === "Admin";
 
   return NextResponse.json({
     canAccessAssignmentBoard,

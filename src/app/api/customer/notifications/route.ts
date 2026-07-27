@@ -22,7 +22,9 @@ export type CustomerNotification = {
 };
 
 export type CustomerIntakePayload = {
+  /** False when Issue/Concern creation is locked (other request types remain allowed). */
   canCreateTickets: boolean;
+  canCreateIssueConcern: boolean;
   authProvider: string | null;
   pendingConfirmation: {
     ticketId: string;
@@ -123,6 +125,7 @@ export async function GET() {
 
   const intake: CustomerIntakePayload = {
     canCreateTickets: !pendingPrimary,
+    canCreateIssueConcern: !pendingPrimary,
     authProvider: session.user.authProvider ?? null,
     pendingConfirmation: pendingPrimary
       ? {

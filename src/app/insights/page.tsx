@@ -20,6 +20,7 @@ import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGri
 import { PersonnelTaskMetricsGrid } from "@/components/metrics/PersonnelTaskMetricsGrid";
 import {
   applyPenaltyToTaskEfficiency,
+  normalizePersonName,
   type PersonnelCombinedMetricCard,
   type PersonnelDelayPenaltyRow,
 } from "@/lib/task-personnel-metrics";
@@ -117,7 +118,7 @@ export default function InsightsPage() {
     });
   }, []);
 
-  /** Personnel only see personal ticket metrics. SuperAdmin/Admin see task reporting tabs. */
+  /** Personnel only see personal request metrics. SuperAdmin/Admin see task reporting tabs. */
   const showTaskReportingTabs = isAdminRole;
   const showKpiTasksTab = false;
 
@@ -144,6 +145,8 @@ export default function InsightsPage() {
   const [selectedTicketMetricCompany, setSelectedTicketMetricCompany] = useState("");
   const [taskChecklistPillars, setTaskChecklistPillars] = useState<TaskChecklistPillarMetrics | null>(null);
   const [personnelTicketMetrics, setPersonnelTicketMetrics] = useState<PersonnelTicketMetric[]>([]);
+  const [personnelRfpAccountingMetrics, setPersonnelRfpAccountingMetrics] = useState<PersonnelTicketMetric[]>([]);
+  const [personnelRfpFinanceMetrics, setPersonnelRfpFinanceMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelDelayPenalties, setPersonnelDelayPenalties] = useState<PersonnelDelayPenaltyRow[]>([]);
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
@@ -151,13 +154,17 @@ export default function InsightsPage() {
 
   const loadKpis = useCallback(async () => {
     setError(null);
-    if (isAdminRole && !selectedTicketMetricCompany) {
+    if (isCompanyScopedAdmin && !selectedTicketMetricCompany) {
+      setData(null);
+      return;
+    }
+    if (isAdminRole && !isCompanyScopedAdmin && !selectedTicketMetricCompany) {
       setData(null);
       return;
     }
     const qs = new URLSearchParams({ from, to });
     if (isAdminRole) {
-      qs.set("companyId", selectedTicketMetricCompany);
+      qs.set("companyId", selectedTicketMetricCompany || "ALL");
     }
     const res = await fetch(`/api/kpis?${qs.toString()}`, { cache: "no-store" });
     if (!res.ok) {
@@ -167,7 +174,7 @@ export default function InsightsPage() {
     }
     const json = (await res.json()) as KpiPayload;
     setData(json);
-  }, [from, to, isAdminRole, selectedTicketMetricCompany]);
+  }, [from, to, isAdminRole, isCompanyScopedAdmin, selectedTicketMetricCompany]);
 
   const loadTaskMetrics = useCallback(async () => {
     setTaskMetricsError(null);
@@ -195,6 +202,8 @@ export default function InsightsPage() {
         setTaskMetricsUserSupport(null);
         setTaskChecklistPillars(null);
         setPersonnelTicketMetrics([]);
+        setPersonnelRfpAccountingMetrics([]);
+        setPersonnelRfpFinanceMetrics([]);
         setPersonnelDelayPenalties([]);
         return;
       }
@@ -203,12 +212,16 @@ export default function InsightsPage() {
         taskMetricsUserSupport: TaskMetricsUserSupportTickets;
         taskChecklistPillars: TaskChecklistPillarMetrics;
         personnelTicketMetrics: PersonnelTicketMetric[];
+        personnelRfpAccountingMetrics?: PersonnelTicketMetric[];
+        personnelRfpFinanceMetrics?: PersonnelTicketMetric[];
         personnelDelayPenalties?: PersonnelDelayPenaltyRow[];
       };
       setTaskMetricsHelpdesk(json.taskMetricsHelpdesk);
       setTaskMetricsUserSupport(json.taskMetricsUserSupport);
       setTaskChecklistPillars(json.taskChecklistPillars);
       setPersonnelTicketMetrics(json.personnelTicketMetrics ?? []);
+      setPersonnelRfpAccountingMetrics(json.personnelRfpAccountingMetrics ?? []);
+      setPersonnelRfpFinanceMetrics(json.personnelRfpFinanceMetrics ?? []);
       setPersonnelDelayPenalties(json.personnelDelayPenalties ?? []);
     } finally {
       setTaskMetricsLoading(false);
@@ -258,28 +271,36 @@ export default function InsightsPage() {
   useEffect(() => {
     if (!showTaskReportingTabs) return;
     let cancelled = false;
-    async function loadTaskMetricCompanies() {
-      const res = await fetch("/api/kpis/task-project-tracker-options", { cache: "no-store" });
-      if (!res.ok) return;
+    async function loadMetricCompanies() {
+      const res = await fetch("/api/kpis/metric-companies", { cache: "no-store" });
+      if (!res.ok) {
+        if (!cancelled) {
+          setError("Could not load companies for request metrics.");
+        }
+        return;
+      }
       const json = (await res.json()) as { companies: Array<{ id: string; name: string }> };
       if (cancelled) return;
-      setTaskMetricCompanies(json.companies ?? []);
+      const companies = json.companies ?? [];
+      setTaskMetricCompanies(companies);
       setSelectedTaskMetricCompany((current) => {
-        if (json.companies.some((company) => company.id === current)) return current;
-        return json.companies[0]?.id ?? "";
+        if (companies.some((company) => company.id === current)) return current;
+        return companies[0]?.id ?? "";
       });
       setSelectedTicketMetricCompany((current) => {
-        if (json.companies.some((company) => company.id === current)) return current;
-        return json.companies[0]?.id ?? "";
+        if (current === "ALL" && !isCompanyScopedAdmin) return current;
+        if (companies.some((company) => company.id === current)) return current;
+        if (isCompanyScopedAdmin) return companies[0]?.id ?? "";
+        return "ALL";
       });
     }
-    void loadTaskMetricCompanies();
-    const id = window.setInterval(() => void loadTaskMetricCompanies(), 30_000);
+    void loadMetricCompanies();
+    const id = window.setInterval(() => void loadMetricCompanies(), 30_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [showTaskReportingTabs]);
+  }, [showTaskReportingTabs, isCompanyScopedAdmin]);
 
   useEffect(() => {
     function onVisibility() {
@@ -355,7 +376,7 @@ export default function InsightsPage() {
       <header className="rounded-2xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-6 shadow-[0_12px_40px_rgba(0,0,0,0.06)] md:p-8 dark:border-zinc-800/90 dark:from-[#101010] dark:to-[#080808] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
         <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-              {BRAND_TITLE} · {isPersonnel ? "Personal metrics" : "Ticket metrics & reports"}
+              {BRAND_TITLE} · {isPersonnel ? "Personal metrics" : "Request metrics & reports"}
             </p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 md:text-4xl dark:text-white">
               {isPersonnel ? "Personal performance intelligence" : "Operations intelligence"}
@@ -364,7 +385,7 @@ export default function InsightsPage() {
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as InsightsTab)} className="mt-6">
           <TabsList className="flex flex-wrap rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
             <TabsTrigger value="ticket-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-              {isPersonnel ? "My Ticket Metrics and Reports" : "Ticket Metrics and Reports"}
+              {isPersonnel ? "My Request Metrics and Reports" : "Request Metrics and Reports"}
             </TabsTrigger>
             {showTaskReportingTabs ? (
               <TabsTrigger value="task-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
@@ -395,6 +416,8 @@ export default function InsightsPage() {
           <TaskMetricsPanel
             checklistPillars={taskChecklistPillars}
             personnelTicketMetrics={personnelTicketMetrics}
+            personnelRfpAccountingMetrics={personnelRfpAccountingMetrics}
+            personnelRfpFinanceMetrics={personnelRfpFinanceMetrics}
             personnelDelayPenalties={personnelDelayPenalties}
             helpdeskTickets={taskMetricsHelpdesk}
             userSupportTickets={taskMetricsUserSupport}
@@ -422,7 +445,11 @@ export default function InsightsPage() {
       ) : (
         <div className="space-y-8">
           {!data ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-500">Loading metrics…</p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-500">
+              {isAdminRole && !selectedTicketMetricCompany
+                ? "Loading companies…"
+                : "Loading metrics…"}
+            </p>
           ) : (
             <>
           {/* Operational load */}
@@ -433,12 +460,12 @@ export default function InsightsPage() {
             <div className="mt-4 space-y-4">
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <MetricTile
-                  label="Ticket volume"
+                  label="Request volume"
                   value={String(data.operational.ticketVolume)}
                   accent
                 />
                 <MetricTile
-                  label="Backlog"
+                  label="Active requests"
                   value={String(data.operational.backlogSize)}
                 />
                 <MetricTile
@@ -509,6 +536,7 @@ export default function InsightsPage() {
                         onChange={(e) => setSelectedTicketMetricCompany(e.target.value)}
                         className="mt-1.5 min-h-10 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
                       >
+                        <option value="ALL">All companies</option>
                         {taskMetricCompanies.map((company) => (
                           <option key={company.id} value={company.id}>
                             {company.name}
@@ -567,7 +595,7 @@ export default function InsightsPage() {
               <div className="mt-6">
                 <MetricsPieChart
                   title="Open queue distribution"
-                  itemsLabel={(n) => `${n} open ticket${n === 1 ? "" : "s"}`}
+                  itemsLabel={(n) => `${n} open request${n === 1 ? "" : "s"}`}
                   emptyDescription="No active queue items."
                   showPercentages
                   pieClassName="h-44 w-44 sm:h-48 sm:w-48"
@@ -681,6 +709,8 @@ function CompanyValueLabel({
 function TaskMetricsPanel({
   checklistPillars,
   personnelTicketMetrics,
+  personnelRfpAccountingMetrics,
+  personnelRfpFinanceMetrics,
   personnelDelayPenalties,
   helpdeskTickets,
   userSupportTickets,
@@ -705,6 +735,8 @@ function TaskMetricsPanel({
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   personnelTicketMetrics: PersonnelTicketMetric[];
+  personnelRfpAccountingMetrics: PersonnelTicketMetric[];
+  personnelRfpFinanceMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
@@ -824,7 +856,68 @@ function TaskMetricsPanel({
       personnelDelayPenalties.map((row) => [row.name.trim().toLowerCase(), row.deduction]),
     );
 
-    return rows.map((row) => {
+    /** Live request counts from PostgreSQL — preferred over merged DB fields that may be missing. */
+    const liveRequestsByName = new Map<string, PersonnelTicketMetric>();
+    for (const metric of personnelTicketMetrics) {
+      const key = normalizePersonName(metric.name);
+      if (!key) continue;
+      const existing = liveRequestsByName.get(key);
+      if (!existing) {
+        liveRequestsByName.set(key, { ...metric });
+        continue;
+      }
+      const closed = existing.closed + metric.closed;
+      const pending = existing.pending + metric.pending;
+      const total = closed + pending;
+      liveRequestsByName.set(key, {
+        ...existing,
+        closed,
+        pending,
+        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+      });
+    }
+
+    const liveRfpAccountingByName = new Map<string, PersonnelTicketMetric>();
+    for (const metric of personnelRfpAccountingMetrics) {
+      const key = normalizePersonName(metric.name);
+      if (!key) continue;
+      const existing = liveRfpAccountingByName.get(key);
+      if (!existing) {
+        liveRfpAccountingByName.set(key, { ...metric });
+        continue;
+      }
+      const closed = existing.closed + metric.closed;
+      const pending = existing.pending + metric.pending;
+      const total = closed + pending;
+      liveRfpAccountingByName.set(key, {
+        ...existing,
+        closed,
+        pending,
+        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+      });
+    }
+
+    const liveRfpFinanceByName = new Map<string, PersonnelTicketMetric>();
+    for (const metric of personnelRfpFinanceMetrics) {
+      const key = normalizePersonName(metric.name);
+      if (!key) continue;
+      const existing = liveRfpFinanceByName.get(key);
+      if (!existing) {
+        liveRfpFinanceByName.set(key, { ...metric });
+        continue;
+      }
+      const closed = existing.closed + metric.closed;
+      const pending = existing.pending + metric.pending;
+      const total = closed + pending;
+      liveRfpFinanceByName.set(key, {
+        ...existing,
+        closed,
+        pending,
+        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+      });
+    }
+
+    const cards: PersonnelCombinedMetricCard[] = rows.map((row) => {
       const livePenalty =
         penaltyById.get(row.sourceUserId) ??
         penaltyByName.get(row.name.trim().toLowerCase()) ??
@@ -839,18 +932,48 @@ function TaskMetricsPanel({
           ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
           : Math.round(row.taskEfficiency ?? 0);
 
+      const live = liveRequestsByName.get(normalizePersonName(row.name));
+      const closed = live?.closed ?? Number(row.ticketsClosed ?? 0);
+      const pending = live?.pending ?? Number(row.ticketsPending ?? 0);
+      const requestTotal = closed + pending;
+      const requestEfficiency =
+        live != null
+          ? Math.round(live.efficiency)
+          : row.ticketEfficiency != null
+            ? Math.round(Number(row.ticketEfficiency))
+            : requestTotal > 0
+              ? Math.round((closed / requestTotal) * 100)
+              : null;
+
+      const rfpAccounting = liveRfpAccountingByName.get(normalizePersonName(row.name)) ?? null;
+      const rfpFinance = liveRfpFinanceByName.get(normalizePersonName(row.name)) ?? null;
+
       return {
         id: row.sourceUserId,
         name: row.name,
         role: "Assignee",
         tickets:
-          row.ticketEfficiency != null || row.ticketsClosed + row.ticketsPending > 0
+          live != null || requestEfficiency != null || requestTotal > 0
             ? {
-                closed: row.ticketsClosed,
-                pending: row.ticketsPending,
-                efficiency: Math.round(row.ticketEfficiency ?? 0),
+                closed,
+                pending,
+                efficiency: requestEfficiency ?? 0,
               }
             : null,
+        rfpAccounting: rfpAccounting
+          ? {
+              closed: rfpAccounting.closed,
+              pending: rfpAccounting.pending,
+              efficiency: Math.round(rfpAccounting.efficiency),
+            }
+          : null,
+        rfpFinance: rfpFinance
+          ? {
+              closed: rfpFinance.closed,
+              pending: rfpFinance.pending,
+              efficiency: Math.round(rfpFinance.efficiency),
+            }
+          : null,
         tasks:
           row.totalTasks > 0 || row.taskEfficiency != null
             ? {
@@ -865,7 +988,64 @@ function TaskMetricsPanel({
             : null,
       };
     });
-  }, [mergedPersonnelRows, selectedCompanyName, personnelDelayPenalties]);
+
+    const seenNames = new Set(cards.map((card) => normalizePersonName(card.name)));
+    const ensureCard = (name: string, id: string) => {
+      const key = normalizePersonName(name);
+      if (!key || seenNames.has(key)) return cards.find((c) => normalizePersonName(c.name) === key);
+      seenNames.add(key);
+      const card: PersonnelCombinedMetricCard = {
+        id,
+        name,
+        role: "Assignee",
+        tickets: null,
+        rfpAccounting: null,
+        rfpFinance: null,
+        tasks: null,
+      };
+      cards.push(card);
+      return card;
+    };
+
+    for (const live of liveRequestsByName.values()) {
+      const card = ensureCard(live.name, live.id);
+      if (!card) continue;
+      if (!card.tickets) {
+        card.tickets = {
+          closed: live.closed,
+          pending: live.pending,
+          efficiency: Math.round(live.efficiency),
+        };
+      }
+    }
+    for (const live of liveRfpAccountingByName.values()) {
+      const card = ensureCard(live.name, live.id);
+      if (!card) continue;
+      card.rfpAccounting = {
+        closed: live.closed,
+        pending: live.pending,
+        efficiency: Math.round(live.efficiency),
+      };
+    }
+    for (const live of liveRfpFinanceByName.values()) {
+      const card = ensureCard(live.name, live.id);
+      if (!card) continue;
+      card.rfpFinance = {
+        closed: live.closed,
+        pending: live.pending,
+        efficiency: Math.round(live.efficiency),
+      };
+    }
+
+    return cards;
+  }, [
+    mergedPersonnelRows,
+    selectedCompanyName,
+    personnelDelayPenalties,
+    personnelTicketMetrics,
+    personnelRfpAccountingMetrics,
+    personnelRfpFinanceMetrics,
+  ]);
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">

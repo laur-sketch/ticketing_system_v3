@@ -13,7 +13,7 @@ function formatStatus(status: string) {
   return formatTicketStatusLabel(status);
 }
 
-/** Stable colors per ticket status — shared by pie, strip, and legends. */
+/** Stable colors per request status — shared by pie, strip, and legends. */
 export { TICKET_STATUS_CHART_COLORS };
 
 const TICKET_STATUS_SORT_ORDER = [
@@ -67,7 +67,7 @@ function shortDayLabel(label: string): string {
   return label?.length >= 10 ? label.slice(5) : label ?? "—";
 }
 
-/** Created and closed tickets per day (Asia/Manila buckets) — density plot. */
+/** Created and closed requests per day (Asia/Manila buckets) — density plot. */
 export function MetricsTrendChart({
   labels,
   created,
@@ -83,7 +83,7 @@ export function MetricsTrendChart({
   if (n === 0) {
     return (
       <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-14 text-center text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/40 dark:text-zinc-500">
-        Expand the reporting window or add ticket activity to plot trends.
+        Expand the reporting window or add request activity to plot trends.
       </div>
     );
   }

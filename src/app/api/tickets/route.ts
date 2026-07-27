@@ -4,13 +4,14 @@ import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import {
   customerTicketWhereBySessionEmail,
+  issueConcernIntakeLockMessage,
   requestorHasIntakeBlockingTicket,
 } from "@/lib/customer-pending-resolution";
-import { COMPANY_ROSTER } from "@/lib/company-roster";
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
 import { logActivity } from "@/lib/ticket-actions";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
+import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { addHours, getSlaPolicy } from "@/lib/sla";
 import { nextTicketNumber } from "@/lib/ticket-number";
 import { shouldNotifyAdminOnCreate, shouldNotifySuperAdminOnCreate } from "@/lib/triggers";
@@ -19,12 +20,45 @@ import {
   isValidWorkEmail,
   resolveTicketContactFields,
 } from "@/lib/ticket-intake-contact";
-import { resolveCustomerRequestTeam } from "@/lib/ticket-intake-request-team";
+import { resolveCustomerRequestTeam, resolveRosterTeamByExactName, resolveRosterTeamById } from "@/lib/ticket-intake-request-team";
 import type { IntakeScreenshotMetaItem } from "@/lib/ticket-intake-screenshots-meta";
 import { persistTicketScreenshots, validateScreenshotFiles } from "@/lib/ticket-intake-screenshots";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { runForConfirmationReminderSweep } from "@/lib/confirmation-reminders";
+import { parseRequestTypeId, requestTypeLabel } from "@/lib/request-types";
+import {
+  formatPaymentRequestDescription,
+  formatPaymentRequestTitle,
+  formatPaymentPeso,
+  normalizePaymentAmountInput,
+  DELIVERY_OF_CHECK_ONLINE_DEPOSIT,
+  MODE_OF_PAYMENT_CHECK,
+} from "@/lib/request-for-payment";
+import {
+  formatItemRequisitionDescription,
+  formatItemRequisitionTitle,
+  parseRequisitionItemsPayload,
+  validateItemRequisitionFields,
+} from "@/lib/item-requisition";
+import { paymentProceduralStatusLabel } from "@/lib/request-for-payment-approval";
+import { initPaymentApprovalMetaIfNeeded } from "@/lib/payment-approval-db";
+import { itemRequisitionProceduralStatusLabel } from "@/lib/item-requisition-approval";
+import { initItemRequisitionApprovalMetaIfNeeded } from "@/lib/item-requisition-approval-db";
+import {
+  formatFundTransferRequestDescription,
+  formatFundTransferRequestTitle,
+  validateFundTransferRequestFields,
+} from "@/lib/fund-transfer-request";
+import {
+  formatJobOrderDescription,
+  formatJobOrderTitle,
+  parseJobOrderNatureList,
+  validateJobOrderFields,
+} from "@/lib/job-order";
+import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
+import {
+  stampFundTransferCreatorOnCreate,
+} from "@/lib/fund-transfer-approval-db";
 
 const categories = new Set(Object.values(TicketCategory));
 const priorities = new Set(Object.values(TicketPriority));
@@ -50,11 +84,14 @@ export async function GET(req: Request) {
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
 
+  const personnelWhere =
+    session.user.role === "Personnel" ? await personnelRequestBoardWhere(operator?.id) : null;
+
   const tickets = await prisma.ticket.findMany({
     where: {
       ...(status ? { status: status as never } : {}),
       ...(teamId ? { teamId } : {}),
-      ...(session.user.role === "Personnel" ? { assignedAgentId: operator?.id ?? "__none__" } : {}),
+      ...(personnelWhere ?? {}),
       ...(session.user.role === "Customer"
         ? customerTicketWhereBySessionEmail(session.user.email ?? "")
         : {}),
@@ -121,10 +158,34 @@ export async function POST(req: Request) {
     let companyTeamIdRaw: string | undefined;
     let customerOrgRoleRaw: string | undefined;
     let branchRaw: string | undefined;
+    let departmentRaw: string | undefined;
     let assignedCompanyTextRaw: string | undefined;
     let contactNameRaw: string | undefined;
     let contactEmailRaw: string | undefined;
     let requestToCompanySbuRaw: string | undefined;
+    let requestTypeRaw: string | undefined;
+    let payeeRaw: string | undefined;
+    let inPaymentOfRaw: string | undefined;
+    let accountTitleRaw: string | undefined;
+    let amountRaw: string | undefined;
+    let modeOfPaymentRaw: string | undefined;
+    let deliveryOfCheckRaw: string | undefined;
+    let bankNameAccountNumberRaw: string | undefined;
+    let requisitionItemsRaw: unknown;
+    let purposeOfRequestRaw: string | undefined;
+    let fundTransferAmountRaw: string | undefined;
+    let requestingDepartmentBusinessUnitRaw: string | undefined;
+    let fromAccountNameRaw: string | undefined;
+    let fromAccountNumberRaw: string | undefined;
+    let toAccountNameRaw: string | undefined;
+    let toAccountNumberRaw: string | undefined;
+    let bankNameRaw: string | undefined;
+    let bankAddressRaw: string | undefined;
+    let natureOfConcernRaw: unknown;
+    let buildingRaw: string | undefined;
+    let startDateRaw: string | undefined;
+    let targetDateRaw: string | undefined;
+    let expectedDurationRaw: string | undefined;
     let screenshotFiles: File[] | undefined;
 
     if (contentType.includes("multipart/form-data")) {
@@ -140,6 +201,8 @@ export async function POST(req: Request) {
       customerOrgRoleRaw = cor != null ? String(cor) : undefined;
       const br = fd.get("branch");
       branchRaw = br != null ? String(br) : undefined;
+      const dep = fd.get("department");
+      departmentRaw = dep != null ? String(dep) : undefined;
       const ac = fd.get("assignedCompanyText");
       assignedCompanyTextRaw = ac != null ? String(ac) : undefined;
       const cn = fd.get("contactName");
@@ -148,6 +211,64 @@ export async function POST(req: Request) {
       contactEmailRaw = cem != null ? String(cem) : undefined;
       const rts = fd.get("requestToCompanySbu");
       requestToCompanySbuRaw = rts != null ? String(rts) : undefined;
+      const rt = fd.get("requestType");
+      requestTypeRaw = rt != null ? String(rt) : undefined;
+      const py = fd.get("payee");
+      payeeRaw = py != null ? String(py) : undefined;
+      const ipo = fd.get("inPaymentOf");
+      inPaymentOfRaw = ipo != null ? String(ipo) : undefined;
+      const at = fd.get("accountTitle");
+      accountTitleRaw = at != null ? String(at) : undefined;
+      const amt = fd.get("amount");
+      amountRaw = amt != null ? String(amt) : undefined;
+      const mop = fd.get("modeOfPayment");
+      modeOfPaymentRaw = mop != null ? String(mop) : undefined;
+      const doc = fd.get("deliveryOfCheck");
+      deliveryOfCheckRaw = doc != null ? String(doc) : undefined;
+      const bna = fd.get("bankNameAccountNumber");
+      bankNameAccountNumberRaw = bna != null ? String(bna) : undefined;
+      const ri = fd.get("requisitionItems");
+      if (typeof ri === "string" && ri.trim()) {
+        try {
+          requisitionItemsRaw = JSON.parse(ri);
+        } catch {
+          return NextResponse.json({ error: "Invalid requisition items payload." }, { status: 400 });
+        }
+      }
+      const por = fd.get("purposeOfRequest");
+      purposeOfRequestRaw = por != null ? String(por) : undefined;
+      const fta = fd.get("fundTransferAmount");
+      fundTransferAmountRaw = fta != null ? String(fta) : undefined;
+      const rdbu = fd.get("requestingDepartmentBusinessUnit");
+      requestingDepartmentBusinessUnitRaw = rdbu != null ? String(rdbu) : undefined;
+      const fan = fd.get("fromAccountName");
+      fromAccountNameRaw = fan != null ? String(fan) : undefined;
+      const fac = fd.get("fromAccountNumber");
+      fromAccountNumberRaw = fac != null ? String(fac) : undefined;
+      const tan = fd.get("toAccountName");
+      toAccountNameRaw = tan != null ? String(tan) : undefined;
+      const tac = fd.get("toAccountNumber");
+      toAccountNumberRaw = tac != null ? String(tac) : undefined;
+      const bn = fd.get("bankName");
+      bankNameRaw = bn != null ? String(bn) : undefined;
+      const ba = fd.get("bankAddress");
+      bankAddressRaw = ba != null ? String(ba) : undefined;
+      const noc = fd.get("natureOfConcern");
+      if (typeof noc === "string" && noc.trim()) {
+        try {
+          natureOfConcernRaw = JSON.parse(noc);
+        } catch {
+          natureOfConcernRaw = noc;
+        }
+      }
+      const bld = fd.get("building");
+      buildingRaw = bld != null ? String(bld) : undefined;
+      const sd = fd.get("startDate");
+      startDateRaw = sd != null ? String(sd) : undefined;
+      const td = fd.get("targetDate");
+      targetDateRaw = td != null ? String(td) : undefined;
+      const ed = fd.get("expectedDuration");
+      expectedDurationRaw = ed != null ? String(ed) : undefined;
       const raw = fd.getAll("screenshots");
       screenshotFiles = raw.filter((x): x is File => x instanceof File && x.size > 0);
       const v = validateScreenshotFiles(screenshotFiles);
@@ -172,12 +293,47 @@ export async function POST(req: Request) {
       customerOrgRoleRaw =
         typeof body.customerOrgRole === "string" ? body.customerOrgRole : undefined;
       branchRaw = typeof body.branch === "string" ? body.branch : undefined;
+      departmentRaw = typeof body.department === "string" ? body.department : undefined;
       assignedCompanyTextRaw =
         typeof body.assignedCompanyText === "string" ? body.assignedCompanyText : undefined;
       contactNameRaw = typeof body.contactName === "string" ? body.contactName : undefined;
       contactEmailRaw = typeof body.contactEmail === "string" ? body.contactEmail : undefined;
       requestToCompanySbuRaw =
         typeof body.requestToCompanySbu === "string" ? body.requestToCompanySbu : undefined;
+      requestTypeRaw = typeof body.requestType === "string" ? body.requestType : undefined;
+      payeeRaw = typeof body.payee === "string" ? body.payee : undefined;
+      inPaymentOfRaw = typeof body.inPaymentOf === "string" ? body.inPaymentOf : undefined;
+      accountTitleRaw = typeof body.accountTitle === "string" ? body.accountTitle : undefined;
+      amountRaw = typeof body.amount === "string" ? body.amount : undefined;
+      modeOfPaymentRaw = typeof body.modeOfPayment === "string" ? body.modeOfPayment : undefined;
+      deliveryOfCheckRaw =
+        typeof body.deliveryOfCheck === "string" ? body.deliveryOfCheck : undefined;
+      bankNameAccountNumberRaw =
+        typeof body.bankNameAccountNumber === "string" ? body.bankNameAccountNumber : undefined;
+      requisitionItemsRaw = body.requisitionItems;
+      purposeOfRequestRaw =
+        typeof body.purposeOfRequest === "string" ? body.purposeOfRequest : undefined;
+      fundTransferAmountRaw =
+        typeof body.fundTransferAmount === "string" ? body.fundTransferAmount : undefined;
+      requestingDepartmentBusinessUnitRaw =
+        typeof body.requestingDepartmentBusinessUnit === "string"
+          ? body.requestingDepartmentBusinessUnit
+          : undefined;
+      fromAccountNameRaw =
+        typeof body.fromAccountName === "string" ? body.fromAccountName : undefined;
+      fromAccountNumberRaw =
+        typeof body.fromAccountNumber === "string" ? body.fromAccountNumber : undefined;
+      toAccountNameRaw = typeof body.toAccountName === "string" ? body.toAccountName : undefined;
+      toAccountNumberRaw =
+        typeof body.toAccountNumber === "string" ? body.toAccountNumber : undefined;
+      bankNameRaw = typeof body.bankName === "string" ? body.bankName : undefined;
+      bankAddressRaw = typeof body.bankAddress === "string" ? body.bankAddress : undefined;
+      natureOfConcernRaw = body.natureOfConcern;
+      buildingRaw = typeof body.building === "string" ? body.building : undefined;
+      startDateRaw = typeof body.startDate === "string" ? body.startDate : undefined;
+      targetDateRaw = typeof body.targetDate === "string" ? body.targetDate : undefined;
+      expectedDurationRaw =
+        typeof body.expectedDuration === "string" ? body.expectedDuration : undefined;
     }
 
     const accountEmail = (session.user.email || "").trim().toLowerCase();
@@ -227,18 +383,6 @@ export async function POST(req: Request) {
           .filter((e) => e.length > 0),
       ),
     ];
-    const blocking = await requestorHasIntakeBlockingTicket(identityEmails);
-    if (blocking) {
-      return NextResponse.json(
-        {
-          error:
-            "This requestor already has an assigned or active ticket. Close that ticket before submitting a new one.",
-          pendingTicketId: blocking.id,
-          pendingTicketNumber: blocking.ticketNumber,
-        },
-        { status: 409 },
-      );
-    }
 
     const effectiveCategory = (category || "GENERAL").trim();
     const effectivePriority = (priority && String(priority).trim() ? String(priority).trim() : "LOW");
@@ -247,6 +391,130 @@ export async function POST(req: Request) {
     if (branch.length > 120) {
       return NextResponse.json({ error: "Branch must be at most 120 characters." }, { status: 400 });
     }
+    const requestType = parseRequestTypeId(requestTypeRaw);
+
+    // Intake lock applies only to Issue/Concern tickets.
+    if (requestType === "ISSUE_CONCERN_TICKET") {
+      const blocking = await requestorHasIntakeBlockingTicket(identityEmails);
+      if (blocking) {
+        return NextResponse.json(
+          {
+            error: issueConcernIntakeLockMessage(blocking.ticketNumber),
+            pendingTicketId: blocking.id,
+            pendingTicketNumber: blocking.ticketNumber,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    const departmentFromRequest =
+      requestType === "FUND_TRANSFER_REQUEST"
+        ? (requestingDepartmentBusinessUnitRaw ?? departmentRaw ?? "").trim()
+        : (departmentRaw ?? "").trim();
+    const department = departmentFromRequest;
+    if (department.length > 200) {
+      return NextResponse.json({ error: "Department must be at most 200 characters." }, { status: 400 });
+    }
+    const payee = (payeeRaw ?? "").trim();
+    const inPaymentOf = (inPaymentOfRaw ?? "").trim();
+    const accountTitle = (accountTitleRaw ?? "").trim();
+    const amount = (amountRaw ?? "").trim();
+    const modeOfPayment = (modeOfPaymentRaw ?? "").trim();
+    const deliveryOfCheck = (deliveryOfCheckRaw ?? "").trim();
+    const bankNameAccountNumber = (bankNameAccountNumberRaw ?? "").trim();
+    if (requestType === "REQUEST_FOR_PAYMENT") {
+      if (!payee || !inPaymentOf || !accountTitle || !amount || !modeOfPayment) {
+        return NextResponse.json(
+          {
+            error:
+              "Payee, In payment of, Account title, Amount, and Mode of payment are required for a payment request.",
+          },
+          { status: 400 },
+        );
+      }
+      if (modeOfPayment === MODE_OF_PAYMENT_CHECK && !deliveryOfCheck) {
+        return NextResponse.json(
+          { error: "Delivery of check is required when Mode of payment is Check." },
+          { status: 400 },
+        );
+      }
+      if (
+        modeOfPayment === MODE_OF_PAYMENT_CHECK &&
+        deliveryOfCheck === DELIVERY_OF_CHECK_ONLINE_DEPOSIT &&
+        !bankNameAccountNumber
+      ) {
+        return NextResponse.json(
+          { error: "Bank name / account number is required for Online Deposit." },
+          { status: 400 },
+        );
+      }
+      if (
+        payee.length > 200 ||
+        inPaymentOf.length > 500 ||
+        accountTitle.length > 200 ||
+        amount.length > 80 ||
+        modeOfPayment.length > 120 ||
+        deliveryOfCheck.length > 80 ||
+        bankNameAccountNumber.length > 200
+      ) {
+        return NextResponse.json({ error: "A payment field exceeds the maximum length." }, { status: 400 });
+      }
+    }
+
+    const requisitionFields =
+      requestType === "ITEM_REQUISITION_SLIP"
+        ? {
+            items: parseRequisitionItemsPayload(requisitionItemsRaw),
+            purposeOfRequest: (purposeOfRequestRaw ?? issueText).trim(),
+          }
+        : null;
+    if (requisitionFields) {
+      const check = validateItemRequisitionFields(requisitionFields);
+      if (!check.ok) {
+        return NextResponse.json({ error: check.error }, { status: 400 });
+      }
+    }
+
+    const fundTransferFields =
+      requestType === "FUND_TRANSFER_REQUEST"
+        ? {
+            requestingDepartmentBusinessUnit: (requestingDepartmentBusinessUnitRaw ?? "").trim(),
+            fundTransferAmount: (fundTransferAmountRaw ?? "").trim(),
+            fromAccountName: (fromAccountNameRaw ?? "").trim(),
+            fromAccountNumber: (fromAccountNumberRaw ?? "").trim(),
+            toAccountName: (toAccountNameRaw ?? "").trim(),
+            toAccountNumber: (toAccountNumberRaw ?? "").trim(),
+            bankName: (bankNameRaw ?? "").trim(),
+            bankAddress: (bankAddressRaw ?? "").trim(),
+            reason: issueText,
+          }
+        : null;
+    if (fundTransferFields) {
+      const check = validateFundTransferRequestFields(fundTransferFields);
+      if (!check.ok) {
+        return NextResponse.json({ error: check.error }, { status: 400 });
+      }
+    }
+
+    const jobOrderFields =
+      requestType === "JOB_ORDER"
+        ? {
+            natureOfConcern: parseJobOrderNatureList(natureOfConcernRaw),
+            building: (buildingRaw ?? "").trim(),
+            startDate: (startDateRaw ?? "").trim(),
+            targetDate: (targetDateRaw ?? "").trim(),
+            expectedDuration: (expectedDurationRaw ?? "").trim(),
+            notes: issueText,
+          }
+        : null;
+    if (jobOrderFields) {
+      const check = validateJobOrderFields(jobOrderFields);
+      if (!check.ok) {
+        return NextResponse.json({ error: check.error }, { status: 400 });
+      }
+    }
+
     const sessionCompanyId =
       typeof session.user.companyId === "string" && session.user.companyId.trim()
         ? session.user.companyId.trim()
@@ -254,14 +522,39 @@ export async function POST(req: Request) {
     const screenshotList = Array.isArray(screenshotNames)
       ? screenshotNames.map((v) => String(v).trim()).filter(Boolean)
       : [];
-    const normalizedTitle = (
+    let normalizedTitle = (
       title ||
       issueText.split("\n")[0]?.trim() ||
       `${effectiveName} request`
     ).trim();
-    const normalizedDescription = issueText;
+    let normalizedDescription = issueText;
 
-    if (!normalizedTitle || !issueText || !effectiveName || !effectiveRequestorEmail || !effectiveContactEmail) {
+    if (requestType === "REQUEST_FOR_PAYMENT") {
+      const amountNormalized = normalizePaymentAmountInput(amount) || amount;
+      const paymentFields = {
+        payee,
+        inPaymentOf,
+        accountTitle,
+        amount: amountNormalized,
+        modeOfPayment,
+        deliveryOfCheck,
+        bankNameAccountNumber,
+        notes: issueText,
+      };
+      normalizedTitle = (title || formatPaymentRequestTitle(paymentFields)).trim();
+      normalizedDescription = formatPaymentRequestDescription(paymentFields);
+    } else if (requisitionFields) {
+      normalizedTitle = (title || formatItemRequisitionTitle(requisitionFields)).trim();
+      normalizedDescription = formatItemRequisitionDescription(requisitionFields);
+    } else if (fundTransferFields) {
+      normalizedTitle = (title || formatFundTransferRequestTitle(fundTransferFields)).trim();
+      normalizedDescription = formatFundTransferRequestDescription(fundTransferFields);
+    } else if (jobOrderFields) {
+      normalizedTitle = (title || formatJobOrderTitle(jobOrderFields)).trim();
+      normalizedDescription = formatJobOrderDescription(jobOrderFields);
+    }
+
+    if (!normalizedTitle || !normalizedDescription || !effectiveName || !effectiveRequestorEmail || !effectiveContactEmail) {
       return NextResponse.json(
         { error: "Missing required fields." },
         { status: 400 },
@@ -285,7 +578,6 @@ export async function POST(req: Request) {
 
     let team: { id: string; name: string } | null = null;
     let customerRequestSbuText: string | null = null;
-    let customerSbuRoutingMatched: boolean | null = null;
     let customerAssignedCompanyText: string | null = null;
     let customerAssignedOutsideQueue = false;
     let customerRequestOutsideQueue = false;
@@ -345,13 +637,13 @@ export async function POST(req: Request) {
       }
       customerRequestSbuText = requestToCompanySbu;
 
+      // Target queue = "Send request to" only — never fall back to the requestor's company.
       const routed = await resolveCustomerRequestTeam({
         requestText: requestToCompanySbu,
-        fallbackTeamId: effectivePortalCompanyId,
+        fallbackTeamId: null,
       });
-      customerRequestOutsideQueue = !routed;
-      team = routed?.team ?? outsideTeam;
-      customerSbuRoutingMatched = routed?.matched ?? false;
+      customerRequestOutsideQueue = !routed?.matched;
+      team = routed?.matched ? routed.team : outsideTeam;
     } else {
       const rawCompanyTeamId = (companyTeamIdRaw || "").trim();
       const requestToCompanySbu = (requestToCompanySbuRaw ?? "").trim();
@@ -361,26 +653,30 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
+
+      const isStaffIntake =
+        session.user.role === "Personnel" ||
+        session.user.role === "Admin" ||
+        session.user.role === "SuperAdmin";
+
       if (rawCompanyTeamId) {
-        const selectedTeam = await prisma.team.findUnique({
-          where: { id: rawCompanyTeamId },
-          select: { id: true, name: true },
-        });
-        if (!selectedTeam || !(COMPANY_ROSTER as readonly string[]).includes(selectedTeam.name)) {
+        const selectedTeam = await resolveRosterTeamById(rawCompanyTeamId);
+        if (!selectedTeam) {
           return NextResponse.json({ error: "Invalid company/SBU selection." }, { status: 400 });
         }
         team = selectedTeam;
-      } else if (session.user.role === "Personnel" && requestToCompanySbu) {
-        const fallbackTeamId = await resolveStaffCompanyTeamId(accountEmail);
-        const outsideTeam = await ensureOutsideCompanyTeam();
-        const routed = await resolveCustomerRequestTeam({
-          requestText: requestToCompanySbu,
-          fallbackTeamId,
-        });
-        team = routed?.team ?? outsideTeam;
+        customerRequestSbuText = selectedTeam.name;
+      } else if (isStaffIntake && requestToCompanySbu) {
+        // Legacy / name-only payloads: exact roster match only (no creator-company fallback).
+        const exact = await resolveRosterTeamByExactName(requestToCompanySbu);
+        if (!exact) {
+          return NextResponse.json(
+            { error: "Invalid company/SBU selection. Choose a roster company from Send request to." },
+            { status: 400 },
+          );
+        }
+        team = exact;
         customerRequestSbuText = requestToCompanySbu;
-        customerRequestOutsideQueue = !routed;
-        customerSbuRoutingMatched = routed?.matched ?? false;
       } else {
         return NextResponse.json(
           { error: "Request to Company/SBU is required." },
@@ -408,6 +704,13 @@ export async function POST(req: Request) {
 
     const ticket = await prisma.ticket.create({ data: createData });
 
+    // Persist request type via raw SQL so this works even if Prisma Client wasn't regenerated yet.
+    await prisma.$executeRaw`
+      UPDATE tickets
+      SET request_type = ${requestType}
+      WHERE id = ${ticket.id}
+    `;
+
     let uploadedMeta: IntakeScreenshotMetaItem[] | null = null;
     if (screenshotFiles && screenshotFiles.length > 0) {
       uploadedMeta = await persistTicketScreenshots(ticket.id, screenshotFiles);
@@ -423,10 +726,42 @@ export async function POST(req: Request) {
       "Ticket logged",
       `Queued for ${team?.name ?? "triage"}. SLA: first response by ${firstResponseDueAt.toISOString()}, resolution by ${resolutionDueAt.toISOString()}.`,
     );
-    const requestSbuFreeText =
-      (session.user.role === "Customer" || session.user.role === "Personnel") && customerRequestSbuText
-        ? customerRequestSbuText
-        : null;
+    await logActivity(ticket.id, "USER", "Request type", requestTypeLabel(requestType));
+    if (requestType === "REQUEST_FOR_PAYMENT") {
+      const meta = await initPaymentApprovalMetaIfNeeded(ticket.id);
+      await logActivity(
+        ticket.id,
+        "SYSTEM",
+        "Payment approval started",
+        paymentProceduralStatusLabel(meta.proceduralStep) ?? "PREPARED BY IS MISSING",
+      );
+    }
+    if (requestType === "ITEM_REQUISITION_SLIP") {
+      const meta = await initItemRequisitionApprovalMetaIfNeeded(ticket.id);
+      await logActivity(
+        ticket.id,
+        "SYSTEM",
+        "Item requisition approval started",
+        itemRequisitionProceduralStatusLabel(meta.proceduralStep) ??
+          "CANVASSED BY IS MISSING",
+      );
+    }
+    if (requestType === "FUND_TRANSFER_REQUEST") {
+      const meta = await stampFundTransferCreatorOnCreate({
+        ticketId: ticket.id,
+        email: session.user.email ?? effectiveRequestorEmail ?? effectiveContactEmail,
+        name: session.user.name ?? effectiveName,
+        teamId: team?.id ?? null,
+      });
+      await logActivity(
+        ticket.id,
+        "SYSTEM",
+        "Fund transfer approval started",
+        fundTransferProceduralStatusLabel(meta.proceduralStep) ??
+          "RECOMMENDING APPROVAL IS MISSING",
+      );
+    }
+    const requestSbuFreeText = customerRequestSbuText;
     if (team) {
       if (requestSbuFreeText) {
         await logActivity(ticket.id, "USER", "Request to Company/SBU", requestSbuFreeText);
@@ -436,15 +771,6 @@ export async function POST(req: Request) {
             "SYSTEM",
             "Routing note",
             `No roster SBU matched the request text; ticket queued under ${team.name}.`,
-          );
-        } else if (customerSbuRoutingMatched === false) {
-          const fallbackLabel =
-            session.user.role === "Personnel" ? "designated company" : "assigned company";
-          await logActivity(
-            ticket.id,
-            "SYSTEM",
-            "Routing note",
-            `Ticket queued under ${team.name} (${fallbackLabel} fallback); refine SBU keywords if needed.`,
           );
         }
       } else {
@@ -474,6 +800,43 @@ export async function POST(req: Request) {
     }
     if (branch) {
       await logActivity(ticket.id, "USER", "Branch", branch);
+    }
+    if (department) {
+      await logActivity(
+        ticket.id,
+        "USER",
+        requestType === "FUND_TRANSFER_REQUEST"
+          ? "Requesting department/business unit"
+          : "Department",
+        department,
+      );
+    }
+    if (requestType === "REQUEST_FOR_PAYMENT") {
+      await logActivity(ticket.id, "USER", "Payee", payee);
+      await logActivity(ticket.id, "USER", "In payment of", inPaymentOf);
+      await logActivity(ticket.id, "USER", "Account title", accountTitle);
+      await logActivity(
+        ticket.id,
+        "USER",
+        "Amount",
+        formatPaymentPeso(amount) || amount,
+      );
+      await logActivity(ticket.id, "USER", "Mode of payment", modeOfPayment);
+      if (deliveryOfCheck) {
+        await logActivity(ticket.id, "USER", "Delivery of check", deliveryOfCheck);
+      }
+      if (bankNameAccountNumber) {
+        await logActivity(ticket.id, "USER", "Bank name / account number", bankNameAccountNumber);
+      }
+    }
+    if (fundTransferFields) {
+      await logActivity(ticket.id, "USER", "Fund transfer amount", fundTransferFields.fundTransferAmount);
+      await logActivity(ticket.id, "USER", "From account name", fundTransferFields.fromAccountName);
+      await logActivity(ticket.id, "USER", "From account number", fundTransferFields.fromAccountNumber);
+      await logActivity(ticket.id, "USER", "To account name", fundTransferFields.toAccountName);
+      await logActivity(ticket.id, "USER", "To account number", fundTransferFields.toAccountNumber);
+      await logActivity(ticket.id, "USER", "Bank name", fundTransferFields.bankName);
+      await logActivity(ticket.id, "USER", "Bank address", fundTransferFields.bankAddress);
     }
     if (uploadedMeta && uploadedMeta.length > 0) {
       const label = uploadedMeta.map((m) => m.originalName).join(", ");

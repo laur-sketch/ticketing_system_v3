@@ -10,6 +10,9 @@ const HRIS_COMPANY_ALIASES: Record<string, CompanyRosterName> = {
   eazzygas: "EAZYGAZ",
   easygas: "EAZYGAZ",
   eazygas: "EAZYGAZ",
+  eazygaz: "EAZYGAZ",
+  "eazy gaz": "EAZYGAZ",
+  "eazzy gas": "EAZYGAZ",
   "aci/apmc": "ACI",
 };
 

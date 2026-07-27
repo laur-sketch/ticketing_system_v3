@@ -433,10 +433,10 @@ export function PersonnelClient({
     "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
   )} max-w-full sm:max-w-[140px]`;
 
-  const assignmentSelectClass = `${cn(
+  const assignmentInputClass = `${cn(
     "w-full min-w-0 rounded-md border border-zinc-300 bg-zinc-50 px-1.5 py-1 text-[11px] text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
     "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
-  )} max-w-full sm:max-w-[128px]`;
+  )} max-w-full sm:max-w-[7.5rem]`;
 
   function showStaffDesignatedCompany(role: string) {
     const n = normalizePortalRole(role) ?? role;
@@ -757,7 +757,7 @@ export function PersonnelClient({
                                 onChange={(next) =>
                                   void updateStaffAssignmentColor(row.mergedSourceUserId, next)
                                 }
-                                selectClassName={assignmentSelectClass}
+                                selectClassName={assignmentInputClass}
                               />
                             </td>
                             <td className="px-3 py-2 text-right text-[10px] text-zinc-500">—</td>
@@ -851,7 +851,7 @@ export function PersonnelClient({
                               onChange={(e) =>
                                 void updateMergedUserRole(row.mergedSourceUserId, e.target.value)
                               }
-                              className={assignmentSelectClass}
+                              className={teamSelectClass}
                               title="Portal role"
                             >
                               {PORTAL_ROLES.map((r) => (
@@ -886,7 +886,7 @@ export function PersonnelClient({
                               onChange={(next) =>
                                 void updateStaffAssignmentColor(row.mergedSourceUserId, next)
                               }
-                              selectClassName={assignmentSelectClass}
+                              selectClassName={assignmentInputClass}
                             />
                           </td>
                           <td className="px-2 py-1 text-right text-[10px] text-zinc-500">—</td>

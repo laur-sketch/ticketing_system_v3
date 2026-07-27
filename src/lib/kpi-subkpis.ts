@@ -503,6 +503,8 @@ function rawEnvelopeMeta(raw: unknown) {
       taskCount: null as number | null,
       isFieldAssignment: false,
       isProject: false,
+      linkedJobOrderTicketId: null as string | null,
+      linkedJobOrderTicketNumber: null as string | null,
     };
   }
   const pillarBeforeScreenshot = parseTaskScreenshotMetaList(raw.pillarBeforeScreenshot);
@@ -543,6 +545,14 @@ function rawEnvelopeMeta(raw: unknown) {
         : null,
     isFieldAssignment: raw.isFieldAssignment === true,
     isProject: raw.isProject === true,
+    linkedJobOrderTicketId:
+      typeof raw.linkedJobOrderTicketId === "string" && raw.linkedJobOrderTicketId.trim()
+        ? raw.linkedJobOrderTicketId.trim()
+        : null,
+    linkedJobOrderTicketNumber:
+      typeof raw.linkedJobOrderTicketNumber === "string" && raw.linkedJobOrderTicketNumber.trim()
+        ? raw.linkedJobOrderTicketNumber.trim().slice(0, 64)
+        : null,
   };
 }
 
@@ -573,7 +583,23 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.taskCount != null ? { taskCount: meta.taskCount } : {}),
     ...(meta.isFieldAssignment ? { isFieldAssignment: true } : {}),
     ...(meta.isProject ? { isProject: true } : {}),
+    ...(meta.linkedJobOrderTicketId
+      ? {
+          linkedJobOrderTicketId: meta.linkedJobOrderTicketId,
+          ...(meta.linkedJobOrderTicketNumber
+            ? { linkedJobOrderTicketNumber: meta.linkedJobOrderTicketNumber }
+            : {}),
+        }
+      : {}),
   } as Prisma.InputJsonValue;
+}
+
+function stripLinkedJobOrderKeys(value: Prisma.InputJsonValue): Prisma.InputJsonValue {
+  if (!isPlainObject(value)) return value;
+  const next = { ...value };
+  delete next.linkedJobOrderTicketId;
+  delete next.linkedJobOrderTicketNumber;
+  return next as Prisma.InputJsonValue;
 }
 
 export function getTaskTargetDueDate(raw: unknown): string | null {
@@ -670,6 +696,32 @@ export function markProjectTask(raw: unknown): Prisma.InputJsonValue {
   const meta = rawEnvelopeMeta(raw);
   meta.isProject = true;
   meta.isFieldAssignment = false;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+export function getLinkedJobOrderFromSubKpis(
+  raw: unknown,
+): { ticketId: string; ticketNumber: string | null } | null {
+  const meta = rawEnvelopeMeta(raw);
+  if (!meta.linkedJobOrderTicketId) return null;
+  return {
+    ticketId: meta.linkedJobOrderTicketId,
+    ticketNumber: meta.linkedJobOrderTicketNumber,
+  };
+}
+
+export function setLinkedJobOrderOnSubKpis(
+  raw: unknown,
+  link: { ticketId: string; ticketNumber?: string | null } | null,
+): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  if (!link?.ticketId?.trim()) {
+    meta.linkedJobOrderTicketId = null;
+    meta.linkedJobOrderTicketNumber = null;
+    return stripLinkedJobOrderKeys(withEnvelopeMeta(ensureEnvelope(raw), meta));
+  }
+  meta.linkedJobOrderTicketId = link.ticketId.trim();
+  meta.linkedJobOrderTicketNumber = link.ticketNumber?.trim()?.slice(0, 64) || null;
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
 }
 

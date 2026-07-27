@@ -37,7 +37,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         kind: "group",
         label: "Operations",
         children: [
-          { href: "/agent", label: "Tickets" },
+          { href: "/agent", label: "Requests" },
           { href: "/agent/tasks", label: "Tasks" },
         ],
       },
@@ -61,7 +61,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         kind: "group",
         label: "Operations",
         children: [
-          { href: "/agent", label: "Tickets" },
+          { href: "/agent", label: "Requests" },
           { href: "/agent/tasks", label: "Tasks" },
         ],
       },
@@ -85,7 +85,7 @@ function linksForRole(role: string | undefined): NavItem[] {
         kind: "group",
         label: "Operations",
         children: [
-          { href: "/agent", label: "Tickets" },
+          { href: "/agent", label: "Requests" },
           { href: "/agent/tasks", label: "Tasks" },
         ],
       },

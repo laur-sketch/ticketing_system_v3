@@ -46,7 +46,7 @@ describe("deep check: requestor API routes", () => {
     });
     vi.mocked(customerHasPendingResolvedTicket).mockResolvedValue({
       id: "t1",
-      ticketNumber: "TKT-1",
+      ticketNumber: "REQ-1",
       status: "FOR_CONFIRMATION",
       updatedAt: new Date(),
     });
@@ -76,7 +76,7 @@ describe("deep check: requestor API routes", () => {
     vi.mocked(listTicketsAwaitingCustomerConfirmation).mockResolvedValue([
       {
         id: "t2",
-        ticketNumber: "TKT-2",
+        ticketNumber: "REQ-2",
         title: "Printer issue",
         status: "FOR_CONFIRMATION",
         updatedAt: new Date("2026-06-01T12:00:00.000Z"),

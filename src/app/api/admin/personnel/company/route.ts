@@ -6,6 +6,7 @@ import {
   resolveSecondaryDatabaseName,
 } from "@/lib/merged-database-sources";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
+import { withSecondaryWriteClient } from "@/lib/prisma-secondary-write";
 import { isStaffPortalRole } from "@/lib/staff-role";
 import { Prisma } from "@prisma/client/secondary";
 
@@ -62,12 +63,6 @@ export async function PATCH(req: Request) {
     companyName = team.name;
   }
 
-  await prismaSecondary.$executeRaw`
-    UPDATE merged_users
-    SET company_name = ${companyName}, updated_at = CURRENT_TIMESTAMP
-    WHERE source_user_id = ${mergedSourceUserId}
-  `;
-
   // Keep linked portal profile + agent queue aligned when present.
   // Prefer HRIS-linked portal; fall back to email (merge may lag the link).
   const emailNeedle = existing[0].email?.trim().toLowerCase() || null;
@@ -123,11 +118,39 @@ export async function PATCH(req: Request) {
     }
   }
 
+  let mergedSynced = false;
+  try {
+    // Writes go through DATABASE_URL_SECONDARY_SYNC (not merge_app SELECT-only).
+    await withSecondaryWriteClient(async (db) => {
+      await db.$executeRaw`
+        UPDATE merged_users
+        SET company_name = ${companyName}, updated_at = CURRENT_TIMESTAMP
+        WHERE source_user_id = ${mergedSourceUserId}
+      `;
+    });
+    mergedSynced = true;
+  } catch (e) {
+    console.warn(
+      "merged_users company sync skipped (portal company still updated):",
+      e instanceof Error ? e.message : e,
+    );
+    if (!portal) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not update company: merge database write failed and no portal account is linked. Set DATABASE_URL_SECONDARY_SYNC to a user with UPDATE on merged_users.",
+        },
+        { status: 503 },
+      );
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     mergedSourceUserId: mergedIdRaw,
     companyName,
     teamId,
     portalAccountId: portal?.id ?? null,
+    mergedSynced,
   });
 }
