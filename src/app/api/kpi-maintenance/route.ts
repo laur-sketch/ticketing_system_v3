@@ -154,6 +154,17 @@ function kpiRowVisibleToAgent(
   return row.assignedAgentId === id || hasSubKpiAssignedTo(row.subKpis, id);
 }
 
+/** Assignee / sub-assignee visibility, plus Field Assignments where the agent is a traveler. */
+function filterKpiRowsForViewer<T extends { id: string; assignedAgentId: string | null; subKpis: unknown }>(
+  rows: T[],
+  agentId: string | null | undefined,
+  travelerKpiIds: Set<string>,
+): T[] {
+  return rows.filter(
+    (row) => kpiRowVisibleToAgent(row, agentId) || travelerKpiIds.has(row.id),
+  );
+}
+
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
   if (unauthorized || !session) return unauthorized;
@@ -197,19 +208,18 @@ export async function GET(req: Request) {
     kpiIdsWithTravelOrders,
     travelOrderBoardSummariesByKpiIds,
   } = await import("@/lib/travel-order-db");
+
+  const viewerAgentId = !perms.canAssignWork
+    ? (perms.operator?.id ?? null)
+    : filterByAssigned;
+  const travelerKpiIds = viewerAgentId
+    ? await kpiIdsWhereAgentIsTravelOrderTraveler(viewerAgentId)
+    : new Set<string>();
+
   if (!perms.canAssignWork) {
-    const operatorId = perms.operator?.id ?? null;
-    const travelerKpiIds = operatorId
-      ? await kpiIdsWhereAgentIsTravelOrderTraveler(operatorId)
-      : new Set<string>();
-    rows = rows.filter(
-      (row) => kpiRowVisibleToAgent(row, operatorId) || travelerKpiIds.has(row.id),
-    );
+    rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds);
   } else if (filterByAssigned) {
-    const travelerKpiIds = await kpiIdsWhereAgentIsTravelOrderTraveler(filterByAssigned);
-    rows = rows.filter(
-      (row) => kpiRowVisibleToAgent(row, filterByAssigned) || travelerKpiIds.has(row.id),
-    );
+    rows = filterKpiRowsForViewer(rows, filterByAssigned, travelerKpiIds);
   }
 
   const now = new Date();
@@ -342,10 +352,9 @@ export async function GET(req: Request) {
       },
     });
     if (!perms.canAssignWork) {
-      const operatorId = perms.operator?.id ?? null;
-      rows = rows.filter((row) => kpiRowVisibleToAgent(row, operatorId));
+      rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds);
     } else if (filterByAssigned) {
-      rows = rows.filter((row) => kpiRowVisibleToAgent(row, filterByAssigned));
+      rows = filterKpiRowsForViewer(rows, filterByAssigned, travelerKpiIds);
     }
   }
 
