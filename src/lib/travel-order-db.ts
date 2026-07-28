@@ -993,6 +993,72 @@ export async function kpiIdsWithTravelOrders(kpiIds: string[]): Promise<Set<stri
   return new Set(rows.map((r) => r.kpi_maintenance_id));
 }
 
+export type TravelOrderBoardSummary = {
+  orderRequest: string;
+  travelers: string[];
+};
+
+/**
+ * Latest travel-order purpose + traveler names per KPI (for Task Board Field Assignment cards).
+ */
+export async function travelOrderBoardSummariesByKpiIds(
+  kpiIds: string[],
+): Promise<Map<string, TravelOrderBoardSummary>> {
+  const out = new Map<string, TravelOrderBoardSummary>();
+  if (kpiIds.length === 0) return out;
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      kpi_maintenance_id: string;
+      order_request: string;
+      traveler_agent_ids: unknown;
+      created_by_agent_id: string | null;
+      creator_name: string | null;
+    }>
+  >`
+    SELECT DISTINCT ON (t.kpi_maintenance_id)
+      t.kpi_maintenance_id,
+      t.order_request,
+      COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
+      t.created_by_agent_id,
+      cr.name AS creator_name
+    FROM travel_orders t
+    LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
+    WHERE t.kpi_maintenance_id IN (${Prisma.join(kpiIds)})
+    ORDER BY t.kpi_maintenance_id, t.created_at DESC
+  `;
+
+  const travelerIdSet = new Set<string>();
+  const parsed = rows.map((r) => {
+    const ids = parseTravelerAgentIds(r.traveler_agent_ids, r.created_by_agent_id);
+    for (const id of ids) travelerIdSet.add(id);
+    return { ...r, travelerIds: ids };
+  });
+
+  const travelerIds = [...travelerIdSet];
+  const agentById = new Map<string, string>();
+  if (travelerIds.length > 0) {
+    const agents = await prisma.$queryRaw<Array<{ id: string; name: string }>>`
+      SELECT id, name FROM agents WHERE id IN (${Prisma.join(travelerIds)})
+    `;
+    for (const a of agents) agentById.set(a.id, a.name);
+  }
+
+  for (const row of parsed) {
+    const names = row.travelerIds
+      .map((id) => agentById.get(id))
+      .filter((n): n is string => Boolean(n));
+    if (names.length === 0 && row.creator_name?.trim()) {
+      names.push(row.creator_name.trim());
+    }
+    out.set(row.kpi_maintenance_id, {
+      orderRequest: typeof row.order_request === "string" ? row.order_request : "",
+      travelers: names,
+    });
+  }
+  return out;
+}
+
 export function serializeTravelOrder(row: TravelOrderRow) {
   return {
     id: row.id,

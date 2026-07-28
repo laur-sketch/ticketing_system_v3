@@ -2,8 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DateTime } from "luxon";
-import { ImagePlus, Check, Loader2, MapPin, X } from "lucide-react";
+import { ImagePlus, Loader2, MapPin, X } from "lucide-react";
 import { MapLocationPicker } from "@/components/task-board/MapLocationPicker";
+import {
+  TravelOrderPageNav,
+  travelOrderApprovalGridClass,
+  type TravelOrderFormPage,
+} from "@/components/task-board/TravelOrderPageNav";
 import {
   canApproveTravelOrderNow,
   canCancelTravelOrderNow,
@@ -97,7 +102,12 @@ export function TravelOrderSummaryPanel({
     longitude: number;
     capturedAt: string | null;
   } | null>(null);
+  const [orderPages, setOrderPages] = useState<Record<string, TravelOrderFormPage>>({});
   const remarksTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  function setOrderPage(orderId: string, page: TravelOrderFormPage) {
+    setOrderPages((prev) => ({ ...prev, [orderId]: page }));
+  }
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -493,6 +503,16 @@ export function TravelOrderSummaryPanel({
           const kpiAlreadySubmitted = order.kpiSubmittedAt != null;
           const canSubmitDone = running && canCheckIn && !kpiAlreadySubmitted;
 
+          const defaultPage: TravelOrderFormPage =
+            canApproveThis || canConfirmThis ? 2 : 1;
+          const formPage = orderPages[order.id] ?? defaultPage;
+          const flatApprovers =
+            order.approvedByAgents?.length
+              ? order.approvedByAgents
+              : order.approvedByAgent
+                ? [order.approvedByAgent]
+                : [];
+
           return (
             <div
               key={order.id}
@@ -508,14 +528,6 @@ export function TravelOrderSummaryPanel({
                 >
                   Status: {order.status}
                 </p>
-                {!hierarchical ? (
-                  <p className="text-[11px] text-zinc-500">
-                    {approved ? "Approved by" : "To be Approved by"}:{" "}
-                    {(order.approvedByAgents?.length
-                      ? order.approvedByAgents.map((a) => a.name).join(", ")
-                      : order.approvedByAgent?.name) ?? "—"}
-                  </p>
-                ) : null}
               </div>
               {rejected ? (
                 <div className="space-y-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-2 dark:text-rose-200">
@@ -546,586 +558,556 @@ export function TravelOrderSummaryPanel({
                   This travel order was cancelled by its creator.
                 </p>
               ) : null}
-              {(order.travelers?.length ?? 0) > 0 || order.createdByAgent ? (
-                <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
-                  Travelers:{" "}
-                  {(order.travelers?.length
-                    ? order.travelers.map((t) => t.name).join(", ")
-                    : order.createdByAgent?.name) ?? "—"}
-                </p>
-              ) : null}
-              {order.vehicle ? (
-                <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
-                  Vehicle: {travelOrderVehicleLabel(order.vehicle)}
-                </p>
-              ) : null}
 
-              {hierarchical ? (
-                <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50/80 p-2.5 dark:border-zinc-700 dark:bg-zinc-900/40">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
-                    Approval hierarchy
-                    {order.status === TRAVEL_ORDER_STATUS.SUBMITTED && unlockedLevels.length > 0
-                      ? ` · waiting on Level${unlockedLevels.length > 1 ? "s" : ""} ${unlockedLevels
-                          .map((l) => l.level)
-                          .join(", ")}`
-                      : null}
-                    {hierarchyDone &&
-                    (approved || order.status === TRAVEL_ORDER_STATUS.SUBMITTED)
-                      ? earlyOptionalDone
-                        ? ` · completed via optional Level ${earlyOptionalDone.level}`
-                        : " · all required levels approved"
-                      : null}
-                    {rejected && order.rejectedAtLevel != null
-                      ? ` · declined at Level ${order.rejectedAtLevel}`
-                      : null}
-                    {rejected && order.rejectedAtLevel == null && order.rejectedByAgent
-                      ? " · declined after approval"
-                      : null}
-                  </p>
-                  <ol className="space-y-1.5">
-                    {levels.map((lvl) => {
-                      const done = Boolean(lvl.approvedAt);
-                      const optional = isApprovalLevelOptional(lvl);
-                      const declinedHere =
-                        rejected &&
-                        order.rejectedAtLevel != null &&
-                        order.rejectedAtLevel === lvl.level;
-                      const closedAfterDecline =
-                        rejected &&
-                        order.rejectedAtLevel != null &&
-                        lvl.level > order.rejectedAtLevel;
-                      const unlocked =
-                        !rejected &&
-                        order.status === TRAVEL_ORDER_STATUS.SUBMITTED &&
-                        !done &&
-                        isApprovalLevelUnlocked(levels, lvl.level);
-                      const skipped =
-                        !done &&
-                        !declinedHere &&
-                        !closedAfterDecline &&
-                        (approved || hierarchyDone) &&
-                        !unlocked;
-                      return (
-                        <li
-                          key={`${order.id}-lvl-${lvl.level}`}
-                          className="flex flex-wrap items-start gap-2 text-xs"
-                        >
-                          <span
-                            className={
-                              declinedHere
-                                ? "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-rose-600 text-white"
-                                : done
-                                  ? "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"
-                                  : unlocked
-                                    ? "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-orange-600 text-[10px] font-bold text-white"
-                                    : skipped
-                                      ? "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-sky-400/50 text-[10px] font-bold text-sky-700 dark:text-sky-300"
-                                      : "mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-zinc-300 text-[10px] font-bold text-zinc-500 dark:border-zinc-600"
-                            }
-                            aria-hidden
-                          >
-                            {declinedHere ? (
-                              <X className="size-3" />
-                            ) : done ? (
-                              <Check className="size-3" />
-                            ) : (
-                              lvl.level
-                            )}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-zinc-900 dark:text-zinc-100">
-                              Level {lvl.level}: {lvl.agent?.name ?? "Unassigned"}
-                              <span
-                                className={
-                                  optional
-                                    ? "ml-1.5 text-[10px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300"
-                                    : "ml-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500"
-                                }
-                              >
-                                {optional ? "Optional" : "Required"}
-                              </span>
-                            </p>
-                            {declinedHere ? (
-                              <p className="text-[11px] text-rose-700 dark:text-rose-300">
-                                Declined
-                                {order.rejectedByAgent?.name
-                                  ? ` by ${order.rejectedByAgent.name}`
-                                  : lvl.agent?.name
-                                    ? ` by ${lvl.agent.name}`
-                                    : ""}
-                                {order.rejectedAt
-                                  ? ` · ${formatCheckedAt(order.rejectedAt)}`
-                                  : ""}
-                              </p>
-                            ) : done ? (
-                              <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
-                                Approved
-                                {optional ? " (optional — completed chain)" : ""}
-                                {lvl.approvedByAgent?.name
-                                  ? ` by ${lvl.approvedByAgent.name}`
-                                  : ""}
-                                {lvl.approvedAt
-                                  ? ` · ${formatCheckedAt(lvl.approvedAt)}`
-                                  : ""}
-                              </p>
-                            ) : unlocked ? (
-                              <p className="text-[11px] text-orange-700 dark:text-orange-300">
-                                Pending — actionable now
-                                {optional ? " · approving completes the order" : ""}
-                              </p>
-                            ) : skipped ? (
-                              <p className="text-[11px] text-sky-700 dark:text-sky-300">
-                                {earlyOptionalDone
-                                  ? `Skipped — optional Level ${earlyOptionalDone.level} completed the chain`
-                                  : "Skipped — not required after hierarchy completed"}
-                              </p>
-                            ) : closedAfterDecline ? (
-                              <p className="text-[11px] text-zinc-500">
-                                Closed — declined at Level {order.rejectedAtLevel}
-                              </p>
-                            ) : (
-                              <p className="text-[11px] text-zinc-500">
-                                Waiting for previous required level(s)
-                              </p>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                  {rejected && order.rejectedAtLevel == null && order.rejectedByAgent ? (
-                    <p className="mt-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-700 dark:text-rose-300">
-                      Declined at confirmation by {order.rejectedByAgent.name}
-                      {order.rejectedAt ? ` · ${formatCheckedAt(order.rejectedAt)}` : ""}
+              <TravelOrderPageNav
+                page={formPage}
+                onPageChange={(page) => setOrderPage(order.id, page)}
+              />
+
+              {formPage === 1 ? (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                      Purpose of travel
                     </p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {canApproveThis ? (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={
-                        busyKey === `approve-${order.id}` ||
-                        busyKey === `reject-${order.id}` ||
-                        declineDraft?.orderId === order.id
-                      }
-                      onClick={() => void approveOrder(order)}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {busyKey === `approve-${order.id}` ? (
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                      ) : null}
-                      {hierarchical && actionableLevel
-                        ? `Approve Level ${actionableLevel.level}${
-                            isApprovalLevelOptional(actionableLevel) ? " (optional)" : ""
-                          }`
-                        : "Approve travel order"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busyKey === `approve-${order.id}` || busyKey === `reject-${order.id}`}
-                      onClick={() =>
-                        setDeclineDraft({ orderId: order.id, asConfirmer: false, reason: "" })
-                      }
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-200"
-                    >
-                      Do not approve
-                    </button>
+                    <p className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
+                      {order.orderRequest || "—"}
+                    </p>
                   </div>
-                  {declineDraft?.orderId === order.id && !declineDraft.asConfirmer ? (
-                    <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
-                      <label className="block space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-rose-800 dark:text-rose-300">
-                          Why are you declining?
-                        </span>
-                        <textarea
-                          value={declineDraft.reason}
-                          onChange={(e) =>
-                            setDeclineDraft((prev) =>
-                              prev ? { ...prev, reason: e.target.value } : prev,
-                            )
-                          }
-                          rows={3}
-                          maxLength={2000}
-                          placeholder="Explain why this travel order is not approved…"
-                          className="w-full rounded-lg border border-rose-400/40 bg-white px-2.5 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-rose-500 dark:border-rose-500/30 dark:bg-zinc-950 dark:text-zinc-100"
-                        />
-                      </label>
-                      <div className="flex flex-wrap gap-2">
+
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                      Travelers
+                    </p>
+                    <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                      {(order.travelers?.length
+                        ? order.travelers.map((t) => t.name).join(", ")
+                        : order.createdByAgent?.name) ?? "—"}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                      Vehicle
+                    </p>
+                    <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                      {order.vehicle ? travelOrderVehicleLabel(order.vehicle) : "—"}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                      Location
+                    </p>
+                    <ul className="space-y-2">
+                      {order.locations.map((loc) => {
+                        const visitStatus = travelOrderLocationVisitStatus(loc);
+                        const statusLabel = travelOrderLocationVisitStatusLabel(visitStatus);
+                        const started = Boolean(loc.startedAt);
+                        const ended = Boolean(loc.endedAt || loc.checkedAt);
+                        const startBusy = busyKey === `start-${loc.id}`;
+                        const endBusy = busyKey === `end-${loc.id}`;
+                        const hasStartGps =
+                          loc.startedLatitude != null && loc.startedLongitude != null;
+                        const hasEndGps =
+                          (loc.endedLatitude ?? loc.latitude) != null &&
+                          (loc.endedLongitude ?? loc.longitude) != null;
+
+                        if (!approved) {
+                          return (
+                            <li
+                              key={loc.id}
+                              className="rounded-lg border border-dashed border-zinc-300 px-2.5 py-2 dark:border-zinc-700"
+                            >
+                              <p className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                <MapPin className="size-3.5 text-orange-600" aria-hidden />
+                                {loc.label}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-zinc-500">
+                                Start/End GPS capture, remarks, and images unlock after approval.
+                              </p>
+                            </li>
+                          );
+                        }
+
+                        return (
+                          <li
+                            key={loc.id}
+                            className={cn(
+                              "space-y-2 rounded-lg border px-2.5 py-2",
+                              visitStatus === "completed"
+                                ? "border-emerald-400/50 bg-emerald-500/5 dark:border-emerald-700/50"
+                                : visitStatus === "in_progress"
+                                  ? "border-orange-400/50 bg-orange-500/5 dark:border-orange-700/40"
+                                  : "border-zinc-300 dark:border-zinc-700",
+                            )}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                {loc.label}
+                              </p>
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                                  visitStatus === "completed"
+                                    ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
+                                    : visitStatus === "in_progress"
+                                      ? "bg-orange-500/15 text-orange-800 dark:text-orange-200"
+                                      : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+                                )}
+                              >
+                                {statusLabel}
+                              </span>
+                            </div>
+
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-white/70 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                                    Start
+                                  </p>
+                                  <button
+                                    type="button"
+                                    disabled={!canCheckIn || started || startBusy || ended}
+                                    onClick={() => void captureVisit(order, loc, "start")}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-45"
+                                  >
+                                    {startBusy ? (
+                                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                                    ) : null}
+                                    Start
+                                  </button>
+                                </div>
+                                {started ? (
+                                  <div className="space-y-1">
+                                    <p className="text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
+                                      {loc.startedAt ? formatCheckedAt(loc.startedAt) : "Started"}
+                                    </p>
+                                    {hasStartGps ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => openGpsPin(loc, "start")}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 hover:underline dark:text-orange-300"
+                                      >
+                                        <MapPin className="size-3" aria-hidden />
+                                        {loc.startedLatitude!.toFixed(5)},{" "}
+                                        {loc.startedLongitude!.toFixed(5)}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <p className="text-[11px] text-zinc-500">
+                                    Captures GPS + time when you arrive.
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-white/70 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                                    End
+                                  </p>
+                                  <button
+                                    type="button"
+                                    disabled={!canCheckIn || !started || ended || endBusy}
+                                    onClick={() => void captureVisit(order, loc, "end")}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-200"
+                                  >
+                                    {endBusy ? (
+                                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                                    ) : null}
+                                    End
+                                  </button>
+                                </div>
+                                {ended ? (
+                                  <div className="space-y-1">
+                                    <p className="text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
+                                      {formatCheckedAt(loc.endedAt ?? loc.checkedAt)}
+                                    </p>
+                                    {hasEndGps ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => openGpsPin(loc, "end")}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
+                                      >
+                                        <MapPin className="size-3" aria-hidden />
+                                        {(loc.endedLatitude ?? loc.latitude)!.toFixed(5)},{" "}
+                                        {(loc.endedLongitude ?? loc.longitude)!.toFixed(5)}
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <p className="text-[11px] text-zinc-500">
+                                    {started
+                                      ? "Captures GPS + time when you finish."
+                                      : "Available after Start."}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                                Remarks
+                                <textarea
+                                  rows={2}
+                                  defaultValue={loc.remarks ?? ""}
+                                  disabled={!canCheckIn}
+                                  onChange={(e) =>
+                                    scheduleRemarksSave(order.id, loc.id, e.target.value)
+                                  }
+                                  placeholder="Notes for this location…"
+                                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                                />
+                              </label>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <label
+                                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${
+                                    !canCheckIn ||
+                                    loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                    busyKey === `img-${loc.id}`
+                                      ? "pointer-events-none opacity-50"
+                                      : ""
+                                  }`}
+                                >
+                                  {busyKey === `img-${loc.id}` ? (
+                                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                  ) : (
+                                    <ImagePlus className="size-3.5 text-orange-600" aria-hidden />
+                                  )}
+                                  Upload image
+                                  <input
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/jpg"
+                                    multiple
+                                    className="sr-only"
+                                    disabled={
+                                      !canCheckIn ||
+                                      loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                      busyKey === `img-${loc.id}`
+                                    }
+                                    onChange={(e) => {
+                                      void uploadLocationImages(order, loc, e.target.files);
+                                      e.target.value = "";
+                                    }}
+                                  />
+                                </label>
+                                <span className="text-[10px] text-zinc-500">
+                                  {loc.attachments.length}/{MAX_LOCATION_IMAGES} · JPG/PNG
+                                </span>
+                              </div>
+                              {loc.attachments.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {loc.attachments.map((att) => {
+                                    const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
+                                    const removing =
+                                      busyKey === `rm-${loc.id}-${att.storedFileName}`;
+                                    return (
+                                      <div
+                                        key={att.storedFileName}
+                                        className="relative overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
+                                      >
+                                        <a
+                                          href={href}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="block"
+                                        >
+                                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                                          <img
+                                            src={href}
+                                            alt={att.originalName}
+                                            className="h-16 w-16 object-cover"
+                                          />
+                                        </a>
+                                        {canCheckIn ? (
+                                          <button
+                                            type="button"
+                                            disabled={removing}
+                                            onClick={() =>
+                                              void removeLocationImage(
+                                                order,
+                                                loc,
+                                                att.storedFileName,
+                                              )
+                                            }
+                                            className="absolute right-0.5 top-0.5 inline-flex size-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50"
+                                            aria-label={`Remove ${att.originalName}`}
+                                          >
+                                            {removing ? (
+                                              <Loader2 className="size-3 animate-spin" aria-hidden />
+                                            ) : (
+                                              <X className="size-3" aria-hidden />
+                                            )}
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+
+                  <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+                    {canSubmitDone ? (
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] text-zinc-500">
+                          KPI preview: {checkedCount}/{totalCount} completed · {liveKpiPercent}%
+                          {" "}(formula: completed ÷ total × 100)
+                        </p>
                         <button
                           type="button"
-                          disabled={busyKey === `reject-${order.id}` || !declineDraft.reason.trim()}
-                          onClick={() => void rejectOrder(order, false, declineDraft.reason)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={busyKey === `done-${order.id}`}
+                          onClick={() => void submitAsDone(order)}
+                          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {busyKey === `reject-${order.id}` ? (
+                          {busyKey === `done-${order.id}` ? (
                             <Loader2 className="size-3.5 animate-spin" aria-hidden />
                           ) : null}
-                          Submit decline
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busyKey === `reject-${order.id}`}
-                          onClick={() => setDeclineDraft(null)}
-                          className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                        >
-                          Cancel
+                          Submit as Done
                         </button>
                       </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {canCancelThis ? (
-                <button
-                  type="button"
-                  disabled={busyKey === `cancel-${order.id}`}
-                  onClick={() => void cancelOrder(order)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-400/60 bg-zinc-500/10 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-200"
-                >
-                  {busyKey === `cancel-${order.id}` ? (
-                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                  ) : null}
-                  Cancel travel order
-                </button>
-              ) : null}
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
-                  Order request
-                </p>
-                <p className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
-                  {order.orderRequest || "—"}
-                </p>
-              </div>
-              <ul className="space-y-2">
-                {order.locations.map((loc) => {
-                  const visitStatus = travelOrderLocationVisitStatus(loc);
-                  const statusLabel = travelOrderLocationVisitStatusLabel(visitStatus);
-                  const started = Boolean(loc.startedAt);
-                  const ended = Boolean(loc.endedAt || loc.checkedAt);
-                  const startBusy = busyKey === `start-${loc.id}`;
-                  const endBusy = busyKey === `end-${loc.id}`;
-                  const hasStartGps =
-                    loc.startedLatitude != null && loc.startedLongitude != null;
-                  const hasEndGps =
-                    (loc.endedLatitude ?? loc.latitude) != null &&
-                    (loc.endedLongitude ?? loc.longitude) != null;
-
-                  if (!approved) {
-                    return (
-                      <li
-                        key={loc.id}
-                        className="rounded-lg border border-dashed border-zinc-300 px-2.5 py-2 dark:border-zinc-700"
-                      >
-                        <p className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                          <MapPin className="size-3.5 text-orange-600" aria-hidden />
-                          {loc.label}
-                        </p>
-                        <p className="mt-0.5 text-[11px] text-zinc-500">
-                          Start/End GPS capture, remarks, and images unlock after approval.
-                        </p>
-                      </li>
-                    );
-                  }
-
-                  return (
-                    <li
-                      key={loc.id}
-                      className={cn(
-                        "space-y-2 rounded-lg border px-2.5 py-2",
-                        visitStatus === "completed"
-                          ? "border-emerald-400/50 bg-emerald-500/5 dark:border-emerald-700/50"
-                          : visitStatus === "in_progress"
-                            ? "border-orange-400/50 bg-orange-500/5 dark:border-orange-700/40"
-                            : "border-zinc-300 dark:border-zinc-700",
-                      )}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                          {loc.label}
-                        </p>
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                            visitStatus === "completed"
-                              ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200"
-                              : visitStatus === "in_progress"
-                                ? "bg-orange-500/15 text-orange-800 dark:text-orange-200"
-                                : "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
-                          )}
-                        >
-                          {statusLabel}
-                        </span>
-                      </div>
-
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-white/70 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                              Start
-                            </p>
-                            <button
-                              type="button"
-                              disabled={!canCheckIn || started || startBusy || ended}
-                              onClick={() => void captureVisit(order, loc, "start")}
-                              className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-45"
-                            >
-                              {startBusy ? (
-                                <Loader2 className="size-3 animate-spin" aria-hidden />
-                              ) : null}
-                              Start
-                            </button>
-                          </div>
-                          {started ? (
-                            <div className="space-y-1">
-                              <p className="text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
-                                {loc.startedAt ? formatCheckedAt(loc.startedAt) : "Started"}
-                              </p>
-                              {hasStartGps ? (
-                                <button
-                                  type="button"
-                                  onClick={() => openGpsPin(loc, "start")}
-                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 hover:underline dark:text-orange-300"
-                                >
-                                  <MapPin className="size-3" aria-hidden />
-                                  {loc.startedLatitude!.toFixed(5)}, {loc.startedLongitude!.toFixed(5)}
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-zinc-500">
-                              Captures GPS + time when you arrive.
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-white/70 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                              End
-                            </p>
-                            <button
-                              type="button"
-                              disabled={!canCheckIn || !started || ended || endBusy}
-                              onClick={() => void captureVisit(order, loc, "end")}
-                              className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-200"
-                            >
-                              {endBusy ? (
-                                <Loader2 className="size-3 animate-spin" aria-hidden />
-                              ) : null}
-                              End
-                            </button>
-                          </div>
-                          {ended ? (
-                            <div className="space-y-1">
-                              <p className="text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
-                                {formatCheckedAt(loc.endedAt ?? loc.checkedAt)}
-                              </p>
-                              {hasEndGps ? (
-                                <button
-                                  type="button"
-                                  onClick={() => openGpsPin(loc, "end")}
-                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
-                                >
-                                  <MapPin className="size-3" aria-hidden />
-                                  {(loc.endedLatitude ?? loc.latitude)!.toFixed(5)},{" "}
-                                  {(loc.endedLongitude ?? loc.longitude)!.toFixed(5)}
-                                </button>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-zinc-500">
-                              {started
-                                ? "Captures GPS + time when you finish."
-                                : "Available after Start."}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                          Remarks
-                          <textarea
-                            rows={2}
-                            defaultValue={loc.remarks ?? ""}
-                            disabled={!canCheckIn}
-                            onChange={(e) => scheduleRemarksSave(order.id, loc.id, e.target.value)}
-                            placeholder="Notes for this location…"
-                            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                          />
-                        </label>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <label
-                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${
-                              !canCheckIn ||
-                              loc.attachments.length >= MAX_LOCATION_IMAGES ||
-                              busyKey === `img-${loc.id}`
-                                ? "pointer-events-none opacity-50"
-                                : ""
-                            }`}
-                          >
-                            {busyKey === `img-${loc.id}` ? (
-                              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                            ) : (
-                              <ImagePlus className="size-3.5 text-orange-600" aria-hidden />
-                            )}
-                            Upload image
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/png,image/jpg"
-                              multiple
-                              className="sr-only"
-                              disabled={
-                                !canCheckIn ||
-                                loc.attachments.length >= MAX_LOCATION_IMAGES ||
-                                busyKey === `img-${loc.id}`
-                              }
-                              onChange={(e) => {
-                                void uploadLocationImages(order, loc, e.target.files);
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
-                          <span className="text-[10px] text-zinc-500">
-                            {loc.attachments.length}/{MAX_LOCATION_IMAGES} · JPG/PNG
-                          </span>
-                        </div>
-                        {loc.attachments.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {loc.attachments.map((att) => {
-                              const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
-                              const removing = busyKey === `rm-${loc.id}-${att.storedFileName}`;
-                              return (
-                                <div
-                                  key={att.storedFileName}
-                                  className="relative overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
-                                >
-                                  <a href={href} target="_blank" rel="noreferrer" className="block">
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                      src={href}
-                                      alt={att.originalName}
-                                      className="h-16 w-16 object-cover"
-                                    />
-                                  </a>
-                                  {canCheckIn ? (
-                                    <button
-                                      type="button"
-                                      disabled={removing}
-                                      onClick={() =>
-                                        void removeLocationImage(order, loc, att.storedFileName)
-                                      }
-                                      className="absolute right-0.5 top-0.5 inline-flex size-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50"
-                                      aria-label={`Remove ${att.originalName}`}
-                                    >
-                                      {removing ? (
-                                        <Loader2 className="size-3 animate-spin" aria-hidden />
-                                      ) : (
-                                        <X className="size-3" aria-hidden />
-                                      )}
-                                    </button>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-
-              <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-                {canSubmitDone ? (
-                  <div className="space-y-1.5">
-                    <p className="text-[11px] text-zinc-500">
-                      KPI preview: {checkedCount}/{totalCount} completed · {liveKpiPercent}%
-                      {" "}(formula: completed ÷ total × 100)
-                    </p>
-                    <button
-                      type="button"
-                      disabled={busyKey === `done-${order.id}`}
-                      onClick={() => void submitAsDone(order)}
-                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {busyKey === `done-${order.id}` ? (
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                      ) : null}
-                      Submit as Done
-                    </button>
+                    ) : kpiAlreadySubmitted ? (
+                      <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                        KPI recorded: {order.kpiPercent ?? liveKpiPercent}% ({checkedCount}/
+                        {totalCount} completed)
+                        {order.kpiSubmittedAt
+                          ? ` · ${formatCheckedAt(order.kpiSubmittedAt)}`
+                          : ""}
+                      </p>
+                    ) : null}
                   </div>
-                ) : kpiAlreadySubmitted ? (
-                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                    KPI recorded: {order.kpiPercent ?? liveKpiPercent}% ({checkedCount}/{totalCount} completed)
-                    {order.kpiSubmittedAt
-                      ? ` · ${formatCheckedAt(order.kpiSubmittedAt)}`
-                      : ""}
-                  </p>
-                ) : null}
+                </>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                      To be Approved by:
+                      {hierarchical &&
+                      order.status === TRAVEL_ORDER_STATUS.SUBMITTED &&
+                      unlockedLevels.length > 0
+                        ? ` · waiting on Level${unlockedLevels.length > 1 ? "s" : ""} ${unlockedLevels
+                            .map((l) => l.level)
+                            .join(", ")}`
+                        : null}
+                      {hierarchical &&
+                      hierarchyDone &&
+                      (approved || order.status === TRAVEL_ORDER_STATUS.SUBMITTED)
+                        ? earlyOptionalDone
+                          ? ` · completed via optional Level ${earlyOptionalDone.level}`
+                          : " · all required levels approved"
+                        : null}
+                      {hierarchical && rejected && order.rejectedAtLevel != null
+                        ? ` · declined at Level ${order.rejectedAtLevel}`
+                        : null}
+                      {hierarchical &&
+                      rejected &&
+                      order.rejectedAtLevel == null &&
+                      order.rejectedByAgent
+                        ? " · declined after approval"
+                        : null}
+                    </p>
 
-                <div className="space-y-1.5 rounded-lg border border-orange-400/30 bg-orange-500/[0.05] p-2.5 dark:border-orange-500/25">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
-                    Approval confirmation
-                  </p>
-                  <p className="text-xs text-zinc-700 dark:text-zinc-300">
-                    {order.confirmationByAgent?.name ?? "—"}
-                    {order.confirmationByAgent?.email
-                      ? ` · ${order.confirmationByAgent.email}`
-                      : ""}
-                  </p>
-                  {confirmed ? (
-                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
-                      Confirmed
-                    </p>
-                  ) : rejected ? (
-                    <p className="text-[11px] text-rose-700 dark:text-rose-300">
-                      Declined — confirmation closed
-                    </p>
-                  ) : cancelled ? (
-                    <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
-                      Cancelled — confirmation closed
-                    </p>
-                  ) : canConfirmThis ? (
+                    {hierarchical ? (
+                      <div
+                        className={cn(
+                          travelOrderApprovalGridClass(levels.length),
+                          "rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/40",
+                        )}
+                      >
+                        {levels.map((lvl) => {
+                          const done = Boolean(lvl.approvedAt);
+                          const optional = isApprovalLevelOptional(lvl);
+                          const declinedHere =
+                            rejected &&
+                            order.rejectedAtLevel != null &&
+                            order.rejectedAtLevel === lvl.level;
+                          const closedAfterDecline =
+                            rejected &&
+                            order.rejectedAtLevel != null &&
+                            lvl.level > order.rejectedAtLevel;
+                          const unlocked =
+                            !rejected &&
+                            order.status === TRAVEL_ORDER_STATUS.SUBMITTED &&
+                            !done &&
+                            isApprovalLevelUnlocked(levels, lvl.level);
+                          const skipped =
+                            !done &&
+                            !declinedHere &&
+                            !closedAfterDecline &&
+                            (approved || hierarchyDone) &&
+                            !unlocked;
+                          const nameClass = declinedHere
+                            ? "text-rose-700 dark:text-rose-300"
+                            : done
+                              ? "text-emerald-800 dark:text-emerald-300"
+                              : unlocked
+                                ? "text-orange-800 dark:text-orange-300"
+                                : skipped
+                                  ? "text-sky-700 dark:text-sky-300"
+                                  : "text-zinc-400 dark:text-zinc-600";
+                          return (
+                            <div
+                              key={`${order.id}-lvl-${lvl.level}`}
+                              className="min-w-0 self-start"
+                            >
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                                Level {lvl.level}
+                                <span
+                                  className={
+                                    optional
+                                      ? "ml-1.5 text-sky-700 dark:text-sky-300"
+                                      : "ml-1.5 text-zinc-500"
+                                  }
+                                >
+                                  {optional ? "Optional" : "Required"}
+                                </span>
+                              </p>
+                              <p
+                                className={`mt-1 break-words text-sm font-medium leading-snug ${nameClass}`}
+                              >
+                                {lvl.agent?.name ?? "—"}
+                              </p>
+                              {declinedHere ? (
+                                <p className="mt-0.5 text-[11px] text-rose-700 dark:text-rose-300">
+                                  Declined
+                                  {order.rejectedByAgent?.name
+                                    ? ` by ${order.rejectedByAgent.name}`
+                                    : lvl.agent?.name
+                                      ? ` by ${lvl.agent.name}`
+                                      : ""}
+                                  {order.rejectedAt
+                                    ? ` · ${formatCheckedAt(order.rejectedAt)}`
+                                    : ""}
+                                </p>
+                              ) : done ? (
+                                <p className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+                                  Approved
+                                  {optional ? " (optional — completed chain)" : ""}
+                                  {lvl.approvedByAgent?.name
+                                    ? ` by ${lvl.approvedByAgent.name}`
+                                    : ""}
+                                  {lvl.approvedAt
+                                    ? ` · ${formatCheckedAt(lvl.approvedAt)}`
+                                    : ""}
+                                </p>
+                              ) : unlocked ? (
+                                <p className="mt-0.5 text-[11px] text-orange-700 dark:text-orange-300">
+                                  Pending — actionable now
+                                  {optional ? " · approving completes the order" : ""}
+                                </p>
+                              ) : skipped ? (
+                                <p className="mt-0.5 text-[11px] text-sky-700 dark:text-sky-300">
+                                  {earlyOptionalDone
+                                    ? `Skipped — optional Level ${earlyOptionalDone.level} completed the chain`
+                                    : "Skipped — not required after hierarchy completed"}
+                                </p>
+                              ) : closedAfterDecline ? (
+                                <p className="mt-0.5 text-[11px] text-zinc-500">
+                                  Closed — declined at Level {order.rejectedAtLevel}
+                                </p>
+                              ) : (
+                                <p className="mt-0.5 text-[11px] text-zinc-500">
+                                  Waiting for previous required level(s)
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div
+                        className={cn(
+                          travelOrderApprovalGridClass(Math.max(flatApprovers.length, 1)),
+                          "rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/40",
+                        )}
+                      >
+                        {flatApprovers.length > 0 ? (
+                          flatApprovers.map((agent) => (
+                            <div key={`${order.id}-approver-${agent.id}`} className="min-w-0 self-start">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+                                Approver
+                              </p>
+                              <p
+                                className={`mt-1 break-words text-sm font-medium leading-snug ${
+                                  approved
+                                    ? "text-emerald-800 dark:text-emerald-300"
+                                    : "text-zinc-700 dark:text-zinc-300"
+                                }`}
+                              >
+                                {agent.name}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="min-w-0 self-start">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+                              Approver
+                            </p>
+                            <p className="mt-1 text-sm font-medium text-zinc-400 dark:text-zinc-600">
+                              —
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {hierarchical &&
+                    rejected &&
+                    order.rejectedAtLevel == null &&
+                    order.rejectedByAgent ? (
+                      <p className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1.5 text-[11px] text-rose-700 dark:text-rose-300">
+                        Declined at confirmation by {order.rejectedByAgent.name}
+                        {order.rejectedAt ? ` · ${formatCheckedAt(order.rejectedAt)}` : ""}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {canApproveThis ? (
                     <div className="space-y-2">
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
                           disabled={
-                            busyKey === `confirm-${order.id}` ||
+                            busyKey === `approve-${order.id}` ||
                             busyKey === `reject-${order.id}` ||
                             declineDraft?.orderId === order.id
                           }
-                          onClick={() => void confirmOrder(order)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50 dark:text-emerald-200"
+                          onClick={() => void approveOrder(order)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {busyKey === `confirm-${order.id}` ? (
+                          {busyKey === `approve-${order.id}` ? (
                             <Loader2 className="size-3.5 animate-spin" aria-hidden />
                           ) : null}
-                          Confirm travel order
+                          {hierarchical && actionableLevel
+                            ? `Approve Level ${actionableLevel.level}${
+                                isApprovalLevelOptional(actionableLevel) ? " (optional)" : ""
+                              }`
+                            : "Approve travel order"}
                         </button>
                         <button
                           type="button"
                           disabled={
-                            busyKey === `confirm-${order.id}` || busyKey === `reject-${order.id}`
+                            busyKey === `approve-${order.id}` || busyKey === `reject-${order.id}`
                           }
                           onClick={() =>
-                            setDeclineDraft({ orderId: order.id, asConfirmer: true, reason: "" })
+                            setDeclineDraft({ orderId: order.id, asConfirmer: false, reason: "" })
                           }
                           className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-200"
                         >
-                          Do not confirm
+                          Do not approve
                         </button>
                       </div>
-                      {declineDraft?.orderId === order.id && declineDraft.asConfirmer ? (
+                      {declineDraft?.orderId === order.id && !declineDraft.asConfirmer ? (
                         <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
                           <label className="block space-y-1">
                             <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-rose-800 dark:text-rose-300">
-                              Why are you declining confirmation?
+                              Why are you declining?
                             </span>
                             <textarea
                               value={declineDraft.reason}
@@ -1136,7 +1118,7 @@ export function TravelOrderSummaryPanel({
                               }
                               rows={3}
                               maxLength={2000}
-                              placeholder="Explain why confirmation is declined…"
+                              placeholder="Explain why this travel order is not approved…"
                               className="w-full rounded-lg border border-rose-400/40 bg-white px-2.5 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-rose-500 dark:border-rose-500/30 dark:bg-zinc-950 dark:text-zinc-100"
                             />
                           </label>
@@ -1146,7 +1128,7 @@ export function TravelOrderSummaryPanel({
                               disabled={
                                 busyKey === `reject-${order.id}` || !declineDraft.reason.trim()
                               }
-                              onClick={() => void rejectOrder(order, true, declineDraft.reason)}
+                              onClick={() => void rejectOrder(order, false, declineDraft.reason)}
                               className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {busyKey === `reject-${order.id}` ? (
@@ -1166,13 +1148,143 @@ export function TravelOrderSummaryPanel({
                         </div>
                       ) : null}
                     </div>
-                  ) : order.confirmationByAgentId && approved ? (
-                    <p className="text-[11px] text-zinc-500">
-                      Waiting for confirmation
-                    </p>
                   ) : null}
-                </div>
-              </div>
+                  {canCancelThis ? (
+                    <button
+                      type="button"
+                      disabled={busyKey === `cancel-${order.id}`}
+                      onClick={() => void cancelOrder(order)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-400/60 bg-zinc-500/10 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-200"
+                    >
+                      {busyKey === `cancel-${order.id}` ? (
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      ) : null}
+                      Cancel travel order
+                    </button>
+                  ) : null}
+
+                  <div className="space-y-1.5 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+                      To be Confirmed by:
+                    </p>
+                    <div className="min-w-0 rounded-lg border border-orange-400/30 bg-orange-500/[0.05] p-2.5 dark:border-orange-500/25">
+                      <p
+                        className={`break-words text-sm font-medium leading-snug ${
+                          confirmed
+                            ? "text-emerald-800 dark:text-emerald-300"
+                            : order.confirmationByAgent?.name
+                              ? "text-zinc-800 dark:text-zinc-200"
+                              : "text-zinc-400 dark:text-zinc-600"
+                        }`}
+                      >
+                        {order.confirmationByAgent?.name ?? "—"}
+                        {order.confirmationByAgent?.email
+                          ? ` · ${order.confirmationByAgent.email}`
+                          : ""}
+                      </p>
+                      {confirmed ? (
+                        <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                          Confirmed
+                        </p>
+                      ) : rejected ? (
+                        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">
+                          Declined — confirmation closed
+                        </p>
+                      ) : cancelled ? (
+                        <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                          Cancelled — confirmation closed
+                        </p>
+                      ) : canConfirmThis ? (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              disabled={
+                                busyKey === `confirm-${order.id}` ||
+                                busyKey === `reject-${order.id}` ||
+                                declineDraft?.orderId === order.id
+                              }
+                              onClick={() => void confirmOrder(order)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50 dark:text-emerald-200"
+                            >
+                              {busyKey === `confirm-${order.id}` ? (
+                                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                              ) : null}
+                              Confirm travel order
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                busyKey === `confirm-${order.id}` ||
+                                busyKey === `reject-${order.id}`
+                              }
+                              onClick={() =>
+                                setDeclineDraft({
+                                  orderId: order.id,
+                                  asConfirmer: true,
+                                  reason: "",
+                                })
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-200"
+                            >
+                              Do not confirm
+                            </button>
+                          </div>
+                          {declineDraft?.orderId === order.id && declineDraft.asConfirmer ? (
+                            <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
+                              <label className="block space-y-1">
+                                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-rose-800 dark:text-rose-300">
+                                  Why are you declining confirmation?
+                                </span>
+                                <textarea
+                                  value={declineDraft.reason}
+                                  onChange={(e) =>
+                                    setDeclineDraft((prev) =>
+                                      prev ? { ...prev, reason: e.target.value } : prev,
+                                    )
+                                  }
+                                  rows={3}
+                                  maxLength={2000}
+                                  placeholder="Explain why confirmation is declined…"
+                                  className="w-full rounded-lg border border-rose-400/40 bg-white px-2.5 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-rose-500 dark:border-rose-500/30 dark:bg-zinc-950 dark:text-zinc-100"
+                                />
+                              </label>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={
+                                    busyKey === `reject-${order.id}` ||
+                                    !declineDraft.reason.trim()
+                                  }
+                                  onClick={() =>
+                                    void rejectOrder(order, true, declineDraft.reason)
+                                  }
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {busyKey === `reject-${order.id}` ? (
+                                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                  ) : null}
+                                  Submit decline
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busyKey === `reject-${order.id}`}
+                                  onClick={() => setDeclineDraft(null)}
+                                  className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : order.confirmationByAgentId && approved ? (
+                        <p className="mt-1 text-[11px] text-zinc-500">Waiting for confirmation</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           );
         })}

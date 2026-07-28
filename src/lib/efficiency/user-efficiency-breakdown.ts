@@ -118,7 +118,7 @@ type ChecklistWorkRow = {
   agentId: string;
   ownerName: string;
   taskId: string | null;
-  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK";
+  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK" | "TRAVEL_ORDER";
   taskTitle: string;
   status: "CURRENT" | "DONE" | "DELAYED";
   dueAt: Date | null;
@@ -488,6 +488,73 @@ async function loadProjectAndChecklistWorkInWindow(
   return byAgent;
 }
 
+/**
+ * Confirmed Travel Orders in the window — one DONE row per traveler (Field Assignment credit).
+ */
+async function loadConfirmedTravelWorkInWindow(
+  start: Date,
+  end: Date,
+): Promise<Map<string, ChecklistWorkRow[]>> {
+  const { parseTravelerAgentIds } = await import("@/lib/travel-order");
+  const { TRAVEL_ORDER_STATUS } = await import("@/lib/travel-order");
+
+  const rows = await prismaPrimary.$queryRaw<
+    Array<{
+      id: string;
+      order_request: string;
+      traveler_agent_ids: unknown;
+      created_by_agent_id: string | null;
+      updated_at: Date;
+    }>
+  >`
+    SELECT id, order_request, traveler_agent_ids, created_by_agent_id, updated_at
+    FROM travel_orders
+    WHERE status = ${TRAVEL_ORDER_STATUS.CONFIRMED}
+      AND updated_at >= ${start}
+      AND updated_at < ${end}
+  `;
+
+  const agentIds = new Set<string>();
+  const parsed = rows.map((r) => {
+    const travelers = parseTravelerAgentIds(r.traveler_agent_ids, r.created_by_agent_id);
+    for (const id of travelers) agentIds.add(id);
+    return { ...r, travelers };
+  });
+
+  const nameById = new Map<string, string>();
+  if (agentIds.size > 0) {
+    const agents = await prismaPrimary.agent.findMany({
+      where: { id: { in: [...agentIds] } },
+      select: { id: true, name: true },
+    });
+    for (const a of agents) nameById.set(a.id, a.name);
+  }
+
+  const byAgent = new Map<string, ChecklistWorkRow[]>();
+  for (const row of parsed) {
+    const title = (row.order_request?.trim() || "Travel Order").slice(0, 512);
+    const completedAt =
+      row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+    for (const agentId of row.travelers) {
+      const work: ChecklistWorkRow = {
+        agentId,
+        ownerName: nameById.get(agentId) ?? "Traveler",
+        taskId: row.id,
+        taskSource: "TRAVEL_ORDER",
+        taskTitle: title,
+        status: "DONE",
+        dueAt: null,
+        completedAt,
+        delayPenaltyAccrued: 0,
+      };
+      const list = byAgent.get(agentId) ?? [];
+      list.push(work);
+      byAgent.set(agentId, list);
+    }
+  }
+  return byAgent;
+}
+
 function agentIdsForMergedPerson(
   group: PersonGroupRef,
   agents: AgentEnrichment[],
@@ -770,6 +837,12 @@ export async function runComputeUserEfficiencyBreakdowns(
         period.end,
         timeZone,
       );
+      const travelWork = await loadConfirmedTravelWorkInWindow(period.start, period.end);
+      for (const [agentId, rows] of travelWork) {
+        const list = projectWork.get(agentId) ?? [];
+        list.push(...rows);
+        projectWork.set(agentId, list);
+      }
       // Always load snapshot checklist progress. Applied per person only when that
       // person has no TaskItem and no live project/checklist rows (see below).
       // Do not gate on global `tasks.length` — one board task must not wipe
@@ -927,7 +1000,9 @@ export async function runComputeUserEfficiencyBreakdowns(
                   ? `Delay penalty accrued: ${t.delayPenaltyAccrued} pts`
                   : t.taskSource === "IT_PROJECT_SUBTASK"
                     ? "IT project subtask"
-                    : "Non-recurring KPI checklist item",
+                    : t.taskSource === "TRAVEL_ORDER"
+                      ? "Confirmed Travel Order (traveler)"
+                      : "Non-recurring KPI checklist item",
             })),
           ];
         }

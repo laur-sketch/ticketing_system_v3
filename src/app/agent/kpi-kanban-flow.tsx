@@ -152,6 +152,8 @@ type KpiRecord = {
   enableSubtaskAssignees?: boolean;
   /** True when this card has a linked Request for Travel Order. */
   isFieldAssignment?: boolean;
+  /** Purpose + travelers from the latest linked travel order (Field Assignment cards). */
+  travelOrderSummary?: { orderRequest: string; travelers: string[] } | null;
   /** Job Orders linked to this Task Board project. */
   linkedJobOrders?: Array<{ id: string; ticketNumber: string; title: string }>;
 };
@@ -3370,7 +3372,10 @@ export function AgentKpiKanbanFlow({
                       {kpiPillarLabel(activeTask)}
                     </span>
                     <span className="mt-2 inline-flex max-w-full items-center rounded-md border border-orange-400/50 bg-orange-500/10 px-2.5 py-1 text-sm font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
-                      <span className="truncate">{taskLabel(activeTask)}</span>
+                      <span className="truncate">
+                        {activeTask.travelOrderSummary?.orderRequest?.trim() ||
+                          taskLabel(activeTask)}
+                      </span>
                     </span>
                   </>
                 ) : pillarOnly ? (
@@ -3391,8 +3396,17 @@ export function AgentKpiKanbanFlow({
                 )}
               </h3>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"} ·{" "}
-                {taskTypeBadgeLabel(activeTask, itProject)}
+                {fieldAssignment ? (
+                  <>
+                    Travelers:{" "}
+                    {activeTask.travelOrderSummary?.travelers?.length
+                      ? activeTask.travelOrderSummary.travelers.join(", ")
+                      : activeTask.assignedAgent?.name ?? "—"}
+                  </>
+                ) : (
+                  <>Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"}</>
+                )}{" "}
+                · {taskTypeBadgeLabel(activeTask, itProject)}
               </p>
               {(activeTask.linkedJobOrders?.length ?? 0) > 0 ? (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -3812,10 +3826,16 @@ export function AgentKpiKanbanFlow({
                                     {kpiPillarLabel(r)}
                                   </p>
                                   <p className="mt-1.5 inline-flex max-w-full items-center rounded-md border border-orange-400/45 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
-                                    <span className="truncate">{taskLabel(r)}</span>
+                                    <span className="truncate">
+                                      {r.travelOrderSummary?.orderRequest?.trim() ||
+                                        taskLabel(r)}
+                                    </span>
                                   </p>
                                   <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
+                                    Travelers:{" "}
+                                    {r.travelOrderSummary?.travelers?.length
+                                      ? r.travelOrderSummary.travelers.join(", ")
+                                      : r.assignedAgent?.name ?? "—"}
                                   </p>
                                 </>
                               ) : pillarOnly ? (
@@ -4132,10 +4152,7 @@ export function AgentKpiKanbanFlow({
                         {order.kpiTitle ?? "Travel Orders"}
                       </p>
                       <p className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                        {order.kpiMainTask ?? "Field Assignment"}
-                      </p>
-                      <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">
-                        {order.orderRequest}
+                        {order.orderRequest?.trim() || order.kpiMainTask || "Field Assignment"}
                       </p>
                       <p className="mt-1 text-xs text-zinc-500">
                         Travelers: {travelers}

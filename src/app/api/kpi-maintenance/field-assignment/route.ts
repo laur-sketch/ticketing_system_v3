@@ -143,12 +143,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid locationsJson." }, { status: 400 });
   }
 
-  if (!mainTask) {
-    return NextResponse.json({ error: "Enter a Field Assignment / travel order name." }, { status: 400 });
-  }
   if (!orderRequest) {
-    return NextResponse.json({ error: "Order request details are required." }, { status: 400 });
+    return NextResponse.json({ error: "Purpose of travel is required." }, { status: 400 });
   }
+  const resolvedMainTask = mainTask || orderRequest.slice(0, 160);
   if (approvedByAgentIds.length === 0) {
     return NextResponse.json({ error: "Select at least one person who will approve this travel order." }, { status: 400 });
   }
@@ -245,13 +243,13 @@ export async function POST(req: Request) {
   }
 
   // Unique mainTask under title — append short suffix on conflict for personal creates.
-  let finalMainTask = mainTask;
+  let finalMainTask = resolvedMainTask;
   const existing = await prisma.kpiMaintenance.findFirst({
     where: { title, mainTask: finalMainTask },
     select: { id: true },
   });
   if (existing) {
-    finalMainTask = `${mainTask} (${new Date().toISOString().slice(0, 16).replace("T", " ")})`;
+    finalMainTask = `${resolvedMainTask} (${new Date().toISOString().slice(0, 16).replace("T", " ")})`;
   }
 
   const createdBy =

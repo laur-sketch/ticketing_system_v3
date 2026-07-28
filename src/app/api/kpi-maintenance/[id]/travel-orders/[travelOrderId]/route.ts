@@ -16,6 +16,7 @@ import {
   serializeTravelOrder,
   updateTravelOrderStatus,
 } from "@/lib/travel-order-db";
+import { triggerTravelOrderConfirmedSideEffects } from "@/lib/sync/travel-order-confirm-side-effects";
 
 /**
  * PATCH /api/kpi-maintenance/:id/travel-orders/:travelOrderId
@@ -191,6 +192,9 @@ export async function PATCH(
     });
     if (!updated) {
       return NextResponse.json({ error: "Travel order could not be updated." }, { status: 500 });
+    }
+    if (statusRaw === TRAVEL_ORDER_STATUS.CONFIRMED) {
+      triggerTravelOrderConfirmedSideEffects(updated);
     }
     return NextResponse.json({ travelOrder: serializeTravelOrder(updated) });
   } catch (err) {

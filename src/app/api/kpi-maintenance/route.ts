@@ -371,10 +371,14 @@ export async function GET(req: Request) {
     rows = rows.filter((r) => !archivedRowIds.has(r.id));
   }
 
-  const { kpiIdsWithTravelOrders } = await import("@/lib/travel-order-db");
+  const { kpiIdsWithTravelOrders, travelOrderBoardSummariesByKpiIds } = await import("@/lib/travel-order-db");
   const { isFieldAssignmentTask, getLinkedJobOrderFromSubKpis } = await import("@/lib/kpi-subkpis");
   const { loadJobOrdersLinkedToProjects } = await import("@/lib/job-order-project");
-  const fieldAssignmentIds = await kpiIdsWithTravelOrders(rows.map((r) => r.id));
+  const kpiIdList = rows.map((r) => r.id);
+  const [fieldAssignmentIds, travelSummaries] = await Promise.all([
+    kpiIdsWithTravelOrders(kpiIdList),
+    travelOrderBoardSummariesByKpiIds(kpiIdList),
+  ]);
 
   const linkedJobOrders = await loadJobOrdersLinkedToProjects(rows.map((r) => r.id));
   const linkedByProjectId = new Map<string, Array<{ id: string; ticketNumber: string; title: string }>>();
@@ -402,10 +406,12 @@ export async function GET(req: Request) {
                 },
               ]
             : [];
+      const travelSummary = travelSummaries.get(r.id) ?? null;
       return {
         ...r,
         isFieldAssignment: fieldAssignmentIds.has(r.id) || isFieldAssignmentTask(r.subKpis),
         linkedJobOrders: linkedJobOrdersForRow,
+        travelOrderSummary: travelSummary,
       };
     }),
     canAssignWork: perms.canAssignWork,

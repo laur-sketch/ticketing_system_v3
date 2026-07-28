@@ -275,7 +275,7 @@ model MergedUserEfficiencyTaskDetail {
   breakdownId              String    @map("breakdown_id") @db.VarChar(191)
   /// Primary PG TaskItem.id when source = TASK_ITEM; KPI/IT subtask id otherwise.
   taskId                   String?   @map("task_id") @db.VarChar(191)
-  /// TASK_ITEM | KPI_CHECKLIST | IT_PROJECT_SUBTASK | TICKET_SUMMARY
+  /// TASK_ITEM | KPI_CHECKLIST | IT_PROJECT_SUBTASK | TRAVEL_ORDER | TICKET_SUMMARY
   taskSource               String    @default("TASK_ITEM") @map("task_source") @db.VarChar(32)
   taskTitle                String    @map("task_title") @db.VarChar(512)
   status                   String    @map("status") @db.VarChar(20)
@@ -322,4 +322,88 @@ model MergedUsernameAlias {
 
   @@index([sourceUserId], map: "idx_merged_username_aliases_user")
   @@map("merged_username_aliases")
+}
+
+/// Confirmed Travel Order snapshot from ticketing (timestamps + company).
+model MergedTravelOrder {
+  sourceId                   String    @id @map("source_id") @db.VarChar(191)
+  sourceDatabase             String    @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  kpiMaintenanceId           String    @map("kpi_maintenance_id") @db.VarChar(191)
+  orderRequest               String    @map("order_request") @db.Text
+  status                     String    @map("status") @db.VarChar(32)
+  vehicle                    String?   @map("vehicle") @db.VarChar(64)
+  companyTeamId              String?   @map("company_team_id") @db.VarChar(191)
+  companyName                String?   @map("company_name") @db.VarChar(255)
+  confirmationByAgentId      String?   @map("confirmation_by_agent_id") @db.VarChar(191)
+  confirmationByAgentEmail   String?   @map("confirmation_by_agent_email") @db.VarChar(255)
+  confirmationMergedUserId   BigInt?   @map("confirmation_merged_user_id") @db.UnsignedBigInt
+  createdByAgentId           String?   @map("created_by_agent_id") @db.VarChar(191)
+  createdByAgentEmail        String?   @map("created_by_agent_email") @db.VarChar(255)
+  createdByMergedUserId      BigInt?   @map("created_by_merged_user_id") @db.UnsignedBigInt
+  travelerAgentIds           Json?     @map("traveler_agent_ids")
+  travelerEmails             Json?     @map("traveler_emails")
+  kpiPercent                 Int?      @map("kpi_percent")
+  kpiSubmittedAt             DateTime? @map("kpi_submitted_at") @db.DateTime(3)
+  confirmedAt                DateTime  @map("confirmed_at") @db.DateTime(3)
+  createdAt                  DateTime  @map("created_at") @db.DateTime(3)
+  updatedAt                  DateTime  @map("updated_at") @db.DateTime(3)
+  mergedAt                   DateTime  @default(now()) @map("merged_at")
+
+  locations MergedTravelOrderLocation[]
+  travelers MergedTravelOrderTraveler[]
+
+  @@unique([sourceDatabase, sourceId], map: "uq_merged_travel_order_source")
+  @@index([kpiMaintenanceId], map: "idx_merged_travel_order_kpi")
+  @@index([companyTeamId], map: "idx_merged_travel_order_company")
+  @@index([confirmedAt], map: "idx_merged_travel_order_confirmed")
+  @@index([status], map: "idx_merged_travel_order_status")
+  @@map("merged_travel_orders")
+}
+
+model MergedTravelOrderLocation {
+  id                   String    @id @default(cuid()) @db.VarChar(191)
+  travelOrderSourceId  String    @map("travel_order_source_id") @db.VarChar(191)
+  sourceDatabase       String    @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  locationSourceId     String    @map("location_source_id") @db.VarChar(191)
+  label                String    @map("label") @db.VarChar(512)
+  sortOrder            Int       @default(0) @map("sort_order")
+  startedAt            DateTime? @map("started_at") @db.DateTime(3)
+  startedLatitude      Decimal?  @map("started_latitude") @db.Decimal(10, 7)
+  startedLongitude     Decimal?  @map("started_longitude") @db.Decimal(10, 7)
+  endedAt              DateTime? @map("ended_at") @db.DateTime(3)
+  endedLatitude        Decimal?  @map("ended_latitude") @db.Decimal(10, 7)
+  endedLongitude       Decimal?  @map("ended_longitude") @db.Decimal(10, 7)
+  checkedAt            DateTime? @map("checked_at") @db.DateTime(3)
+  remarks              String?   @map("remarks") @db.Text
+  mergedAt             DateTime  @default(now()) @map("merged_at")
+
+  travelOrder MergedTravelOrder @relation(fields: [travelOrderSourceId], references: [sourceId], onDelete: Cascade)
+
+  @@unique([sourceDatabase, locationSourceId], map: "uq_merged_travel_loc")
+  @@index([travelOrderSourceId], map: "idx_merged_travel_loc_order")
+  @@index([startedAt], map: "idx_merged_travel_loc_started")
+  @@index([endedAt], map: "idx_merged_travel_loc_ended")
+  @@map("merged_travel_order_locations")
+}
+
+model MergedTravelOrderTraveler {
+  id                   String    @id @default(cuid()) @db.VarChar(191)
+  travelOrderSourceId  String    @map("travel_order_source_id") @db.VarChar(191)
+  sourceDatabase       String    @default("ticketing_system") @map("source_database") @db.VarChar(64)
+  agentId              String    @map("agent_id") @db.VarChar(191)
+  agentEmail           String?   @map("agent_email") @db.VarChar(255)
+  displayName          String    @map("display_name") @db.VarChar(255)
+  mergedSourceUserId   BigInt?   @map("merged_source_user_id") @db.UnsignedBigInt
+  companyTeamId        String?   @map("company_team_id") @db.VarChar(191)
+  companyName          String?   @map("company_name") @db.VarChar(255)
+  mergedAt             DateTime  @default(now()) @map("merged_at")
+
+  travelOrder MergedTravelOrder @relation(fields: [travelOrderSourceId], references: [sourceId], onDelete: Cascade)
+
+  @@unique([sourceDatabase, travelOrderSourceId, agentId], map: "uq_merged_travel_traveler")
+  @@index([travelOrderSourceId], map: "idx_merged_travel_traveler_order")
+  @@index([agentId], map: "idx_merged_travel_traveler_agent")
+  @@index([mergedSourceUserId], map: "idx_merged_travel_traveler_merged")
+  @@index([companyTeamId], map: "idx_merged_travel_traveler_company")
+  @@map("merged_travel_order_travelers")
 }

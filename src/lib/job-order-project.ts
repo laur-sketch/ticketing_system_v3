@@ -1,6 +1,6 @@
 /** Job Order ↔ Task Board Project linking helpers. */
 
-import type { Prisma } from "@prisma/client/primary";
+import { Prisma } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
 import {
   formatJobOrderTitle,
