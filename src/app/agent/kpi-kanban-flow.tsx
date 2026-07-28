@@ -4101,13 +4101,13 @@ export function AgentKpiKanbanFlow({
       <TaskBoardPopup
         open={travelOrdersOpen}
         title="Travel Orders"
-        description="Travel orders for your company. Create a request, add co-travelers, and open a row for approvals and check-ins."
+        description="Travel orders for your company, plus any where you are an assigned traveler. Create a request, add co-travelers, and open a row for approvals and check-ins."
         onClose={() => setTravelOrdersOpen(false)}
         size="lg"
       >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Visible only to colleagues in your company.
+            Includes your company&apos;s orders and travel orders you are assigned to.
           </p>
           <button
             type="button"

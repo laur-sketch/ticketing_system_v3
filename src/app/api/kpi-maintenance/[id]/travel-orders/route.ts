@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   agentIdsFromApprovalLevels,
   isDesignatedApprover,
+  isTravelOrderTraveler,
   isValidLatLng,
   normalizeApprovalLevelsForStore,
 } from "@/lib/travel-order";
@@ -38,8 +39,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
         (order) =>
           isDesignatedApprover(operatorId, order) ||
           order.confirmationByAgentId === operatorId ||
-          order.createdByAgentId === operatorId ||
-          (order.travelerAgentIds ?? []).includes(operatorId),
+          isTravelOrderTraveler(operatorId, order),
       ),
   );
   const canAccess =
@@ -51,8 +51,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
 type LocationBody = {
   label?: string;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
   remarks?: string | null;
 };
 

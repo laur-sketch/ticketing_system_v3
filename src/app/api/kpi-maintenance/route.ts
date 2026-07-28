@@ -192,11 +192,24 @@ export async function GET(req: Request) {
       assignedAgent: { select: { id: true, name: true, team: { select: { id: true, name: true } } } },
     },
   });
+  const {
+    kpiIdsWhereAgentIsTravelOrderTraveler,
+    kpiIdsWithTravelOrders,
+    travelOrderBoardSummariesByKpiIds,
+  } = await import("@/lib/travel-order-db");
   if (!perms.canAssignWork) {
     const operatorId = perms.operator?.id ?? null;
-    rows = rows.filter((row) => kpiRowVisibleToAgent(row, operatorId));
+    const travelerKpiIds = operatorId
+      ? await kpiIdsWhereAgentIsTravelOrderTraveler(operatorId)
+      : new Set<string>();
+    rows = rows.filter(
+      (row) => kpiRowVisibleToAgent(row, operatorId) || travelerKpiIds.has(row.id),
+    );
   } else if (filterByAssigned) {
-    rows = rows.filter((row) => kpiRowVisibleToAgent(row, filterByAssigned));
+    const travelerKpiIds = await kpiIdsWhereAgentIsTravelOrderTraveler(filterByAssigned);
+    rows = rows.filter(
+      (row) => kpiRowVisibleToAgent(row, filterByAssigned) || travelerKpiIds.has(row.id),
+    );
   }
 
   const now = new Date();
@@ -371,7 +384,6 @@ export async function GET(req: Request) {
     rows = rows.filter((r) => !archivedRowIds.has(r.id));
   }
 
-  const { kpiIdsWithTravelOrders, travelOrderBoardSummariesByKpiIds } = await import("@/lib/travel-order-db");
   const { isFieldAssignmentTask, getLinkedJobOrderFromSubKpis } = await import("@/lib/kpi-subkpis");
   const { loadJobOrdersLinkedToProjects } = await import("@/lib/job-order-project");
   const kpiIdList = rows.map((r) => r.id);

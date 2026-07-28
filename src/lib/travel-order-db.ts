@@ -551,7 +551,22 @@ export async function findTravelOrderById(
 export async function findTravelOrdersByCompanyTeamId(
   companyTeamId: string,
 ): Promise<TravelOrderRow[]> {
-  const orders = await prisma.$queryRaw<RawTravelOrder[]>`
+  return findTravelOrdersVisibleToAgent({ companyTeamId, agentId: null });
+}
+
+/**
+ * Travel orders visible to an agent: same-company orders, plus any where they
+ * are an assigned traveler (including cross-company co-travelers).
+ */
+export async function findTravelOrdersVisibleToAgent(input: {
+  companyTeamId: string | null;
+  agentId: string | null;
+}): Promise<TravelOrderRow[]> {
+  const companyTeamId = input.companyTeamId?.trim() || null;
+  const agentId = input.agentId?.trim() || null;
+  if (!companyTeamId && !agentId) return [];
+
+  const selectSql = Prisma.sql`
     SELECT
       t.id,
       t.kpi_maintenance_id,
@@ -594,7 +609,28 @@ export async function findTravelOrdersByCompanyTeamId(
     LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
     LEFT JOIN agents rj ON rj.id = t.rejected_by_agent_id
     LEFT JOIN kpi_maintenance k ON k.id = t.kpi_maintenance_id
-    WHERE t.company_team_id = ${companyTeamId}
+  `;
+
+  const whereParts: Prisma.Sql[] = [];
+  if (companyTeamId) {
+    whereParts.push(Prisma.sql`t.company_team_id = ${companyTeamId}`);
+  }
+  if (agentId) {
+    whereParts.push(
+      Prisma.sql`(
+        t.created_by_agent_id = ${agentId}
+        OR t.traveler_agent_ids @> ${JSON.stringify([agentId])}::jsonb
+      )`,
+    );
+  }
+  const whereSql =
+    whereParts.length === 1
+      ? whereParts[0]!
+      : Prisma.sql`(${Prisma.join(whereParts, " OR ")})`;
+
+  const orders = await prisma.$queryRaw<RawTravelOrder[]>`
+    ${selectSql}
+    WHERE ${whereSql}
     ORDER BY t.created_at DESC
   `;
 
@@ -989,6 +1025,24 @@ export async function kpiIdsWithTravelOrders(kpiIds: string[]): Promise<Set<stri
     SELECT DISTINCT kpi_maintenance_id
     FROM travel_orders
     WHERE kpi_maintenance_id IN (${Prisma.join(kpiIds)})
+  `;
+  return new Set(rows.map((r) => r.kpi_maintenance_id));
+}
+
+/**
+ * Field Assignment / travel-order KPI ids where the agent is an assigned traveler
+ * (or the travel-order creator, for older rows missing traveler_agent_ids).
+ */
+export async function kpiIdsWhereAgentIsTravelOrderTraveler(
+  agentId: string,
+): Promise<Set<string>> {
+  const id = typeof agentId === "string" ? agentId.trim() : "";
+  if (!id) return new Set();
+  const rows = await prisma.$queryRaw<Array<{ kpi_maintenance_id: string }>>`
+    SELECT DISTINCT kpi_maintenance_id
+    FROM travel_orders
+    WHERE created_by_agent_id = ${id}
+       OR traveler_agent_ids @> ${JSON.stringify([id])}::jsonb
   `;
   return new Set(rows.map((r) => r.kpi_maintenance_id));
 }

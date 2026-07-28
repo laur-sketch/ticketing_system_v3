@@ -3,13 +3,14 @@ import { requireRole } from "@/lib/access";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import {
-  findTravelOrdersByCompanyTeamId,
+  findTravelOrdersVisibleToAgent,
   serializeTravelOrder,
 } from "@/lib/travel-order-db";
 
 /**
  * GET /api/travel-orders
- * Lists travel orders visible to the caller's company.
+ * Lists travel orders for the caller's company, plus any where they are an
+ * assigned traveler (including cross-company co-travelers).
  */
 export async function GET() {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
@@ -22,11 +23,10 @@ export async function GET() {
   }
 
   const companyTeamId = await resolveAgentDesignatedCompanyId(operatorId);
-  if (!companyTeamId) {
-    return NextResponse.json({ travelOrders: [], companyTeamId: null });
-  }
-
-  const rows = await findTravelOrdersByCompanyTeamId(companyTeamId);
+  const rows = await findTravelOrdersVisibleToAgent({
+    companyTeamId,
+    agentId: operatorId,
+  });
   return NextResponse.json({
     companyTeamId,
     travelOrders: rows.map(serializeTravelOrder),

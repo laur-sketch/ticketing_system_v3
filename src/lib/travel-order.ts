@@ -385,7 +385,7 @@ export function agentIdsFromApprovalLevels(
 }
 
 export function hasHierarchicalApprovals(
-  levels: Array<{ level?: number }> | null | undefined,
+  levels: Array<{ level?: number; agentId?: string | null }> | null | undefined,
 ): boolean {
   return Array.isArray(levels) && levels.length > 0;
 }
@@ -433,9 +433,7 @@ export function getCurrentApprovalLevel(
  * - every required level has approved (optional leftovers may be skipped).
  * If every level is optional, at least one approval is required.
  */
-export function isApprovalHierarchySatisfied(
-  levels: TravelOrderApprovalLevelStored[] | TravelOrderApprovalLevelDto[],
-): boolean {
+export function isApprovalHierarchySatisfied(levels: ApprovalLevelLike[]): boolean {
   if (levels.length === 0) return false;
   const sorted = sortApprovalLevels(levels);
   if (sorted.some((l) => isApprovalLevelOptional(l) && Boolean(l.approvedAt))) {
@@ -449,9 +447,7 @@ export function isApprovalHierarchySatisfied(
 }
 
 /** @deprecated Prefer isApprovalHierarchySatisfied — kept for call sites. */
-export function allApprovalLevelsComplete(
-  levels: TravelOrderApprovalLevelStored[] | TravelOrderApprovalLevelDto[],
-): boolean {
+export function allApprovalLevelsComplete(levels: ApprovalLevelLike[]): boolean {
   return isApprovalHierarchySatisfied(levels);
 }
 
@@ -553,6 +549,19 @@ export function canCancelTravelOrderNow(
     order.status === TRAVEL_ORDER_STATUS.SUBMITTED ||
     order.status === TRAVEL_ORDER_STATUS.APPROVED
   );
+}
+
+/** Assigned traveler (including creator) on a travel order. */
+export function isTravelOrderTraveler(
+  operatorAgentId: string | null | undefined,
+  order: {
+    travelerAgentIds?: string[] | null;
+    createdByAgentId?: string | null;
+  },
+): boolean {
+  if (!operatorAgentId) return false;
+  if (order.createdByAgentId === operatorAgentId) return true;
+  return (order.travelerAgentIds ?? []).includes(operatorAgentId);
 }
 
 export function parseTravelOrderAttachments(raw: unknown): TaskScreenshotMetaItem[] {

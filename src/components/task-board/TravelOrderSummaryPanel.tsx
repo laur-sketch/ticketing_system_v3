@@ -13,6 +13,7 @@ import {
   canApproveTravelOrderNow,
   canCancelTravelOrderNow,
   canConfirmTravelOrderNow,
+  isTravelOrderTraveler,
   getOperatorActionableApprovalLevel,
   getUnlockedIncompleteLevels,
   hasHierarchicalApprovals,
@@ -501,7 +502,9 @@ export function TravelOrderSummaryPanel({
           const liveKpiPercent =
             totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
           const kpiAlreadySubmitted = order.kpiSubmittedAt != null;
-          const canSubmitDone = running && canCheckIn && !kpiAlreadySubmitted;
+          const isAssignedTraveler = isTravelOrderTraveler(operatorAgentId, order);
+          const allowCheckIn = canCheckIn || isAssignedTraveler;
+          const canSubmitDone = running && allowCheckIn && !kpiAlreadySubmitted;
 
           const defaultPage: TravelOrderFormPage =
             canApproveThis || canConfirmThis ? 2 : 1;
@@ -668,7 +671,7 @@ export function TravelOrderSummaryPanel({
                                   </p>
                                   <button
                                     type="button"
-                                    disabled={!canCheckIn || started || startBusy || ended}
+                                    disabled={!allowCheckIn || started || startBusy || ended}
                                     onClick={() => void captureVisit(order, loc, "start")}
                                     className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-45"
                                   >
@@ -709,7 +712,7 @@ export function TravelOrderSummaryPanel({
                                   </p>
                                   <button
                                     type="button"
-                                    disabled={!canCheckIn || !started || ended || endBusy}
+                                    disabled={!allowCheckIn || !started || ended || endBusy}
                                     onClick={() => void captureVisit(order, loc, "end")}
                                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-200"
                                   >
@@ -752,7 +755,7 @@ export function TravelOrderSummaryPanel({
                                 <textarea
                                   rows={2}
                                   defaultValue={loc.remarks ?? ""}
-                                  disabled={!canCheckIn}
+                                  disabled={!allowCheckIn}
                                   onChange={(e) =>
                                     scheduleRemarksSave(order.id, loc.id, e.target.value)
                                   }
@@ -763,7 +766,7 @@ export function TravelOrderSummaryPanel({
                               <div className="flex flex-wrap items-center gap-2">
                                 <label
                                   className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${
-                                    !canCheckIn ||
+                                    !allowCheckIn ||
                                     loc.attachments.length >= MAX_LOCATION_IMAGES ||
                                     busyKey === `img-${loc.id}`
                                       ? "pointer-events-none opacity-50"
@@ -782,7 +785,7 @@ export function TravelOrderSummaryPanel({
                                     multiple
                                     className="sr-only"
                                     disabled={
-                                      !canCheckIn ||
+                                      !allowCheckIn ||
                                       loc.attachments.length >= MAX_LOCATION_IMAGES ||
                                       busyKey === `img-${loc.id}`
                                     }
@@ -820,7 +823,7 @@ export function TravelOrderSummaryPanel({
                                             className="h-16 w-16 object-cover"
                                           />
                                         </a>
-                                        {canCheckIn ? (
+                                        {allowCheckIn ? (
                                           <button
                                             type="button"
                                             disabled={removing}

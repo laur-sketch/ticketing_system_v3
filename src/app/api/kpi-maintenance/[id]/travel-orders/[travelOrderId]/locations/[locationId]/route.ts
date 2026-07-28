@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { prisma } from "@/lib/prisma";
-import { isTravelOrderApproved, isValidLatLng } from "@/lib/travel-order";
+import { isTravelOrderApproved, isTravelOrderTraveler, isValidLatLng } from "@/lib/travel-order";
 import {
   findTravelOrderById,
   serializeTravelOrder,
@@ -28,14 +28,18 @@ async function loadApprovedLocation(
   });
   if (!kpi) return { error: NextResponse.json({ error: "Task not found." }, { status: 404 }) };
 
-  const canAccess =
-    sessionPerms.canAssignWork || kpi.assignedAgentId === sessionPerms.operator?.id;
-  if (!canAccess) return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-
   const order = await findTravelOrderById(travelOrderId);
   if (!order || order.kpiMaintenanceId !== id) {
     return { error: NextResponse.json({ error: "Travel order not found." }, { status: 404 }) };
   }
+
+  const operatorId = sessionPerms.operator?.id ?? null;
+  const canAccess =
+    sessionPerms.canAssignWork ||
+    kpi.assignedAgentId === operatorId ||
+    isTravelOrderTraveler(operatorId, order);
+  if (!canAccess) return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+
   if (!isTravelOrderApproved(order.status)) {
     return {
       error: NextResponse.json(

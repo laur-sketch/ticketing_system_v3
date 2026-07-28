@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { prisma } from "@/lib/prisma";
-import { isTravelOrderRunning } from "@/lib/travel-order";
+import { isTravelOrderRunning, isTravelOrderTraveler } from "@/lib/travel-order";
 import { findTravelOrderById, serializeTravelOrder } from "@/lib/travel-order-db";
 import { finalizeFieldAssignmentKpiFromTravelOrder } from "@/lib/travel-order-kpi-finalize";
 
@@ -25,14 +25,18 @@ export async function POST(
   });
   if (!kpi) return NextResponse.json({ error: "Task not found." }, { status: 404 });
 
-  const canAccess =
-    perms.canAssignWork || kpi.assignedAgentId === perms.operator?.id;
-  if (!canAccess) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
   const order = await findTravelOrderById(travelOrderId);
   if (!order || order.kpiMaintenanceId !== id) {
     return NextResponse.json({ error: "Travel order not found." }, { status: 404 });
   }
+
+  const operatorId = perms.operator?.id ?? null;
+  const canAccess =
+    perms.canAssignWork ||
+    kpi.assignedAgentId === operatorId ||
+    isTravelOrderTraveler(operatorId, order);
+  if (!canAccess) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   if (!isTravelOrderRunning(order.status)) {
     return NextResponse.json(
       { error: "Submit as Done is only available while the travel order is running (approved)." },
