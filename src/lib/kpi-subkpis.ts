@@ -616,7 +616,7 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
 
 function stripLinkedJobOrderKeys(value: Prisma.InputJsonValue): Prisma.InputJsonValue {
   if (!isPlainObject(value)) return value;
-  const next: Record<string, unknown> = { ...value };
+  const next: Record<string, unknown> = { ...(value as Record<string, unknown>) };
   delete next.linkedJobOrderTicketId;
   delete next.linkedJobOrderTicketNumber;
   return next as Prisma.InputJsonValue;

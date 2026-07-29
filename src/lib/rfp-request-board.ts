@@ -17,7 +17,7 @@ export async function loadRfpTicketIdsForCurrentStepAssignee(
   const rows = await prisma.ticket.findMany({
     where: {
       requestType: "REQUEST_FOR_PAYMENT",
-      paymentApprovalMeta: { not: null },
+      paymentApprovalMeta: { not: Prisma.DbNull },
       status: { in: ACTIVE_REQUEST_STATUSES },
     },
     select: {

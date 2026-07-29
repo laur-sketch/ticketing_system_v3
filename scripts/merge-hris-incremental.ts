@@ -143,6 +143,21 @@ async function ensureSchema(
       KEY idx_merged_attendance_company (company_name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  // Existing DBs may predate profile/face columns (CREATE TABLE IF NOT EXISTS won't add them).
+  for (const col of [
+    { name: "profile_image", ddl: "VARCHAR(255) NULL AFTER hire_date" },
+    { name: "face_image", ddl: "LONGTEXT NULL AFTER profile_image" },
+  ] as const) {
+    const cols = await db.$queryRawUnsafe<Array<{ Field: string }>>(
+      `SHOW COLUMNS FROM ${target}.merged_users LIKE '${col.name}'`,
+    );
+    if (cols.length === 0) {
+      await db.$executeRawUnsafe(
+        `ALTER TABLE ${target}.merged_users ADD COLUMN ${col.name} ${col.ddl}`,
+      );
+    }
+  }
 }
 
 async function resolveSince(

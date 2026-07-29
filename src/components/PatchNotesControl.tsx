@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Megaphone, X } from "lucide-react";
+import { ChevronDown, Megaphone, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { PatchNoteContentSections, PatchNoteSection } from "@/lib/patch-notes-seed";
 import { resolvePatchNoteSections } from "@/lib/patch-notes-content";
@@ -190,7 +190,7 @@ export function PatchNotesControl({ visible = true }: Props) {
                     Patch Notes &amp; Update History
                   </h2>
                   <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                    Newest updates first. Open anytime from the header.
+                    Newest first. Expand a version dropdown to read that release.
                   </p>
                 </div>
                 <button
@@ -209,16 +209,23 @@ export function PatchNotesControl({ visible = true }: Props) {
                 ) : patches.length === 0 ? (
                   <p className="text-sm text-zinc-500">No patch notes yet.</p>
                 ) : (
-                  <div className="space-y-5">
-                    {patches.map((note) => {
+                  <div className="space-y-2">
+                    {patches.map((note, index) => {
                       const sections = resolvePatchNoteSections(note);
+                      const isLatest = index === 0 || note.id === latestId;
                       return (
-                        <article
+                        <details
                           key={note.id}
-                          className="rounded-xl border border-zinc-200 bg-zinc-50/80 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+                          open={isLatest}
+                          className="group rounded-xl border border-zinc-200 bg-zinc-50/80 open:bg-white dark:border-zinc-800 dark:bg-zinc-900/60 dark:open:bg-zinc-900"
                         >
-                          <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-zinc-200/80 pb-2.5 dark:border-zinc-800">
-                            <div className="min-w-0">
+                          <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 marker:hidden [&::-webkit-details-marker]:hidden">
+                            <ChevronDown
+                              size={16}
+                              className="shrink-0 text-zinc-400 transition-transform group-open:rotate-180 dark:text-zinc-500"
+                              aria-hidden
+                            />
+                            <div className="min-w-0 flex-1">
                               <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                                 v{note.version}
                                 {note.title ? (
@@ -237,45 +244,47 @@ export function PatchNotesControl({ visible = true }: Props) {
                                 New
                               </span>
                             ) : null}
-                          </header>
+                          </summary>
 
-                          {sections.length === 0 ? (
-                            <p className="mt-3 text-sm text-zinc-500">No details for this release.</p>
-                          ) : (
-                            <div className="mt-3 space-y-4">
-                              {sections.map((section) => (
-                                <section key={`${note.id}-${section.key}`}>
-                                  <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
-                                    {section.label}
-                                  </h3>
-                                  <ul className="mt-2 space-y-2.5">
-                                    {section.items.map((item, index) => (
-                                      <li
-                                        key={`${note.id}-${section.key}-${item.title}-${index}`}
-                                        className="flex items-start gap-2.5"
-                                      >
-                                        <span
-                                          className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500"
-                                          aria-hidden
-                                        />
-                                        <div className="min-w-0">
-                                          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                                            {item.title}
-                                          </p>
-                                          {item.description ? (
-                                            <p className="mt-0.5 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                                              {item.description}
+                          <div className="border-t border-zinc-200/80 px-4 pb-3.5 pt-3 dark:border-zinc-800">
+                            {sections.length === 0 ? (
+                              <p className="text-sm text-zinc-500">No details for this release.</p>
+                            ) : (
+                              <div className="space-y-4">
+                                {sections.map((section) => (
+                                  <section key={`${note.id}-${section.key}`}>
+                                    <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
+                                      {section.label}
+                                    </h3>
+                                    <ul className="mt-2 space-y-2.5">
+                                      {section.items.map((item, itemIndex) => (
+                                        <li
+                                          key={`${note.id}-${section.key}-${item.title}-${itemIndex}`}
+                                          className="flex items-start gap-2.5"
+                                        >
+                                          <span
+                                            className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500"
+                                            aria-hidden
+                                          />
+                                          <div className="min-w-0">
+                                            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                                              {item.title}
                                             </p>
-                                          ) : null}
-                                        </div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </section>
-                              ))}
-                            </div>
-                          )}
-                        </article>
+                                            {item.description ? (
+                                              <p className="mt-0.5 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                                                {item.description}
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </section>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </details>
                       );
                     })}
                   </div>

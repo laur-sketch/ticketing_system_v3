@@ -3,6 +3,7 @@
  * Received By (Accounting) and Received By (Finance).
  */
 
+import { Prisma } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
 import {
   parsePaymentApprovalMeta,
@@ -106,7 +107,7 @@ export async function loadRfpRolePersonnelMetrics(
   const tickets = await prisma.ticket.findMany({
     where: {
       requestType: "REQUEST_FOR_PAYMENT",
-      paymentApprovalMeta: { not: null },
+      paymentApprovalMeta: { not: Prisma.DbNull },
     },
     select: {
       id: true,

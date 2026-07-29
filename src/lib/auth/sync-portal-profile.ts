@@ -441,6 +441,17 @@ async function upsertPortalAccount(
 
   const existing = await findExistingPortal(email, username, profile.hrisSourceUserId);
 
+  // auth_user_id is unique on portal_accounts — free it from any other row first.
+  if (authUserId) {
+    await prismaPrimary.portalAccount.updateMany({
+      where: {
+        authUserId,
+        ...(existing ? { NOT: { id: existing.id } } : {}),
+      },
+      data: { authUserId: null },
+    });
+  }
+
   if (existing) {
     const roleUpdate = buildPortalRoleUpdate(existing, mapped, forceRoleRefresh);
     let usernameUpdate: string | undefined = username ?? existing.username ?? undefined;

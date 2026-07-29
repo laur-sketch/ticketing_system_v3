@@ -215,30 +215,26 @@ export async function POST(req: Request) {
               );
             }
           } else {
-            if (meta.proceduralStep === "DONE") {
-              // no-op
-            } else {
-              const uniqueness = canAssignPaymentApprover({
-                meta,
-                agentId: agent.id,
-                forStep: meta.proceduralStep,
-              });
-              if (!uniqueness.ok) {
-                return NextResponse.json({ error: uniqueness.error }, { status: 400 });
-              }
-              const field = assigneeFieldForStep(meta.proceduralStep);
-              const nextMeta = applyPaymentApprovalAssignees(meta, { [field]: agent.id });
-              await savePaymentApprovalMeta(ticketId, nextMeta);
-              const pending = paymentProceduralStatusLabel(nextMeta.proceduralStep);
-              await logActivity(
-                ticketId,
-                "SYSTEM",
-                `Assigned for ${PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
-                pending
-                  ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
-                  : (updated.assignedAgent?.name ?? agent.name),
-              );
+            const uniqueness = canAssignPaymentApprover({
+              meta,
+              agentId: agent.id,
+              forStep: meta.proceduralStep,
+            });
+            if (!uniqueness.ok) {
+              return NextResponse.json({ error: uniqueness.error }, { status: 400 });
             }
+            const field = assigneeFieldForStep(meta.proceduralStep);
+            const nextMeta = applyPaymentApprovalAssignees(meta, { [field]: agent.id });
+            await savePaymentApprovalMeta(ticketId, nextMeta);
+            const pending = paymentProceduralStatusLabel(nextMeta.proceduralStep);
+            await logActivity(
+              ticketId,
+              "SYSTEM",
+              `Assigned for ${PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+              pending
+                ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
+                : (updated.assignedAgent?.name ?? agent.name),
+            );
           }
         }
       } else if (requestType === "ITEM_REQUISITION_SLIP") {
