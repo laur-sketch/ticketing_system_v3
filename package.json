@@ -71,6 +71,8 @@
     "db:import:july-backup": "npx tsx scripts/import-ticketing-backup.ts --confirm && npm run db:fix:logins",
     "db:fix:logins": "npx tsx scripts/fix-all-login-accounts.ts && npx tsx scripts/reconcile-portal-with-merged-users.ts",
     "db:reconcile:merged-users": "npx tsx scripts/reconcile-portal-with-merged-users.ts",
+    "db:replace:portal-from-merged": "npx tsx scripts/replace-portal-users-from-merged.ts --apply",
+    "db:replace:portal-from-merged:dry": "npx tsx scripts/replace-portal-users-from-merged.ts",
     "db:sync:portal-merged": "npx tsx scripts/sync-portal-to-merged-users.ts --apply",
     "db:sync:portal-merged:dry": "npx tsx scripts/sync-portal-to-merged-users.ts",
     "db:promote:hris-personnel": "npx tsx scripts/promote-hris-personnel.ts --apply",

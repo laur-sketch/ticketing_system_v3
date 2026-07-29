@@ -13,7 +13,7 @@ import { prismaSecondary } from "@/lib/prisma";
 type SinceRow = { since: Date | null };
 
 function resolveLiveSourceDb(): string {
-  return process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris";
+  return process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris-dev";
 }
 
 function resolveSourceTag(): string {

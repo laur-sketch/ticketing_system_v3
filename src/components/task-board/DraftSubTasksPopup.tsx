@@ -42,7 +42,7 @@ const EMPTY: DraftForm = {
   segmentId: "",
 };
 
-type DraftSegment = { id: string; label: string; items: SubKpiItem[] };
+type DraftSegment = { id: string; label: string; items: SubKpiItem[]; dueDate?: string | null };
 
 type DraftSubTasksPopupProps = {
   open: boolean;
@@ -51,10 +51,14 @@ type DraftSubTasksPopupProps = {
   segmented: boolean;
   segments: DraftSegment[];
   canSegment: boolean;
+  /** Project mode: offer phase columns instead of generic segments. */
+  canMakePhases?: boolean;
   minimumSegmentItems: number;
   hideDueDate?: boolean;
   /** Main-task target date shown when a subtask inherits. */
   parentDueDate?: string;
+  /** Optional Job Order ticket link shown as Check Reference in this form. */
+  checkReferenceHref?: string | null;
   onChange: (next: SubKpiItem[]) => void;
   onSegmentedChange: (next: boolean) => void;
   /** Prefer functional updates so adds never drop existing Unassigned cards. */
@@ -70,9 +74,11 @@ export function DraftSubTasksPopup({
   segmented,
   segments,
   canSegment,
+  canMakePhases = false,
   minimumSegmentItems: _minimumSegmentItems,
   hideDueDate = false,
   parentDueDate = "",
+  checkReferenceHref = null,
   onChange,
   onSegmentedChange,
   onSegmentsChange,
@@ -177,7 +183,7 @@ export function DraftSubTasksPopup({
       setError("Sub Task title is required.");
       return;
     }
-    if (!hideDueDate && addDraft.useCustomDueDate && !addDraft.dueDate) {
+    if (!hideDueDate && !canMakePhases && addDraft.useCustomDueDate && !addDraft.dueDate) {
       setError("Choose a custom target date, or uncheck the option to inherit the main task date.");
       return;
     }
@@ -188,7 +194,7 @@ export function DraftSubTasksPopup({
       done: false,
       ...(addDraft.description.trim() ? { description: addDraft.description.trim() } : {}),
       ...(addDraft.remarks.trim() ? { remarks: addDraft.remarks.trim() } : {}),
-      ...(!hideDueDate && addDraft.useCustomDueDate && addDraft.dueDate
+      ...(!hideDueDate && !canMakePhases && addDraft.useCustomDueDate && addDraft.dueDate
         ? { dueDate: addDraft.dueDate }
         : {}),
       ...(addDraft.priority === "High" || addDraft.priority === "Medium" || addDraft.priority === "Low"
@@ -255,7 +261,7 @@ export function DraftSubTasksPopup({
       setError("Sub Task title is required.");
       return;
     }
-    if (!hideDueDate && editDraft.useCustomDueDate && !editDraft.dueDate) {
+    if (!hideDueDate && !canMakePhases && editDraft.useCustomDueDate && !editDraft.dueDate) {
       setError("Choose a custom target date, or uncheck the option to inherit the main task date.");
       return;
     }
@@ -269,7 +275,9 @@ export function DraftSubTasksPopup({
         const remarks = editDraft.remarks.trim();
         if (remarks) next.remarks = remarks;
         else delete (next as { remarks?: string }).remarks;
-        if (!hideDueDate) {
+        if (canMakePhases) {
+          delete (next as { dueDate?: string }).dueDate;
+        } else if (!hideDueDate) {
           if (editDraft.useCustomDueDate && editDraft.dueDate) next.dueDate = editDraft.dueDate;
           else delete (next as { dueDate?: string }).dueDate;
         }
@@ -303,13 +311,20 @@ export function DraftSubTasksPopup({
 
   function addSegment() {
     const nextNumber = namedSegments.length + 1;
+    const labelPrefix = canMakePhases ? "Phase" : "Segment";
+    const defaultDue = canMakePhases ? parentDueDate.trim() || null : null;
     onSegmentsChange((prev) => {
       const ensured = ensureUnsegmentedSegment(prev);
       const unassignedItems =
         ensured.find((s) => isUnsegmentedSegmentId(s.id))?.items ?? [];
       return ensureUnsegmentedSegment([
         ...ensured.filter((s) => !isUnsegmentedSegmentId(s.id)),
-        { id: crypto.randomUUID(), label: `Segment ${nextNumber}`, items: [] },
+        {
+          id: crypto.randomUUID(),
+          label: `${labelPrefix} ${nextNumber}`,
+          items: [],
+          ...(defaultDue ? { dueDate: defaultDue } : {}),
+        },
         {
           id: UNSEGMENTED_SEGMENT_ID,
           label: UNSEGMENTED_SEGMENT_LABEL,
@@ -346,6 +361,17 @@ export function DraftSubTasksPopup({
     if (isUnsegmentedSegmentId(segmentId)) return;
     onSegmentsChange((prev) =>
       prev.map((segment) => (segment.id === segmentId ? { ...segment, label } : segment)),
+    );
+  }
+
+  function updateSegmentDueDate(segmentId: string, dueDate: string) {
+    if (isUnsegmentedSegmentId(segmentId)) return;
+    onSegmentsChange((prev) =>
+      prev.map((segment) =>
+        segment.id === segmentId
+          ? { ...segment, dueDate: dueDate.trim() || null }
+          : segment,
+      ),
     );
   }
 
@@ -421,13 +447,22 @@ export function DraftSubTasksPopup({
             </div>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                {!hideDueDate
-                  ? s.dueDate
-                    ? `Target ${s.dueDate}`
-                    : parentDueDate.trim()
-                      ? `Target ${parentDueDate.trim()} (from main task)`
-                      : "Uses main task target date"
-                  : "\u00a0"}
+                {canMakePhases
+                  ? (() => {
+                      const phase = segments.find((segment) =>
+                        segment.items.some((candidate) => candidate.id === s.id),
+                      );
+                      return phase?.dueDate?.trim()
+                        ? `Phase target ${phase.dueDate.trim()}`
+                        : "Uses phase target date";
+                    })()
+                  : !hideDueDate
+                    ? s.dueDate
+                      ? `Target ${s.dueDate}`
+                      : parentDueDate.trim()
+                        ? `Target ${parentDueDate.trim()} (from main task)`
+                        : "Uses main task target date"
+                    : "\u00a0"}
               </p>
               <div className="flex items-center gap-1.5">
                 {canCopyToSegment ? (
@@ -503,7 +538,7 @@ export function DraftSubTasksPopup({
             className="mt-1 resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
           />
         </label>
-        {!hideDueDate ? (
+        {!hideDueDate && !canMakePhases ? (
           <div className="flex flex-col gap-2 sm:col-span-2">
             <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               <input
@@ -540,6 +575,10 @@ export function DraftSubTasksPopup({
               </label>
             ) : null}
           </div>
+        ) : canMakePhases ? (
+          <p className="text-[11px] font-medium normal-case tracking-normal text-zinc-500 sm:col-span-2 dark:text-zinc-400">
+            Target dates are set on each phase column above — not on individual sub-tasks.
+          </p>
         ) : null}
         <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
           Priority
@@ -570,14 +609,26 @@ export function DraftSubTasksPopup({
       size="xl"
     >
       <div className="space-y-4">
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-        >
-          <ArrowLeft className="size-3.5" aria-hidden />
-          Back
-        </button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            <ArrowLeft className="size-3.5" aria-hidden />
+            Back
+          </button>
+          {checkReferenceHref?.trim() ? (
+            <a
+              href={checkReferenceHref.trim()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex shrink-0 items-center rounded-md border border-orange-500/50 bg-orange-600 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-white transition hover:bg-orange-500"
+            >
+              Check Reference
+            </a>
+          ) : null}
+        </div>
 
         {error ? (
           <p
@@ -624,7 +675,7 @@ export function DraftSubTasksPopup({
           </div>
         ) : null}
 
-        {canSegment || segmented ? (
+        {canSegment || canMakePhases || segmented ? (
           <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <label className="flex cursor-pointer items-start gap-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
@@ -641,9 +692,11 @@ export function DraftSubTasksPopup({
                   className="mt-0.5"
                 />
                 <span>
-                  Segment this checklist
+                  {canMakePhases ? "Make Phases" : "Segment this checklist"}
                   <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                    Each segment is a column (Trello-style). New cards start in Unassigned — drag them into a segment.
+                    {canMakePhases
+                      ? "Each phase is a column on the Timeline Tracker. New cards start in Unassigned — drag them into a phase."
+                      : "Each segment is a column (Trello-style). New cards start in Unassigned — drag them into a segment."}
                   </span>
                 </span>
               </label>
@@ -654,7 +707,7 @@ export function DraftSubTasksPopup({
                   className="inline-flex items-center gap-1 rounded-lg border border-orange-500/50 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-500/10 dark:text-orange-300"
                 >
                   <Plus className="size-3.5" aria-hidden />
-                  Add segment
+                  {canMakePhases ? "Add phase" : "Add segment"}
                 </button>
               ) : null}
             </div>
@@ -664,7 +717,11 @@ export function DraftSubTasksPopup({
         <div className="space-y-3">
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
             {allItems.length} sub-task{allItems.length === 1 ? "" : "s"}
-            {segmented ? " · Drag between Unassigned and segment columns" : ""}
+            {segmented
+              ? canMakePhases
+                ? " · Drag between Unassigned and phase columns"
+                : " · Drag between Unassigned and segment columns"
+              : ""}
             {canCopyToSegment ? " · Select multiple to copy" : ""}
           </p>
           {segmented ? (
@@ -674,7 +731,13 @@ export function DraftSubTasksPopup({
               selectedIds={canCopyToSegment ? selectedIds : undefined}
               onToggleSelected={canCopyToSegment ? toggleSelected : undefined}
               onDropCard={moveCardOnKanban}
+              showPhaseDueDate={canMakePhases}
               onEditSegmentLabel={(segmentId, label) => updateSegmentLabel(segmentId, label)}
+              onEditSegmentDueDate={
+                canMakePhases
+                  ? (segmentId, dueDate) => updateSegmentDueDate(segmentId, dueDate)
+                  : undefined
+              }
               onRemoveSegment={(segmentId) => {
                 const seg = segments.find((s) => s.id === segmentId);
                 if (seg) removeSegment(seg);
@@ -760,8 +823,9 @@ export function DraftSubTasksPopup({
           <div className="mt-2 space-y-2">
             {segmented ? (
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                New sub-tasks land on Unassigned. Drag them onto a segment column before creating the
-                task — Unassigned must be empty to finalize.
+                New sub-tasks land on Unassigned. Drag them onto a{" "}
+                {canMakePhases ? "phase" : "segment"} column before creating the task — Unassigned must
+                be empty to finalize.
               </p>
             ) : null}
             {renderFields(addDraft, (next) => setAddDraft((prev) => ({ ...prev, ...next })), "New")}

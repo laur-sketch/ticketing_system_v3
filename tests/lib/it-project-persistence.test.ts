@@ -43,7 +43,7 @@ describe("IT project create persistence", () => {
     expect(parseItProjectSubKpis(ensured).phases[0]!.items).toHaveLength(2);
   });
 
-  it("rejects subtask due after phase due", () => {
+  it("sets phase due from latest subtask due (allows subtask after draft phase due)", () => {
     const built = buildItProjectFromPhaseDrafts([
       {
         name: "Phase 1",
@@ -51,7 +51,9 @@ describe("IT project create persistence", () => {
         items: [{ title: "Late", dueDate: "2026-07-20" }],
       },
     ]);
-    expect(built.ok).toBe(false);
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.data.phases[0]!.dueDate).toBe("2026-07-20");
   });
 
   it("start/end lifecycle updates dates and status", () => {

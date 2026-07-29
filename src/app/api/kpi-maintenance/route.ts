@@ -56,14 +56,14 @@ import {
   hasItemsInUnassignedSegment,
 } from "@/lib/kpi-subkpis";
 import {
+  applyPhaseDelayNotifications,
   buildItProjectFromPhaseDrafts,
-  findItProjectPhaseForSubKpi,
   isItProjectEnvelope,
-  isSubtaskDueWithinPhaseDue,
   itProjectActivePhase,
   itProjectAllItems,
   itProjectChecklistItems,
   parseItProjectSubKpis,
+  seedJoLinkedProjectTimeline,
   setItProjectActivePhase,
   setItProjectSubKpiAssignee,
   setItProjectSubKpiItemsAssistanceRequested,
@@ -72,12 +72,17 @@ import {
   setItProjectSubKpiPenalty,
   setItProjectSubKpiProjectMeta,
   setItProjectSubKpiSchedule,
+  syncAllPhaseDueDates,
   updateItProjectPhases,
+  usesProjectTimelineTracker,
   validateItProjectPhaseDueConstraints,
   wrapItProjectSubKpis,
+  moveItProjectSubKpiToPhase,
+  setItProjectPhaseDueDate,
   type ItProjectData,
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { isValidLatLng } from "@/lib/travel-order";
 import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
 import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-efficiency-recompute";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
@@ -475,6 +480,7 @@ export async function POST(req: Request) {
     segments?: Array<{
       id?: string;
       label?: string;
+      dueDate?: string | null;
       items?: Array<{
         title?: string;
         description?: string | null;
@@ -676,6 +682,7 @@ export async function POST(req: Request) {
         ? body.segments.map((seg) => ({
             id: typeof seg.id === "string" ? seg.id.trim() : undefined,
             label: (seg.label ?? "").trim(),
+            dueDate: typeof seg.dueDate === "string" ? seg.dueDate.trim() : null,
             items: Array.isArray(seg.items)
               ? seg.items.map(mapDraftItem).filter((i) => i.title.length > 0)
               : [],
@@ -755,12 +762,23 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+    // JO creates must use the Project + timeline path — not the IT PROJECT IMPLEMENTATION pillar.
+    if (isItProject) {
+      return NextResponse.json(
+        {
+          error:
+            "Job Order projects use Project mode (not IT Project Implementation). Create under Job Order Request or another task group as a Project.",
+        },
+        { status: 400 },
+      );
+    }
     const joTicket = await prisma.ticket.findUnique({
       where: { id: linkedJobOrderTicketId },
       select: {
         id: true,
         ticketNumber: true,
         requestType: true,
+        description: true,
       },
     });
     if (!joTicket || joTicket.requestType !== "JOB_ORDER") {
@@ -778,9 +796,20 @@ export async function POST(req: Request) {
       );
     }
     const { setLinkedJobOrderOnSubKpis } = await import("@/lib/kpi-subkpis");
+    const { parseJobOrderDescription } = await import("@/lib/job-order");
     subKpisPersist = setLinkedJobOrderOnSubKpis(subKpisPersist, {
       ticketId: joTicket.id,
       ticketNumber: joTicket.ticketNumber,
+    });
+    const joTarget =
+      body.pillarDueDate?.trim() ||
+      parseJobOrderDescription(joTicket.description)?.targetDate?.trim() ||
+      null;
+    subKpisPersist = seedJoLinkedProjectTimeline(subKpisPersist, { targetDueDate: joTarget });
+  } else if (!isItProject && body.isProject === true) {
+    // Non-JO projects still need the Timeline Tracker envelope so phase targets persist.
+    subKpisPersist = seedJoLinkedProjectTimeline(subKpisPersist, {
+      targetDueDate: body.pillarDueDate?.trim() || null,
     });
   }
 
@@ -967,9 +996,20 @@ export async function PATCH(req: Request) {
       actualDate?: string | null;
       startDate?: string | null;
     };
+    moveSubKpiPhase?: {
+      subKpiId?: string;
+      phaseId?: string;
+    };
+    phaseDueDate?: {
+      phaseId?: string;
+      dueDate?: string | null;
+    };
     subKpiLifecycle?: {
       subKpiId?: string;
       action?: "start" | "end";
+      latitude?: number | null;
+      longitude?: number | null;
+      capturedAt?: string | null;
     };
     subKpiWorkMeta?: {
       subKpiId?: string;
@@ -1036,6 +1076,8 @@ export async function PATCH(req: Request) {
       subKpiId?: string;
     };
     deleteTask?: boolean;
+    /** Move an assigned/running Project into another task group (updates `title`). */
+    moveToTaskGroup?: string;
     taskSchedule?: {
       isRecurring?: boolean;
       frequency?: string;
@@ -1076,6 +1118,7 @@ export async function PATCH(req: Request) {
     select: {
       id: true,
       title: true,
+      mainTask: true,
       assignedAgentId: true,
       assignedAgent: { select: { id: true, name: true, email: true } },
       subKpis: true,
@@ -1101,6 +1144,62 @@ export async function PATCH(req: Request) {
     await prisma.kpiMaintenance.delete({ where: { id } });
     await deleteTaskScreenshotsDir(id);
     return NextResponse.json({ ok: true, id });
+  }
+
+  if (typeof body.moveToTaskGroup === "string") {
+    if (!perms.canAssignWork) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { isProjectTask } = await import("@/lib/kpi-subkpis");
+    if (!isProjectTask(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Only Project cards can be moved to another task group." },
+        { status: 400 },
+      );
+    }
+    if (!kpiRow.assignedAgentId) {
+      return NextResponse.json(
+        { error: "Assign the project first, then move it into a task group." },
+        { status: 400 },
+      );
+    }
+    const nextTitle = body.moveToTaskGroup.trim().replace(/\s+/g, " ");
+    if (!nextTitle) {
+      return NextResponse.json({ error: "Task group name is required." }, { status: 400 });
+    }
+    if (isItProjectImplementationPillar(nextTitle)) {
+      return NextResponse.json(
+        { error: "Cannot move a Job Order project into IT Project Implementation." },
+        { status: 400 },
+      );
+    }
+    if (nextTitle.toLowerCase() === kpiRow.title.trim().toLowerCase()) {
+      return NextResponse.json(kpiRow);
+    }
+    const mainTask = (kpiRow.mainTask ?? "").trim();
+    if (mainTask) {
+      const clash = await prisma.kpiMaintenance.findFirst({
+        where: {
+          title: { equals: nextTitle, mode: "insensitive" },
+          mainTask: { equals: mainTask, mode: "insensitive" },
+          NOT: { id: kpiRow.id },
+        },
+        select: { id: true },
+      });
+      if (clash) {
+        return NextResponse.json(
+          {
+            error: `A task named "${mainTask}" already exists under group '${nextTitle}'. Rename the project or choose another group.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { title: nextTitle },
+    });
+    return NextResponse.json(updated);
   }
 
   const snapshotTz = timeZoneFromPeriodKey(kpiRow.periodKey) || patchTz;
@@ -1186,8 +1285,8 @@ export async function PATCH(req: Request) {
     if (!isAssignee) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (!isItProjectImplementationPillar(kpiRow.title)) {
-      return NextResponse.json({ error: "Phase updates apply only to IT Project Implementation." }, { status: 400 });
+    if (!usesProjectTimelineTracker(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json({ error: "Phase updates apply only to Timeline Tracker projects." }, { status: 400 });
     }
     let wrapped: Prisma.InputJsonValue;
     if (Array.isArray(body.itProjectState.phases) && body.itProjectState.phases.length > 0) {
@@ -1196,10 +1295,10 @@ export async function PATCH(req: Request) {
         typeof body.itProjectState.activePhaseId === "string" && body.itProjectState.activePhaseId.trim()
           ? body.itProjectState.activePhaseId.trim()
           : parsed.activePhaseId;
-      const nextState: ItProjectData = {
+      const nextState = syncAllPhaseDueDates({
         activePhaseId,
         phases: body.itProjectState.phases as ItProjectData["phases"],
-      };
+      });
       const dueCheck = validateItProjectPhaseDueConstraints(nextState);
       if (!dueCheck.ok) {
         return NextResponse.json({ error: dueCheck.error }, { status: 400 });
@@ -1376,9 +1475,70 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
+  if (body.moveSubKpiPhase != null && typeof body.moveSubKpiPhase === "object") {
+    if (!usesProjectTimelineTracker(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Moving between phases applies only to Timeline Tracker projects." },
+        { status: 400 },
+      );
+    }
+    const subKpiIdMove = String(body.moveSubKpiPhase.subKpiId ?? "").trim();
+    const phaseIdMove = String(body.moveSubKpiPhase.phaseId ?? "").trim();
+    if (!subKpiIdMove) {
+      return NextResponse.json({ error: "moveSubKpiPhase.subKpiId is required." }, { status: 400 });
+    }
+    if (!phaseIdMove) {
+      return NextResponse.json({ error: "moveSubKpiPhase.phaseId is required." }, { status: 400 });
+    }
+    if (!canEditSubKpi(subKpiIdMove) && !perms.canAssignWork) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const result = moveItProjectSubKpiToPhase(kpiRow.subKpis, subKpiIdMove, phaseIdMove);
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: result.json },
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (body.phaseDueDate != null && typeof body.phaseDueDate === "object") {
+    if (!usesProjectTimelineTracker(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Phase target dates apply only to Timeline Tracker projects." },
+        { status: 400 },
+      );
+    }
+    if (!perms.canAssignWork && !isAssignee) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const phaseIdDue = String(body.phaseDueDate.phaseId ?? "").trim();
+    if (!phaseIdDue) {
+      return NextResponse.json({ error: "phaseDueDate.phaseId is required." }, { status: 400 });
+    }
+    const dueRaw = body.phaseDueDate.dueDate;
+    const dueValue =
+      dueRaw == null || (typeof dueRaw === "string" && !dueRaw.trim())
+        ? null
+        : String(dueRaw).trim();
+    const data = parseItProjectSubKpis(kpiRow.subKpis, kpiRow.itProjectPhase);
+    if (!data.phases.some((p) => p.id === phaseIdDue)) {
+      return NextResponse.json({ error: "Phase not found." }, { status: 404 });
+    }
+    const nextJson = setItProjectPhaseDueDate(kpiRow.subKpis, phaseIdDue, dueValue);
+    const updated = await prisma.kpiMaintenance.update({
+      where: { id },
+      data: { subKpis: nextJson },
+    });
+    return NextResponse.json(updated);
+  }
+
   if (body.subKpiSchedule != null && typeof body.subKpiSchedule === "object") {
-    if (!isItProjectImplementationPillar(kpiRow.title)) {
-      return NextResponse.json({ error: "Per sub-task scheduling applies only to IT Project Implementation." }, { status: 400 });
+    if (!usesProjectTimelineTracker(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
+      return NextResponse.json(
+        { error: "Per sub-task scheduling applies only to Timeline Tracker projects." },
+        { status: 400 },
+      );
     }
     const subKpiIdSched = String(body.subKpiSchedule.subKpiId ?? "").trim();
     if (!subKpiIdSched) {
@@ -1388,25 +1548,16 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const sched = body.subKpiSchedule;
-    const projectData = parseItProjectSubKpis(kpiRow.subKpis);
-    const phase = findItProjectPhaseForSubKpi(projectData, subKpiIdSched);
-    if (sched.dueDate != null && sched.dueDate !== "" && phase) {
-      if (!isSubtaskDueWithinPhaseDue(sched.dueDate, phase.dueDate)) {
-        return NextResponse.json(
-          {
-            error: `Sub-task due date must be on or before phase "${phase.name}" due date${
-              phase.dueDate ? ` (${phase.dueDate})` : ""
-            }.`,
-          },
-          { status: 400 },
-        );
-      }
-    }
-    const updatedJson = setItProjectSubKpiSchedule(kpiRow.subKpis, subKpiIdSched, {
+    let updatedJson = setItProjectSubKpiSchedule(kpiRow.subKpis, subKpiIdSched, {
       dueDate: sched.dueDate,
       actualDate: sched.actualDate,
       startDate: sched.startDate,
     });
+    const delayPass = applyPhaseDelayNotifications(updatedJson, {
+      timeZone: patchTz,
+      cardAssignedAgentId: kpiRow.assignedAgentId,
+    });
+    updatedJson = delayPass.json;
     const prevComplete = checklistFullyComplete(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
     const nextComplete = checklistFullyComplete(updatedJson, kpiMainTaskLabel(kpiRow));
     let lastFullCompletionAt: Date | null | undefined;
@@ -1421,13 +1572,16 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    return NextResponse.json(updated);
+    return NextResponse.json({
+      ...updated,
+      phaseDelayNotifications: delayPass.notifications,
+    });
   }
 
   if (body.subKpiLifecycle != null && typeof body.subKpiLifecycle === "object") {
-    if (!isItProjectImplementationPillar(kpiRow.title)) {
+    if (!usesProjectTimelineTracker(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
       return NextResponse.json(
-        { error: "Start/End lifecycle applies only to IT Project Implementation." },
+        { error: "Start/End lifecycle applies only to Timeline Tracker projects." },
         { status: 400 },
       );
     }
@@ -1442,7 +1596,19 @@ export async function PATCH(req: Request) {
     if (!canEditSubKpi(subKpiIdLife)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const life = setItProjectSubKpiLifecycle(kpiRow.subKpis, subKpiIdLife, action, patchTz);
+    const lat = body.subKpiLifecycle.latitude;
+    const lng = body.subKpiLifecycle.longitude;
+    if ((lat != null || lng != null) && !isValidLatLng(lat, lng)) {
+      return NextResponse.json({ error: "Invalid GPS coordinates." }, { status: 400 });
+    }
+    const life = setItProjectSubKpiLifecycle(kpiRow.subKpis, subKpiIdLife, action, patchTz, {
+      latitude: typeof lat === "number" ? lat : null,
+      longitude: typeof lng === "number" ? lng : null,
+      capturedAt:
+        typeof body.subKpiLifecycle.capturedAt === "string"
+          ? body.subKpiLifecycle.capturedAt
+          : null,
+    });
     if (!life.ok) {
       return NextResponse.json({ error: life.error }, { status: 400 });
     }

@@ -64,6 +64,16 @@ export function Nav() {
       updatedAt: string;
     }>
   >([]);
+  const [phaseDelayAlerts, setPhaseDelayAlerts] = useState<
+    Array<{
+      kpiMaintenanceId: string;
+      kpiTitle: string;
+      phaseId: string;
+      phaseName: string;
+      targetDate: string;
+      href: string;
+    }>
+  >([]);
   const [accountRequestNotifications, setAccountRequestNotifications] = useState<
     Array<{ id: string; requestType: string; createdAt: string; portalAccount: { name: string; email: string } }>
   >([]);
@@ -164,6 +174,9 @@ export function Nav() {
       fetch("/api/travel-orders/pending-approvals", { cache: "no-store" }).then((r) =>
         r.ok ? r.json() : { pendingApprovals: [] },
       ),
+      fetch("/api/kpi-maintenance/phase-delay-alerts", { cache: "no-store" }).then((r) =>
+        r.ok ? r.json() : { delayedPhases: [] },
+      ),
       isAdminRole
         ? fetch("/api/admin/account-requests/notifications", { cache: "no-store" }).then((r) =>
             r.ok ? r.json() : { rows: [] },
@@ -174,6 +187,7 @@ export function Nav() {
         ([
           rows,
           travelPayload,
+          delayPayload,
           reqPayload,
         ]: [
           Array<{ id: string; ticketNumber: string; title: string; status: string; updatedAt: string }>,
@@ -187,6 +201,16 @@ export function Nav() {
               pendingLevel?: number | null;
               pendingLevelOptional?: boolean;
               updatedAt: string;
+            }>;
+          },
+          {
+            delayedPhases?: Array<{
+              kpiMaintenanceId: string;
+              kpiTitle: string;
+              phaseId: string;
+              phaseName: string;
+              targetDate: string;
+              href: string;
             }>;
           },
           {
@@ -215,6 +239,7 @@ export function Nav() {
               updatedAt: n.updatedAt,
             })),
           );
+          setPhaseDelayAlerts(delayPayload.delayedPhases ?? []);
           setAccountRequestNotifications(isAdminRole ? (reqPayload.rows ?? []) : []);
         },
       )
@@ -222,6 +247,7 @@ export function Nav() {
         if (!ignore) {
           setNotifications([]);
           setTravelOrderApprovals([]);
+          setPhaseDelayAlerts([]);
           setAccountRequestNotifications([]);
         }
       })
@@ -298,12 +324,35 @@ export function Nav() {
           <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">Loading…</p>
         ) : notifications.length === 0 &&
           accountRequestNotifications.length === 0 &&
-          travelOrderApprovals.length === 0 ? (
+          travelOrderApprovals.length === 0 &&
+          phaseDelayAlerts.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">
             No recent notifications.
           </p>
         ) : (
           <>
+            {phaseDelayAlerts.length > 0 ? (
+              <div className="space-y-1">
+                <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-rose-700 dark:text-rose-300">
+                  Delayed project phases
+                </p>
+                {phaseDelayAlerts.map((n) => (
+                  <Link
+                    key={`phase-delay-${n.kpiMaintenanceId}-${n.phaseId}`}
+                    href={n.href}
+                    onClick={() => setNotifOpen(false)}
+                    className="block rounded-lg border border-rose-300/60 bg-rose-50/80 px-3 py-2 text-left transition hover:bg-rose-100/80 dark:border-rose-500/30 dark:bg-rose-500/10 dark:hover:bg-rose-500/15"
+                  >
+                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                      {n.kpiTitle}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-rose-800 dark:text-rose-200">
+                      {n.phaseName} delayed — target {n.targetDate}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            ) : null}
             {travelOrderApprovals.length > 0 ? (
               <div className="space-y-1">
                 <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">

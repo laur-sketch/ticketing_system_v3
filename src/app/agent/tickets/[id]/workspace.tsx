@@ -460,11 +460,11 @@ export function AgentWorkspace({
         <div className="border-b border-zinc-200 px-3 py-3 sm:px-5 sm:py-4 dark:border-zinc-800/90">
           <div className="flex flex-wrap items-start justify-between gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="break-all text-zinc-700 dark:text-zinc-300">{ticket.ticketNumber}</span>
-              <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-zinc-700/70 dark:text-zinc-200">
-                {formatTicketPriorityLabel(ticket.priority)}
-              </span>
-            </div>
+            <span className="break-all text-zinc-700 dark:text-zinc-300">{ticket.ticketNumber}</span>
+            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-zinc-700/70 dark:text-zinc-200">
+              {formatTicketPriorityLabel(ticket.priority)}
+            </span>
+          </div>
             <time
               dateTime={
                 ticket.createdAt instanceof Date
@@ -1030,59 +1030,59 @@ export function AgentWorkspace({
 
         {ticket.status === "FOR_CONFIRMATION" ? (
           <>
-            <div className="border-b border-zinc-200 px-3 sm:px-5 dark:border-zinc-800/90">
-              <div className="flex gap-5 text-sm font-medium">
+        <div className="border-b border-zinc-200 px-3 sm:px-5 dark:border-zinc-800/90">
+          <div className="flex gap-5 text-sm font-medium">
                 <span className="border-b-2 border-orange-500 py-3 text-orange-700 dark:text-orange-300">
                   Verification outcome
                 </span>
-              </div>
-            </div>
+          </div>
+        </div>
 
-            <div className="space-y-3 px-3 py-3 sm:px-5 sm:py-4">
-              {verificationState.state === "verified" ? (
-                <article className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700/50 dark:bg-emerald-950/20">
-                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Verified by requestor</p>
-                  <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">
-                    {ticket.feedback
-                      ? "Star rating and feedback have been submitted."
-                      : "Verification complete. Waiting for star rating and feedback."}
+        <div className="space-y-3 px-3 py-3 sm:px-5 sm:py-4">
+          {verificationState.state === "verified" ? (
+            <article className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-700/50 dark:bg-emerald-950/20">
+              <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Verified by requestor</p>
+              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">
+                {ticket.feedback
+                  ? "Star rating and feedback have been submitted."
+                  : "Verification complete. Waiting for star rating and feedback."}
+              </p>
+              {ticket.feedback ? (
+                <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+                  <p className="text-sm text-zinc-900 dark:text-zinc-100">
+                    Star rating: <span className="font-semibold">{ticket.feedback.csat}/5</span>
                   </p>
-                  {ticket.feedback ? (
-                    <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
-                      <p className="text-sm text-zinc-900 dark:text-zinc-100">
-                        Star rating: <span className="font-semibold">{ticket.feedback.csat}/5</span>
-                      </p>
-                      <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
-                        {ticket.feedback.comment?.trim() || "No written feedback submitted."}
-                      </p>
-                    </div>
-                  ) : null}
-                </article>
+                  <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+                    {ticket.feedback.comment?.trim() || "No written feedback submitted."}
+                  </p>
+                </div>
               ) : null}
+            </article>
+          ) : null}
 
-              {verificationState.state === "rejected" ? (
-                <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-700/50 dark:bg-rose-950/20">
-                  <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">Not verified by requestor</p>
-                  <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">
+          {verificationState.state === "rejected" ? (
+            <article className="rounded-xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-700/50 dark:bg-rose-950/20">
+              <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">Not verified by requestor</p>
+              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">
                     The requestor did not verify the resolution. Request workflow returns to active handling.
-                  </p>
-                  <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
-                    <p className="text-xs uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">Reason provided</p>
-                    <p className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{verificationState.rejectedReason}</p>
-                  </div>
-                </article>
-              ) : null}
+              </p>
+              <div className="mt-3 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
+                <p className="text-xs uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">Reason provided</p>
+                <p className="mt-1 text-sm text-zinc-900 dark:text-zinc-100">{verificationState.rejectedReason}</p>
+              </div>
+            </article>
+          ) : null}
 
-              {verificationState.state === "pending" ? (
-                <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/60">
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Awaiting requestor verification</p>
-                  <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
-                    A verification email was sent. This tab will automatically reflect rating and feedback once verified,
-                    or show the requestor&apos;s rejection reason when not verified.
-                  </p>
-                </article>
-              ) : null}
-            </div>
+          {verificationState.state === "pending" ? (
+            <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/60">
+              <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Awaiting requestor verification</p>
+              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+                A verification email was sent. This tab will automatically reflect rating and feedback once verified,
+                or show the requestor&apos;s rejection reason when not verified.
+              </p>
+            </article>
+          ) : null}
+        </div>
           </>
         ) : null}
 
@@ -1147,9 +1147,9 @@ export function AgentWorkspace({
               </button>
             </div>
           ) : (
-            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
               More-information requests are available while the ticket is open or in progress.
-            </p>
+          </p>
           )}
         </article>
 
@@ -1204,19 +1204,19 @@ export function AgentWorkspace({
                 ) : null}
                 {canApproveTransfer ? (
                   <div className="flex flex-col gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() =>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
                         patch({
                           action: "approve_transfer",
                           note: "Transfer accepted — request assigned to me.",
                         })
-                      }
+                }
                       className="min-h-10 w-full rounded-lg border border-emerald-500/70 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                    >
+              >
                       Accept transfer
-                    </button>
+              </button>
                     <button
                       type="button"
                       disabled={busy}
@@ -1262,8 +1262,8 @@ export function AgentWorkspace({
                   className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                   placeholder="Why this request needs transfer"
                 />
-                <button
-                  type="button"
+              <button
+                type="button"
                   disabled={busy || !transferRecipientId}
                   onClick={() =>
                     patch({
@@ -1275,7 +1275,7 @@ export function AgentWorkspace({
                   className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                 >
                   Send transfer request
-                </button>
+              </button>
               </div>
             ) : null}
 
@@ -1291,8 +1291,8 @@ export function AgentWorkspace({
                   ) : paymentApprovalMeta?.proceduralStep === "DONE" ? (
                     <p className="mt-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
                       All approval roles complete
-                    </p>
-                  ) : null}
+                  </p>
+                ) : null}
                 </div>
                 {(
                   [
@@ -1343,11 +1343,11 @@ export function AgentWorkspace({
                 <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
                   Each person may only hold one approval role on this request.
                 </p>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    patch({
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      patch({
                       action: "set_payment_approval_assignees",
                       preparedByAgentId: approvalDraft.preparedByAgentId,
                       notedByAgentId: approvalDraft.notedByAgentId,
@@ -1359,7 +1359,7 @@ export function AgentWorkspace({
                   className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                 >
                   Save approval assignees
-                </button>
+                  </button>
                 {currentPaymentStep && canCompleteCurrentPaymentStep ? (
                   <button
                     type="button"
@@ -1533,7 +1533,7 @@ export function AgentWorkspace({
                 ).map(([key, label]) => (
                   <label key={key} className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                     {label}
-                    <select
+                  <select
                       value={requisitionApprovalDraft[key] ?? ""}
                       onChange={(e) =>
                         setRequisitionApprovalDraft((prev) => ({
@@ -1541,8 +1541,8 @@ export function AgentWorkspace({
                           [key]: e.target.value || null,
                         }))
                       }
-                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    >
+                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  >
                       <option value="">Select assignee</option>
                       {approvalAgents.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -1550,8 +1550,8 @@ export function AgentWorkspace({
                           {a.email ? ` (${a.email})` : ""}
                         </option>
                       ))}
-                    </select>
-                  </label>
+                  </select>
+                </label>
                 ))}
                 <button
                   type="button"
@@ -1606,13 +1606,13 @@ export function AgentWorkspace({
                     <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                       Submit for Next Approval
                     </p>
-                    <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                       {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]} — company user
-                      <select
+                    <select
                         value={requestApproverId || currentRequisitionStepAssigneeId || ""}
                         onChange={(e) => setRequestApproverId(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                      >
+                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
                         <option value="">Select user from company</option>
                         {approvalAgents.map((a) => (
                           <option key={a.id} value={a.id}>
@@ -1620,8 +1620,8 @@ export function AgentWorkspace({
                             {a.email ? ` (${a.email})` : ""}
                           </option>
                         ))}
-                      </select>
-                    </label>
+                    </select>
+                  </label>
                     <button
                       type="button"
                       disabled={busy || !(requestApproverId || currentRequisitionStepAssigneeId)}
@@ -1670,7 +1670,7 @@ export function AgentWorkspace({
                           <option key={a.id} value={a.id}>
                             {a.name}
                             {a.email ? ` (${a.email})` : ""}
-                          </option>
+                            </option>
                         ))}
                       </select>
                     </label>
@@ -1719,16 +1719,16 @@ export function AgentWorkspace({
                       </p>
                     )}
                   </>
-                ) : null}
-              </div>
+                  ) : null}
+                </div>
             ) : null}
 
             {isRequisitionRequest &&
             canCompleteCurrentRequisitionStep &&
             !isSuperAdmin &&
             !canRequestRequisitionApproval ? (
-              <button
-                type="button"
+                <button
+                  type="button"
                 disabled={busy}
                 onClick={() =>
                   patch({
@@ -1868,7 +1868,7 @@ export function AgentWorkspace({
                       className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                     >
                       Submit for Next Approval
-                    </button>
+                </button>
                   </div>
                 ) : null}
               </div>
@@ -1889,7 +1889,7 @@ export function AgentWorkspace({
                       All approval roles complete — awaiting customer confirmation
                     </p>
                   ) : null}
-                </div>
+              </div>
                 {currentFundTransferStep ? (
                   <>
                     <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
@@ -1944,25 +1944,25 @@ export function AgentWorkspace({
                       </p>
                     )}
                   </>
-                ) : null}
-              </div>
+            ) : null}
+          </div>
             ) : null}
 
             {isFundTransferRequest &&
             canCompleteCurrentFundTransferStep &&
             !isSuperAdmin &&
             !canRequestFundTransferApproval ? (
-              <button
-                type="button"
+            <button
+              type="button"
                 disabled={busy}
                 onClick={() => patch({ action: "complete_fund_transfer_approval_step" })}
                 className="min-h-10 rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-              >
+            >
                 Complete{" "}
                 {currentFundTransferStep
                   ? FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]
                   : "approval"}
-              </button>
+            </button>
             ) : null}
 
             {isFundTransferRequest &&

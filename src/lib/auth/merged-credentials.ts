@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { PrismaClient as PrismaClientSecondary } from "@prisma/client/secondary";
 import { prismaSecondary } from "@/lib/prisma";
 import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
 
@@ -31,6 +32,86 @@ type MergedUserRow = {
   is_active: number | boolean;
 };
 
+/** Cached after first denied SELECT on live HRIS.users (e.g. local merge_app). */
+let liveHrisUsersJoinAvailable: boolean | null = null;
+let resolvedLiveHrisDb: string | null = null;
+let privilegedSecondary: PrismaClientSecondary | null | undefined;
+
+function isLiveHrisAccessError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    msg.includes("1142") ||
+    msg.includes("1049") ||
+    /SELECT command denied/i.test(msg) ||
+    /TABLEACCESS_DENIED/i.test(msg) ||
+    /Unknown database/i.test(msg) ||
+    /doesn't exist/i.test(msg)
+  );
+}
+
+function markLiveHrisJoinUnavailable(error: unknown): void {
+  if (liveHrisUsersJoinAvailable === false) return;
+  liveHrisUsersJoinAvailable = false;
+  console.warn(
+    "[merged-credentials] live HRIS.users join unavailable on merge app user; falling back",
+    error instanceof Error ? error.message : error,
+  );
+}
+
+/**
+ * Prefer DATABASE_URL_SECONDARY_SYNC for live HRIS.users reads when merge_app
+ * lacks cross-schema SELECT (common local setup).
+ */
+function liveHrisPrisma(): PrismaClientSecondary {
+  const syncUrl = process.env.DATABASE_URL_SECONDARY_SYNC?.trim();
+  if (!syncUrl) return prismaSecondary;
+  if (privilegedSecondary === undefined) {
+    try {
+      privilegedSecondary = new PrismaClientSecondary({
+        log: ["error"],
+        datasources: { db: { url: syncUrl } },
+      });
+    } catch (e) {
+      console.warn("[merged-credentials] could not open SECONDARY_SYNC client", e);
+      privilegedSecondary = null;
+    }
+  }
+  return privilegedSecondary ?? prismaSecondary;
+}
+
+async function queryMergedUserRows(
+  sqlWithLiveJoin: string,
+  sqlMergedOnly: string,
+  paramsWithJoin: unknown[],
+  paramsMergedOnly: unknown[],
+): Promise<MergedUserRow[]> {
+  if (liveHrisUsersJoinAvailable === false) {
+    return prismaSecondary.$queryRawUnsafe<MergedUserRow[]>(sqlMergedOnly, ...paramsMergedOnly);
+  }
+
+  // Try privileged sync client first (can often read live HRIS), then merge_app.
+  const clients: PrismaClientSecondary[] = [liveHrisPrisma()];
+  if (clients[0] !== prismaSecondary) clients.push(prismaSecondary);
+
+  let lastError: unknown;
+  for (const client of clients) {
+    try {
+      const rows = await client.$queryRawUnsafe<MergedUserRow[]>(
+        sqlWithLiveJoin,
+        ...paramsWithJoin,
+      );
+      liveHrisUsersJoinAvailable = true;
+      return rows;
+    } catch (error) {
+      lastError = error;
+      if (!isLiveHrisAccessError(error)) throw error;
+    }
+  }
+
+  markLiveHrisJoinUnavailable(lastError);
+  return prismaSecondary.$queryRawUnsafe<MergedUserRow[]>(sqlMergedOnly, ...paramsMergedOnly);
+}
+
 function mapRow(row: MergedUserRow): MergedAuthUser | null {
   if (!row.password_hash) return null;
   return {
@@ -48,12 +129,42 @@ function mapRow(row: MergedUserRow): MergedAuthUser | null {
 }
 
 /** Live HRIS MySQL schema used for credential truth (same server as merge DB). */
-function resolveLiveHrisDb(): string {
-  const name = process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris";
+export function resolveLiveHrisDb(): string {
+  const name = process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris-dev";
   if (!/^[A-Za-z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid HRIS_LIVE_SOURCE_DB: ${name}`);
   }
   return name;
+}
+
+/**
+ * Resolve an existing live HRIS schema. Defaults try hris-dev → hrisdemo → hris
+ * so local demos work without requiring HRIS_LIVE_SOURCE_DB.
+ */
+export async function resolveLiveHrisDbAvailable(): Promise<string> {
+  if (resolvedLiveHrisDb) return resolvedLiveHrisDb;
+  const preferred = resolveLiveHrisDb();
+  const candidates = [preferred, "hris-dev", "hrisdemo", "hris"].filter(
+    (v, i, arr) => arr.indexOf(v) === i,
+  );
+
+  const client = liveHrisPrisma();
+  for (const db of candidates) {
+    try {
+      const rows = await client.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+        `SELECT COUNT(*) AS n FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
+        db,
+      );
+      if (Number(rows[0]?.n ?? 0) > 0) {
+        resolvedLiveHrisDb = db;
+        return db;
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  resolvedLiveHrisDb = preferred;
+  return preferred;
 }
 
 function isHrisTaggedSource(sourceDatabase: string): boolean {
@@ -87,22 +198,37 @@ export async function verifyMergedPassword(
   }
 }
 
-/** Read live `hris.users.password` for a merged HRIS source_user_id. */
+/** Read live HRIS users.password when the live schema matches the merged source. */
 export async function fetchLiveHrisPassword(
   sourceUserId: bigint,
+  sourceDatabase?: string | null,
 ): Promise<string | null> {
-  const db = resolveLiveHrisDb();
-  try {
-    const rows = await prismaSecondary.$queryRawUnsafe<Array<{ password: string | null }>>(
-      `SELECT password FROM \`${db}\`.users WHERE id = ? LIMIT 1`,
-      sourceUserId,
-    );
-    const pw = rows[0]?.password?.trim();
-    return pw || null;
-  } catch (e) {
-    console.warn("[merged-credentials] live HRIS password lookup failed", e);
+  const db = await resolveLiveHrisDbAvailable();
+  if (sourceDatabase?.trim() && sourceDatabase.trim() !== db) {
+    // e.g. merged row is hrisdemo but only hris-dev exists locally — use merged hash.
     return null;
   }
+  const clients: PrismaClientSecondary[] = [liveHrisPrisma()];
+  if (clients[0] !== prismaSecondary) clients.push(prismaSecondary);
+
+  for (const client of clients) {
+    try {
+      const rows = await client.$queryRawUnsafe<Array<{ password: string | null }>>(
+        `SELECT password FROM \`${db}\`.users WHERE id = ? LIMIT 1`,
+        sourceUserId,
+      );
+      liveHrisUsersJoinAvailable = true;
+      const pw = rows[0]?.password?.trim();
+      return pw || null;
+    } catch (e) {
+      if (!isLiveHrisAccessError(e)) {
+        console.warn("[merged-credentials] live HRIS password lookup failed", e);
+        return null;
+      }
+    }
+  }
+  markLiveHrisJoinUnavailable(new Error(`no client can SELECT ${db}.users`));
+  return null;
 }
 
 /** Keep merged_users.password_hash aligned with the hash that just authenticated. */
@@ -124,9 +250,8 @@ export async function healMergedPasswordHash(
 }
 
 /**
- * Verify password for a merged user. Prefers live HRIS hash for HRIS-tagged
- * rows so portal-side $2b$ drift cannot lock people out of their HRIS password.
- * Heals merged_users when the live hash authenticates.
+ * Verify password for a merged user. Prefers live HRIS hash only when the live
+ * schema matches the row's source_database. Otherwise uses merged_users.password_hash.
  */
 export async function verifyMergedUserPassword(
   merged: MergedAuthUser,
@@ -135,7 +260,7 @@ export async function verifyMergedUserPassword(
   if (!password) return false;
 
   if (isHrisTaggedSource(merged.sourceDatabase)) {
-    const liveHash = await fetchLiveHrisPassword(merged.sourceUserId);
+    const liveHash = await fetchLiveHrisPassword(merged.sourceUserId, merged.sourceDatabase);
     if (liveHash) {
       const liveOk = await verifyMergedPassword(liveHash, password);
       if (liveOk) {
@@ -144,8 +269,7 @@ export async function verifyMergedUserPassword(
         }
         return true;
       }
-      // Live HRIS rejected — do not fall through to a drifted merged hash for
-      // HRIS users (that would accept a stale portal-only password).
+      // Matching live schema rejected — do not fall through to a drifted merged hash.
       return false;
     }
   }
@@ -158,10 +282,11 @@ export async function verifyMergedUserPassword(
  * Safe to call periodically; idempotent.
  */
 export async function syncHrisPasswordsIntoMerged(): Promise<{ updated: number }> {
-  const db = resolveLiveHrisDb();
+  const db = await resolveLiveHrisDbAvailable();
   const tags = resolveHrisSourceTags();
   const tagList = tags.map(() => "?").join(",");
-  const updated = await prismaSecondary.$executeRawUnsafe(
+  const client = liveHrisPrisma();
+  const updated = await client.$executeRawUnsafe(
     `
     UPDATE merged_users m
     INNER JOIN \`${db}\`.users h ON h.id = m.source_user_id
@@ -207,17 +332,18 @@ export async function syncHrisPasswordsIntoMerged(): Promise<{ updated: number }
  * Uses raw SQL because MySQL Prisma client does not support `mode: "insensitive"`.
  *
  * Prefer HRIS credential rows over portal_ticketing duplicates that share the
- * same username/email. For HRIS-tagged rows, prefer live `hris.users.password`.
+ * same username/email. For HRIS-tagged rows, prefer live HRIS.users.password
+ * when readable; otherwise use merged_users.password_hash.
  */
 export async function findMergedUserByLogin(loginId: string): Promise<MergedAuthUser | null> {
   const trimmed = loginId.trim();
   if (!trimmed) return null;
   const needle = trimmed.toLowerCase();
   const hrisTags = resolveHrisSourceTags();
-  const liveDb = resolveLiveHrisDb();
+  const liveDb = await resolveLiveHrisDbAvailable();
   const tagList = hrisTags.map(() => "?").join(",");
 
-  const rows = await prismaSecondary.$queryRawUnsafe<MergedUserRow[]>(
+  const rows = await queryMergedUserRows(
     `
     SELECT
       m.source_user_id,
@@ -233,7 +359,7 @@ export async function findMergedUserByLogin(loginId: string): Promise<MergedAuth
     FROM merged_users m
     LEFT JOIN \`${liveDb}\`.users h
       ON h.id = m.source_user_id
-     AND m.source_database IN (${tagList})
+     AND m.source_database = ?
     WHERE m.is_active = 1
       AND (
         LOWER(m.username) = ?
@@ -241,23 +367,47 @@ export async function findMergedUserByLogin(loginId: string): Promise<MergedAuth
         OR LOWER(m.employee_code) = ?
       )
     ORDER BY
+      CASE WHEN m.source_database = ? THEN 0 ELSE 1 END ASC,
       CASE WHEN m.source_database IN (${tagList}) THEN 0 ELSE 1 END ASC,
       CASE WHEN COALESCE(NULLIF(TRIM(h.password), ''), m.password_hash) IS NOT NULL
             AND TRIM(COALESCE(NULLIF(TRIM(h.password), ''), m.password_hash)) <> '' THEN 0 ELSE 1 END ASC,
       m.source_user_id ASC
     LIMIT 1
     `,
-    ...hrisTags,
-    needle,
-    needle,
-    needle,
-    ...hrisTags,
+    `
+    SELECT
+      m.source_user_id,
+      m.source_database,
+      m.employee_code,
+      m.username,
+      m.password_hash,
+      m.name,
+      m.email,
+      m.role,
+      m.company_name,
+      m.is_active
+    FROM merged_users m
+    WHERE m.is_active = 1
+      AND (
+        LOWER(m.username) = ?
+        OR LOWER(m.email) = ?
+        OR LOWER(m.employee_code) = ?
+      )
+    ORDER BY
+      CASE WHEN m.source_database = ? THEN 0 ELSE 1 END ASC,
+      CASE WHEN m.source_database IN (${tagList}) THEN 0 ELSE 1 END ASC,
+      CASE WHEN m.password_hash IS NOT NULL AND TRIM(m.password_hash) <> '' THEN 0 ELSE 1 END ASC,
+      m.source_user_id ASC
+    LIMIT 1
+    `,
+    [liveDb, needle, needle, needle, liveDb, ...hrisTags],
+    [needle, needle, needle, liveDb, ...hrisTags],
   );
 
   const row = rows[0];
   if (row) return mapRow(row);
 
-  const aliasRows = await prismaSecondary.$queryRawUnsafe<MergedUserRow[]>(
+  const aliasRows = await queryMergedUserRows(
     `
     SELECT
       u.source_user_id,
@@ -274,7 +424,7 @@ export async function findMergedUserByLogin(loginId: string): Promise<MergedAuth
     INNER JOIN merged_users u ON u.source_user_id = a.source_user_id
     LEFT JOIN \`${liveDb}\`.users h
       ON h.id = u.source_user_id
-     AND u.source_database IN (${tagList})
+     AND u.source_database = ?
     WHERE u.is_active = 1
       AND LOWER(a.username) = ?
     ORDER BY
@@ -284,9 +434,30 @@ export async function findMergedUserByLogin(loginId: string): Promise<MergedAuth
       u.source_user_id ASC
     LIMIT 1
     `,
-    ...hrisTags,
-    needle,
-    ...hrisTags,
+    `
+    SELECT
+      u.source_user_id,
+      u.source_database,
+      u.employee_code,
+      u.username,
+      u.password_hash,
+      u.name,
+      u.email,
+      u.role,
+      u.company_name,
+      u.is_active
+    FROM merged_username_aliases a
+    INNER JOIN merged_users u ON u.source_user_id = a.source_user_id
+    WHERE u.is_active = 1
+      AND LOWER(a.username) = ?
+    ORDER BY
+      CASE WHEN u.source_database IN (${tagList}) THEN 0 ELSE 1 END ASC,
+      CASE WHEN u.password_hash IS NOT NULL AND TRIM(u.password_hash) <> '' THEN 0 ELSE 1 END ASC,
+      u.source_user_id ASC
+    LIMIT 1
+    `,
+    [liveDb, needle, ...hrisTags],
+    [needle, ...hrisTags],
   );
 
   const aliasRow = aliasRows[0];
@@ -298,10 +469,10 @@ export async function findMergedUserByEmail(email: string): Promise<MergedAuthUs
   const e = email.trim().toLowerCase();
   if (!e) return null;
   const hrisTags = resolveHrisSourceTags();
-  const liveDb = resolveLiveHrisDb();
+  const liveDb = await resolveLiveHrisDbAvailable();
   const tagList = hrisTags.map(() => "?").join(",");
 
-  const rows = await prismaSecondary.$queryRawUnsafe<MergedUserRow[]>(
+  const rows = await queryMergedUserRows(
     `
     SELECT
       m.source_user_id,
@@ -317,7 +488,7 @@ export async function findMergedUserByEmail(email: string): Promise<MergedAuthUs
     FROM merged_users m
     LEFT JOIN \`${liveDb}\`.users h
       ON h.id = m.source_user_id
-     AND m.source_database IN (${tagList})
+     AND m.source_database = ?
     WHERE m.is_active = 1 AND LOWER(m.email) = ?
     ORDER BY
       CASE WHEN m.source_database IN (${tagList}) THEN 0 ELSE 1 END ASC,
@@ -326,9 +497,28 @@ export async function findMergedUserByEmail(email: string): Promise<MergedAuthUs
       m.source_user_id ASC
     LIMIT 1
     `,
-    ...hrisTags,
-    e,
-    ...hrisTags,
+    `
+    SELECT
+      m.source_user_id,
+      m.source_database,
+      m.employee_code,
+      m.username,
+      m.password_hash,
+      m.name,
+      m.email,
+      m.role,
+      m.company_name,
+      m.is_active
+    FROM merged_users m
+    WHERE m.is_active = 1 AND LOWER(m.email) = ?
+    ORDER BY
+      CASE WHEN m.source_database IN (${tagList}) THEN 0 ELSE 1 END ASC,
+      CASE WHEN m.password_hash IS NOT NULL AND TRIM(m.password_hash) <> '' THEN 0 ELSE 1 END ASC,
+      m.source_user_id ASC
+    LIMIT 1
+    `,
+    [liveDb, e, ...hrisTags],
+    [e, ...hrisTags],
   );
 
   const row = rows[0];

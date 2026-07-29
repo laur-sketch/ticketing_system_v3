@@ -208,10 +208,23 @@ export async function linkJobOrderToProject(opts: {
     };
   }
 
-  const nextSubKpis = setLinkedJobOrderOnSubKpis(project.subKpis, {
+  const nextSubKpisLinked = setLinkedJobOrderOnSubKpis(project.subKpis, {
     ticketId: ticket.id,
     ticketNumber: ticket.ticketNumber,
   });
+
+  let nextSubKpis = nextSubKpisLinked;
+  // Link-existing: seed / enrich Timeline Tracker (phase envelope + JO target) for non-IT projects.
+  if (!isItProjectImplementationPillar(project.title)) {
+    const { seedJoLinkedProjectTimeline } = await import("@/lib/it-project-subkpis");
+    const fields = await prisma.ticket.findUnique({
+      where: { id: ticket.id },
+      select: { description: true },
+    });
+    const joFields = fields?.description ? parseJobOrderDescription(fields.description) : null;
+    const targetDueDate = joFields?.targetDate?.trim() || null;
+    nextSubKpis = seedJoLinkedProjectTimeline(nextSubKpis, { targetDueDate });
+  }
 
   await setTicketLinkedKpiMaintenanceId(ticket.id, project.id);
   await prisma.kpiMaintenance.update({

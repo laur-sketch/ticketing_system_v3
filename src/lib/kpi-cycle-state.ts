@@ -1,6 +1,11 @@
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import {
+  itProjectHasAnyDelay,
+  itProjectHasAnyPhaseDelay,
+  itProjectMaxDelayMs,
+  usesProjectTimelineTracker,
+} from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
-import { itProjectHasAnyDelay, itProjectMaxDelayMs } from "@/lib/it-project-subkpis";
 import {
   collectChecklistProgressItems,
   getTaskTargetDueDate,
@@ -16,6 +21,13 @@ import {
 import { DateTime } from "luxon";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+function isTimelineBoardRecord(record: { title?: string | null; subKpis?: unknown }): boolean {
+  return (
+    isItProjectImplementationPillar(String(record.title ?? "")) ||
+    usesProjectTimelineTracker(record.subKpis)
+  );
+}
 
 function parseSubKpiYmd(value: unknown, timeZone: string): DateTime | null {
   if (typeof value !== "string" || !YMD.test(value.trim())) return null;
@@ -157,7 +169,7 @@ export function incompletePastDeadlineDelayMs(
   nowMs: number,
   timeZone: string,
 ): number {
-  if (isItProjectImplementationPillar(String(record.title ?? ""))) {
+  if (isTimelineBoardRecord(record)) {
     return itProjectIncompleteOverdueMs(record.subKpis, nowMs, timeZone);
   }
   if (record.isRecurring === false) {
@@ -175,7 +187,7 @@ export function recurringDoneDelayedMs(
   timeZone: string,
   doneAtMs: number,
 ): number {
-  if (isItProjectImplementationPillar(String(record.title ?? ""))) {
+  if (isTimelineBoardRecord(record)) {
     return itProjectMaxDelayMs(record.subKpis, doneAtMs, timeZone);
   }
   const deadline =
@@ -188,15 +200,25 @@ export function recurringDoneDelayedMs(
   return Math.max(0, doneAtMs - end);
 }
 
-/** Board column: IT Project and non-recurring tasks land in Delayed from target/actual dates. */
+/** Board column: timeline / IT project and non-recurring tasks land in Delayed from phase/sub-task targets. */
 export function taskKanbanDerivedStatus(
   record: KpiMaintenanceLike & { subKpis?: unknown },
   args: { total: number; done: number; nowMs: number; timeZone: string },
 ): "CURRENT" | "DONE" | "DELAYED" {
   const { total, done, nowMs, timeZone } = args;
   if (total === 0) return "CURRENT";
-  if (isItProjectImplementationPillar(String(record.title ?? ""))) {
-    if (itProjectHasAnyDelay(record.subKpis, nowMs, timeZone)) return "DELAYED";
+  if (isTimelineBoardRecord(record)) {
+    if (
+      itProjectHasAnyPhaseDelay(
+        record.subKpis,
+        nowMs,
+        timeZone,
+        getTaskTargetDueDate(record.subKpis),
+      ) ||
+      itProjectHasAnyDelay(record.subKpis, nowMs, timeZone)
+    ) {
+      return "DELAYED";
+    }
     return done === total ? "DONE" : "CURRENT";
   }
   if (record.isRecurring === false && nonRecurringTaskHasDelay(record.subKpis, nowMs, timeZone)) {

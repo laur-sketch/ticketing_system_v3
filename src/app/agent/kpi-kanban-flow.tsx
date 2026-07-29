@@ -22,10 +22,13 @@ import {
   itProjectAggregatedProgressFromRaw,
   itProjectChecklistProgressFromRaw,
   itProjectChecklistItems,
-  itProjectPhaseProgressFromItems,
   parseItProjectSubKpis,
+  resolvePhaseEffectiveTargetDate,
   setItProjectSubKpiLifecycle,
+  usesProjectTimelineTracker,
+  type ItProjectPhase,
 } from "@/lib/it-project-subkpis";
+import { ProjectTimelineKanban } from "@/components/task-board/ProjectTimelineKanban";
 import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
@@ -187,6 +190,10 @@ function taskTypeBadgeLabel(r: KpiRecord, itProject: boolean): string {
   return `${String(r.frequency || "DAILY").toUpperCase()} TASK`;
 }
 
+function isTimelineProjectRecord(r: Pick<KpiRecord, "title" | "subKpis">): boolean {
+  return isItProjectImplementationPillar(r.title) || usesProjectTimelineTracker(r.subKpis);
+}
+
 function nonRecurringCycleHint(r: KpiRecord): string {
   return `${nonRecurringTaskKindLabel(r)} — based on main task target and actual dates`;
 }
@@ -335,6 +342,7 @@ export function AgentKpiKanbanFlow({
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [operatorAgentName, setOperatorAgentName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [moveToTaskGroupDraft, setMoveToTaskGroupDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
   const [nowMs, setNowMs] = useState(0);
@@ -423,6 +431,10 @@ export function AgentKpiKanbanFlow({
     if (typeof payload.operatorAgentName === "string" && payload.operatorAgentName.trim()) {
       setOperatorAgentName(payload.operatorAgentName);
     }
+    // Deduped phase-delay notify (once per phase per day); board already shows delay banners.
+    void fetch(`/api/kpi-maintenance/phase-delay-alerts?tz=${encodeURIComponent(tz)}`, {
+      cache: "no-store",
+    }).catch(() => undefined);
   }
 
   async function loadContext() {
@@ -511,10 +523,10 @@ export function AgentKpiKanbanFlow({
   useEffect(() => {
     const joId = fromJobOrderTicketId?.trim() || null;
     setFromJobOrderId(joId);
-    if (joId && showAdminTaskManagement) {
+    if (joId && (showAdminTaskManagement || canAssignWork)) {
       setTaskManagementOpen(true);
     }
-  }, [fromJobOrderTicketId, showAdminTaskManagement]);
+  }, [fromJobOrderTicketId, showAdminTaskManagement, canAssignWork]);
 
   function openActiveTask(taskId: string) {
     setActiveTaskId(taskId);
@@ -536,7 +548,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function progress(r: KpiRecord) {
-    const p = isItProjectImplementationPillar(r.title)
+    const p = isTimelineProjectRecord(r)
       ? itProjectChecklistProgressFromRaw(r.subKpis)
       : kpiChecklistProgress(r.subKpis, taskLabel(r));
     const view = kpiChecklistMetricView(p, false);
@@ -559,7 +571,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function incompleteOverdueMs(r: KpiRecord) {
-    if (isItProjectImplementationPillar(r.title)) {
+    if (isTimelineProjectRecord(r)) {
       return incompletePastDeadlineDelayMs(r, nowMs, tz);
     }
     const p = progress(r);
@@ -632,7 +644,7 @@ export function AgentKpiKanbanFlow({
 
   function taskWillFinishAfterToggle(r: KpiRecord, subKpiId: string, currentlyDone: boolean) {
     if (currentlyDone) return false;
-    const items = isItProjectImplementationPillar(r.title)
+    const items = isTimelineProjectRecord(r)
       ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase).phases.flatMap((phase) => phase.items)
       : collectChecklistProgressItems(r.subKpis, taskLabel(r));
     if (items.length === 0) return false;
@@ -711,7 +723,7 @@ export function AgentKpiKanbanFlow({
   async function assignSubKpi(recordId: string, subKpiId: string, assignedAgentId: string) {
     const record = rows.find((r) => r.id === recordId);
     const items = record
-      ? isItProjectImplementationPillar(record.title)
+      ? isTimelineProjectRecord(record)
         ? itProjectChecklistItems(record.subKpis)
         : collectAllSubKpiItems(normalizeSubKpis(record.subKpis))
       : [];
@@ -960,6 +972,29 @@ export function AgentKpiKanbanFlow({
     }
   }
 
+  async function patchPhaseDueDate(recordId: string, phaseId: string, dueDate: string) {
+    setBusyId(recordId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: recordId,
+          phaseDueDate: { phaseId, dueDate: dueDate.trim() || null },
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not update phase target date.");
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function patchSubKpiSchedule(
     recordId: string,
     subKpiId: string,
@@ -987,10 +1022,39 @@ export function AgentKpiKanbanFlow({
   async function patchSubKpiLifecycle(recordId: string, subKpiId: string, action: "start" | "end") {
     setBusyId(recordId);
     setError(null);
+    let coords: { latitude: number; longitude: number };
+    try {
+      coords = await new Promise((resolve, reject) => {
+        if (typeof navigator === "undefined" || !navigator.geolocation) {
+          reject(new Error("Geolocation is not available on this device."));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) =>
+            resolve({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            }),
+          (err) => reject(new Error(err.message || "Could not read GPS position.")),
+          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+        );
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not capture GPS.");
+      setBusyId(null);
+      return;
+    }
+    const capturedAt = new Date().toISOString();
     setRows((prev) =>
       prev.map((row) => {
-        if (row.id !== recordId || !isItProjectImplementationPillar(row.title)) return row;
-        const life = setItProjectSubKpiLifecycle(row.subKpis, subKpiId, action, tz);
+        if (row.id !== recordId) return row;
+        if (!isItProjectImplementationPillar(row.title) && !usesProjectTimelineTracker(row.subKpis)) {
+          return row;
+        }
+        const life = setItProjectSubKpiLifecycle(row.subKpis, subKpiId, action, tz, {
+          ...coords,
+          capturedAt,
+        });
         if (!life.ok) return row;
         return { ...row, subKpis: life.json };
       }),
@@ -999,47 +1063,21 @@ export function AgentKpiKanbanFlow({
       const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: recordId, subKpiLifecycle: { subKpiId, action } }),
+        body: JSON.stringify({
+          id: recordId,
+          subKpiLifecycle: {
+            subKpiId,
+            action,
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            capturedAt,
+          },
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "Could not update task lifecycle.");
         await load();
-        return;
-      }
-      await load();
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function patchItProjectPhaseDue(recordId: string, phaseId: string, dueDate: string | null) {
-    const row = rows.find((r) => r.id === recordId);
-    if (!row) return;
-    const data = parseItProjectSubKpis(row.subKpis, row.itProjectPhase);
-    const nextPhases = data.phases.map((p) => {
-      if (p.id !== phaseId) return p;
-      if (!dueDate) {
-        const { dueDate: _removed, ...rest } = p;
-        void _removed;
-        return rest;
-      }
-      return { ...p, dueDate };
-    });
-    setBusyId(recordId);
-    setError(null);
-    try {
-      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          id: recordId,
-          itProjectState: { activePhaseId: data.activePhaseId, phases: nextPhases },
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(body.error ?? "Could not update phase due date.");
         return;
       }
       await load();
@@ -1380,6 +1418,33 @@ export function AgentKpiKanbanFlow({
     }
   }
 
+  async function moveProjectToTaskGroup(r: KpiRecord, nextGroup: string) {
+    if (!canAssignWork) return;
+    const title = nextGroup.trim();
+    if (!title) {
+      setError("Select a task group.");
+      return;
+    }
+    setBusyId(r.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: r.id, moveToTaskGroup: title }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Could not move project to task group.");
+        return;
+      }
+      setMoveToTaskGroupDraft("");
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function patchTaskSchedule(r: KpiRecord, draft: TaskScheduleDraft) {
     if (!showAdminTaskManagement) return;
     const taskSchedule: Record<string, unknown> = {
@@ -1542,7 +1607,7 @@ export function AgentKpiKanbanFlow({
       canAssignWork,
       isMainAssignee,
     });
-    const perSubtaskSeek = isItProjectImplementationPillar(r.title);
+    const perSubtaskSeek = isTimelineProjectRecord(r);
 
     const assistanceBadge = s.assistanceRequested ? (
       <span className="inline-flex items-center rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">
@@ -2452,20 +2517,25 @@ export function AgentKpiKanbanFlow({
   function renderItProjectSubKpiCard(
     r: KpiRecord,
     s: SubKpiItem,
-    parentEditable: boolean,
-    phaseDueDate?: string | null,
+    _parentEditable: boolean,
+    phase: ItProjectPhase,
   ) {
     const subEditable = canEditSubKpi(r, s);
     const projectStatus = s.projectStatus ?? (s.assignedAgentId ? "Pending" : "");
     const projectProgress = itProjectStatusProgress(s);
-    const started = Boolean(s.startDate?.trim());
-    const ended = hasValidActualDate(s);
+    const started = Boolean(s.startDate?.trim() || s.startedAt?.trim());
+    const ended = hasValidActualDate(s) || Boolean(s.endedAt?.trim());
     const canStart = subEditable && !started && !ended;
     const canEnd = subEditable && started && !ended;
+    const mainDue = getTaskTargetDueDate(r.subKpis);
+    const effectiveDue = resolvePhaseEffectiveTargetDate(phase, mainDue) ?? "";
+    const selectClass =
+      "mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100";
+
     return (
       <div
         key={s.id}
-        className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-2.5 dark:border-zinc-600 dark:bg-zinc-950/40"
+        className="rounded-lg border border-zinc-200/90 bg-zinc-50/80 p-3 dark:border-zinc-600 dark:bg-zinc-950/40"
       >
         <div className="flex items-start gap-2 text-xs text-zinc-800 dark:text-zinc-200">
           <span
@@ -2479,48 +2549,65 @@ export function AgentKpiKanbanFlow({
             )}
             aria-hidden
           />
-          <span className={cn(projectProgress === 100 && "line-through opacity-70")}>
+          <span className={cn("min-w-0 flex-1 font-semibold", projectProgress === 100 && "line-through opacity-70")}>
             {s.title}
           </span>
         </div>
+
         {renderSubKpiAssignmentControl(r, s)}
+
         <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
             disabled={!canStart || busyId === r.id}
             onClick={() => void patchSubKpiLifecycle(r.id, s.id, "start")}
             className={cn(
-              "rounded-lg px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide",
+              "rounded-lg px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide",
               canStart
                 ? "bg-emerald-600 text-white hover:bg-emerald-500"
                 : "cursor-not-allowed bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500",
             )}
           >
-            Start Task
+            Start
           </button>
           <button
             type="button"
             disabled={!canEnd || busyId === r.id}
             onClick={() => void patchSubKpiLifecycle(r.id, s.id, "end")}
             className={cn(
-              "rounded-lg px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide",
+              "rounded-lg px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide",
               canEnd
                 ? "bg-orange-600 text-white hover:bg-orange-500"
                 : "cursor-not-allowed bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500",
             )}
           >
-            End Task
+            End
           </button>
         </div>
+
         {(started || ended) && (
-          <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-            {started ? `Started ${s.startDate}` : null}
-            {started && ended ? " · " : null}
-            {ended ? `Ended ${s.actualDate}` : null}
-          </p>
+          <div className="mt-1.5 space-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {started ? (
+              <p>
+                Started {s.startedAt ? new Date(s.startedAt).toLocaleString() : s.startDate}
+                {typeof s.startedLatitude === "number" && typeof s.startedLongitude === "number"
+                  ? ` · ${s.startedLatitude.toFixed(5)}, ${s.startedLongitude.toFixed(5)}`
+                  : ""}
+              </p>
+            ) : null}
+            {ended ? (
+              <p>
+                Ended {s.endedAt ? new Date(s.endedAt).toLocaleString() : s.actualDate}
+                {typeof s.endedLatitude === "number" && typeof s.endedLongitude === "number"
+                  ? ` · ${s.endedLatitude.toFixed(5)}, ${s.endedLongitude.toFixed(5)}`
+                  : ""}
+              </p>
+            ) : null}
+          </div>
         )}
-        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             Priority
             <select
               value={s.projectPriority ?? "Medium"}
@@ -2530,7 +2617,7 @@ export function AgentKpiKanbanFlow({
                   projectPriority: e.target.value,
                 })
               }
-              className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className={selectClass}
             >
               {IT_PROJECT_PRIORITY_OPTIONS.map((priority) => (
                 <option key={priority} value={priority}>
@@ -2539,7 +2626,7 @@ export function AgentKpiKanbanFlow({
               ))}
             </select>
           </label>
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+          <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             Completion
             <select
               value={projectStatus}
@@ -2549,7 +2636,7 @@ export function AgentKpiKanbanFlow({
                   projectStatus: e.target.value,
                 })
               }
-              className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className={selectClass}
             >
               {!projectStatus ? <option value="">Assign first</option> : null}
               {IT_PROJECT_STATUS_OPTIONS.map((status) => (
@@ -2559,64 +2646,47 @@ export function AgentKpiKanbanFlow({
               ))}
             </select>
           </label>
-          <div className="rounded-lg border border-zinc-200 bg-white px-2 py-2 dark:border-zinc-800 dark:bg-zinc-900/70">
-            <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+          <div className="flex min-w-0 flex-col justify-end rounded-lg border border-zinc-200 bg-white px-2.5 py-2 sm:col-span-2 dark:border-zinc-800 dark:bg-zinc-900/70">
+            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
               <span>Progress</span>
               <span>{projectProgress}%</span>
             </div>
-            <div className="h-2 w-full min-w-24 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-              <div className="h-full rounded-full bg-orange-500 transition-[width]" style={{ width: `${projectProgress}%` }} />
+            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-orange-500 transition-[width]"
+                style={{ width: `${projectProgress}%` }}
+              />
             </div>
           </div>
         </div>
+
         {!hasValidActualDate(s) ? (
-          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+          <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">
             Use End Task (or set Completion to Done) when finished.
           </p>
         ) : null}
-        <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Sub Task
-        </p>
-        <div className="mt-1.5 grid gap-2">
-          <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Due date
-            <DatePickerField
-              value={s.dueDate ?? ""}
-              max={phaseDueDate ?? undefined}
-              disabled={!parentEditable || busyId === r.id}
-              onChange={(e) => {
-                const next = e.target.value || null;
-                if (next && phaseDueDate && next > phaseDueDate) {
-                  setError(`Due date must be on or before phase due (${phaseDueDate}).`);
-                  return;
-                }
-                void patchSubKpiSchedule(r.id, s.id, {
-                  dueDate: next,
-                });
-              }}
-              wrapperClassName="mt-1"
-              aria-label={`Due date for ${s.title}`}
-            />
-            {phaseDueDate ? (
-              <span className="mt-0.5 text-[10px] font-medium normal-case tracking-normal text-zinc-500">
-                Must be on or before phase due {phaseDueDate}
-              </span>
-            ) : null}
-          </label>
-        </div>
+
         <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
           Status:{" "}
           <span
             className={cn(
               "font-semibold",
-              isItProjectSubTaskDelayed(s, nowMs, tz)
+              isItProjectSubTaskDelayed(
+                effectiveDue ? { ...s, dueDate: effectiveDue } : s,
+                nowMs,
+                tz,
+              )
                 ? "text-rose-700 dark:text-rose-400"
                 : hasValidActualDate(s)
                   ? "text-emerald-600 dark:text-emerald-400"
                   : "text-amber-700 dark:text-amber-300",
             )}
           >
-            {subTaskStatusLabel(s, nowMs, tz)}
+            {subTaskStatusLabel(
+              effectiveDue ? { ...s, dueDate: effectiveDue } : s,
+              nowMs,
+              tz,
+            )}
           </span>
         </p>
         {(() => {
@@ -2628,7 +2698,7 @@ export function AgentKpiKanbanFlow({
             title: r.title,
             taskDailyPenaltyAmount: taskDailyPenaltyAmountFromSubKpis(r.subKpis),
             taskDelayPenaltyFrequency: taskDelayPenaltyFrequencyFromSubKpis(r.subKpis),
-            phaseDueDate: phaseDueDate ?? null,
+            phaseDueDate: effectiveDue || null,
           };
           const penalty = subKpiAccruedPenalty(s, penaltyCtx);
           const canManagePenalty = showAdminTaskManagement;
@@ -2636,7 +2706,7 @@ export function AgentKpiKanbanFlow({
             <div className="mt-2 space-y-1">
               {canManagePenalty ? (
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                  <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
                     Penalty frequency
                     <select
                       value={s.delayPenaltyFrequency ?? ""}
@@ -2648,7 +2718,7 @@ export function AgentKpiKanbanFlow({
                             raw === "" ? null : (raw as DelayPenaltyFrequency),
                         });
                       }}
-                      className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                      className={selectClass}
                     >
                       <option value="">
                         Task default ({taskDelayPenaltyFrequencyFromSubKpis(r.subKpis)})
@@ -2660,7 +2730,7 @@ export function AgentKpiKanbanFlow({
                       ))}
                     </select>
                   </label>
-                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                  <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
                     Penalty per{" "}
                     {delayPenaltyFrequencyLabel(
                       resolveSubKpiDelayPenaltyFrequency(s, penaltyCtx),
@@ -2682,7 +2752,7 @@ export function AgentKpiKanbanFlow({
                           dailyPenaltyAmount: raw === "" ? null : Number(raw),
                         });
                       }}
-                      className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                      className={selectClass}
                     />
                   </label>
                 </div>
@@ -2794,7 +2864,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderTaskSubtaskContent(r: KpiRecord) {
-    const itProject = isItProjectImplementationPillar(r.title);
+    const itProject = isTimelineProjectRecord(r);
     const normalized = normalizeSubKpis(r.subKpis);
     const itProjectData = itProject ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase) : null;
     if (!itProject && isPillarOnlyTask(r.subKpis)) {
@@ -2835,62 +2905,24 @@ export function AgentKpiKanbanFlow({
     }
 
     if (itProject && itProjectData) {
-      return itProjectData.phases.map((phase) => {
-        const phaseProgress = itProjectPhaseProgressFromItems(phase);
-        return (
-          <div
-            key={phase.id}
-            className="rounded-lg border border-orange-400/45 bg-orange-500/[0.06] p-3 dark:border-orange-500/35 dark:bg-orange-500/10"
-          >
-            <div className="border-b border-orange-400/25 pb-2 dark:border-orange-500/25">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
-                  {phase.name}
-                </p>
-                <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
-                  {phaseProgress.total > 0
-                    ? `${phaseProgress.done}/${phaseProgress.total} · ${phaseProgress.percent}%`
-                    : "No sub-tasks"}
-                </span>
-              </div>
-              {editable ? (
-                <label className="mt-2 flex max-w-xs flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  Phase target / due
-                  <DatePickerField
-                    value={phase.dueDate ?? ""}
-                    disabled={busyId === r.id}
-                    onChange={(e) =>
-                      void patchItProjectPhaseDue(r.id, phase.id, e.target.value || null)
-                    }
-                    aria-label={`Due date for phase ${phase.name}`}
-                  />
-                </label>
-              ) : phase.dueDate ? (
-                <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-                  Phase due {phase.dueDate}
-                </p>
-              ) : null}
-              {phaseProgress.total > 0 ? (
-                <ChecklistProgressBar
-                  percent={phaseProgress.percent}
-                  barClassName="bg-orange-500"
-                />
-              ) : null}
-            </div>
-            <div className="mt-2 space-y-2">
-              {phase.items.length === 0 ? (
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  No sub-tasks in this phase.
-                </p>
-              ) : (
-                phase.items.map((s) =>
-                  renderItProjectSubKpiCard(r, s, editable, phase.dueDate),
-                )
-              )}
-            </div>
-          </div>
-        );
-      });
+      return (
+        <ProjectTimelineKanban
+          phases={itProjectData.phases}
+          mainProjectDueDate={getTaskTargetDueDate(r.subKpis)}
+          timeZone={tz}
+          busy={busyId === r.id}
+          onEditPhaseDueDate={
+            showAdminTaskManagement
+              ? (phaseId, dueDate) => void patchPhaseDueDate(r.id, phaseId, dueDate)
+              : undefined
+          }
+          renderSubtask={(phase, subtaskId) => {
+            const s = phase.items.find((it) => it.id === subtaskId);
+            if (!s) return null;
+            return renderItProjectSubKpiCard(r, s, editable, phase);
+          }}
+        />
+      );
     }
 
     return (
@@ -3334,7 +3366,7 @@ export function AgentKpiKanbanFlow({
     const editable = canEditChecklist(activeTask);
     const p = progress(activeTask);
     const end = periodEnd(activeTask);
-    const itProject = isItProjectImplementationPillar(activeTask.title);
+    const itProject = isTimelineProjectRecord(activeTask);
     const normalized = normalizeSubKpis(activeTask.subKpis);
     const pillarOnly = !itProject && isPillarOnlyTask(activeTask.subKpis);
     const fieldAssignment = isFieldAssignmentRecord(activeTask);
@@ -3473,6 +3505,12 @@ export function AgentKpiKanbanFlow({
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">{statusOf(activeTask)}</dd>
                 </div>
                 <div>
+                  <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                    Task group
+                  </dt>
+                  <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">{activeTask.title}</dd>
+                </div>
+                <div>
                   <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Cycle</dt>
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">
                     {fieldAssignment
@@ -3501,6 +3539,60 @@ export function AgentKpiKanbanFlow({
                   </div>
                 ) : null}
               </dl>
+              {canAssignWork &&
+              isProjectTask(activeTask.subKpis) &&
+              activeTask.assignedAgent?.id ? (
+                <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    Move to task group
+                  </p>
+                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Optional — place this running project under another group without changing Project tagging.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <select
+                      value={moveToTaskGroupDraft || activeTask.title}
+                      disabled={busyId === activeTask.id}
+                      onChange={(e) => setMoveToTaskGroupDraft(e.target.value)}
+                      className="min-w-[12rem] flex-1 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      {Array.from(
+                        new Set(
+                          rows
+                            .map((row) => row.title.trim())
+                            .filter(
+                              (t) => t && !isItProjectImplementationPillar(t),
+                            ),
+                        ),
+                      )
+                        .sort((a, b) => a.localeCompare(b))
+                        .map((title) => (
+                          <option key={title} value={title}>
+                            {title}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={
+                        busyId === activeTask.id ||
+                        !(moveToTaskGroupDraft || activeTask.title).trim() ||
+                        (moveToTaskGroupDraft || activeTask.title).trim().toLowerCase() ===
+                          activeTask.title.trim().toLowerCase()
+                      }
+                      onClick={() =>
+                        void moveProjectToTaskGroup(
+                          activeTask,
+                          moveToTaskGroupDraft || activeTask.title,
+                        )
+                      }
+                      className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Move
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {renderTaskScheduleEditor(activeTask)}
               {usesTaskPriority ? (
                 <label className="block rounded-lg border border-zinc-200 bg-white p-3 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-500">
@@ -3523,9 +3615,9 @@ export function AgentKpiKanbanFlow({
               !fieldAssignment &&
               (itProject || activeTask.isRecurring === false) ? (
                 <div className="block space-y-2 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                      Penalty frequency
+                  <div className="grid items-end gap-2 sm:grid-cols-2">
+                    <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                      <span className="leading-tight">Penalty frequency</span>
                       <select
                         value={taskDelayPenaltyFrequencyFromSubKpis(activeTask.subKpis)}
                         disabled={busyId === activeTask.id}
@@ -3544,18 +3636,20 @@ export function AgentKpiKanbanFlow({
                         ))}
                       </select>
                     </label>
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                      Penalty per{" "}
-                      {delayPenaltyFrequencyLabel(
-                        taskDelayPenaltyFrequencyFromSubKpis(activeTask.subKpis),
-                      )}{" "}
-                      (task default)
+                    <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                      <span className="leading-tight">
+                        Penalty per{" "}
+                        {delayPenaltyFrequencyLabel(
+                          taskDelayPenaltyFrequencyFromSubKpis(activeTask.subKpis),
+                        )}
+                      </span>
                       <input
                         type="number"
                         min={0}
                         step="any"
                         value={taskDailyPenaltyAmountFromSubKpis(activeTask.subKpis) ?? ""}
                         disabled={busyId === activeTask.id}
+                        placeholder="Task default amount"
                         onChange={(e) => {
                           const raw = e.target.value.trim();
                           void patchTaskDailyPenalty(
@@ -3762,7 +3856,7 @@ export function AgentKpiKanbanFlow({
                       const p = progress(r);
                       const incLate = incompleteOverdueMs(r);
                       const end = periodEnd(r);
-                      const itProject = isItProjectImplementationPillar(r.title);
+                      const itProject = isTimelineProjectRecord(r);
                       const normalized = normalizeSubKpis(r.subKpis);
                       const itProjectData = itProject
                         ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase)
@@ -3880,6 +3974,11 @@ export function AgentKpiKanbanFlow({
                               {taskTypeBadgeLabel(r, itProject)}
                             </span>
                           </div>
+                          {(r.linkedJobOrders?.length ?? 0) > 0 ? (
+                            <span className="mt-2 inline-flex rounded-full border border-sky-400/50 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-100">
+                              Job Order Request
+                            </span>
+                          ) : null}
                           {!itProject && normalized.segmented ? (
                             <span className="mt-2 inline-flex rounded-full border border-orange-400/60 bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100">
                               Segmented

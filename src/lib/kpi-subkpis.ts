@@ -59,6 +59,14 @@ export type SubKpiItem = {
   /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
   actualDate?: string | null;
+  /** ISO timestamp when Start was pressed (GPS lifecycle). */
+  startedAt?: string | null;
+  /** ISO timestamp when End was pressed (GPS lifecycle). */
+  endedAt?: string | null;
+  startedLatitude?: number | null;
+  startedLongitude?: number | null;
+  endedLatitude?: number | null;
+  endedLongitude?: number | null;
   numericalValue?: number | null;
   /** Target number admins set when numerical record completion is enabled. */
   numericalTarget?: number | null;
@@ -211,7 +219,13 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   };
 }
 
-export type SubKpiSegment = { id: string; label: string; items: SubKpiItem[] };
+export type SubKpiSegment = {
+  id: string;
+  label: string;
+  items: SubKpiItem[];
+  /** Optional phase / segment target date (YYYY-MM-DD). Used for Project Make Phases. */
+  dueDate?: string | null;
+};
 
 /** Reserved segment id for the General / Unsegmented Kanban board. */
 export const UNSEGMENTED_SEGMENT_ID = "__unsegmented__";
@@ -343,7 +357,7 @@ export function normalizeSubKpis(raw: unknown): NormalizedSubKpis {
   if (isPlainObject(raw)) {
     if (raw.segmented === true && Array.isArray(raw.segments)) {
       const segments = (raw.segments as unknown[]).map((seg) => {
-        const s = seg as SubKpiSegment;
+        const s = seg as SubKpiSegment & Record<string, unknown>;
         const id = String(s?.id ?? "");
         const label = String(s?.label ?? "");
         const items = Array.isArray(s?.items)
@@ -353,7 +367,13 @@ export function normalizeSubKpis(raw: unknown): NormalizedSubKpis {
                 : { id: "", title: "", done: false },
             )
           : [];
-        return { id, label, items };
+        const dueDate = normalizeOptionalSubKpiYmd(s?.dueDate);
+        return {
+          id,
+          label,
+          items,
+          ...(dueDate ? { dueDate } : {}),
+        };
       });
       return { segmented: true, segments: ensureUnsegmentedSegment(segments) };
     }
@@ -596,7 +616,7 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
 
 function stripLinkedJobOrderKeys(value: Prisma.InputJsonValue): Prisma.InputJsonValue {
   if (!isPlainObject(value)) return value;
-  const next = { ...value };
+  const next: Record<string, unknown> = { ...value };
   delete next.linkedJobOrderTicketId;
   delete next.linkedJobOrderTicketNumber;
   return next as Prisma.InputJsonValue;
@@ -1795,7 +1815,12 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
 export function validateSegmentStructureForPersist(
   segmented: boolean,
   flatInput: SubKpiCreateDraft[],
-  segmentsInput: Array<{ id?: string; label: string; items: SubKpiCreateDraft[] }> | undefined,
+  segmentsInput: Array<{
+    id?: string;
+    label: string;
+    dueDate?: string | null;
+    items: SubKpiCreateDraft[];
+  }> | undefined,
   options?: { allowPillarOnly?: boolean },
 ): { ok: true; norm: NormalizedSubKpis } | { ok: false; error: string } {
   if (!segmented) {
@@ -1830,10 +1855,12 @@ export function validateSegmentStructureForPersist(
     if (isGeneral && items.length > 0) {
       return { ok: false, error: UNASSIGNED_SEGMENT_BLOCK_MESSAGE };
     }
+    const dueDate = isGeneral ? null : normalizeOptionalSubKpiYmd(seg.dueDate);
     segments.push({
       id: isGeneral ? UNSEGMENTED_SEGMENT_ID : rawId || crypto.randomUUID(),
       label,
       items,
+      ...(dueDate ? { dueDate } : {}),
     });
   }
 

@@ -362,7 +362,7 @@ async function loadProjectAndChecklistWorkInWindow(
 ): Promise<Map<string, ChecklistWorkRow[]>> {
   const nowMs = Math.min(Date.now(), end.getTime() - 1);
   const kpis = await prismaPrimary.kpiMaintenance.findMany({
-    where: {
+      where: {
       OR: [
         { title: "IT PROJECT IMPLEMENTATION" },
         { isRecurring: false },
@@ -970,20 +970,20 @@ export async function runComputeUserEfficiencyBreakdowns(
             ...agentTasks.map((t) => {
               const penalty = boardTaskPenalty(t, nowMs);
               return {
-                taskId: t.id,
-                taskSource: "TASK_ITEM",
-                taskTitle: t.title.slice(0, 512),
-                status: t.status,
-                dueAt: t.dueAt,
+            taskId: t.id,
+            taskSource: "TASK_ITEM",
+            taskTitle: t.title.slice(0, 512),
+            status: t.status,
+            dueAt: t.dueAt,
                 completedAt: t.status === "DONE" ? t.completedAt ?? t.updatedAt : null,
-                efficiencyContribution: t.status === "DONE" ? perDone : 0,
+            efficiencyContribution: t.status === "DONE" ? perDone : 0,
                 delayPenaltyAccrued: penalty,
-                notes:
-                  t.status === "DELAYED"
-                    ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
+            notes:
+              t.status === "DELAYED"
+                ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
                     : penalty > 0
                       ? `Delay penalty accrued: ${penalty} pts`
-                      : null,
+                : null,
               };
             }),
             ...projectRows.map((t) => ({

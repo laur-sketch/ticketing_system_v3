@@ -162,7 +162,12 @@ export const authOptions: NextAuthOptions = {
         // Portal password login only when PORTAL_CREDENTIALS_SOURCE=portal, or as
         // a last resort for customer accounts with no merged_users row.
         if (useMergedCredentials()) {
-          const merged = await findMergedUserByLogin(loginId);
+          let merged: Awaited<ReturnType<typeof findMergedUserByLogin>> = null;
+          try {
+            merged = await findMergedUserByLogin(loginId);
+          } catch (e) {
+            console.error("[auth] findMergedUserByLogin failed", e);
+          }
           if (merged?.passwordHash) {
             const mergedOk = await verifyMergedUserPassword(merged, password);
             if (!mergedOk) return null;
@@ -197,7 +202,7 @@ export const authOptions: NextAuthOptions = {
           if (
             portalOnly?.passwordHash &&
             portalOnly.accountStatus !== "LEGACY_CONFLICT" &&
-            !(await findMergedUserByLogin(portalOnly.email))
+            !(await findMergedUserByLogin(portalOnly.email).catch(() => null))
           ) {
             const portalOk = await bcrypt.compare(password, portalOnly.passwordHash);
             if (!portalOk) return null;

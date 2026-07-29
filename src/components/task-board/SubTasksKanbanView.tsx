@@ -11,6 +11,7 @@ import {
   UNSEGMENTED_SEGMENT_LABEL,
 } from "@/lib/kpi-subkpis";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 
 export type SubtaskKanbanCard = {
   id: string;
@@ -26,6 +27,7 @@ export type SubtaskKanbanCard = {
 export type SubtaskKanbanBoardModel = {
   id: string;
   label: string;
+  dueDate?: string | null;
   items: SubtaskKanbanCard[];
 };
 
@@ -57,6 +59,7 @@ export function segmentsToKanbanBoards(segments: SubKpiSegment[]): SubtaskKanban
     ...named.map((seg) => ({
       id: seg.id,
       label: seg.label.trim() || "Untitled segment",
+      dueDate: seg.dueDate ?? null,
       items: seg.items.map((item) => toCard(item, seg.id)),
     })),
     {
@@ -77,6 +80,9 @@ type SubTasksKanbanViewProps = {
   onDropCard: (itemId: string, targetSegmentId: string) => void;
   renderCardActions?: (card: SubtaskKanbanCard) => ReactNode;
   onEditSegmentLabel?: (segmentId: string, label: string) => void;
+  /** When set, named columns show a phase/segment target date field. */
+  onEditSegmentDueDate?: (segmentId: string, dueDate: string) => void;
+  showPhaseDueDate?: boolean;
   onRemoveSegment?: (segmentId: string) => void;
 };
 
@@ -89,6 +95,8 @@ export function SubTasksKanbanView({
   onDropCard,
   renderCardActions,
   onEditSegmentLabel,
+  onEditSegmentDueDate,
+  showPhaseDueDate = false,
   onRemoveSegment,
 }: SubTasksKanbanViewProps) {
   const drag = usePointerColumnDrag<string>({
@@ -125,7 +133,7 @@ export function SubTasksKanbanView({
                 value={board.label}
                 onChange={(e) => onEditSegmentLabel(board.id, e.target.value)}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs font-semibold text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-                aria-label="Segment name"
+                aria-label={showPhaseDueDate ? "Phase name" : "Segment name"}
               />
             ) : (
               <h3
@@ -144,7 +152,23 @@ export function SubTasksKanbanView({
             )}
             {isUnassigned ? (
               <p className="mt-0.5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
-                Waiting list — drag into a segment column to assign.
+                Waiting list — drag into a {showPhaseDueDate ? "phase" : "segment"} column to assign.
+              </p>
+            ) : null}
+            {showPhaseDueDate && canManage && onEditSegmentDueDate && !isUnassigned ? (
+              <label className="mt-1.5 block text-[9px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Target date
+                <DatePickerField
+                  value={board.dueDate ?? ""}
+                  onChange={(e) => onEditSegmentDueDate(board.id, e.target.value)}
+                  wrapperClassName="mt-0.5"
+                  shellClassName="h-8"
+                  aria-label={`${board.label || "Phase"} target date`}
+                />
+              </label>
+            ) : showPhaseDueDate && !isUnassigned && board.dueDate ? (
+              <p className="mt-1 text-[10px] font-medium text-zinc-600 dark:text-zinc-400">
+                Target {board.dueDate}
               </p>
             ) : null}
           </div>
@@ -226,7 +250,7 @@ export function SubTasksKanbanView({
                           {card.priority}
                         </span>
                       ) : null}
-                      {card.dueLabel ? (
+                      {card.dueLabel && !showPhaseDueDate ? (
                         <span className="rounded-full border border-zinc-300 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-600 dark:border-zinc-600 dark:text-zinc-400">
                           {card.dueLabel}
                         </span>
