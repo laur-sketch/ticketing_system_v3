@@ -1025,28 +1025,8 @@ export function AgentKpiKanbanFlow({
   async function patchSubKpiLifecycle(recordId: string, subKpiId: string, action: "start" | "end") {
     setBusyId(recordId);
     setError(null);
-    let coords: { latitude: number; longitude: number };
-    try {
-      coords = await new Promise((resolve, reject) => {
-        if (typeof navigator === "undefined" || !navigator.geolocation) {
-          reject(new Error("Geolocation is not available on this device."));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(
-          (pos) =>
-            resolve({
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-            }),
-          (err) => reject(new Error(err.message || "Could not read GPS position.")),
-          { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
-        );
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not capture GPS.");
-      setBusyId(null);
-      return;
-    }
+    // GPS capture is reserved for Travel Order Start/End buttons.
+    // Project sub-task Start/End should not prompt for device geolocation.
     const capturedAt = new Date().toISOString();
     setRows((prev) =>
       prev.map((row) => {
@@ -1055,7 +1035,8 @@ export function AgentKpiKanbanFlow({
           return row;
         }
         const life = setItProjectSubKpiLifecycle(row.subKpis, subKpiId, action, tz, {
-          ...coords,
+          latitude: null,
+          longitude: null,
           capturedAt,
         });
         if (!life.ok) return row;
@@ -1071,8 +1052,8 @@ export function AgentKpiKanbanFlow({
           subKpiLifecycle: {
             subKpiId,
             action,
-            latitude: coords.latitude,
-            longitude: coords.longitude,
+            latitude: null,
+            longitude: null,
             capturedAt,
           },
         }),
