@@ -347,6 +347,13 @@ export async function runPortalToMergedSync(options?: {
       result.agentOwnershipMerged += await mergeLegacyAgentOwnership(portal, dryRun);
 
       if (!dryRun) {
+        // merged_source_user_id is unique — free any stale mapping pointing at this merged user.
+        await prismaPrimary.portalMergeMapping.deleteMany({
+          where: {
+            mergedSourceUserId,
+            NOT: { portalAccountId: portal.id },
+          },
+        });
         await prismaPrimary.portalMergeMapping.upsert({
           where: { portalAccountId: portal.id },
           create: {
@@ -356,7 +363,12 @@ export async function runPortalToMergedSync(options?: {
             legacyUsername: portal.username,
             lastSyncedAt: new Date(),
           },
-          update: { lastSyncedAt: new Date() },
+          update: {
+            mergedSourceUserId,
+            legacyPortalEmail: portal.email,
+            legacyUsername: portal.username,
+            lastSyncedAt: new Date(),
+          },
         });
       }
     } catch (e) {

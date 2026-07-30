@@ -45,6 +45,9 @@ yarn-error.log*
 # user-uploaded ticket screenshots (served via /api/tickets/[id]/screenshots/...)
 /uploads
 
+# local DB dumps / JSON backups — never commit
+/backups
+
 # vercel
 .vercel
 

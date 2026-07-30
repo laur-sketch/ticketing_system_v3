@@ -1,4 +1,5 @@
 import { MERGED_SOURCE_DATABASE } from "@/lib/merged-database-sources";
+import { resolveLiveHrisDbAvailable } from "@/lib/auth/merged-credentials";
 import { prismaSecondary } from "@/lib/prisma";
 
 /**
@@ -11,10 +12,6 @@ import { prismaSecondary } from "@/lib/prisma";
  */
 
 type SinceRow = { since: Date | null };
-
-function resolveLiveSourceDb(): string {
-  return process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris-dev";
-}
 
 function resolveSourceTag(): string {
   return (
@@ -42,7 +39,8 @@ export type HrisAttendanceSyncResult = {
 
 export async function runHrisAttendanceSync(): Promise<HrisAttendanceSyncResult> {
   const start = Date.now();
-  const sourceDb = resolveLiveSourceDb();
+  // Prefer HRIS_LIVE_SOURCE_DB, then fall back to hris-dev → hrisdemo → hris.
+  const sourceDb = await resolveLiveHrisDbAvailable();
   const sourceTag = resolveSourceTag();
   const source = sqlId(sourceDb);
 

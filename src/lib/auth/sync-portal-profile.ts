@@ -440,7 +440,7 @@ async function upsertPortalAccount(
 
   const existing = await findExistingPortal(email, username, profile.hrisSourceUserId);
 
-  // auth_user_id is unique on portal_accounts — free it from any other row first.
+  // Unique columns — free them from any other row before write (avoids P2002 races).
   if (authUserId) {
     await prismaPrimary.portalAccount.updateMany({
       where: {
@@ -448,6 +448,15 @@ async function upsertPortalAccount(
         ...(existing ? { NOT: { id: existing.id } } : {}),
       },
       data: { authUserId: null },
+    });
+  }
+  if (profile.hrisSourceUserId != null) {
+    await prismaPrimary.portalAccount.updateMany({
+      where: {
+        mergedSourceUserId: profile.hrisSourceUserId,
+        ...(existing ? { NOT: { id: existing.id } } : {}),
+      },
+      data: { mergedSourceUserId: null },
     });
   }
 
@@ -514,21 +523,48 @@ async function upsertPortalAccount(
       }
     }
 
-    await prismaPrimary.portalAccount.update({
-      where: { id: existing.id },
-      data: {
-        name: profile.name,
-        username: usernameUpdate,
-        ...(emailUpdate ? { email: emailUpdate } : {}),
-        authUserId,
-        mergedSourceUserId: profile.hrisSourceUserId ?? undefined,
-        emailVerifiedAt: profile.emailVerified ? new Date() : undefined,
-        profileSyncedAt: new Date(),
-        ...(profile.image && !existing.profileImage ? { profileImage: profile.image } : {}),
-        ...roleUpdate,
-        ...(teamId && isStaff ? { staffDesignatedCompanyId: teamId } : {}),
-      },
-    });
+    const writeExisting = async () => {
+      await prismaPrimary.portalAccount.update({
+        where: { id: existing.id },
+        data: {
+          name: profile.name,
+          username: usernameUpdate,
+          ...(emailUpdate ? { email: emailUpdate } : {}),
+          authUserId,
+          mergedSourceUserId: profile.hrisSourceUserId ?? undefined,
+          emailVerifiedAt: profile.emailVerified ? new Date() : undefined,
+          profileSyncedAt: new Date(),
+          ...(profile.image && !existing.profileImage ? { profileImage: profile.image } : {}),
+          ...roleUpdate,
+          ...(teamId && isStaff ? { staffDesignatedCompanyId: teamId } : {}),
+        },
+      });
+    };
+
+    try {
+      await writeExisting();
+    } catch (e) {
+      const code =
+        e && typeof e === "object" && "code" in e ? String((e as { code?: string }).code) : "";
+      if (code !== "P2002") throw e;
+      // Concurrent sync raced on unique columns — clear again and retry once.
+      if (authUserId) {
+        await prismaPrimary.portalAccount.updateMany({
+          where: { authUserId, NOT: { id: existing.id } },
+          data: { authUserId: null },
+        });
+      }
+      if (profile.hrisSourceUserId != null) {
+        await prismaPrimary.portalAccount.updateMany({
+          where: {
+            mergedSourceUserId: profile.hrisSourceUserId,
+            NOT: { id: existing.id },
+          },
+          data: { mergedSourceUserId: null },
+        });
+      }
+      await writeExisting();
+    }
 
     const refreshed = await prismaPrimary.portalAccount.findUniqueOrThrow({
       where: { id: existing.id },
@@ -549,51 +585,82 @@ async function upsertPortalAccount(
   }
 
   const id = randomUUID();
+  const createData = {
+    id,
+    email,
+    username,
+    name: profile.name,
+    role: mapped.portalRole,
+    headPrivileges: mapped.headPrivileges,
+    passwordHash: null as string | null,
+    authUserId,
+    mergedSourceUserId: profile.hrisSourceUserId ?? null,
+    emailVerifiedAt: profile.emailVerified ? new Date() : null,
+    profileImage: profile.image ?? null,
+    profileSyncedAt: new Date(),
+    staffDesignatedCompanyId: isStaff && teamId ? teamId : null,
+    ...(profile.oauth
+      ? {
+          oauthProvider: profile.oauth.provider,
+          oauthSubject: profile.oauth.providerAccountId,
+        }
+      : {}),
+  };
+  const selectCreated = {
+    id: true,
+    email: true,
+    name: true,
+    role: true,
+    headPrivileges: true,
+    username: true,
+    companyId: true,
+    staffDesignatedCompanyId: true,
+    profileImage: true,
+    authUserId: true,
+  } as const;
+
   try {
     const created = await prismaPrimary.portalAccount.create({
-      data: {
-        id,
-        email,
-        username,
-        name: profile.name,
-        role: mapped.portalRole,
-        headPrivileges: mapped.headPrivileges,
-        passwordHash: null,
-        authUserId,
-        mergedSourceUserId: profile.hrisSourceUserId ?? null,
-        emailVerifiedAt: profile.emailVerified ? new Date() : null,
-        profileImage: profile.image ?? null,
-        profileSyncedAt: new Date(),
-        staffDesignatedCompanyId: isStaff && teamId ? teamId : null,
-        ...(profile.oauth
-          ? {
-              oauthProvider: profile.oauth.provider,
-              oauthSubject: profile.oauth.providerAccountId,
-            }
-          : {}),
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        headPrivileges: true,
-        username: true,
-        companyId: true,
-        staffDesignatedCompanyId: true,
-        profileImage: true,
-        authUserId: true,
-      },
+      data: createData,
+      select: selectCreated,
     });
     return { portal: created, created: true };
   } catch (e) {
     const code =
-      e && typeof e === "object" && "code" in e ? String((e as { code?: unknown }).code) : "";
+      e && typeof e === "object" && "code" in e ? String((e as { code?: string }).code) : "";
     if (code !== "P2002") throw e;
-    // Race: another request created the row — update the existing portal instead.
+    // Another worker may have created the row — re-find and update instead.
     const raced = await findExistingPortal(email, username, profile.hrisSourceUserId);
     if (!raced) throw e;
-    return upsertPortalAccount(profile, authUserId, mapped, teamId, forceRoleRefresh);
+    if (authUserId) {
+      await prismaPrimary.portalAccount.updateMany({
+        where: { authUserId, NOT: { id: raced.id } },
+        data: { authUserId: null },
+      });
+    }
+    if (profile.hrisSourceUserId != null) {
+      await prismaPrimary.portalAccount.updateMany({
+        where: {
+          mergedSourceUserId: profile.hrisSourceUserId,
+          NOT: { id: raced.id },
+        },
+        data: { mergedSourceUserId: null },
+      });
+    }
+    await prismaPrimary.portalAccount.update({
+      where: { id: raced.id },
+      data: {
+        name: profile.name,
+        authUserId,
+        mergedSourceUserId: profile.hrisSourceUserId ?? undefined,
+        profileSyncedAt: new Date(),
+      },
+    });
+    const refreshed = await prismaPrimary.portalAccount.findUniqueOrThrow({
+      where: { id: raced.id },
+      select: selectCreated,
+    });
+    return { portal: refreshed, created: false };
   }
 }
 

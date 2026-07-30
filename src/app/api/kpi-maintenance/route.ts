@@ -88,6 +88,7 @@ import {
   type ItProjectData,
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { kpiRowInCompanyScope } from "@/lib/kpi-company-board-scope";
 import { isValidLatLng } from "@/lib/travel-order";
 import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
 import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-efficiency-recompute";
@@ -188,18 +189,13 @@ export async function GET(req: Request) {
   let where: Prisma.KpiMaintenanceWhereInput = perms.canAssignWork ? {} : {};
 
   const companyTeamId = searchParams.get("company")?.trim();
+  /** When set, company membership is applied in memory so sub-task assignees are included. */
+  let companyAgentIdSet: Set<string> | null = null;
+  let companyFilterId: string | null = null;
   if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
-    // Merged-first company membership so the board filter matches the personnel tab.
+    companyFilterId = companyTeamId;
     const agentIds = await loadAgentIdsForCompanyTeam(companyTeamId);
-    const companyScopeOr: Prisma.KpiMaintenanceWhereInput[] = [
-      { assignedAgentId: null, scopedCompanyTeamId: companyTeamId },
-    ];
-    if (agentIds.length > 0) {
-      companyScopeOr.unshift({ assignedAgentId: { in: agentIds } });
-    }
-    where = {
-      AND: [where, { OR: companyScopeOr }],
-    };
+    companyAgentIdSet = new Set(agentIds);
   }
 
   // Assigned filter is applied in memory so sub-task assignees are included
@@ -215,6 +211,11 @@ export async function GET(req: Request) {
       assignedAgent: { select: { id: true, name: true, team: { select: { id: true, name: true } } } },
     },
   });
+  if (companyFilterId && companyAgentIdSet) {
+    rows = rows.filter((row) =>
+      kpiRowInCompanyScope(row, companyFilterId, companyAgentIdSet),
+    );
+  }
   const {
     kpiIdsWhereAgentIsTravelOrderTraveler,
     kpiIdsWithTravelOrders,
@@ -403,6 +404,11 @@ export async function GET(req: Request) {
         assignedAgent: { select: { id: true, name: true, team: { select: { id: true, name: true } } } },
       },
     });
+    if (companyFilterId && companyAgentIdSet) {
+      rows = rows.filter((row) =>
+        kpiRowInCompanyScope(row, companyFilterId, companyAgentIdSet),
+      );
+    }
     if (!perms.canAssignWork) {
       rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds);
     } else if (filterByAssigned) {
