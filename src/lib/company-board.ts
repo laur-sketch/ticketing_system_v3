@@ -192,7 +192,7 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
     if (selectedFilterTeamIds.length === 0) {
       return { ok: false, cardMode, emptyHint: "No matching company filter in your scope." };
     }
-    displayTeamIds = allowedTeamIds.filter((id) => !selectedFilterTeamIds.includes(id));
+    displayTeamIds = selectedFilterTeamIds.filter((id) => allowedTeamIds.includes(id));
     ticketWhereBase.teamId = { in: selectedFilterTeamIds };
   } else {
     displayTeamIds = allowedTeamIds;

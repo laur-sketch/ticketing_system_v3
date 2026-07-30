@@ -15,16 +15,39 @@ export async function loadPaymentApprovalMeta(ticketId: string): Promise<Payment
   return parsePaymentApprovalMeta(raw);
 }
 
+export type SavePaymentApprovalMetaResult =
+  | { ok: true }
+  | { ok: false; reason: "conflict" };
+
+/**
+ * Persist payment approval meta. When `expectedProceduralStep` is set, the write
+ * is conditional so concurrent completes cannot rewind a later step.
+ */
 export async function savePaymentApprovalMeta(
   ticketId: string,
   meta: PaymentApprovalMeta,
-): Promise<void> {
+  expectedProceduralStep?: string | null,
+): Promise<SavePaymentApprovalMetaResult> {
   const json = JSON.stringify(meta);
+  if (expectedProceduralStep != null && expectedProceduralStep !== "") {
+    const updated = await prisma.$executeRaw`
+      UPDATE tickets
+      SET payment_approval_meta = ${json}::jsonb
+      WHERE id = ${ticketId}
+        AND (
+          payment_approval_meta IS NULL
+          OR payment_approval_meta->>'proceduralStep' = ${expectedProceduralStep}
+        )
+    `;
+    if (Number(updated) === 0) return { ok: false, reason: "conflict" };
+    return { ok: true };
+  }
   await prisma.$executeRaw`
     UPDATE tickets
     SET payment_approval_meta = ${json}::jsonb
     WHERE id = ${ticketId}
   `;
+  return { ok: true };
 }
 
 export async function initPaymentApprovalMetaIfNeeded(ticketId: string): Promise<PaymentApprovalMeta> {

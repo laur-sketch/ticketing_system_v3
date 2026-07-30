@@ -29,7 +29,14 @@ export async function GET(req: Request) {
   if (session?.user?.role === "Admin") {
     const scoped = await resolveStaffCompanyTeamId(session.user.email);
     const requested = searchParams.get("companyId")?.trim() || null;
-    teamId = scoped ?? requested ?? undefined;
+    // Never fall back to an arbitrary client companyId — unscoped Admins see nothing.
+    if (!scoped) {
+      teamId = "__none__";
+    } else if (requested && requested !== "ALL" && requested !== scoped) {
+      return NextResponse.json({ error: "Forbidden company filter." }, { status: 403 });
+    } else {
+      teamId = scoped;
+    }
   } else if (session?.user?.role === "SuperAdmin") {
     const requested = searchParams.get("companyId")?.trim() || null;
     if (requested && requested !== "ALL") {

@@ -35,6 +35,7 @@ import {
   initFundTransferApprovalMetaIfNeeded,
   saveFundTransferApprovalMeta,
 } from "@/lib/fund-transfer-approval-db";
+import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 type AssignBody = {
   ticketId?: string;
@@ -73,6 +74,16 @@ export async function POST(req: Request) {
 
     if (!ticket) return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
 
+    const adminCompanyId =
+      isJwtAdmin && !isSuperAdmin ? await resolveStaffCompanyTeamId(session.user.email) : null;
+    if (isJwtAdmin && !isSuperAdmin) {
+      if (!adminCompanyId || ticket.teamId !== adminCompanyId) {
+        return NextResponse.json(
+          { error: "You can only assign tickets in your designated company." },
+          { status: 403 },
+        );
+      }
+    }
     let agent = null as null | { id: string; name: string; email: string; teamId: string };
     if (agentId) {
       const direct = await prisma.agent.findUnique({
@@ -119,6 +130,16 @@ export async function POST(req: Request) {
             teamId: defaultTeamId,
           },
         }));
+    }
+
+    if (isJwtAdmin && !isSuperAdmin) {
+      const agentCompanyId = await resolveAgentDesignatedCompanyId(agent.id);
+      if (!adminCompanyId || agentCompanyId !== adminCompanyId) {
+        return NextResponse.json(
+          { error: "You can only assign to personnel in your designated company." },
+          { status: 403 },
+        );
+      }
     }
 
     const updated = await prisma.ticket.update({

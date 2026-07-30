@@ -17,7 +17,12 @@ import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-co
 import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticket-feedback-policy";
 import { isAdminPortalRole } from "@/lib/staff-role";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
-import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
+import {
+  adminOutsideCompanyScope,
+  isTicketAssignee,
+  personnelForbiddenForTicket,
+} from "@/lib/ticket-staff-access";
 import {
   applyPaymentApprovalAssignees,
   assigneeFieldForStep,
@@ -183,16 +188,24 @@ export async function GET(
   }
   if (session.user.role === "Personnel") {
     const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
-    const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
-    const coordinatorTeamId = companyCoordinator ? await resolveStaffCompanyTeamId(session.user.email) : null;
-    const ticketInCoordinatorScope =
-      !!coordinatorTeamId &&
-      (ticket.teamId === coordinatorTeamId || ticket.assignedAgent?.teamId === coordinatorTeamId);
-    const ticketInOperatorCompany =
-      !!operator?.teamId && (ticket.teamId === operator.teamId || ticket.assignedAgent?.teamId === operator.teamId);
-    if ((!operator || operator.id !== ticket.assignedAgentId) && !ticketInCoordinatorScope && !ticketInOperatorCompany) {
+    if (
+      await personnelForbiddenForTicket({
+        email: session.user.email,
+        operatorId: operator?.id,
+        ticket,
+      })
+    ) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+  }
+  if (
+    await adminOutsideCompanyScope({
+      role: session.user.role,
+      email: session.user.email,
+      ticketTeamId: ticket.teamId,
+    })
+  ) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const payload = await ticketJsonWithAssigneeColor(ticket);
   return NextResponse.json({ ...payload, slaState: getTicketSlaState(ticket) });
@@ -210,9 +223,12 @@ export async function PATCH(
   const { id } = await ctx.params;
   const ticket = await prisma.ticket.findUnique({
     where: { id },
-    include: { assignedAgent: { select: { email: true, teamId: true } } },
+    include: {
+      assignedAgent: { select: { email: true, teamId: true } },
+    },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // paymentApprovalMeta is a scalar Json field — available on the ticket row for RFP step checks.
   const isRequestor = customerCanAccessTicket(
     { contactEmail: ticket.contactEmail, requestorEmail: ticket.requestorEmail },
     session.user.email,
@@ -222,15 +238,35 @@ export async function PATCH(
   const roleIsAdmin = ["SuperAdmin", "Admin"].includes(session.user.role);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
   const roleIsCompanyAdmin = await portalCompanyAdminPrivilegesForEmail(session.user.email);
-  const isAssignedOperator =
-    (!!operator && operator.id === ticket.assignedAgentId) ||
-    (!!ticket.assignedAgent?.email &&
-      !!session.user.email &&
-      ticket.assignedAgent.email.trim().toLowerCase() === session.user.email.trim().toLowerCase());
+  const isAssignedOperator = isTicketAssignee({
+    operatorId: operator?.id,
+    sessionEmail: session.user.email,
+    ticket,
+  });
   const canPrioritize = roleIsAdmin || isAssignedOperator;
   if (session.user.role === "Customer" && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  if (
+    await adminOutsideCompanyScope({
+      role: session.user.role,
+      email: session.user.email,
+      ticketTeamId: ticket.teamId,
+    })
+  ) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const personnelBlocked =
+    session.user.role === "Personnel"
+      ? await personnelForbiddenForTicket({
+          email: session.user.email,
+          operatorId: operator?.id,
+          ticket,
+        })
+      : false;
+  /** Assignee, RFP-step assignee, company coordinator, or Admin/SuperAdmin. */
+  const canStaffMutateTicket =
+    roleIsAdmin || (session.user.role === "Personnel" && !personnelBlocked);
 
   try {
     const body = await req.json();
@@ -268,6 +304,12 @@ export async function PATCH(
     if (action === "status") {
       if (!isAdminOrAgent && !(isOwner && body.status === "IN_PROGRESS")) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (isAdminOrAgent && !canStaffMutateTicket && !(isOwner && body.status === "IN_PROGRESS")) {
+        return NextResponse.json(
+          { error: "Only the assigned personnel (or company admin) can update this ticket." },
+          { status: 403 },
+        );
       }
       const nextStatus = body.status as TicketStatus;
       if (nextStatus === "CLOSED") {
@@ -376,7 +418,13 @@ export async function PATCH(
               [stepField]: ticket.assignedAgentId,
             });
             const advanced = completePaymentApprovalStep(stamped);
-            await savePaymentApprovalMeta(id, advanced);
+            const saved = await savePaymentApprovalMeta(id, advanced, meta.proceduralStep);
+            if (!saved.ok) {
+              return NextResponse.json(
+                { error: "Payment approval was updated by someone else. Refresh and try again." },
+                { status: 409 },
+              );
+            }
             const completedLabel = PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep];
             await logActivity(
               id,
@@ -542,7 +590,7 @@ export async function PATCH(
     }
 
     if (action === "request_more_info") {
-      if (!isAdminOrAgent) {
+      if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       if (!["OPEN", "IN_PROGRESS", "ESCALATED"].includes(ticket.status)) {
@@ -1060,7 +1108,13 @@ export async function PATCH(
       }
 
       const updatedMeta = previewMeta;
-      await savePaymentApprovalMeta(id, updatedMeta);
+      const savedAssignees = await savePaymentApprovalMeta(id, updatedMeta, meta.proceduralStep);
+      if (!savedAssignees.ok) {
+        return NextResponse.json(
+          { error: "Payment approval was updated by someone else. Refresh and try again." },
+          { status: 409 },
+        );
+      }
       // Put the request on the current procedural role assignee’s Request Board.
       const boardAssigneeId = currentPaymentStepBoardAssigneeId(updatedMeta);
       if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
@@ -1119,8 +1173,14 @@ export async function PATCH(
     }
 
     if (action === "request_payment_approval") {
-      if (!isAdminOrAgent) {
+      if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (!isAssignedOperator && !roleIsAdmin && !roleIsCompanyAdmin) {
+        return NextResponse.json(
+          { error: "Only the assigned personnel can request the next payment approval." },
+          { status: 403 },
+        );
       }
       if (!operator?.id) {
         return NextResponse.json({ error: "Your staff profile could not be resolved." }, { status: 400 });
@@ -1170,7 +1230,13 @@ export async function PATCH(
       }
       const field = assigneeFieldForStep(step);
       const updatedMeta = applyPaymentApprovalAssignees(meta, { [field]: approver.id });
-      await savePaymentApprovalMeta(id, updatedMeta);
+      const saved = await savePaymentApprovalMeta(id, updatedMeta, step);
+      if (!saved.ok) {
+        return NextResponse.json(
+          { error: "Payment approval was updated by someone else. Refresh and try again." },
+          { status: 409 },
+        );
+      }
       const updated = await prisma.ticket.update({
         where: { id },
         data: {
@@ -1242,7 +1308,13 @@ export async function PATCH(
         [stepField]: ticket.assignedAgentId,
       });
       const advanced = completePaymentApprovalStep(stamped);
-      await savePaymentApprovalMeta(id, advanced);
+      const saved = await savePaymentApprovalMeta(id, advanced, previousStep);
+      if (!saved.ok) {
+        return NextResponse.json(
+          { error: "Payment approval was updated by someone else. Refresh and try again." },
+          { status: 409 },
+        );
+      }
       const completedLabel = PAYMENT_APPROVAL_STEP_LABELS[previousStep];
       await logActivity(
         id,
@@ -1403,8 +1475,14 @@ export async function PATCH(
     }
 
     if (action === "request_item_requisition_approval") {
-      if (!isAdminOrAgent) {
+      if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (!isAssignedOperator && !roleIsAdmin && !roleIsCompanyAdmin) {
+        return NextResponse.json(
+          { error: "Only the assigned personnel can request the next item requisition approval." },
+          { status: 403 },
+        );
       }
       if (!operator?.id) {
         return NextResponse.json({ error: "Your staff profile could not be resolved." }, { status: 400 });
@@ -1875,8 +1953,14 @@ export async function PATCH(
     }
 
     if (action === "request_fund_transfer_approval") {
-      if (!isAdminOrAgent) {
+      if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (!isAssignedOperator && !roleIsAdmin && !roleIsCompanyAdmin) {
+        return NextResponse.json(
+          { error: "Only the assigned personnel can request the next fund transfer approval." },
+          { status: 403 },
+        );
       }
       if (!operator?.id) {
         return NextResponse.json({ error: "Your staff profile could not be resolved." }, { status: 400 });
@@ -2056,7 +2140,7 @@ export async function PATCH(
     }
 
     if (action === "link_job_order_project") {
-      if (!isAdminOrAgent) {
+      if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       const { linkJobOrderToProject, projectDisplayName } = await import("@/lib/job-order-project");
@@ -2069,7 +2153,10 @@ export async function PATCH(
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: result.status });
       }
-      const updated = await prisma.ticket.findUnique({ where: { id } });
+      const updated = await prisma.ticket.findUnique({
+        where: { id },
+        include: { team: true, assignedAgent: true },
+      });
       return NextResponse.json({
         ...(updated ? await ticketJsonWithAssigneeColor(updated) : {}),
         linkedProject: {
@@ -2083,7 +2170,7 @@ export async function PATCH(
     }
 
     if (action === "unlink_job_order_project") {
-      if (!isAdminOrAgent) {
+      if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
       const { unlinkJobOrderFromProject } = await import("@/lib/job-order-project");
@@ -2091,7 +2178,10 @@ export async function PATCH(
       if (!result.ok) {
         return NextResponse.json({ error: result.error }, { status: result.status });
       }
-      const updated = await prisma.ticket.findUnique({ where: { id } });
+      const updated = await prisma.ticket.findUnique({
+        where: { id },
+        include: { team: true, assignedAgent: true },
+      });
       return NextResponse.json({
         ...(updated ? await ticketJsonWithAssigneeColor(updated) : {}),
         linkedProject: null,

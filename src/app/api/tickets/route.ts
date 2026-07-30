@@ -10,6 +10,7 @@ import {
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
 import { logActivity } from "@/lib/ticket-actions";
 import { prisma } from "@/lib/prisma";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { addHours, getSlaPolicy } from "@/lib/sla";
@@ -76,7 +77,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
-  const teamId = searchParams.get("teamId");
+  const teamIdParam = searchParams.get("teamId");
   const limitParam = Number.parseInt(searchParams.get("limit") ?? "50", 10);
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 50;
   const operator =
@@ -87,10 +88,23 @@ export async function GET(req: Request) {
   const personnelWhere =
     session.user.role === "Personnel" ? await personnelRequestBoardWhere(operator?.id) : null;
 
+  let adminCompanyWhere: Prisma.TicketWhereInput | null = null;
+  if (session.user.role === "Admin") {
+    const scoped = await resolveStaffCompanyTeamId(session.user.email);
+    if (!scoped) {
+      adminCompanyWhere = { teamId: "__none__" };
+    } else if (teamIdParam && teamIdParam !== scoped) {
+      return NextResponse.json({ error: "Forbidden company filter." }, { status: 403 });
+    } else {
+      adminCompanyWhere = { teamId: scoped };
+    }
+  }
+
   const tickets = await prisma.ticket.findMany({
     where: {
       ...(status ? { status: status as never } : {}),
-      ...(teamId ? { teamId } : {}),
+      ...(session.user.role === "SuperAdmin" && teamIdParam ? { teamId: teamIdParam } : {}),
+      ...(adminCompanyWhere ?? {}),
       ...(personnelWhere ?? {}),
       ...(session.user.role === "Customer"
         ? customerTicketWhereBySessionEmail(session.user.email ?? "")

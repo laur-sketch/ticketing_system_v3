@@ -22,6 +22,7 @@ import {
   type HelpdeskTaskMetricCounts,
 } from "@/lib/helpdesk-csv";
 import { loadItSalfDisplayCsvRowsForTaskMetrics } from "@/lib/kpi-sheet-import-snapshots";
+import { loadAgentIdsForCompanyTeam } from "@/lib/staff-company-scope";
 import { prisma } from "./prisma";
 
 export type { TaskChecklistPillarMetrics, TaskChecklistPillarMetric } from "@/lib/kpi-period-snapshots";
@@ -919,9 +920,25 @@ export async function computeKpis(
     }))
     .sort((a, b) => b.ticketsClosed - a.ticketsClosed);
 
+  let taskMetricsScope: KpiScope = scope;
+  if (!scope.assignedAgentId && !scope.assignedAgentIds && (scope.teamId || scope.teamIds)) {
+    if (scope.teamId) {
+      taskMetricsScope = {
+        ...scope,
+        assignedAgentIds: await loadAgentIdsForCompanyTeam(scope.teamId),
+      };
+    } else if (scope.teamIds) {
+      const nested = await Promise.all(scope.teamIds.map((id) => loadAgentIdsForCompanyTeam(id)));
+      taskMetricsScope = {
+        ...scope,
+        assignedAgentIds: [...new Set(nested.flat())],
+      };
+    }
+  }
+
   const { taskMetricsHelpdesk, taskMetricsUserSupport } = await computeTaskMetrics(
     range,
-    scope,
+    taskMetricsScope,
     helpdeskCadence,
   );
   const csatByStar = buildCsatStarDistribution(

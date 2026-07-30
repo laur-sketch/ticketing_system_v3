@@ -174,8 +174,11 @@ function completionHours(args: {
 export async function GET() {
   const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
   if (unauthorized) return unauthorized;
-  const restrictToAssignedCompany = session.user.role === "Admin";
-  const scopedCompanyId = session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;
+  const restrictToAssignedCompany =
+    session.user.role === "Admin" || session.user.role === "Personnel";
+  const scopedCompanyId = restrictToAssignedCompany
+    ? await resolveStaffCompanyTeamId(session.user.email)
+    : null;
 
   const [taskRows, taskItemRows, staffCompanyRows, agents] = await Promise.all([
     prisma.kpiMaintenance.findMany({

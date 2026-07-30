@@ -373,7 +373,7 @@ export function snapshotTimeZoneForTaskMetrics(clientTz?: string | null): string
   return "Asia/Taipei";
 }
 
-/** Task metrics checklist rows: admins see all; personnel see their assignments plus org-wide (unassigned) KPIs. */
+/** Task metrics checklist rows: admins see scoped set; personnel see only their assignments. */
 export function kpiMaintenanceWhereForTaskMetrics(
   assignedAgentId?: string,
   assignedAgentIds?: string[],
@@ -383,9 +383,7 @@ export function kpiMaintenanceWhereForTaskMetrics(
   }
   if (!assignedAgentId) return {};
   if (assignedAgentId === "__none__") return { assignedAgentId: null };
-  return {
-    OR: [{ assignedAgentId }, { assignedAgentId: null }],
-  };
+  return { assignedAgentId };
 }
 
 function isProjectTimelineMetricsKpi(row: {
@@ -405,11 +403,15 @@ function pillarKeyForProjectKpi(title: string): string {
 /**
  * On-time / delayed metrics for Timeline Tracker / JO-linked projects.
  * Includes legacy IT PROJECT IMPLEMENTATION rows and newer Project / JOB ORDER REQUEST rows.
+ * Only projects overlapping [fromYmd, toYmd] are counted.
  */
 async function computeProjectTimelinePillarMetricsByTitle(args: {
   kpiWhere: Prisma.KpiMaintenanceWhereInput;
   timeZone: string;
+  fromYmd: string;
+  toYmd: string;
 }): Promise<TaskChecklistPillarMetrics> {
+  const zone = normalizeTimeZone(args.timeZone);
   const rows = await prisma.kpiMaintenance.findMany({
     where: {
       isRecurring: false,
@@ -420,11 +422,30 @@ async function computeProjectTimelinePillarMetricsByTitle(args: {
       subKpis: true,
       frequency: true,
       isRecurring: true,
+      nonRecurringStartAt: true,
+      nonRecurringEndAt: true,
       assignedAgent: { select: { id: true, name: true } },
     },
   });
 
-  const projectRows = rows.filter((row) => isProjectTimelineMetricsKpi(row));
+  const inRange = (row: (typeof rows)[number]) => {
+    const start = row.nonRecurringStartAt
+      ? DateTime.fromJSDate(row.nonRecurringStartAt, { zone }).toISODate()
+      : null;
+    const end = row.nonRecurringEndAt
+      ? DateTime.fromJSDate(row.nonRecurringEndAt, { zone }).toISODate()
+      : null;
+    if (start && end) return start <= args.toYmd && end >= args.fromYmd;
+    if (start) return start <= args.toYmd;
+    if (end) return end >= args.fromYmd;
+    const dues = itProjectChecklistItems(row.subKpis)
+      .map((it) => it.dueDate?.trim())
+      .filter((d): d is string => Boolean(d));
+    if (dues.length === 0) return true;
+    return dues.some((d) => d >= args.fromYmd && d <= args.toYmd);
+  };
+
+  const projectRows = rows.filter((row) => isProjectTimelineMetricsKpi(row) && inRange(row));
   const byPillar = new Map<string, typeof projectRows>();
   for (const row of projectRows) {
     const pillar = pillarKeyForProjectKpi(row.title);
@@ -1350,6 +1371,8 @@ export async function computeTaskChecklistPillarMetrics(args: {
   const projectMetricsByPillar = await computeProjectTimelinePillarMetricsByTitle({
     kpiWhere,
     timeZone: zone,
+    fromYmd,
+    toYmd,
   });
 
   const result: TaskChecklistPillarMetrics = {};
