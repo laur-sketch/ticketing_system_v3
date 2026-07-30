@@ -233,8 +233,8 @@ async function mergeUsers(args: {
       employment_status = VALUES(employment_status),
       is_active = VALUES(is_active),
       hire_date = VALUES(hire_date),
-      profile_image = COALESCE(VALUES(profile_image), profile_image),
-      face_image = COALESCE(VALUES(face_image), face_image),
+      profile_image = COALESCE(VALUES(profile_image), ${target}.merged_users.profile_image),
+      face_image = COALESCE(VALUES(face_image), ${target}.merged_users.face_image),
       created_at = VALUES(created_at),
       updated_at = VALUES(updated_at),
       merged_at = CURRENT_TIMESTAMP
@@ -335,7 +335,7 @@ async function main() {
 
     await ensureSchema(db, targetDb, sourceTag);
 
-    const usersSince = await resolveSince(db, targetDb, sourceTag, "merged_users", "updated_at");
+    let usersSince = await resolveSince(db, targetDb, sourceTag, "merged_users", "updated_at");
     const attendanceSince = await resolveSince(
       db,
       targetDb,
@@ -343,6 +343,17 @@ async function main() {
       "merged_attendance_clock_in",
       "clock_in_at",
     );
+
+    // Optional catch-up when watermark skipped newly created users (updated_at older than max).
+    const forceUsersSince = process.env.HRIS_MERGE_USERS_SINCE?.trim();
+    const forceLookbackDays = Number(process.env.HRIS_MERGE_FORCE_USERS_LOOKBACK_DAYS ?? "");
+    if (forceUsersSince) {
+      usersSince = new Date(forceUsersSince);
+      console.log(`Users since overridden by HRIS_MERGE_USERS_SINCE`);
+    } else if (Number.isFinite(forceLookbackDays) && forceLookbackDays > 0) {
+      usersSince = new Date(Date.now() - forceLookbackDays * 86_400_000);
+      console.log(`Users since overridden by ${forceLookbackDays}-day force lookback`);
+    }
 
     console.log(`Users since:      ${usersSince.toISOString()}`);
     console.log(`Attendance since: ${attendanceSince.toISOString()}`);

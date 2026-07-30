@@ -339,6 +339,7 @@ export function AgentKpiKanbanFlow({
   const [canAssignWork, setCanAssignWork] = useState(false);
   const [canUnassignWork, setCanUnassignWork] = useState(false);
   const [canCompleteUnassignedWork, setCanCompleteUnassignedWork] = useState(false);
+  const [canAssignOffline, setCanAssignOffline] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [operatorAgentName, setOperatorAgentName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -418,6 +419,7 @@ export function AgentKpiKanbanFlow({
       canAssignWork?: boolean;
       canUnassignWork?: boolean;
       canCompleteUnassignedWork?: boolean;
+      canAssignOffline?: boolean;
       operatorAgentId?: string | null;
       operatorAgentName?: string | null;
     };
@@ -425,6 +427,7 @@ export function AgentKpiKanbanFlow({
     setCanAssignWork(Boolean(payload.canAssignWork));
     setCanUnassignWork(Boolean(payload.canUnassignWork));
     setCanCompleteUnassignedWork(Boolean(payload.canCompleteUnassignedWork));
+    setCanAssignOffline(Boolean(payload.canAssignOffline));
     if (typeof payload.operatorAgentId === "string" && payload.operatorAgentId.trim()) {
       setOperatorAgentId(payload.operatorAgentId);
     }
@@ -695,7 +698,7 @@ export function AgentKpiKanbanFlow({
       const target =
         agents.find((a) => a.id === nextAssigneeId) ??
         allAssignableAgents.find((a) => a.id === nextAssigneeId);
-      if (target && !agentIsOnDuty(target)) {
+      if (target && !agentIsOnDuty(target) && !canAssignOffline) {
         window.alert(`${target.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
         return;
       }
@@ -748,7 +751,7 @@ export function AgentKpiKanbanFlow({
         Object.values(subAssigneePeersByMainId)
           .flat()
           .find((a) => a.id === assignedAgentId);
-      if (target && !agentIsOnDuty(target)) {
+      if (target && !agentIsOnDuty(target) && !canAssignOffline) {
         window.alert(`${target.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
         return;
       }
@@ -1686,8 +1689,10 @@ export function AgentKpiKanbanFlow({
     if (companyScopedAgents.length === 0 && mainAssigneeId) {
       companyScopedAgents = subAssigneePeersByMainId[mainAssigneeId] ?? [];
     }
-    const onDutyScoped = companyScopedAgents.filter((a) => agentIsOnDuty(a));
-    const assignedStillVisible = assignedId && !onDutyScoped.some((a) => a.id === assignedId);
+    const assignableScoped = canAssignOffline
+      ? companyScopedAgents
+      : companyScopedAgents.filter((a) => agentIsOnDuty(a));
+    const assignedStillVisible = assignedId && !assignableScoped.some((a) => a.id === assignedId);
     return (
       <div className="mt-2 flex flex-col gap-1.5">
         {assistanceBadge}
@@ -1705,9 +1710,9 @@ export function AgentKpiKanbanFlow({
                 {agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"} (current)
               </option>
             ) : null}
-            {onDutyScoped.map((a) => (
+            {assignableScoped.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name} · On Duty
+                {a.name} · {agentIsOnDuty(a) ? "On Duty" : "Offline"}
               </option>
             ))}
           </select>
@@ -2946,7 +2951,7 @@ export function AgentKpiKanbanFlow({
         const userAgent =
           agents.find((agent) => agent.id === userId) ??
           allAssignableAgents.find((agent) => agent.id === userId);
-        if (userAgent && !agentIsOnDuty(userAgent)) {
+        if (userAgent && !agentIsOnDuty(userAgent) && !canAssignOffline) {
           window.alert(`${userAgent.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
           return;
         }
@@ -2985,7 +2990,7 @@ export function AgentKpiKanbanFlow({
     }
 
     for (const agent of agents) {
-      if (!agentIsOnDuty(agent)) continue;
+      if (!canAssignOffline && !agentIsOnDuty(agent)) continue;
       const key = assignmentCompanyKey(agent);
       if (key === ASSIGNMENT_NO_COMPANY) continue;
       if (rosterCompanyIds.size > 0 && !rosterCompanyIds.has(key)) continue;
@@ -3011,7 +3016,7 @@ export function AgentKpiKanbanFlow({
       }
       return a.name.localeCompare(b.name);
     });
-  }, [agents, companyFilterOptions]);
+  }, [agents, canAssignOffline, companyFilterOptions]);
 
   const activeAssignmentCompanyId =
     dragRevealCompanyId ??
@@ -3134,8 +3139,9 @@ export function AgentKpiKanbanFlow({
                     Personnel group
                   </p>
                   <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Only On Duty personnel (merged DB clock-in today) can receive tasks. Drag
-                    over a company, then drop on a person.
+                    {canAssignOffline
+                      ? "SuperAdmin can assign On Duty or Offline personnel. Drag over a company, then drop on a person."
+                      : "Only On Duty personnel (merged DB clock-in today) can receive tasks. Drag over a company, then drop on a person."}
                   </p>
                 </div>
               </div>
@@ -3145,8 +3151,8 @@ export function AgentKpiKanbanFlow({
                     const targetId = assignmentCompanyDropTarget(company.id);
                     const isSelected = assignmentCompanyId === company.id;
                     const isRevealed = activeAssignmentCompanyId === company.id;
-                    const companyAgents = (agentsByAssignmentCompany.get(company.id) ?? []).filter((agent) =>
-                      agentIsOnDuty(agent),
+                    const companyAgents = (agentsByAssignmentCompany.get(company.id) ?? []).filter(
+                      (agent) => canAssignOffline || agentIsOnDuty(agent),
                     );
                     const adminAgents = companyAgents.filter((agent) => assignmentRoleLabel(agent) === "Admin");
                     const personnelAgents = companyAgents.filter(
@@ -3194,12 +3200,16 @@ export function AgentKpiKanbanFlow({
                         {isRevealed ? (
                           <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
                             <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                              Drop on On Duty admin or personnel
+                              {canAssignOffline
+                                ? "Drop on admin or personnel"
+                                : "Drop on On Duty admin or personnel"}
                             </p>
                             <div className="max-h-[min(44dvh,20rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-60">
                               {companyAgents.length === 0 ? (
                                 <p className="rounded-md border border-dashed border-zinc-300 px-2 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                                  No On Duty users in this company.
+                                  {canAssignOffline
+                                    ? "No assignable users in this company."
+                                    : "No On Duty users in this company."}
                                 </p>
                               ) : null}
                               {[
@@ -3231,8 +3241,15 @@ export function AgentKpiKanbanFlow({
                                               <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
                                                 {agent.name}
                                               </p>
-                                              <span className="mt-0.5 inline-flex rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                                                On Duty
+                                              <span
+                                                className={cn(
+                                                  "mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+                                                  agentIsOnDuty(agent)
+                                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                    : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+                                                )}
+                                              >
+                                                {agentIsOnDuty(agent) ? "On Duty" : "Offline"}
                                               </span>
                                             </div>
                                             <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">

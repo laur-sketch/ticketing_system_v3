@@ -443,6 +443,7 @@ export async function GET(req: Request) {
     canAssignWork: perms.canAssignWork,
     canUnassignWork: session.user.role === "SuperAdmin",
     canCompleteUnassignedWork: session.user.role === "SuperAdmin",
+    canAssignOffline: session.user.role === "SuperAdmin",
     operatorAgentId: perms.operator?.id ?? null,
     operatorAgentName: perms.operator?.name ?? null,
     rosterCompanies: perms.canAssignWork
@@ -574,7 +575,7 @@ export async function POST(req: Request) {
   if (assigneeId && !assignee) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
   }
-  if (assigneeId && !(await isAgentOnDutyFromMergedDb(assigneeId))) {
+  if (assigneeId && session.user.role !== "SuperAdmin" && !(await isAgentOnDutyFromMergedDb(assigneeId))) {
     return NextResponse.json(
       { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
       { status: 400 },
@@ -1703,7 +1704,11 @@ export async function PATCH(req: Request) {
     if (assignedAgentId && !assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
-    if (assignedAgentId && !(await isAgentOnDutyFromMergedDb(assignedAgentId))) {
+    if (
+      assignedAgentId &&
+      session.user.role !== "SuperAdmin" &&
+      !(await isAgentOnDutyFromMergedDb(assignedAgentId))
+    ) {
       return NextResponse.json(
         { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
         { status: 400 },
@@ -2054,7 +2059,7 @@ export async function PATCH(req: Request) {
     if (!assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
-    if (!(await isAgentOnDutyFromMergedDb(assignee.id))) {
+    if (session.user.role !== "SuperAdmin" && !(await isAgentOnDutyFromMergedDb(assignee.id))) {
       return NextResponse.json(
         { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
         { status: 400 },
