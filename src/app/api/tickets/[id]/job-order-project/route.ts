@@ -5,16 +5,25 @@ import {
   buildJobOrderProjectPrefill,
   projectDisplayName,
 } from "@/lib/job-order-project";
+import {
+  JO_PROJECT_REQUEST_CANCELLED_SUMMARY,
+  JO_PROJECT_REQUEST_FULFILLED_SUMMARY,
+  JO_PROJECT_REQUESTED_SUMMARY,
+  jobOrderProjectRequestPendingFromActivities,
+} from "@/lib/job-order-project-request";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { isProjectTask } from "@/lib/kpi-subkpis";
 import { prisma } from "@/lib/prisma";
 import { loadAgentIdsForCompanyTeam } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
+import { loadHrisAssignableStaff } from "@/lib/hris-staff-roster";
+import { isAdminPortalRole } from "@/lib/staff-role";
 
 /**
  * GET /api/tickets/[id]/job-order-project
  * Prefill + optional company-scoped project list for Job Order linking.
+ * Also returns company Admins (for Personnel “Request Task Project”) and any pending request.
  */
 export async function GET(
   req: Request,
@@ -117,9 +126,61 @@ export async function GET(
     }
   }
 
+  const companyTeamId = prefill.teamId?.trim() || null;
+  let companyAdmins: Array<{ id: string; name: string; email: string }> = [];
+  if (companyTeamId) {
+    const staff = await loadHrisAssignableStaff({ companyTeamId });
+    const adminStaff = staff.filter(
+      (s) => isAdminPortalRole(s.portalRole) || s.headPrivileges,
+    );
+    const agentIds = adminStaff.map((s) => s.agentId);
+    const agents = agentIds.length
+      ? await prisma.agent.findMany({
+          where: { id: { in: agentIds } },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+    const byId = new Map(agents.map((a) => [a.id, a]));
+    companyAdmins = adminStaff
+      .map((s) => {
+        const agent = byId.get(s.agentId);
+        if (!agent) return null;
+        return { id: agent.id, name: agent.name, email: agent.email };
+      })
+      .filter((row): row is NonNullable<typeof row> => row != null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  const requestActivities = await prisma.ticketActivity.findMany({
+    where: {
+      ticketId: id,
+      summary: {
+        in: [
+          JO_PROJECT_REQUESTED_SUMMARY,
+          JO_PROJECT_REQUEST_FULFILLED_SUMMARY,
+          JO_PROJECT_REQUEST_CANCELLED_SUMMARY,
+        ],
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { summary: true, detail: true },
+  });
+  const { pending, payload } = jobOrderProjectRequestPendingFromActivities(requestActivities);
+
   return NextResponse.json({
     prefill,
     linkedProject,
     projects,
+    companyAdmins,
+    projectRequest: pending
+      ? {
+          pending: true,
+          targetAdminAgentId: payload?.targetAdminAgentId ?? null,
+          targetAdminAgentName: payload?.targetAdminAgentName ?? null,
+          requestedByAgentId: payload?.requestedByAgentId ?? null,
+          requestedByAgentName: payload?.requestedByAgentName ?? null,
+          note: payload?.note ?? null,
+        }
+      : { pending: false },
   });
 }

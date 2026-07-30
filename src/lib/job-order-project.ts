@@ -239,6 +239,15 @@ export async function linkJobOrderToProject(opts: {
     `Linked to Task Board project “${projectDisplayName(project)}”.`,
   );
 
+  const { fulfillPendingJobOrderProjectRequest } = await import(
+    "@/lib/job-order-project-request-server"
+  );
+  await fulfillPendingJobOrderProjectRequest({
+    ticketId: ticket.id,
+    actor: opts.actor,
+    projectDisplayName: projectDisplayName(project),
+  });
+
   return {
     ok: true,
     project: {

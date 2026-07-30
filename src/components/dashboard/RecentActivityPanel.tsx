@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ActivityActor, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { cn } from "@/lib/cn";
+import { parseJobOrderDescription } from "@/lib/job-order";
+import { formatTicketActivityDetail } from "@/lib/ticket-activity-display";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 
 export type TicketActivityLogRow = {
@@ -72,6 +75,8 @@ function LogRowCard({
   onOpenTicket: (ticketId: string) => void;
   interactive?: boolean;
 }) {
+  const detailText = formatTicketActivityDetail(row.summary, row.detail);
+
   return (
     <article
       role={interactive ? "button" : undefined}
@@ -96,8 +101,8 @@ function LogRowCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">{row.summary}</p>
-          {row.detail ? (
-            <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{row.detail}</p>
+          {detailText ? (
+            <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{detailText}</p>
           ) : null}
           <p className="mt-2 text-xs font-medium text-zinc-500 dark:text-zinc-500">
             <span className="text-orange-700 dark:text-orange-400">{row.ticketNumber}</span>
@@ -153,9 +158,14 @@ function TicketDetailFloatPanel({
   ticketId: string;
   onClose: () => void;
 }) {
+  const [mounted, setMounted] = useState(false);
   const [data, setData] = useState<TicketDetailJson | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,17 +198,27 @@ function TicketDetailFloatPanel({
     };
   }, [ticketId]);
 
-  return (
-    <div className="fixed inset-0 z-[95] flex items-end justify-center p-3 sm:items-center sm:justify-end sm:p-6">
+  const jobOrderDetails = useMemo(
+    () => (data?.description ? parseJobOrderDescription(data.description) : null),
+    [data?.description],
+  );
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[95] flex items-center justify-center p-3 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Ticket details"
+    >
       <button
         type="button"
-        className="absolute inset-0 bg-zinc-950/40 backdrop-blur-[2px]"
+        className="absolute inset-0 bg-zinc-950/55 backdrop-blur-[2px]"
         aria-label="Close ticket details"
         onClick={onClose}
       />
-      <aside
-        className="relative z-[96] flex max-h-[min(88dvh,640px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)] ring-1 ring-black/5 backdrop-blur-xl transition-transform duration-200 dark:border-zinc-700/90 dark:bg-[#0c1220]/95 dark:ring-white/10 sm:max-w-md sm:rounded-3xl"
-      >
+      <aside className="relative z-[96] flex max-h-[min(90dvh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-[#0c1220]/95 dark:ring-white/10 sm:rounded-3xl">
         <header className="flex items-start justify-between gap-3 border-b border-zinc-200/80 px-4 py-3.5 dark:border-zinc-800/80 sm:px-5">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-700 dark:text-orange-400">
@@ -284,9 +304,58 @@ function TicketDetailFloatPanel({
               </dl>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Description</p>
-                <p className="mt-1 line-clamp-6 whitespace-pre-wrap text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
-                  {data.description || "—"}
-                </p>
+                {jobOrderDetails ? (
+                  <dl className="mt-2 grid gap-2 text-xs">
+                    <div>
+                      <dt className="text-zinc-500">Nature of concern</dt>
+                      <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
+                        {jobOrderDetails.natureOfConcern.length > 0
+                          ? jobOrderDetails.natureOfConcern.join(", ")
+                          : "—"}
+                      </dd>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <dt className="text-zinc-500">Building</dt>
+                        <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
+                          {jobOrderDetails.building || "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Expected duration</dt>
+                        <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
+                          {jobOrderDetails.expectedDuration || "—"}
+                        </dd>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <dt className="text-zinc-500">Start date</dt>
+                        <dd className="mt-0.5 font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+                          {jobOrderDetails.startDate || "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-zinc-500">Target date</dt>
+                        <dd className="mt-0.5 font-medium tabular-nums text-zinc-800 dark:text-zinc-200">
+                          {jobOrderDetails.targetDate || "—"}
+                        </dd>
+                      </div>
+                    </div>
+                    {jobOrderDetails.notes ? (
+                      <div>
+                        <dt className="text-zinc-500">Notes</dt>
+                        <dd className="mt-0.5 whitespace-pre-wrap font-medium text-zinc-800 dark:text-zinc-200">
+                          {jobOrderDetails.notes}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                ) : (
+                  <p className="mt-1 line-clamp-6 whitespace-pre-wrap text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {data.description || "—"}
+                  </p>
+                )}
               </div>
               <AgentTicketDeepLink
                 ticketId={data.id}
@@ -299,7 +368,8 @@ function TicketDetailFloatPanel({
           ) : null}
         </div>
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -312,8 +382,13 @@ export function RecentActivityPanel({
 }) {
   const [logOpen, setLogOpen] = useState(false);
   const [detailTicketId, setDetailTicketId] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   const preview = useMemo(() => activities.slice(0, PREVIEW_COUNT), [activities]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!logOpen && !detailTicketId) return;
@@ -342,6 +417,64 @@ export function RecentActivityPanel({
     setDetailTicketId(ticketId);
   }, []);
 
+  const activityLogModal =
+    mounted && logOpen
+      ? createPortal(
+          <div className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-6">
+            <button
+              type="button"
+              className="absolute inset-0 bg-zinc-950/65 backdrop-blur-sm"
+              aria-label="Close activity log"
+              onClick={() => setLogOpen(false)}
+            />
+            <section
+              className={cn(
+                "relative z-[81] flex max-h-[min(92dvh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-zinc-200/90 bg-white/95 shadow-[0_-12px_60px_rgba(0,0,0,0.2)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-[#080d18]/95 dark:shadow-[0_-20px_80px_rgba(0,0,0,0.55)] dark:ring-white/5 sm:rounded-3xl sm:shadow-[0_28px_100px_rgba(0,0,0,0.35)]",
+              )}
+            >
+              <header className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200/80 px-5 py-4 dark:border-zinc-800/80">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-700 dark:text-orange-400">
+                    Ticket audit log
+                  </p>
+                  <h3 className="mt-1 text-lg font-bold text-zinc-900 dark:text-zinc-50">All activity</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLogOpen(false)}
+                  className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                >
+                  Close
+                </button>
+              </header>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2 sm:px-5">
+                {activities.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
+                    No ticket logs available.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="sticky top-0 z-[1] -mx-1 mb-3 rounded-xl border border-orange-200/80 bg-orange-50/95 px-3 py-2 text-[11px] font-semibold text-orange-950 backdrop-blur-sm dark:border-orange-500/25 dark:bg-orange-950/50 dark:text-orange-100">
+                      Showing every log entry below. The dashboard still highlights the {PREVIEW_COUNT} most recent
+                      events above.
+                    </p>
+                    <ul className="space-y-2.5">
+                      {activities.map((row) => (
+                        <li key={`full-${row.id}`}>
+                          <LogRowCard row={row} nowMs={nowMs} onOpenTicket={openTicketFromLog} interactive />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -369,59 +502,7 @@ export function RecentActivityPanel({
         </div>
       )}
 
-      {logOpen ? (
-        <div className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-6">
-          <button
-            type="button"
-            className="absolute inset-0 bg-zinc-950/65 backdrop-blur-sm"
-            aria-label="Close activity log"
-            onClick={() => setLogOpen(false)}
-          />
-          <section
-            className={cn(
-              "relative z-[81] flex max-h-[min(92dvh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-zinc-200/90 bg-white/95 shadow-[0_-12px_60px_rgba(0,0,0,0.2)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-[#080d18]/95 dark:shadow-[0_-20px_80px_rgba(0,0,0,0.55)] dark:ring-white/5 sm:rounded-3xl sm:shadow-[0_28px_100px_rgba(0,0,0,0.35)]",
-            )}
-          >
-            <header className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200/80 px-5 py-4 dark:border-zinc-800/80">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-700 dark:text-orange-400">
-                  Ticket audit log
-                </p>
-                <h3 className="mt-1 text-lg font-bold text-zinc-900 dark:text-zinc-50">All activity</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setLogOpen(false)}
-                className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-              >
-                Close
-              </button>
-            </header>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2 sm:px-5">
-              {activities.length === 0 ? (
-                <p className="rounded-xl border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-                  No ticket logs available.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  <p className="sticky top-0 z-[1] -mx-1 mb-3 rounded-xl border border-orange-200/80 bg-orange-50/95 px-3 py-2 text-[11px] font-semibold text-orange-950 backdrop-blur-sm dark:border-orange-500/25 dark:bg-orange-950/50 dark:text-orange-100">
-                    Showing every log entry below. The dashboard still highlights the {PREVIEW_COUNT} most recent
-                    events above.
-                  </p>
-                  <ul className="space-y-2.5">
-                    {activities.map((row) => (
-                      <li key={`full-${row.id}`}>
-                        <LogRowCard row={row} nowMs={nowMs} onOpenTicket={openTicketFromLog} interactive />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-      ) : null}
+      {activityLogModal}
 
       <TicketDetailFloat ticketId={detailTicketId} onClose={() => setDetailTicketId(null)} />
     </div>

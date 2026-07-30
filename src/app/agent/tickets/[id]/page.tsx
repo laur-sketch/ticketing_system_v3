@@ -311,11 +311,8 @@ export default async function AgentTicketPage({
             sessionAgentId={operator?.id ?? null}
             isSuperAdmin={isSuperAdmin}
             isPersonnel={isPersonnel}
-            canManageJobOrderProject={
-              session.user.role === "SuperAdmin" ||
-              session.user.role === "Admin" ||
-              session.user.role === "Personnel"
-            }
+            canCreateJobOrderProject={isAdmin || companyCoordinator}
+            canRequestJobOrderProject={isPersonnel && isAssignedOperator && !isAdmin && !companyCoordinator}
           />
         </div>
       </div>

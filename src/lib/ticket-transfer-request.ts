@@ -48,6 +48,22 @@ export function parseTransferRequestDetail(detail: string | null | undefined): T
   };
 }
 
+/** Human-readable line for activity feeds (avoids dumping JSON payloads). */
+export function formatTransferRequestDetail(detail: string | null | undefined): string | null {
+  const parsed = parseTransferRequestDetail(detail);
+  if (!parsed) return null;
+  // Plain-text legacy: parseTransferRequestDetail always returns an object; detect JSON vs plain.
+  if (detail?.trim().startsWith("{")) {
+    const who =
+      parsed.recipientAgentName?.trim() ||
+      (parsed.recipientSuperAdmin ? "SuperAdmin" : null) ||
+      "a colleague";
+    const reason = parsed.reason?.trim();
+    return reason ? `Transfer to ${who}: ${reason}` : `Transfer to ${who}`;
+  }
+  return parsed.reason?.trim() || detail?.trim() || null;
+}
+
 /** Whether this viewer may accept/reject the pending transfer. */
 export function canViewerApproveTransfer(opts: {
   sessionRole: string;

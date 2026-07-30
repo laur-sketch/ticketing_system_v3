@@ -81,7 +81,8 @@ export function AgentWorkspace({
   sessionAgentId = null,
   isSuperAdmin = false,
   isPersonnel = false,
-  canManageJobOrderProject = false,
+  canCreateJobOrderProject = false,
+  canRequestJobOrderProject = false,
 }: {
   ticket: TicketDetail;
   canUpdatePriority: boolean;
@@ -101,8 +102,10 @@ export function AgentWorkspace({
   sessionAgentId?: string | null;
   isSuperAdmin?: boolean;
   isPersonnel?: boolean;
-  /** Admin / SuperAdmin: create Task Board project from this Job Order. */
-  canManageJobOrderProject?: boolean;
+  /** Admin / SuperAdmin / company coordinator: create Task Board project from this Job Order. */
+  canCreateJobOrderProject?: boolean;
+  /** Assigned Personnel: request a company Admin to create the Task Project. */
+  canRequestJobOrderProject?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -897,7 +900,9 @@ export function AgentWorkspace({
               )}
             <JobOrderProjectLinkPanel
               ticketId={ticket.id}
-              canCreateProject={canManageJobOrderProject}
+              canCreateProject={canCreateJobOrderProject}
+              canRequestProject={canRequestJobOrderProject}
+              sessionAgentId={sessionAgentId}
             />
             </div>
           ) : (

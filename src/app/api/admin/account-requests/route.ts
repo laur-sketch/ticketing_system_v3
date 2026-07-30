@@ -1,6 +1,6 @@
-import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
+import { setLinkedAccountPassword } from "@/lib/auth/linked-account-password";
 import { DEFAULT_PASSWORD_RESET } from "@/lib/default-reset-password";
 import { prisma } from "@/lib/prisma";
 
@@ -40,30 +40,38 @@ export async function PATCH(req: Request) {
       },
     });
 
-    if (status === "APPROVED") {
-      if (request.requestType === "PASSWORD_RESET") {
-        const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD_RESET, 12);
+    if (status === "APPROVED" && request.requestType !== "PASSWORD_RESET") {
+      const nextAccountStatus =
+        request.requestType === "DELETION"
+          ? "DELETED"
+          : request.requestType === "SUSPENSION"
+            ? "SUSPENDED"
+            : null;
+      if (nextAccountStatus) {
         await tx.portalAccount.update({
           where: { id: request.portalAccountId },
-          data: { passwordHash },
+          data: { accountStatus: nextAccountStatus },
         });
-      } else {
-        const nextAccountStatus =
-          request.requestType === "DELETION"
-            ? "DELETED"
-            : request.requestType === "SUSPENSION"
-              ? "SUSPENDED"
-              : null;
-        if (nextAccountStatus) {
-          await tx.portalAccount.update({
-            where: { id: request.portalAccountId },
-            data: { accountStatus: nextAccountStatus },
-          });
-        }
       }
     }
 
     return request;
   });
+
+  if (status === "APPROVED" && updated.requestType === "PASSWORD_RESET") {
+    const portal = await prisma.portalAccount.findUnique({
+      where: { id: updated.portalAccountId },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        mergedSourceUserId: true,
+      },
+    });
+    if (portal) {
+      await setLinkedAccountPassword(portal, DEFAULT_PASSWORD_RESET);
+    }
+  }
+
   return NextResponse.json(updated);
 }

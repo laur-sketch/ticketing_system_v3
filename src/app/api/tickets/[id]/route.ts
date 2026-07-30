@@ -11,6 +11,14 @@ import {
   parseTransferRequestDetail,
   serializeTransferRequest,
 } from "@/lib/ticket-transfer-request";
+import {
+  JO_PROJECT_REQUEST_CANCELLED_SUMMARY,
+  JO_PROJECT_REQUEST_FULFILLED_SUMMARY,
+  JO_PROJECT_REQUESTED_SUMMARY,
+  jobOrderProjectRequestPendingFromActivities,
+  serializeJobOrderProjectRequest,
+} from "@/lib/job-order-project-request";
+import { loadHrisAssignableStaff } from "@/lib/hris-staff-roster";
 import { getTicketSlaState } from "@/lib/sla";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
@@ -2185,6 +2193,187 @@ export async function PATCH(
       return NextResponse.json({
         ...(updated ? await ticketJsonWithAssigneeColor(updated) : {}),
         linkedProject: null,
+      });
+    }
+
+    if (action === "request_job_order_project") {
+      if (!isAssignedOperator) {
+        return NextResponse.json(
+          { error: "Only the assigned personnel can request a Task Project." },
+          { status: 403 },
+        );
+      }
+      if (roleIsAdmin || roleIsCompanyAdmin) {
+        return NextResponse.json(
+          { error: "Admins can create the Task Project directly." },
+          { status: 400 },
+        );
+      }
+      const requestType = await loadTicketRequestType(id);
+      if (requestType !== "JOB_ORDER") {
+        return NextResponse.json(
+          { error: "Only Job Order requests can request a Task Project." },
+          { status: 400 },
+        );
+      }
+      const { getTicketLinkedKpiMaintenanceId } = await import("@/lib/job-order-project");
+      const alreadyLinked = await getTicketLinkedKpiMaintenanceId(id);
+      if (alreadyLinked) {
+        return NextResponse.json(
+          { error: "This Job Order is already linked to a project." },
+          { status: 400 },
+        );
+      }
+
+      const requestAudit = await prisma.ticketActivity.findMany({
+        where: {
+          ticketId: id,
+          summary: {
+            in: [
+              JO_PROJECT_REQUESTED_SUMMARY,
+              JO_PROJECT_REQUEST_FULFILLED_SUMMARY,
+              JO_PROJECT_REQUEST_CANCELLED_SUMMARY,
+            ],
+          },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { summary: true, detail: true },
+      });
+      const { pending } = jobOrderProjectRequestPendingFromActivities(requestAudit);
+      if (pending) {
+        return NextResponse.json(
+          { error: "A Task Project request is already pending." },
+          { status: 400 },
+        );
+      }
+
+      const targetAdminAgentId =
+        typeof body.targetAdminAgentId === "string" ? body.targetAdminAgentId.trim() : "";
+      if (!targetAdminAgentId) {
+        return NextResponse.json(
+          { error: "Select a company Admin to create the Task Project." },
+          { status: 400 },
+        );
+      }
+
+      const companyTeamId =
+        ticket.teamId?.trim() ||
+        (ticket.assignedAgentId
+          ? await resolveAgentDesignatedCompanyId(ticket.assignedAgentId)
+          : null);
+      if (!companyTeamId) {
+        return NextResponse.json(
+          { error: "This Job Order has no company to scope Admins." },
+          { status: 400 },
+        );
+      }
+
+      const staff = await loadHrisAssignableStaff({ companyTeamId });
+      const adminStaff = staff.find(
+        (s) =>
+          s.agentId === targetAdminAgentId &&
+          (isAdminPortalRole(s.portalRole) || s.headPrivileges),
+      );
+      if (!adminStaff) {
+        return NextResponse.json(
+          { error: "Choose an Admin from this Job Order’s company." },
+          { status: 400 },
+        );
+      }
+
+      const targetAdmin = await prisma.agent.findUnique({
+        where: { id: targetAdminAgentId },
+        select: { id: true, name: true },
+      });
+      if (!targetAdmin) {
+        return NextResponse.json({ error: "Selected Admin not found." }, { status: 404 });
+      }
+
+      const note =
+        typeof body.note === "string" && body.note.trim() ? body.note.trim().slice(0, 500) : undefined;
+
+      await logActivity(
+        id,
+        "AGENT",
+        JO_PROJECT_REQUESTED_SUMMARY,
+        serializeJobOrderProjectRequest({
+          targetAdminAgentId: targetAdmin.id,
+          targetAdminAgentName: targetAdmin.name,
+          requestedByAgentId: operator?.id ?? null,
+          requestedByAgentName: operator?.name ?? session.user.name ?? null,
+          note,
+        }),
+      );
+
+      const updated = await prisma.ticket.findUnique({
+        where: { id },
+        include: { team: true, assignedAgent: true },
+      });
+      return NextResponse.json({
+        ...(updated ? await ticketJsonWithAssigneeColor(updated) : {}),
+        projectRequest: {
+          pending: true,
+          targetAdminAgentId: targetAdmin.id,
+          targetAdminAgentName: targetAdmin.name,
+          requestedByAgentId: operator?.id ?? null,
+          requestedByAgentName: operator?.name ?? session.user.name ?? null,
+          note: note ?? null,
+        },
+      });
+    }
+
+    if (action === "cancel_job_order_project_request") {
+      if (!isAssignedOperator && !roleIsAdmin && !roleIsCompanyAdmin) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const requestAudit = await prisma.ticketActivity.findMany({
+        where: {
+          ticketId: id,
+          summary: {
+            in: [
+              JO_PROJECT_REQUESTED_SUMMARY,
+              JO_PROJECT_REQUEST_FULFILLED_SUMMARY,
+              JO_PROJECT_REQUEST_CANCELLED_SUMMARY,
+            ],
+          },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { summary: true, detail: true },
+      });
+      const { pending, payload } = jobOrderProjectRequestPendingFromActivities(requestAudit);
+      if (!pending) {
+        return NextResponse.json({ error: "No pending Task Project request." }, { status: 400 });
+      }
+      if (
+        isAssignedOperator &&
+        !roleIsAdmin &&
+        !roleIsCompanyAdmin &&
+        payload?.requestedByAgentId &&
+        operator?.id &&
+        payload.requestedByAgentId !== operator.id
+      ) {
+        return NextResponse.json(
+          { error: "Only the requester or an Admin can cancel this request." },
+          { status: 403 },
+        );
+      }
+
+      await logActivity(
+        id,
+        "AGENT",
+        JO_PROJECT_REQUEST_CANCELLED_SUMMARY,
+        payload?.targetAdminAgentName
+          ? `Cancelled request to ${payload.targetAdminAgentName}.`
+          : "Cancelled Task Project request.",
+      );
+
+      const updated = await prisma.ticket.findUnique({
+        where: { id },
+        include: { team: true, assignedAgent: true },
+      });
+      return NextResponse.json({
+        ...(updated ? await ticketJsonWithAssigneeColor(updated) : {}),
+        projectRequest: { pending: false },
       });
     }
 

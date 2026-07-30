@@ -8,7 +8,9 @@ import {
 import { useMergedCredentials } from "@/lib/auth/credentials-source";
 import { isOAuthOnlyPortal, verifyPortalPassword } from "@/lib/auth/portal-password";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
+import { withSecondaryWriteClient } from "@/lib/prisma-secondary-write";
 import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
+
 
 type PortalAuthRow = {
   id: string;
@@ -75,34 +77,36 @@ export async function setLinkedAccountPassword(
   const laravelHash = toLaravelBcryptHash(nextHash);
 
   if (useMergedCredentials() && portal.mergedSourceUserId != null) {
-    await prismaSecondary.$executeRaw`
-      UPDATE merged_users
-      SET password_hash = ${laravelHash}, updated_at = CURRENT_TIMESTAMP
-      WHERE source_user_id = ${portal.mergedSourceUserId}
-    `;
+    await withSecondaryWriteClient(async (db) => {
+      await db.$executeRaw`
+        UPDATE merged_users
+        SET password_hash = ${laravelHash}, updated_at = CURRENT_TIMESTAMP
+        WHERE source_user_id = ${portal.mergedSourceUserId}
+      `;
 
-    // Keep live HRIS in sync so login (which prefers hris.users.password) accepts
-    // the password the user just set in the portal.
-    const hrisTags = resolveHrisSourceTags();
-    const tagged = await prismaSecondary.$queryRaw<Array<{ source_database: string }>>`
-      SELECT source_database FROM merged_users
-      WHERE source_user_id = ${portal.mergedSourceUserId}
-      LIMIT 1
-    `;
-    if (tagged[0] && hrisTags.includes(tagged[0].source_database)) {
-      const liveDb = process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris";
-      if (/^[A-Za-z0-9_-]+$/.test(liveDb)) {
-        try {
-          await prismaSecondary.$executeRawUnsafe(
-            `UPDATE \`${liveDb}\`.users SET password = ? WHERE id = ?`,
-            laravelHash,
-            portal.mergedSourceUserId,
-          );
-        } catch (e) {
-          console.warn("[linked-account-password] HRIS password write failed", e);
+      // Keep live HRIS in sync so login (which prefers hris.users.password) accepts
+      // the password the user just set in the portal.
+      const hrisTags = resolveHrisSourceTags();
+      const tagged = await db.$queryRaw<Array<{ source_database: string }>>`
+        SELECT source_database FROM merged_users
+        WHERE source_user_id = ${portal.mergedSourceUserId}
+        LIMIT 1
+      `;
+      if (tagged[0] && hrisTags.includes(tagged[0].source_database)) {
+        const liveDb = process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris-dev";
+        if (/^[A-Za-z0-9_-]+$/.test(liveDb)) {
+          try {
+            await db.$executeRawUnsafe(
+              `UPDATE \`${liveDb}\`.users SET password = ? WHERE id = ?`,
+              laravelHash,
+              portal.mergedSourceUserId,
+            );
+          } catch (e) {
+            console.warn("[linked-account-password] HRIS password write failed", e);
+          }
         }
       }
-    }
+    });
 
     // Keep portal hash cleared so dual-credential conflicts cannot return.
     await prismaPrimary.portalAccount.update({

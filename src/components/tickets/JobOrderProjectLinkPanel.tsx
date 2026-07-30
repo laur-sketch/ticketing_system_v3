@@ -22,13 +22,33 @@ type Prefill = {
   suggestedProjectName: string;
 };
 
+type CompanyAdmin = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+type ProjectRequest = {
+  pending: boolean;
+  targetAdminAgentId?: string | null;
+  targetAdminAgentName?: string | null;
+  requestedByAgentId?: string | null;
+  requestedByAgentName?: string | null;
+  note?: string | null;
+};
+
 export function JobOrderProjectLinkPanel({
   ticketId,
   canCreateProject,
+  canRequestProject,
+  sessionAgentId = null,
 }: {
   ticketId: string;
-  /** Admin / SuperAdmin — can open Task management create flow. */
+  /** Admin / SuperAdmin / company coordinator — can open Task management create flow. */
   canCreateProject: boolean;
+  /** Assigned Personnel — request an Admin to create the project. */
+  canRequestProject: boolean;
+  sessionAgentId?: string | null;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -37,8 +57,11 @@ export function JobOrderProjectLinkPanel({
   const [linkedProject, setLinkedProject] = useState<LinkedProject | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [prefill, setPrefill] = useState<Prefill | null>(null);
+  const [companyAdmins, setCompanyAdmins] = useState<CompanyAdmin[]>([]);
+  const [projectRequest, setProjectRequest] = useState<ProjectRequest>({ pending: false });
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState("");
+  const [selectedAdminId, setSelectedAdminId] = useState("");
 
   async function load() {
     setLoading(true);
@@ -52,6 +75,8 @@ export function JobOrderProjectLinkPanel({
         linkedProject?: LinkedProject | null;
         projects?: ProjectOption[];
         prefill?: Prefill;
+        companyAdmins?: CompanyAdmin[];
+        projectRequest?: ProjectRequest;
       };
       if (!res.ok) {
         setError(data.error ?? "Could not load project link options.");
@@ -60,7 +85,12 @@ export function JobOrderProjectLinkPanel({
       setLinkedProject(data.linkedProject ?? null);
       setProjects(data.projects ?? []);
       setPrefill(data.prefill ?? null);
+      setCompanyAdmins(data.companyAdmins ?? []);
+      setProjectRequest(data.projectRequest ?? { pending: false });
       setSelectedId(data.linkedProject?.id ?? "");
+      if (data.projectRequest?.pending && data.projectRequest.targetAdminAgentId) {
+        setSelectedAdminId(data.projectRequest.targetAdminAgentId);
+      }
     } catch {
       setError("Could not load project link options.");
     } finally {
@@ -81,6 +111,14 @@ export function JobOrderProjectLinkPanel({
       return hay.includes(q);
     });
   }, [projects, query]);
+
+  const isTargetedAdmin =
+    projectRequest.pending &&
+    Boolean(
+      sessionAgentId &&
+        projectRequest.targetAdminAgentId &&
+        sessionAgentId === projectRequest.targetAdminAgentId,
+    );
 
   async function linkSelected() {
     if (!selectedId) {
@@ -104,6 +142,7 @@ export function JobOrderProjectLinkPanel({
       return;
     }
     setLinkedProject(data.linkedProject ?? null);
+    setProjectRequest({ pending: false });
     router.refresh();
   }
 
@@ -126,6 +165,56 @@ export function JobOrderProjectLinkPanel({
     router.refresh();
   }
 
+  async function requestProject() {
+    if (!selectedAdminId) {
+      setError("Select a company Admin to create the Task Project.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/tickets/${ticketId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "request_job_order_project",
+        targetAdminAgentId: selectedAdminId,
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      projectRequest?: ProjectRequest;
+    };
+    setBusy(false);
+    if (!res.ok) {
+      setError(data.error ?? "Could not submit Task Project request.");
+      return;
+    }
+    setProjectRequest(data.projectRequest ?? { pending: true });
+    router.refresh();
+  }
+
+  async function cancelRequest() {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/tickets/${ticketId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "cancel_job_order_project_request" }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      projectRequest?: ProjectRequest;
+    };
+    setBusy(false);
+    if (!res.ok) {
+      setError(data.error ?? "Could not cancel request.");
+      return;
+    }
+    setProjectRequest(data.projectRequest ?? { pending: false });
+    setSelectedAdminId("");
+    router.refresh();
+  }
+
   const createHref = (() => {
     const params = new URLSearchParams();
     params.set("fromJobOrder", ticketId);
@@ -141,7 +230,11 @@ export function JobOrderProjectLinkPanel({
             Related Task Board project
           </p>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            Link this Job Order to an existing project, or create one from these details.
+            {canCreateProject
+              ? "Link this Job Order to an existing project, or create one from these details."
+              : canRequestProject
+                ? "Link an existing project, or request a company Admin to create a Task Project."
+                : "Link this Job Order to an existing Task Board project."}
           </p>
         </div>
         {canCreateProject && !linkedProject ? (
@@ -183,47 +276,127 @@ export function JobOrderProjectLinkPanel({
           </button>
         </div>
       ) : (
-        <div className="mt-3 space-y-2">
-          <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Search projects
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Type to filter by name…"
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-          </label>
-          <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Select project
-            <select
-              value={selectedId}
-              onChange={(e) => setSelectedId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+        <div className="mt-3 space-y-3">
+          {projectRequest.pending ? (
+            <div
+              className={`rounded-lg border px-3 py-2 ${
+                isTargetedAdmin
+                  ? "border-orange-400/50 bg-orange-500/15 dark:border-orange-400/40 dark:bg-orange-500/20"
+                  : "border-zinc-200 bg-white/80 dark:border-zinc-700 dark:bg-zinc-950/50"
+              }`}
             >
-              <option value="">Choose a project…</option>
-              {filteredProjects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.displayName}
-                  {p.title && p.title !== p.displayName ? ` · ${p.title}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {filteredProjects.length === 0 ? (
-            <p className="text-xs text-zinc-500">
-              No matching projects for this company.
-              {canCreateProject ? " Use Create Related Project to start one." : ""}
-            </p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                Task Project request pending
+              </p>
+              <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {isTargetedAdmin
+                  ? `${projectRequest.requestedByAgentName?.trim() || "Personnel"} asked you to create a Task Project for this Job Order.`
+                  : `Requested from ${projectRequest.targetAdminAgentName?.trim() || "company Admin"}.`}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {isTargetedAdmin || canCreateProject ? (
+                  <Link
+                    href={createHref}
+                    className="inline-flex rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-orange-500"
+                  >
+                    Create Task Project
+                  </Link>
+                ) : null}
+                {canRequestProject || canCreateProject ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void cancelRequest()}
+                    className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:border-rose-400/50 hover:text-rose-700 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  >
+                    Cancel request
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : canRequestProject && !canCreateProject ? (
+            <div className="space-y-2 rounded-lg border border-zinc-200 bg-white/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                Request Task Project
+              </p>
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                Company Admin
+                <select
+                  value={selectedAdminId}
+                  onChange={(e) => setSelectedAdminId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                >
+                  <option value="">Select Admin…</option>
+                  {companyAdmins.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.email ? ` · ${a.email}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {companyAdmins.length === 0 ? (
+                <p className="text-xs text-zinc-500">
+                  No Admins found for this company. Ask a SuperAdmin to assign company Admins.
+                </p>
+              ) : null}
+              <button
+                type="button"
+                disabled={busy || !selectedAdminId}
+                onClick={() => void requestProject()}
+                className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
+              >
+                Request Task Project
+              </button>
+            </div>
           ) : null}
-          <button
-            type="button"
-            disabled={busy || !selectedId}
-            onClick={() => void linkSelected()}
-            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-          >
-            Link selected project
-          </button>
+
+          <div className="space-y-2">
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Search projects
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Type to filter by name…"
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              />
+            </label>
+            <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Select project
+              <select
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              >
+                <option value="">Choose a project…</option>
+                {filteredProjects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.displayName}
+                    {p.title && p.title !== p.displayName ? ` · ${p.title}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {filteredProjects.length === 0 ? (
+              <p className="text-xs text-zinc-500">
+                No matching projects for this company.
+                {canCreateProject
+                  ? " Use Create Related Project to start one."
+                  : canRequestProject
+                    ? " Request a company Admin to create one."
+                    : ""}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              disabled={busy || !selectedId}
+              onClick={() => void linkSelected()}
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            >
+              Link selected project
+            </button>
+          </div>
         </div>
       )}
 
