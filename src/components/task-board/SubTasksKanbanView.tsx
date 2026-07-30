@@ -211,7 +211,7 @@ export function SubTasksKanbanView({
                   : {})}
                 className={cn(
                   "rounded-lg border border-zinc-200 bg-white p-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-950",
-                  canManage && "cursor-grab touch-pan-y active:cursor-grabbing",
+                  canManage && "cursor-grab touch-none active:cursor-grabbing",
                   drag.draggingItemId === card.id && "opacity-50 ring-1 ring-orange-400/50",
                   card.done && "border-emerald-300/70 bg-emerald-50/50 dark:border-emerald-800/40",
                   isUnassigned && opts.fullWidth && "w-[min(100%,16.5rem)]",

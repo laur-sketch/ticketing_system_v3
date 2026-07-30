@@ -17,6 +17,7 @@ import {
   incidentMetricPercents,
   isInvertedChecklistPillar,
   isPillarOnlyTask,
+  isProjectTask,
   kpiChecklistMetricView,
   kpiChecklistProgress,
   normalizeSubKpis,
@@ -25,10 +26,13 @@ import {
   type KpiChecklistProgress,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
-import { countItProjectSubKpiStatus, itProjectChecklistItems, itProjectStatusProgress } from "@/lib/it-project-subkpis";
+import { countItProjectSubKpiStatus, itProjectChecklistItems, itProjectStatusProgress, usesProjectTimelineTracker } from "@/lib/it-project-subkpis";
 import {
+  isItProjectImplementationPillar,
+  isJobOrderRequestPillar,
   IT_PROJECT_IMPLEMENTATION_TITLE,
   IT_TASK_PILLAR_TITLES,
+  JOB_ORDER_REQUEST_PILLAR_TITLE,
 } from "@/lib/it-task-pillar-titles";
 import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
@@ -384,81 +388,119 @@ export function kpiMaintenanceWhereForTaskMetrics(
   };
 }
 
-async function computeItProjectImplementationPillarMetric(args: {
+function isProjectTimelineMetricsKpi(row: {
+  title: string;
+  subKpis: unknown;
+  isRecurring: boolean | null;
+}): boolean {
+  if (row.isRecurring === true) return false;
+  if (isItProjectImplementationPillar(row.title) || isJobOrderRequestPillar(row.title)) return true;
+  return isProjectTask(row.subKpis) || usesProjectTimelineTracker(row.subKpis);
+}
+
+function pillarKeyForProjectKpi(title: string): string {
+  return pillarFromKpiTitle(title) ?? normalizeDynamicPillarTitle(title) ?? IT_PROJECT_IMPLEMENTATION_TITLE;
+}
+
+/**
+ * On-time / delayed metrics for Timeline Tracker / JO-linked projects.
+ * Includes legacy IT PROJECT IMPLEMENTATION rows and newer Project / JOB ORDER REQUEST rows.
+ */
+async function computeProjectTimelinePillarMetricsByTitle(args: {
   kpiWhere: Prisma.KpiMaintenanceWhereInput;
   timeZone: string;
-}): Promise<TaskChecklistPillarMetric> {
+}): Promise<TaskChecklistPillarMetrics> {
   const rows = await prisma.kpiMaintenance.findMany({
     where: {
-      title: IT_PROJECT_IMPLEMENTATION_TITLE,
       isRecurring: false,
       ...args.kpiWhere,
     },
     select: {
-      subKpis: true,
       title: true,
+      subKpis: true,
       frequency: true,
       isRecurring: true,
       assignedAgent: { select: { id: true, name: true } },
     },
   });
-  const nowMs = Date.now();
-  let total = 0;
-  let completedOnTime = 0;
-  let delayed = 0;
-  for (const row of rows) {
-    const counts = countItProjectSubKpiStatus(row.subKpis, nowMs, args.timeZone);
-    total += counts.total;
-    completedOnTime += counts.completedOnTime;
-    delayed += counts.delayed;
+
+  const projectRows = rows.filter((row) => isProjectTimelineMetricsKpi(row));
+  const byPillar = new Map<string, typeof projectRows>();
+  for (const row of projectRows) {
+    const pillar = pillarKeyForProjectKpi(row.title);
+    const list = byPillar.get(pillar) ?? [];
+    list.push(row);
+    byPillar.set(pillar, list);
   }
-  const basePercent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
-  let assigneeProgress = assigneeProgressForRows(
-    rows.map((row) => ({
-      title: IT_PROJECT_IMPLEMENTATION_TITLE,
-      subKpis: row.subKpis,
-      assignedAgent: row.assignedAgent,
-      items: itProjectChecklistItems(row.subKpis),
-    })),
-    (item) => itProjectStatusProgress(item) === 100,
-  );
 
-  const penaltyRows: PersonnelDelayPenaltyRow[] = [
-    ...mergePenaltyDeductionMaps(
-      rows.map((row) =>
-        penaltyDeductionsForKpi(
-          {
-            subKpis: row.subKpis,
-            frequency: row.frequency as KpiFrequencyCode,
-            isRecurring: row.isRecurring,
-            title: row.title,
-            assignedAgent: row.assignedAgent,
-          },
-          { nowMs, timeZone: args.timeZone },
+  // Always materialize the legacy IT PROJECT bucket so callers can merge cleanly.
+  if (!byPillar.has(IT_PROJECT_IMPLEMENTATION_TITLE)) {
+    byPillar.set(IT_PROJECT_IMPLEMENTATION_TITLE, []);
+  }
+
+  const nowMs = Date.now();
+  const out: TaskChecklistPillarMetrics = {};
+
+  for (const [pillar, pillarRows] of byPillar) {
+    let total = 0;
+    let completedOnTime = 0;
+    let delayed = 0;
+    for (const row of pillarRows) {
+      const counts = countItProjectSubKpiStatus(row.subKpis, nowMs, args.timeZone);
+      total += counts.total;
+      completedOnTime += counts.completedOnTime;
+      delayed += counts.delayed;
+    }
+    const basePercent = total > 0 ? Math.round((completedOnTime / total) * 100) : 0;
+    let assigneeProgress = assigneeProgressForRows(
+      pillarRows.map((row) => ({
+        title: row.title,
+        subKpis: row.subKpis,
+        assignedAgent: row.assignedAgent,
+        items: itProjectChecklistItems(row.subKpis),
+      })),
+      (item) => itProjectStatusProgress(item) === 100,
+    );
+
+    const penaltyRows: PersonnelDelayPenaltyRow[] = [
+      ...mergePenaltyDeductionMaps(
+        pillarRows.map((row) =>
+          penaltyDeductionsForKpi(
+            {
+              subKpis: row.subKpis,
+              frequency: row.frequency as KpiFrequencyCode,
+              isRecurring: row.isRecurring,
+              title: row.title,
+              assignedAgent: row.assignedAgent,
+            },
+            { nowMs, timeZone: args.timeZone },
+          ),
         ),
-      ),
-    ).values(),
-  ].filter((row) => row.deduction > 0);
+      ).values(),
+    ].filter((row) => row.deduction > 0);
 
-  assigneeProgress = applyPenaltiesToAssigneeProgress(assigneeProgress, penaltyRows);
-  const totalPenalty = penaltyRows.reduce((sum, row) => sum + row.deduction, 0);
-  const percent =
-    assigneeProgress.length > 0
-      ? weightedAssigneeProgressPercent(assigneeProgress)
-      : totalPenalty > 0
-        ? applyPenaltyToTaskEfficiency(basePercent, totalPenalty)
-        : basePercent;
+    assigneeProgress = applyPenaltiesToAssigneeProgress(assigneeProgress, penaltyRows);
+    const totalPenalty = penaltyRows.reduce((sum, row) => sum + row.deduction, 0);
+    const percent =
+      assigneeProgress.length > 0
+        ? weightedAssigneeProgressPercent(assigneeProgress)
+        : totalPenalty > 0
+          ? applyPenaltyToTaskEfficiency(basePercent, totalPenalty)
+          : basePercent;
 
-  return {
-    total,
-    done: completedOnTime,
-    missing: delayed,
-    percent,
-    periodsCounted: rows.length,
-    periodsInRange: rows.length,
-    assigneeProgress,
-    assigneeProgressAccumulated: assigneeProgress,
-  };
+    out[pillar] = {
+      total,
+      done: completedOnTime,
+      missing: delayed,
+      percent,
+      periodsCounted: pillarRows.length,
+      periodsInRange: pillarRows.length,
+      assigneeProgress,
+      assigneeProgressAccumulated: assigneeProgress,
+    };
+  }
+
+  return out;
 }
 
 function assigneeProgressForRows(
@@ -1305,15 +1347,38 @@ export async function computeTaskChecklistPillarMetrics(args: {
   const now = new Date();
   const currentPeriodKeyFor = (kpi: (typeof kpis)[number]) => resolvePeriodKeyForKpi(kpi, now, zone);
 
-  const result: TaskChecklistPillarMetrics = {};
+  const projectMetricsByPillar = await computeProjectTimelinePillarMetricsByTitle({
+    kpiWhere,
+    timeZone: zone,
+  });
 
-  for (const pillar of pillarsToCompute) {
-    if (pillar === IT_PROJECT_IMPLEMENTATION_TITLE) {
-      result[pillar] = await computeItProjectImplementationPillarMetric({ kpiWhere, timeZone: zone });
+  const result: TaskChecklistPillarMetrics = {};
+  const pillarsWithProjectMetrics = new Set(
+    Object.entries(projectMetricsByPillar)
+      .filter(
+        ([pillar, metric]) =>
+          pillar === IT_PROJECT_IMPLEMENTATION_TITLE ||
+          pillar === JOB_ORDER_REQUEST_PILLAR_TITLE ||
+          (metric?.periodsCounted ?? 0) > 0 ||
+          (metric?.total ?? 0) > 0,
+      )
+      .map(([pillar]) => pillar),
+  );
+
+  const pillarsForLoop = [
+    ...pillarsToCompute,
+    ...[...pillarsWithProjectMetrics].filter((p) => !pillarsToCompute.includes(p)),
+  ];
+
+  for (const pillar of pillarsForLoop) {
+    if (pillarsWithProjectMetrics.has(pillar) && projectMetricsByPillar[pillar]) {
+      result[pillar] = projectMetricsByPillar[pillar]!;
       continue;
     }
 
-    const pillarKpis = selectedByPillar.get(pillar) ?? [];
+    const pillarKpis = (selectedByPillar.get(pillar) ?? []).filter(
+      (kpi) => !isProjectTimelineMetricsKpi(kpi),
+    );
     if (pillarKpis.length === 0) {
       result[pillar] = {
         total: 0,

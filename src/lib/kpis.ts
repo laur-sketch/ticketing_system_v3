@@ -98,7 +98,8 @@ export type TaskMetricsHelpdeskTickets = {
 };
 
 /**
- * Helpdesk Support headline: `(closed in range ÷ (open in range + closed in range)) × 100`, capped at 100%.
+ * Request Support headline: `(closed in range ÷ (open in range + closed in range)) × 100`, capped at 100%.
+ * (Internal pillar key remains HELPDESK SUPPORT.)
  */
 export function helpdeskSupportPercent(closedInRange: number, openInRange: number): number | null {
   const total = openInRange + closedInRange;

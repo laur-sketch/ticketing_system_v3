@@ -1,12 +1,11 @@
 ﻿import Link from "next/link";
-import { redirect } from "next/navigation";
 import { ArrowRight, LogIn, Shield, Users } from "lucide-react";
 import { LandingAccessVisual } from "@/components/landing/LandingAccessVisual";
 import { LandingHeroVisual } from "@/components/landing/LandingHeroVisual";
 import { LandingWorkflowVisual } from "@/components/landing/LandingWorkflowVisual";
 import { LandingGallery } from "@/components/landing/LandingGallery";
 import { TaskCommandLanding } from "@/components/landing/TaskCommandLanding";
-import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
+import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import { BrandLockup } from "@/components/BrandLockup";
@@ -17,6 +16,8 @@ import {
 } from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { findSessionAgentId } from "@/lib/session-agent";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -44,10 +45,6 @@ function priorityTone(priority: TicketPriority) {
 export default async function Home() {
   const session = await safeGetServerSession();
 
-  if (session?.user?.role === "Personnel") {
-    redirect("/agent");
-  }
-
   if (session?.user?.role === "Customer") {
     const email = session.user.email ?? "";
     const first = session.user.name?.split(" ")[0] ?? "there";
@@ -64,11 +61,40 @@ export default async function Home() {
     );
   }
 
-  if (session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin") {
+  if (
+    session?.user?.role === "SuperAdmin" ||
+    session?.user?.role === "Admin" ||
+    session?.user?.role === "Personnel"
+  ) {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const isSuperAdmin = session.user.role === "SuperAdmin";
+    const isPersonnel = session.user.role === "Personnel";
+    const scopedCompanyTeamId =
+      isSuperAdmin || isPersonnel ? null : await resolveStaffCompanyTeamId(session.user.email);
+    const personnelAgent = isPersonnel
+      ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
+      : null;
+    // SuperAdmin: all tickets. Admin: assigned company. Personnel: own assigned work only.
+    const ticketScope: Prisma.TicketWhereInput = isPersonnel
+      ? { assignedAgentId: personnelAgent?.id ?? "__none__" }
+      : isSuperAdmin
+        ? {}
+        : { teamId: scopedCompanyTeamId ?? "__none__" };
+    const scopedCompanyName =
+      !isSuperAdmin && !isPersonnel && scopedCompanyTeamId
+        ? (
+            await prisma.team.findUnique({
+              where: { id: scopedCompanyTeamId },
+              select: { name: true },
+            })
+          )?.name ?? null
+        : null;
+
     const activeStatuses: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"];
-    const activeWhere = { status: { in: activeStatuses } } as const;
+    const activeWhere = { status: { in: activeStatuses }, ...ticketScope } as const;
+    /** Priority Stack: only live queue work — exclude done / confirmation / delayed side states. */
+    const priorityStackStatuses: TicketStatus[] = ["OPEN", "IN_PROGRESS"];
 
     const [
       openTickets,
@@ -81,17 +107,18 @@ export default async function Home() {
       resolvedLast24h,
     ] = await Promise.all([
       prisma.ticket.count({ where: activeWhere }),
-      prisma.ticket.count(),
+      prisma.ticket.count({ where: ticketScope }),
       prisma.ticket.count({
-        where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] } },
+        where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] }, ...ticketScope },
       }),
       prisma.ticket.findMany({
-        where: { firstResponseAt: { not: null } },
+        where: { firstResponseAt: { not: null }, ...ticketScope },
         select: { createdAt: true, firstResponseAt: true },
         take: 60,
         orderBy: { updatedAt: "desc" },
       }),
       prisma.ticketActivity.findMany({
+        where: { ticket: ticketScope },
         orderBy: { createdAt: "desc" },
         take: 250,
         select: {
@@ -111,16 +138,21 @@ export default async function Home() {
         },
       }),
       prisma.ticket.findMany({
-        where: { ...activeWhere, priority: { in: ["URGENT", "HIGH"] } },
+        where: {
+          status: { in: priorityStackStatuses },
+          priority: { in: ["URGENT", "HIGH"] },
+          ...ticketScope,
+        },
         orderBy: { updatedAt: "desc" },
         take: 6,
         select: { id: true, title: true, priority: true, category: true },
       }),
-      prisma.ticket.count({ where: { createdAt: { gte: yesterday } } }),
+      prisma.ticket.count({ where: { createdAt: { gte: yesterday }, ...ticketScope } }),
       prisma.ticket.count({
         where: {
           status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] },
           resolvedAt: { gte: yesterday },
+          ...ticketScope,
         },
       }),
     ]);
@@ -139,6 +171,11 @@ export default async function Home() {
     const priorityStack = priorityStackSeed
       .sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "URGENT" ? -1 : 1))
       .slice(0, 3);
+    const scopeLabel = isPersonnel
+      ? "Your assigned work"
+      : isSuperAdmin
+        ? "All companies"
+        : scopedCompanyName ?? (scopedCompanyTeamId ? "Your assigned company" : "No assigned company");
 
     return (
       <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-6 text-zinc-900 sm:px-4 sm:py-8 dark:bg-[#070d19] dark:text-zinc-100">
@@ -154,6 +191,8 @@ export default async function Home() {
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                 {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
                 {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                {" · "}
+                {scopeLabel}
               </p>
             </div>
           </header>

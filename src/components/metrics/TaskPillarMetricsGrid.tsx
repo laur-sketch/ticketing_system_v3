@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
+import { IT_TASK_PILLAR_TITLES, JOB_ORDER_REQUEST_PILLAR_TITLE } from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   isInvertedChecklistPillar,
@@ -37,7 +37,7 @@ import {
   USER_SUPPORT_STAR_COLORS,
 } from "@/lib/kinetic-palette";
 
-const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
+const PILLAR_ICONS: Record<string, LucideIcon> = {
   "HELPDESK SUPPORT": Headphones,
   "DATA BACKUP": Cloud,
   "SYSTEM MAINTENANCE": Wrench,
@@ -45,13 +45,23 @@ const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
   DOCUMENTATION: FileText,
   "USER SUPPORT": Smile,
   "IT PROJECT IMPLEMENTATION": LayoutGrid,
+  [JOB_ORDER_REQUEST_PILLAR_TITLE]: LayoutGrid,
 };
+
+/** Display titles for canonical internal pillar keys. */
+const PILLAR_DISPLAY_NAMES: Record<string, string> = {
+  "HELPDESK SUPPORT": "REQUEST SUPPORT",
+};
+
+export function pillarDisplayName(pillar: string): string {
+  return PILLAR_DISPLAY_NAMES[pillar] ?? pillar;
+}
 
 /** New task groups created on the Task Board don't have a curated icon yet. */
 const DEFAULT_PILLAR_ICON: LucideIcon = ClipboardList;
 
 function pillarIcon(pillar: string): LucideIcon {
-  return PILLAR_ICONS[pillar as ItTaskPillarTitle] ?? DEFAULT_PILLAR_ICON;
+  return PILLAR_ICONS[pillar] ?? DEFAULT_PILLAR_ICON;
 }
 
 /** Helpdesk pillar: closed vs remainder of denominator (cadence-specific). */
@@ -194,7 +204,7 @@ function PillarDonutCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-            {pillar}
+            {pillarDisplayName(pillar)}
           </p>
           <p className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
             {headline}
@@ -319,7 +329,26 @@ const CHECKLIST_PILLAR_CONFIG: Partial<Record<string, ChecklistPillarConfig>> = 
     negativeLabel: "Delayed",
     metricName: "on time",
   },
+  [JOB_ORDER_REQUEST_PILLAR_TITLE]: {
+    positiveLabel: "On time",
+    negativeLabel: "Delayed",
+    metricName: "on time",
+  },
 };
+
+function checklistConfigForPillar(pillar: string): ChecklistPillarConfig {
+  const curated = CHECKLIST_PILLAR_CONFIG[pillar];
+  if (curated) return curated;
+  const upper = pillar.trim().toUpperCase();
+  if (upper.includes("JOB ORDER") || upper.includes("PROJECT")) {
+    return {
+      positiveLabel: "On time",
+      negativeLabel: "Delayed",
+      metricName: "on time",
+    };
+  }
+  return DEFAULT_CHECKLIST_PILLAR_CONFIG;
+}
 
 function checklistProgressSegments(
   view: { positive: number; negative: number },
@@ -734,8 +763,8 @@ function csvLayoutRowsForPillar(args: {
     const percent = (agg?.total ?? 0) > 0 ? `${agg?.percent ?? 0}%` : "0%";
     return [[String(done), "0", String(notStarted), percent]];
   }
-  const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
-  const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const cfg = checklistConfigForPillar(pillar);
+  const invert = cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
   const view = kpiChecklistMetricView(
     {
       total: agg?.total ?? 0,
@@ -804,7 +833,7 @@ function sourceDetailsForPillar(args: {
   if (pillar === "HELPDESK SUPPORT") {
     const total = (helpdeskTickets?.closedCount ?? 0) + (helpdeskTickets?.openTicketsInPeriod ?? 0);
     return {
-      title: "Helpdesk Support Source",
+      title: "Request Support Source",
       rows: [
         { label: "Collected from", value: "Request records plus imported helpdesk CSV snapshots when available" },
         { label: "Recorded as", value: "Closed vs open request counts for the selected working-day range" },
@@ -814,7 +843,7 @@ function sourceDetailsForPillar(args: {
       ],
       tableColumns: ["Metric", "Value", "How it is used"],
       tableRows: [
-        ["Closed requests", String(helpdeskTickets?.closedCount ?? 0), "Numerator for helpdesk support percent"],
+        ["Closed requests", String(helpdeskTickets?.closedCount ?? 0), "Numerator for request support percent"],
         ["Open requests in period", String(helpdeskTickets?.openTicketsInPeriod ?? 0), "Open workload counted in denominator"],
         ["Closed + open total", String(total), "Denominator for the headline percent"],
         ["Requests in range", String(helpdeskTickets?.requestsInRange ?? 0), "Request volume context for the same range"],
@@ -857,9 +886,9 @@ function sourceDetailsForPillar(args: {
     };
   }
   const agg = checklistPillars?.[pillar];
-  const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
+  const cfg = checklistConfigForPillar(pillar);
   const cadenceLabel = metricsCadence.toLowerCase();
-  const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const invert = cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
   const subtaskCsvColumns = agg?.subtaskCsvColumns;
   const subtaskCsvRows = agg?.subtaskCsvRows;
   const hasSubtaskCsvPreview = Boolean(subtaskCsvColumns?.length && subtaskCsvRows?.length);
@@ -886,7 +915,7 @@ function sourceDetailsForPillar(args: {
     invert,
   );
   return {
-    title: `${pillar} Source`,
+    title: `${pillarDisplayName(pillar)} Source`,
     rows: [
       {
         label: "Collected from",
@@ -1035,7 +1064,7 @@ export function TaskPillarMetricsGrid({
           return null;
         }
 
-        const cfg = CHECKLIST_PILLAR_CONFIG[pillar] ?? DEFAULT_CHECKLIST_PILLAR_CONFIG;
+        const cfg = checklistConfigForPillar(pillar);
         const agg = checklistPillars?.[pillar] ?? {
           total: 0,
           done: 0,
@@ -1060,7 +1089,7 @@ export function TaskPillarMetricsGrid({
             ? "—"
             : `${view.percent}% ${cfg.metricName}`;
         const subLabel =
-          pillar === "IT PROJECT IMPLEMENTATION"
+          cfg.metricName === "on time"
             ? `${view.positive} on time · ${view.negative} delayed · ${agg.total} sub-tasks`
             : showCountedPeriods
               ? countedPeriodsLabel(agg)
