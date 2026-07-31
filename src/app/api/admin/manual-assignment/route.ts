@@ -7,7 +7,6 @@ import {
   applyPaymentApprovalAssignees,
   assigneeFieldForStep,
   canAssignPaymentApprover,
-  currentPaymentStepBoardAssigneeId,
   PAYMENT_APPROVAL_STEP_LABELS,
   paymentProceduralStatusLabel,
 } from "@/lib/request-for-payment-approval";
@@ -172,70 +171,26 @@ export async function POST(req: Request) {
       if (requestType === "REQUEST_FOR_PAYMENT") {
         const meta = await initPaymentApprovalMetaIfNeeded(ticketId);
         if (meta.proceduralStep !== "DONE") {
-          if (meta.proceduralStep === "PREPARED_BY" && !meta.completed.PREPARED_BY) {
-            const { stampPaymentAssigneeAsPreparedBy } = await import(
-              "@/lib/request-for-payment-approval"
-            );
-            const stamped = stampPaymentAssigneeAsPreparedBy(meta, agent.id);
-            await savePaymentApprovalMeta(ticketId, stamped);
-            await logActivity(
-              ticketId,
-              "SYSTEM",
-              `Assigned for ${PAYMENT_APPROVAL_STEP_LABELS.PREPARED_BY}`,
-              `${updated.assignedAgent?.name ?? agent.name} recorded as Prepared By.`,
-            );
-            // If the next role is already set, put the request on that person's Request Board.
-            const nextAssigneeId = currentPaymentStepBoardAssigneeId(stamped);
-            if (nextAssigneeId && nextAssigneeId !== agent.id) {
-              const moved = await prisma.ticket.update({
-                where: { id: ticketId },
-                data: { assignedAgentId: nextAssigneeId },
-                include: { assignedAgent: { select: { id: true, name: true } } },
-              });
-              assignedAgentIdAfterSync = moved.assignedAgentId;
-              assignedAgentNameAfterSync = moved.assignedAgent?.name ?? null;
-              const pending = paymentProceduralStatusLabel(stamped.proceduralStep);
-              await logActivity(
-                ticketId,
-                "SYSTEM",
-                "Assigned to next approval role",
-                pending
-                  ? `Prepared By complete. ${pending} — request placed on the next assignee’s Request Board.`
-                  : "Prepared By complete. Request placed on the next assignee’s Request Board.",
-              );
-            } else {
-              const pending = paymentProceduralStatusLabel(stamped.proceduralStep);
-              await logActivity(
-                ticketId,
-                "SYSTEM",
-                "Next approval available",
-                pending
-                  ? `Prepared By complete. ${pending} — use Ticket Controls → Submit for Next Approval.`
-                  : "Prepared By complete. Use Ticket Controls → Submit for Next Approval for the next step.",
-              );
-            }
-          } else {
-            const uniqueness = canAssignPaymentApprover({
-              meta,
-              agentId: agent.id,
-              forStep: meta.proceduralStep,
-            });
-            if (!uniqueness.ok) {
-              return NextResponse.json({ error: uniqueness.error }, { status: 400 });
-            }
-            const field = assigneeFieldForStep(meta.proceduralStep);
-            const nextMeta = applyPaymentApprovalAssignees(meta, { [field]: agent.id });
-            await savePaymentApprovalMeta(ticketId, nextMeta);
-            const pending = paymentProceduralStatusLabel(nextMeta.proceduralStep);
-            await logActivity(
-              ticketId,
-              "SYSTEM",
-              `Assigned for ${PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
-              pending
-                ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
-                : (updated.assignedAgent?.name ?? agent.name),
-            );
+          const uniqueness = canAssignPaymentApprover({
+            meta,
+            agentId: agent.id,
+            forStep: meta.proceduralStep,
+          });
+          if (!uniqueness.ok) {
+            return NextResponse.json({ error: uniqueness.error }, { status: 400 });
           }
+          const field = assigneeFieldForStep(meta.proceduralStep);
+          const nextMeta = applyPaymentApprovalAssignees(meta, { [field]: agent.id });
+          await savePaymentApprovalMeta(ticketId, nextMeta);
+          const pending = paymentProceduralStatusLabel(nextMeta.proceduralStep);
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            `Assigned for ${PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+            pending
+              ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
+              : (updated.assignedAgent?.name ?? agent.name),
+          );
         }
       } else if (requestType === "ITEM_REQUISITION_SLIP") {
         const meta = await initItemRequisitionApprovalMetaIfNeeded(ticketId);

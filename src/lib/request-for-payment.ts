@@ -14,7 +14,21 @@ export const DELIVERY_OF_CHECK_OPTIONS = [
 ] as const;
 
 export const MODE_OF_PAYMENT_CHECK = "Check";
+export const MODE_OF_PAYMENT_ONLINE_DIRECT = "Online direct to Payee's Bank Account #";
 export const DELIVERY_OF_CHECK_ONLINE_DEPOSIT = "Online Deposit";
+
+/** Bank name / account number is required for online deposit paths. */
+export function paymentModeRequiresBankDetails(
+  modeOfPayment: string,
+  deliveryOfCheck?: string | null,
+): boolean {
+  const mode = modeOfPayment.trim();
+  if (mode === MODE_OF_PAYMENT_ONLINE_DIRECT) return true;
+  return (
+    mode === MODE_OF_PAYMENT_CHECK &&
+    (deliveryOfCheck ?? "").trim() === DELIVERY_OF_CHECK_ONLINE_DEPOSIT
+  );
+}
 
 export type PaymentRequestFields = {
   payee: string;
@@ -61,10 +75,12 @@ export function formatPaymentRequestDescription(fields: PaymentRequestFields): s
   const lines = [
     `Payee: ${fields.payee.trim()}`,
     `In payment of: ${fields.inPaymentOf.trim()}`,
-    `Account title: ${fields.accountTitle.trim()}`,
-    `Amount: ${amountDisplay}`,
-    `Mode of payment: ${fields.modeOfPayment.trim()}`,
   ];
+  const accountTitle = fields.accountTitle.trim();
+  if (accountTitle) {
+    lines.push(`Account title: ${accountTitle}`);
+  }
+  lines.push(`Amount: ${amountDisplay}`, `Mode of payment: ${fields.modeOfPayment.trim()}`);
   const delivery = (fields.deliveryOfCheck ?? "").trim();
   if (delivery) {
     lines.push(`Delivery of check: ${delivery}`);

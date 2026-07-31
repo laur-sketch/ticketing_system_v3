@@ -22,11 +22,11 @@ describe("RFP role KPI attribution inputs", () => {
     assert.ok(meta);
     assert.equal(meta!.accountingAgentId, "acct-1");
     assert.equal(meta!.financeAgentId, "fin-1");
-    assert.equal(meta!.completed.RECEIVED_BY_ACCOUNTING, "2026-07-02T04:00:00.000Z");
-    assert.equal(meta!.completed.RECEIVED_BY_FINANCE, "2026-07-03T05:00:00.000Z");
+    assert.equal(meta!.completed.APPROVED_BY_ACCOUNTING, "2026-07-02T04:00:00.000Z");
+    assert.equal(meta!.completed.APPROVED_BY_FINANCE, "2026-07-03T05:00:00.000Z");
     assert.notEqual(
-      meta!.completed.RECEIVED_BY_ACCOUNTING,
-      meta!.completed.RECEIVED_BY_FINANCE,
+      meta!.completed.APPROVED_BY_ACCOUNTING,
+      meta!.completed.APPROVED_BY_FINANCE,
     );
   });
 
@@ -46,7 +46,7 @@ describe("RFP role KPI attribution inputs", () => {
         RECEIVED_BY_ACCOUNTING: "2026-07-02T00:00:00.000Z",
       },
     });
-    assert.equal(accountingPending?.proceduralStep, "RECEIVED_BY_ACCOUNTING");
-    assert.equal(financePending?.proceduralStep, "RECEIVED_BY_FINANCE");
+    assert.equal(accountingPending?.proceduralStep, "APPROVED_BY_ACCOUNTING");
+    assert.equal(financePending?.proceduralStep, "APPROVED_BY_FINANCE");
   });
 });

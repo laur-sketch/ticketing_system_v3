@@ -311,11 +311,17 @@ export default async function AgentHome({
       companyScope = { teamId: { in: rosterTeamIdsForTicketScope } };
     }
 
-    // Company queue = ticket.teamId ("Send request to"). Do not mix in
-    // cross-company personal assignments — those belong on Personnel boards /
-    // notifications, not another company's Request Board.
-    if (companyScope) {
+    // Company queue = ticket.teamId ("Send request to"). Also surface RFPs where this
+    // staff member is the current procedural assignee (e.g. APPROVED BY from another company).
+    const personalRfpScope =
+      operator?.id != null ? await personnelRequestBoardWhere(operator.id) : null;
+
+    if (companyScope && personalRfpScope) {
+      whereBase.OR = [companyScope, personalRfpScope];
+    } else if (companyScope) {
       Object.assign(whereBase, companyScope);
+    } else if (personalRfpScope) {
+      Object.assign(whereBase, personalRfpScope);
     }
   }
   if (effectiveAssigned === "UNASSIGNED") {
@@ -623,7 +629,7 @@ export default async function AgentHome({
           const rt = boardRequestTypeById.get(t.id) ?? "";
           if (rt === "REQUEST_FOR_PAYMENT") {
             return paymentProceduralStatusLabel(
-              boardPaymentMetaById.get(t.id)?.proceduralStep ?? "PREPARED_BY",
+              boardPaymentMetaById.get(t.id)?.proceduralStep ?? "NOTED_BY",
             );
           }
           if (rt === "ITEM_REQUISITION_SLIP") {

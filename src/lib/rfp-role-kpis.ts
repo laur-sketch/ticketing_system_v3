@@ -1,6 +1,6 @@
 /**
  * Request for Payment personnel KPIs — separate helpdesk-style metrics for
- * Received By (Accounting) and Received By (Finance).
+ * Approved By (Accounting) and Approved By (Finance).
  */
 
 import { Prisma } from "@prisma/client/primary";
@@ -123,24 +123,24 @@ export async function loadRfpRolePersonnelMetrics(
     const meta = parsePaymentApprovalMeta(row.paymentApprovalMeta) as PaymentApprovalMeta | null;
     if (!meta) continue;
 
-    const accountingClosedAt = meta.completed.RECEIVED_BY_ACCOUNTING;
+    const accountingClosedAt = meta.completed.APPROVED_BY_ACCOUNTING;
     if (timestampInWorkingDays(accountingClosedAt, workingDayIntervals)) {
       const creditId = meta.accountingAgentId ?? row.assignedAgentId;
       if (agentInScope(creditId, scopedAgentIds)) bump(accountingCounts, creditId, "closed");
     }
 
-    const financeClosedAt = meta.completed.RECEIVED_BY_FINANCE;
+    const financeClosedAt = meta.completed.APPROVED_BY_FINANCE;
     if (timestampInWorkingDays(financeClosedAt, workingDayIntervals)) {
       const creditId = meta.financeAgentId ?? row.assignedAgentId;
       if (agentInScope(creditId, scopedAgentIds)) bump(financeCounts, creditId, "closed");
     }
 
-    if (meta.proceduralStep === "RECEIVED_BY_ACCOUNTING") {
+    if (meta.proceduralStep === "APPROVED_BY_ACCOUNTING") {
       const pendingId = meta.accountingAgentId ?? row.assignedAgentId;
       if (agentInScope(pendingId, scopedAgentIds)) bump(accountingCounts, pendingId, "pending");
     }
 
-    if (meta.proceduralStep === "RECEIVED_BY_FINANCE") {
+    if (meta.proceduralStep === "APPROVED_BY_FINANCE") {
       const pendingId = meta.financeAgentId ?? row.assignedAgentId;
       if (agentInScope(pendingId, scopedAgentIds)) bump(financeCounts, pendingId, "pending");
     }

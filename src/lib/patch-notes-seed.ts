@@ -86,7 +86,7 @@ export const PATCH_NOTE_SEEDS: PatchNoteSeed[] = [
         {
           title: "Request for Payment procedural routing",
           description:
-            "R.F.P. requests move through Prepared By, Noted By, Approved By, and Received By (Accounting / Finance), with assignees placed on the right Request Board at each step.",
+            "R.F.P. requests move through Noted By, Approved By, Approved By Accounting, and Approved By Finance. Approvers are chosen on the form; the request is not green-lit until all four mark Done.",
         },
         {
           title: "Item Requisition & Fund Transfer approvals",

@@ -614,7 +614,7 @@ export function ContributorPersonalKpiCard({
             {row.tickets ? (
               <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
             ) : null}
-            <PersonnelMetricSection title="RFP · Received By Accounting">
+            <PersonnelMetricSection title="RFP · Approved By Accounting">
               <PersonnelMetricStatBox
                 label="Closed"
                 value={row.rfpAccounting.closed}
@@ -642,7 +642,7 @@ export function ContributorPersonalKpiCard({
             {row.tickets || row.rfpAccounting ? (
               <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
             ) : null}
-            <PersonnelMetricSection title="RFP · Received By Finance">
+            <PersonnelMetricSection title="RFP · Approved By Finance">
               <PersonnelMetricStatBox
                 label="Closed"
                 value={row.rfpFinance.closed}
