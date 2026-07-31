@@ -93,7 +93,7 @@ function LogRowCard({
           : undefined
       }
       className={cn(
-        "rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition dark:border-zinc-800 dark:bg-[#0b1220]",
+        "rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition dark:border-zinc-800 dark:bg-zinc-900",
         interactive &&
           "cursor-pointer hover:border-orange-400/50 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 dark:hover:border-orange-500/40",
       )}
@@ -218,7 +218,7 @@ function TicketDetailFloatPanel({
         aria-label="Close ticket details"
         onClick={onClose}
       />
-      <aside className="relative z-[96] flex max-h-[min(90dvh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-[#0c1220]/95 dark:ring-white/10 sm:rounded-3xl">
+      <aside className="relative z-[96] flex max-h-[min(90dvh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-200/90 bg-white/95 shadow-[0_24px_80px_rgba(0,0,0,0.28)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-900/95 dark:ring-white/10 sm:rounded-3xl">
         <header className="flex items-start justify-between gap-3 border-b border-zinc-200/80 px-4 py-3.5 dark:border-zinc-800/80 sm:px-5">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-700 dark:text-orange-400">
@@ -429,7 +429,7 @@ export function RecentActivityPanel({
             />
             <section
               className={cn(
-                "relative z-[81] flex max-h-[min(92dvh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-zinc-200/90 bg-white/95 shadow-[0_-12px_60px_rgba(0,0,0,0.2)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-[#080d18]/95 dark:shadow-[0_-20px_80px_rgba(0,0,0,0.55)] dark:ring-white/5 sm:rounded-3xl sm:shadow-[0_28px_100px_rgba(0,0,0,0.35)]",
+                "relative z-[81] flex max-h-[min(92dvh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-zinc-200/90 bg-white/95 shadow-[0_-12px_60px_rgba(0,0,0,0.2)] ring-1 ring-black/5 backdrop-blur-xl dark:border-zinc-700/90 dark:bg-zinc-950/95 dark:shadow-[0_-20px_80px_rgba(0,0,0,0.55)] dark:ring-white/5 sm:rounded-3xl sm:shadow-[0_28px_100px_rgba(0,0,0,0.35)]",
               )}
             >
               <header className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200/80 px-5 py-4 dark:border-zinc-800/80">
@@ -479,7 +479,7 @@ export function RecentActivityPanel({
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Recent Activity</h2>
+          <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-zinc-100">Recent Activity</h2>
         </div>
         <button
           type="button"
@@ -491,7 +491,7 @@ export function RecentActivityPanel({
       </div>
 
       {activities.length === 0 ? (
-        <article className="rounded-2xl border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220] dark:text-zinc-500">
+        <article className="rounded-2xl border border-zinc-200 bg-white p-5 text-sm text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500">
           No recent ticket activity yet.
         </article>
       ) : (

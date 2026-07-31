@@ -371,6 +371,8 @@ export function AgentKpiKanbanFlow({
   const [companyTravelOrdersLoading, setCompanyTravelOrdersLoading] = useState(false);
   const [companyTravelOrdersError, setCompanyTravelOrdersError] = useState<string | null>(null);
   const [taskCategoryFilter, setTaskCategoryFilter] = useState<TaskBoardCategory>("all");
+  const [mobileLane, setMobileLane] = useState<KpiBoardStatus>("CURRENT");
+  const [laneRegisterKey, setLaneRegisterKey] = useState(0);
   const [subAssigneePeersByMainId, setSubAssigneePeersByMainId] = useState<Record<string, AssignableAgent[]>>({});
   const subAssigneePeersFetchedRef = useRef(new Set<string>());
   const [addSubTaskById, setAddSubTaskById] = useState<
@@ -685,6 +687,7 @@ export function AgentKpiKanbanFlow({
         setError(body.error ?? "Could not move KPI card.");
         return;
       }
+      setMobileLane(to);
       await load();
     } finally {
       setBusyId(null);
@@ -1477,6 +1480,13 @@ export function AgentKpiKanbanFlow({
     return list;
   }, [rows, companyFilterTeamId, taskCategoryFilter, nowMs, tz]);
   const hasBoardRows = boardRows.length > 0;
+  const laneCounts = useMemo(() => {
+    const counts: Record<KpiBoardStatus, number> = { CURRENT: 0, DONE: 0, DELAYED: 0 };
+    for (const row of boardRows) {
+      counts[statusOf(row)] += 1;
+    }
+    return counts;
+  }, [boardRows, nowMs, tz]);
 
   const reloadCompanyTravelOrders = useCallback(async () => {
     setCompanyTravelOrdersLoading(true);
@@ -3025,6 +3035,7 @@ export function AgentKpiKanbanFlow({
     onDrop: (id, col) => void move(id, col),
     disabled: busyId != null,
     activationDistance: 12,
+    onDragEnd: () => setLaneRegisterKey((key) => key + 1),
   });
 
   const activeTask = activeTaskId ? rows.find((row) => row.id === activeTaskId) ?? null : null;
@@ -3726,58 +3737,43 @@ export function AgentKpiKanbanFlow({
   }
 
   return (
-    <section className="mt-3 space-y-4">
+    <section className="mt-3 min-w-0 space-y-3 md:space-y-4">
       <PointerDragGhostLayer ghost={assignLaneDrag.ghost} />
       <PointerDragGhostLayer ghost={kpiStatusDrag.ghost} />
-      <div className="flex flex-wrap gap-2">
-        {showAdminTaskManagement ? (
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap gap-2">
+          {showAdminTaskManagement ? (
+            <button
+              type="button"
+              onClick={() => setTaskManagementOpen(true)}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
+            >
+              Task management
+            </button>
+          ) : null}
+          {canAssignWork ? (
+            <button
+              type="button"
+              onClick={() => setAssignmentBoardOpen(true)}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
+            >
+              Assignment board
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => setTaskManagementOpen(true)}
-            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100"
+            onClick={() => setTravelOrdersOpen(true)}
+            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
           >
-            Open task management
+            Travel Orders
           </button>
-        ) : null}
-        {canAssignWork ? (
-          <button
-            type="button"
-            onClick={() => setAssignmentBoardOpen(true)}
-            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100"
-          >
-            Open task assignment board
-          </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => setTravelOrdersOpen(true)}
-          className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100"
-        >
-          Travel Orders
-        </button>
-      </div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-            Task Kanban (drag to update)
-          </h3>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Hold and slide a task to <strong>Done</strong> or <strong>Current</strong> (touch or mouse).{" "}
-            <span className="text-zinc-500 dark:text-zinc-500">
-              The <strong>Delayed</strong> column applies to <strong>IT Project Implementation</strong> tasks
-              (sub-task past due or actual after due), and to <strong>one-off</strong> tasks the day after each
-              sub-task target date if still incomplete (or when the actual date is on or after that boundary).
-              Fully complete but late tasks stay in{" "}
-              <strong>Delayed</strong>, not Done.
-            </span>
-          </p>
         </div>
-        <label className="flex shrink-0 flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
-          Category
+        <label className="flex min-w-0 items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500 sm:flex-col sm:items-stretch sm:gap-1">
+          <span className="shrink-0">Category</span>
           <select
             value={taskCategoryFilter}
             onChange={(e) => setTaskCategoryFilter(e.target.value as TaskBoardCategory)}
-            className="min-w-[11rem] rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:min-w-[11rem] sm:flex-none"
           >
             <option value="all">All categories</option>
             <option value="task">Task</option>
@@ -3786,13 +3782,96 @@ export function AgentKpiKanbanFlow({
           </select>
         </label>
       </div>
+      <div className="hidden md:block">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
+          Task Kanban (drag to update)
+        </h3>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Hold and slide a task to <strong>Done</strong> or <strong>Current</strong> (touch or mouse).{" "}
+          <span className="text-zinc-500 dark:text-zinc-500">
+            The <strong>Delayed</strong> column applies to <strong>IT Project Implementation</strong> tasks
+            (sub-task past due or actual after due), and to <strong>one-off</strong> tasks the day after each
+            sub-task target date if still incomplete (or when the actual date is on or after that boundary).
+            Fully complete but late tasks stay in <strong>Delayed</strong>, not Done.
+          </span>
+        </p>
+      </div>
+      {hasBoardRows ? (
+        <div
+          role="tablist"
+          aria-label="Task lane"
+          className="grid grid-cols-3 gap-1 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900/70 md:hidden"
+        >
+          {(["CURRENT", "DONE", "DELAYED"] as const).map((col) => {
+            const label = col === "CURRENT" ? "Current" : col === "DONE" ? "Done" : "Delayed";
+            const active = mobileLane === col;
+            return (
+              <button
+                key={`lane-tab-${col}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setMobileLane(col)}
+                className={cn(
+                  "inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition",
+                  active
+                    ? col === "CURRENT"
+                      ? "bg-white text-blue-800 shadow-sm dark:bg-zinc-800 dark:text-blue-200"
+                      : col === "DONE"
+                        ? "bg-white text-emerald-800 shadow-sm dark:bg-zinc-800 dark:text-emerald-200"
+                        : "bg-white text-rose-800 shadow-sm dark:bg-zinc-800 dark:text-rose-200"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                <span>{label}</span>
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                    active
+                      ? "bg-zinc-100 text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+                      : "bg-zinc-200/80 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+                  )}
+                >
+                  {laneCounts[col]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {kpiStatusDrag.draggingItemId ? (
+        <div className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom,0px))] z-[70] grid grid-cols-3 gap-2 md:hidden">
+          {(["CURRENT", "DONE", "DELAYED"] as const).map((col) => {
+            const label = col === "CURRENT" ? "Current" : col === "DONE" ? "Done" : "Delayed";
+            const dropClass =
+              col === "CURRENT"
+                ? "border-blue-400/50 bg-blue-950/90 text-blue-100"
+                : col === "DONE"
+                  ? "border-emerald-400/50 bg-emerald-950/90 text-emerald-100"
+                  : "border-rose-400/50 bg-rose-950/90 text-rose-100";
+            return (
+              <div
+                key={`lane-drop-${col}`}
+                ref={kpiStatusDrag.registerColumn(col)}
+                className={cn(
+                  "rounded-xl border px-2 py-3 text-center text-[11px] font-bold shadow-lg backdrop-blur-sm",
+                  dropClass,
+                  kpiStatusDrag.hoverColumn === col && "ring-2 ring-orange-400 ring-offset-2 ring-offset-zinc-950",
+                )}
+              >
+                Drop → {label}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
       {error ? (
-        <p className="mt-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-200">
+        <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-200">
           {error}
         </p>
       ) : null}
       {!hasBoardRows ? (
-        <div className="mt-4 rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
+        <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
           {taskCategoryFilter !== "all"
             ? `No ${
                 taskCategoryFilter === "field"
@@ -3808,7 +3887,7 @@ export function AgentKpiKanbanFlow({
               : "No task cards available."}
         </div>
       ) : (
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div className="grid min-w-0 gap-3 md:grid-cols-3">
           {(["CURRENT", "DONE", "DELAYED"] as const).map((col) => {
             const list = boardRows
               .filter((r) => statusOf(r) === col)
@@ -3824,28 +3903,29 @@ export function AgentKpiKanbanFlow({
             const label = col === "CURRENT" ? "Current" : col === "DONE" ? "Done" : "Delayed";
             const colClass =
               col === "CURRENT"
-                ? "border-blue-300 bg-blue-50/60 dark:border-blue-700/60 dark:bg-blue-950/20"
+                ? "border-blue-200/90 bg-blue-50/60 dark:border-blue-500/25 dark:bg-blue-950/25"
                 : col === "DONE"
-                  ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-700/60 dark:bg-emerald-950/20"
-                  : "border-rose-300 bg-rose-50/60 dark:border-rose-700/60 dark:bg-rose-950/20";
+                  ? "border-emerald-200/90 bg-emerald-50/60 dark:border-emerald-500/25 dark:bg-emerald-950/25"
+                  : "border-rose-200/90 bg-rose-50/60 dark:border-rose-500/25 dark:bg-rose-950/25";
 
             return (
               <article
-                key={col}
+                key={`${col}-${laneRegisterKey}`}
                 ref={kpiStatusDrag.registerColumn(col)}
                 className={cn(
-                  "min-h-[300px] rounded-xl border p-2.5 transition",
+                  "min-w-0 overflow-hidden rounded-xl border p-3 transition md:min-h-[300px]",
+                  col !== mobileLane && "hidden md:block",
                   colClass,
-                  kpiStatusDrag.hoverColumn === col && "ring-2 ring-orange-500/60",
+                  kpiStatusDrag.hoverColumn === col && "ring-2 ring-inset ring-orange-500/60",
                 )}
               >
-                <div className="flex items-center justify-between gap-3 px-1">
+                <div className="mb-2 hidden items-center justify-between gap-3 px-1 md:flex">
                   <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{label}</h4>
                   <span className="rounded-full bg-white/60 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-200">
                     {list.length}
                   </span>
                 </div>
-                <div className="mt-2 space-y-2.5">
+                <div className="space-y-2.5">
                   {list.length === 0 ? (
                     <p className="px-2 py-8 text-center text-sm text-zinc-600 dark:text-zinc-400">No tasks here.</p>
                   ) : (
@@ -3887,7 +3967,7 @@ export function AgentKpiKanbanFlow({
                             ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => taskLabel(r) })
                             : {})}
                           className={cn(
-                            "rounded-lg border bg-white/75 p-3 shadow-sm transition hover:border-orange-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-950/30 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60",
+                            "min-w-0 rounded-lg border border-zinc-200/80 bg-white/75 p-2.5 shadow-sm transition hover:border-orange-300 hover:bg-white dark:border-zinc-700/80 dark:bg-zinc-950/40 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60 md:p-3",
                             busyId === r.id && "opacity-50",
                             editable && kpiStatusDrag.draggingItemId === r.id && "ring-1 ring-orange-400/40",
                           )}
@@ -3907,7 +3987,7 @@ export function AgentKpiKanbanFlow({
                         >
                           <div className="flex items-start gap-2">
                             {editable ? (
-                              <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
+                              <GripVertical className="mt-0.5 hidden size-4 shrink-0 text-zinc-400 dark:text-zinc-500 md:block" aria-hidden />
                             ) : null}
                             <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
@@ -3923,7 +4003,7 @@ export function AgentKpiKanbanFlow({
                                         taskLabel(r)}
                                     </span>
                                   </p>
-                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                  <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">
                                     Travelers:{" "}
                                     {r.travelOrderSummary?.travelers?.length
                                       ? r.travelOrderSummary.travelers.join(", ")
@@ -3935,7 +4015,7 @@ export function AgentKpiKanbanFlow({
                                   <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
                                     {kpiPillarLabel(r)}
                                   </p>
-                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                  <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
                                     Assigned: {r.assignedAgent?.name ?? "Unassigned"}
                                   </p>
                                 </>
@@ -3947,7 +4027,7 @@ export function AgentKpiKanbanFlow({
                                   <p className="mt-0.5 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                                     {taskLabel(r)}
                                   </p>
-                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                  <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
                                     Assigned: {r.assignedAgent?.name ?? "Unassigned"}
                                   </p>
                                 </>
@@ -3956,7 +4036,7 @@ export function AgentKpiKanbanFlow({
                                   <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                                     {taskLabel(r)}
                                   </p>
-                                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                  <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
                                     Assigned: {r.assignedAgent?.name ?? "Unassigned"}
                                   </p>
                                 </>
@@ -3972,18 +4052,13 @@ export function AgentKpiKanbanFlow({
                               {taskTypeBadgeLabel(r, itProject)}
                             </span>
                           </div>
-                          {(r.linkedJobOrders?.length ?? 0) > 0 ? (
-                            <span className="mt-2 inline-flex rounded-full border border-sky-400/50 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-900 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-100">
-                              Job Order Request
-                            </span>
-                          ) : null}
                           {!itProject && normalized.segmented ? (
                             <span className="mt-2 inline-flex rounded-full border border-orange-400/60 bg-orange-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-100">
                               Segmented
                             </span>
                           ) : null}
                           {canAssignWork && !pillarOnly ? (
-                            <p className="mt-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                            <p className="mt-2 hidden text-[11px] text-zinc-600 dark:text-zinc-400 md:block">
                               Reassign the card through lanes above, or assign individual sub-tasks below.
                             </p>
                           ) : null}
@@ -3993,35 +4068,75 @@ export function AgentKpiKanbanFlow({
                             </p>
                           ) : null}
                           {fieldAssignment ? (
-                            <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
-                              Field Assignment — tracked via Travel Order
+                            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400 md:mt-3">
                               {(() => {
                                 const items = collectChecklistProgressItems(r.subKpis, taskLabel(r));
                                 const value = items[0]?.numericalValue;
-                                return typeof value === "number" ? ` · KPI ${Math.round(value)}%` : "";
+                                const kpiSuffix =
+                                  typeof value === "number" ? ` · KPI ${Math.round(value)}%` : "";
+                                return (
+                                  <>
+                                    <span className="md:hidden">Via Travel Order{kpiSuffix}</span>
+                                    <span className="hidden md:inline">
+                                      Field Assignment — tracked via Travel Order{kpiSuffix}
+                                    </span>
+                                  </>
+                                );
                               })()}
                             </p>
                           ) : (
-                          <div className="mt-3">
-                            <div className="flex items-center justify-between">
+                          <div className="mt-2 md:mt-3">
+                            <div className="flex items-center justify-between gap-2">
                               <p className="text-xs text-zinc-700 dark:text-zinc-200">
-                                {itProjectProgress ? "Project progress (phase average)" : "Progress"}
+                                <span className="md:hidden">Progress</span>
+                                <span className="hidden md:inline">
+                                  {itProjectProgress ? "Project progress (phase average)" : "Progress"}
+                                </span>
                               </p>
-                              <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                              <p className="shrink-0 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
                                 {itProjectProgress
                                   ? itProjectProgress.totalItems > 0
-                                    ? `${itProjectProgress.averagePercent}% avg · ${itProjectProgress.totalDone}/${itProjectProgress.totalItems} sub-tasks`
+                                    ? (
+                                        <>
+                                          <span className="md:hidden">
+                                            {itProjectProgress.averagePercent}% · {itProjectProgress.totalDone}/
+                                            {itProjectProgress.totalItems}
+                                          </span>
+                                          <span className="hidden md:inline">
+                                            {itProjectProgress.averagePercent}% avg · {itProjectProgress.totalDone}/
+                                            {itProjectProgress.totalItems} sub-tasks
+                                          </span>
+                                        </>
+                                      )
                                     : "0%"
                                   : p.total > 0
                                     ? p.inverted
-                                      ? `${p.positive}/${p.total} clear · ${p.negative} flagged · ${p.pct}%`
-                                      : `${p.done}/${p.total} finished · ${p.missing} pending · ${p.pct}%`
+                                      ? (
+                                          <>
+                                            <span className="md:hidden">
+                                              {p.pct}% · {p.negative} flagged
+                                            </span>
+                                            <span className="hidden md:inline">
+                                              {p.positive}/{p.total} clear · {p.negative} flagged · {p.pct}%
+                                            </span>
+                                          </>
+                                        )
+                                      : (
+                                          <>
+                                            <span className="md:hidden">
+                                              {p.done}/{p.total} · {p.pct}%
+                                            </span>
+                                            <span className="hidden md:inline">
+                                              {p.done}/{p.total} finished · {p.missing} pending · {p.pct}%
+                                            </span>
+                                          </>
+                                        )
                                     : `${p.done}/${p.total} · ${p.pct}%`}
                               </p>
                             </div>
                             <ChecklistProgressBar percent={mainBarPct} barClassName={mainBarClass} />
                             {itProjectProgress && itProjectProgress.phases.filter((ph) => ph.total > 0).length > 1 ? (
-                              <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                              <p className="mt-1.5 hidden text-[10px] text-zinc-500 dark:text-zinc-400 md:block">
                                 Average of{" "}
                                 {itProjectProgress.phases
                                   .filter((ph) => ph.total > 0)
@@ -4029,7 +4144,7 @@ export function AgentKpiKanbanFlow({
                                   .join(" · ")}
                               </p>
                             ) : null}
-                            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                            <p className="mt-2 hidden text-xs text-zinc-600 dark:text-zinc-400 md:block">
                               {itProject
                                 ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
                                 : pillarOnly
@@ -4085,7 +4200,8 @@ export function AgentKpiKanbanFlow({
                               {renderPillarScreenshotFields(r, editable)}
                             </div>
                           ) : null}
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                            <div className="flex flex-wrap items-center gap-2">
                             {showSubtaskDrawerToggle ? (
                               <button
                                 type="button"
@@ -4093,7 +4209,7 @@ export function AgentKpiKanbanFlow({
                                   e.stopPropagation();
                                   toggleSubtaskDrawer(r.id);
                                 }}
-                                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 sm:min-h-0 sm:flex-none sm:rounded-full"
                                 aria-expanded={drawerOpen}
                               >
                                 <ChevronDown
@@ -4116,7 +4232,7 @@ export function AgentKpiKanbanFlow({
                                   setSubTasksManagerTaskId(r.id);
                                 }}
                                 onPointerDown={(e) => e.stopPropagation()}
-                                className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/60 bg-orange-500/10 px-3 py-1.5 text-[11px] font-semibold text-orange-800 hover:bg-orange-500/20 dark:border-orange-500/40 dark:text-orange-200 dark:hover:bg-orange-950/40"
+                                className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-orange-500/60 bg-orange-500/10 px-3 py-1.5 text-[11px] font-semibold text-orange-800 hover:bg-orange-500/20 dark:border-orange-500/40 dark:text-orange-200 dark:hover:bg-orange-950/40 sm:min-h-0 sm:flex-none sm:rounded-full"
                               >
                                 <ListChecks className="size-3.5" aria-hidden />
                                 Add Sub Tasks
@@ -4133,18 +4249,19 @@ export function AgentKpiKanbanFlow({
                                   void removeTask(r);
                                 }}
                                 disabled={busyId === r.id}
-                                className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/60 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-800 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                                className="inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-rose-400/60 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-800 hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/40 dark:text-rose-200 dark:hover:bg-rose-950/40 sm:min-h-0 sm:flex-none sm:rounded-full"
                               >
                                 Remove task
                               </button>
                             ) : null}
+                            </div>
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openActiveTask(r.id);
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-full bg-orange-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500"
+                              className="inline-flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-orange-500 sm:min-h-0 sm:w-auto sm:rounded-full sm:py-1.5 sm:text-[11px]"
                             >
                               <Maximize2 className="size-3.5" aria-hidden />
                               Full details

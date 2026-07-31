@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, GripVertical } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ChevronDown, GripVertical, UserPlus, X } from "lucide-react";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
@@ -50,6 +51,10 @@ function assignmentCardPreview(ticket: TicketCard): string {
   if (ticket.requestType === "JOB_ORDER") {
     const preview = extractJobOrderPreview(ticket.description);
     if (preview) return preview;
+  }
+  if (ticket.requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+    const nature = ticket.description.match(/^Nature of Request:\s*(.*)$/im)?.[1]?.trim();
+    if (nature) return nature.slice(0, 120);
   }
   return cleanIssuePreview(ticket.description || ticket.title);
 }
@@ -141,6 +146,14 @@ export function ManualAssignmentBoard({
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [companyFilter, setCompanyFilter] = useState<string>(ASSIGNMENT_COMPANY_ALL);
   const [personnelSearchQuery, setPersonnelSearchQuery] = useState("");
+  const [assignTicket, setAssignTicket] = useState<TicketCard | null>(null);
+  const [sheetSearch, setSheetSearch] = useState("");
+  const [sheetCompany, setSheetCompany] = useState<string>(ASSIGNMENT_COMPANY_ALL);
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    queueMicrotask(() => setPortalReady(true));
+  }, []);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -148,6 +161,15 @@ export function ManualAssignmentBoard({
       setColumns(personnel);
     });
   }, [unassigned, personnel]);
+
+  useEffect(() => {
+    if (!assignTicket) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [assignTicket]);
 
   const filteredColumns = useMemo(
     () => columns.filter((col) => matchesAssignmentPersonnelSearch(col, personnelSearchQuery)),
@@ -167,7 +189,7 @@ export function ManualAssignmentBoard({
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         setError(data.error ?? "Could not assign request.");
-        return;
+        return false;
       }
       setCards((prev) => prev.filter((t) => t.id !== ticket.id));
       setColumns((prev) =>
@@ -180,6 +202,10 @@ export function ManualAssignmentBoard({
             : col,
         ),
       );
+      setAssignTicket(null);
+      setSheetSearch("");
+      setSheetCompany(ASSIGNMENT_COMPANY_ALL);
+      return true;
     } finally {
       setBusyTicketId(null);
     }
@@ -275,6 +301,21 @@ export function ManualAssignmentBoard({
     setOpenCompanyId(next === ASSIGNMENT_COMPANY_ALL ? null : next);
   }
 
+  function openAssignSheet(ticket: TicketCard) {
+    setAssignTicket(ticket);
+    setSheetSearch("");
+    setSheetCompany(companyFilter === ASSIGNMENT_COMPANY_ALL ? ASSIGNMENT_COMPANY_ALL : companyFilter);
+    setError(null);
+  }
+
+  const sheetPeople = useMemo(() => {
+    let list = columns.filter((col) => matchesAssignmentPersonnelSearch(col, sheetSearch));
+    if (sheetCompany !== ASSIGNMENT_COMPANY_ALL) {
+      list = list.filter((col) => personnelCompanyKey(col) === sheetCompany);
+    }
+    return sortPersonnelByRole(list);
+  }, [columns, sheetSearch, sheetCompany]);
+
   function renderTicketCard(t: TicketCard, assigneeColorKey?: string | null, compact?: boolean) {
     const preview = assignmentCardPreview(t);
     const inner = (
@@ -330,6 +371,109 @@ export function ManualAssignmentBoard({
     <main className="min-h-[calc(100dvh-56px)] bg-zinc-50 px-2 py-4 text-zinc-900 sm:px-4 sm:py-8 dark:bg-[#070d19] dark:text-zinc-100">
       <div className="mx-auto max-w-[1500px] space-y-4 sm:space-y-5">
         <PointerDragGhostLayer ghost={laneDrag.ghost} />
+        {portalReady && assignTicket
+          ? createPortal(
+              <div className="fixed inset-0 z-[220] flex flex-col justify-end md:hidden">
+                <button
+                  type="button"
+                  className="absolute inset-0 bg-zinc-950/60 backdrop-blur-[1px]"
+                  aria-label="Close assign sheet"
+                  onClick={() => setAssignTicket(null)}
+                />
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Assign request"
+                  className="relative z-10 flex max-h-[85dvh] flex-col rounded-t-2xl border border-zinc-700 bg-zinc-950 pb-[max(1rem,env(safe-area-inset-bottom,0px))] shadow-2xl"
+                >
+                  <div className="flex items-start justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-orange-400">Assign to</p>
+                      <p className="mt-0.5 truncate font-mono text-xs text-zinc-400">{assignTicket.ticketNumber}</p>
+                      <p className="mt-1 line-clamp-2 text-sm font-semibold text-zinc-100">
+                        {assignmentCardPreview(assignTicket)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAssignTicket(null)}
+                      className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-zinc-700 text-zinc-300"
+                      aria-label="Close"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 border-b border-zinc-800 px-4 py-3">
+                    {showCompanyFilter && companyOptions.length > 0 ? (
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Company</span>
+                        <select
+                          value={sheetCompany}
+                          onChange={(e) => setSheetCompany(e.target.value)}
+                          className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100"
+                        >
+                          <option value={ASSIGNMENT_COMPANY_ALL}>All companies</option>
+                          {companyOptions.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} ({c.agentCount})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Search person</span>
+                      <input
+                        type="search"
+                        value={sheetSearch}
+                        onChange={(e) => setSheetSearch(e.target.value)}
+                        placeholder="Name…"
+                        autoComplete="off"
+                        className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+                    {sheetPeople.length === 0 ? (
+                      <p className="px-2 py-8 text-center text-sm text-zinc-500">No matching people.</p>
+                    ) : (
+                      <ul className="space-y-1.5">
+                        {sheetPeople.map((col) => (
+                          <li key={col.agentId}>
+                            <button
+                              type="button"
+                              disabled={busyTicketId === assignTicket.id}
+                              onClick={() => void assign(assignTicket, col.agentId)}
+                              className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/80 px-3 py-3 text-left transition hover:border-orange-500/40 hover:bg-orange-500/10 disabled:opacity-50"
+                            >
+                              <AssigneeInitialsBadge
+                                agentName={col.name}
+                                assigneeColorKey={col.assigneeColorKey}
+                                className="size-9 shrink-0 text-xs"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-semibold text-zinc-100">{col.name}</p>
+                                <p className="truncate text-[11px] text-zinc-500">
+                                  {col.role}
+                                  {col.teamLabel ? ` · ${col.teamLabel}` : ""}
+                                </p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-300">
+                                {col.cards.length}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>,
+              document.body,
+            )
+          : null}
         <OrchestrationQueueNav />
         <header className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_10px_30px_rgba(0,0,0,0.08)] sm:p-6 dark:border-zinc-800/90 dark:bg-gradient-to-b dark:from-[#0d1629] dark:to-[#0b1220] dark:shadow-[0_16px_45px_rgba(0,0,0,0.35)]">
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-orange-400/95">
@@ -366,6 +510,10 @@ export function ManualAssignmentBoard({
                 {cards.length}
               </span>
             </div>
+            <p className="mb-2 px-1 text-[11px] text-zinc-500 md:hidden">
+              Tap <span className="font-semibold text-orange-600 dark:text-orange-300">Assign</span> on a
+              request, then choose a person.
+            </p>
             <div className="max-h-[38dvh] space-y-2 overflow-y-auto overflow-x-hidden pr-1 sm:max-h-[70vh]">
               {cards.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
@@ -385,8 +533,26 @@ export function ManualAssignmentBoard({
                     )}
                   >
                     <div className="flex gap-2">
-                      <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
-                      <div className="min-w-0 flex-1">{renderTicketCard(t)}</div>
+                      <GripVertical
+                        className="mt-0.5 hidden size-4 shrink-0 text-zinc-400 md:block dark:text-zinc-500"
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1">
+                        {renderTicketCard(t)}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openAssignSheet(t);
+                          }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-orange-500 md:hidden"
+                        >
+                          <UserPlus size={14} aria-hidden />
+                          Assign
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -400,8 +566,11 @@ export function ManualAssignmentBoard({
                 <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
                   Personnel group
                 </h2>
-                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                <p className="mt-0.5 hidden text-[11px] text-zinc-500 md:block dark:text-zinc-400">
                   Tap a company to expand, or drag a request over it to reveal admins and personnel.
+                </p>
+                <p className="mt-0.5 text-[11px] text-zinc-500 md:hidden dark:text-zinc-400">
+                  Browse people here, or use Assign on a request card.
                 </p>
               </div>
               {showCompanyFilter && companyOptions.length > 0 ? (

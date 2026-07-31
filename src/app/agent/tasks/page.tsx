@@ -88,10 +88,10 @@ export default async function AgentTasksPage({
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
               {BRAND_TITLE} · Tasks
             </p>
-            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 sm:mt-1.5 sm:text-2xl">
               Task Board
             </h1>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <p className="mt-1 hidden text-sm text-zinc-600 dark:text-zinc-400 sm:block">
               Field assignments, projects, and running tasks.
             </p>
           </div>

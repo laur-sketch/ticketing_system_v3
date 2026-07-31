@@ -39,8 +39,8 @@ export default async function RootLayout({
   const session = await safeGetServerSession();
 
   return (
-    <html lang="en" suppressHydrationWarning className={`${hankenGrotesk.variable} min-h-dvh antialiased dark`}>
-      <body className="flex min-h-dvh flex-col touch-manipulation">
+    <html lang="en" suppressHydrationWarning className={`${hankenGrotesk.variable} h-full antialiased dark`}>
+      <body className="flex h-full min-h-dvh flex-col touch-manipulation">
         <Script id="theme-init" strategy="beforeInteractive">
           {themeInit}
         </Script>

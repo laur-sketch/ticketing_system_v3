@@ -2,21 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, SlidersHorizontal, UserRound } from "lucide-react";
-import { signOut, useSession } from "next-auth/react";
+import { Bell, Menu, SlidersHorizontal } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button } from "./ui/button";
 import { BrandLockup } from "@/components/BrandLockup";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { PhilippineTimeClock } from "@/components/PhilippineTimeClock";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PatchNotesControl } from "@/components/PatchNotesControl";
 import { TravelOrderApprovalModal } from "@/components/task-board/TravelOrderApprovalModal";
 import { cn } from "@/lib/cn";
-import { SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
+import { openStaffMobileNav } from "@/lib/staff-mobile-nav";
 
 function notifSeenTsKey(email: string) {
   return `notif-open-seen-ts:${email}`;
@@ -89,17 +87,9 @@ export function Nav() {
   const desktopNotifPanelRef = useRef<HTMLDivElement | null>(null);
   const role = data?.user?.role;
   const isAdminRole = role === "SuperAdmin" || role === "Admin";
-  const roleLabel = role === "SuperAdmin" ? "SuperAdmin" : role;
-  const userName = data?.user?.name ?? data?.user?.email ?? "Account";
   const userEmail = data?.user?.email ?? "unknown";
   const showUtilities =
     role === "SuperAdmin" || role === "Admin" || role === "Personnel";
-  const avatarEmail = data?.user?.email?.trim().toLowerCase() ?? "";
-  const avatarSrc = data?.user
-    ? data.user.image && /^https?:\/\//i.test(data.user.image)
-      ? data.user.image
-      : `${SESSION_PROFILE_IMAGE_ROUTE}?u=${encodeURIComponent(avatarEmail || data.user.id || "me")}`
-    : undefined;
 
   const refreshUnreadOpenCount = useCallback(async (lastSeenMs: number, email: string) => {
     try {
@@ -474,13 +464,26 @@ export function Nav() {
       : null;
 
   return (
-    <header className="relative z-50 shrink-0 border-b border-border bg-surface/95 backdrop-blur-md">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-2.5 sm:gap-x-4 sm:px-4">
+    <header className="relative z-50 shrink-0 border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex h-14 items-center gap-2 px-3 sm:gap-3 sm:px-4">
         {showUtilities ? (
           <>
-            <BrandLockup variant="staff-header-compact" href="/" className="inline-flex min-w-0 shrink-0 max-sm:flex-1" />
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:basis-0 sm:max-w-xl">
-              <PhilippineTimeClock compact className="shrink-0" />
+            <button
+              type="button"
+              onClick={() => openStaffMobileNav()}
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-foreground transition hover:bg-surface-muted lg:hidden"
+              aria-label="Open navigation menu"
+              title="Menu"
+            >
+              <Menu size={17} />
+            </button>
+            <BrandLockup
+              variant="staff-header-compact"
+              href="/"
+              className="inline-flex min-w-0 shrink max-w-[9rem] sm:max-w-[14rem] lg:max-w-none"
+            />
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:max-w-xl sm:gap-2">
+              <PhilippineTimeClock compact className="hidden shrink-0 md:inline-flex" />
               <div className="relative shrink-0" ref={notifRef}>
                 <button
                   type="button"
@@ -488,7 +491,6 @@ export function Nav() {
                     setNotifOpen((v) => {
                       const next = !v;
                       if (next && typeof window !== "undefined") {
-                        // Opening the panel does not clear unread; use Mark all as Read.
                         const key = notifSeenTsKey(data?.user?.email ?? "unknown");
                         const lastSeenMs = Number(window.localStorage.getItem(key) ?? "0") || 0;
                         void refreshUnreadOpenCount(lastSeenMs, data?.user?.email ?? "unknown");
@@ -496,7 +498,7 @@ export function Nav() {
                       return next;
                     });
                   }}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-foreground shadow-sm transition hover:bg-surface-muted sm:h-9 sm:w-9"
+                  className="inline-flex size-9 items-center justify-center rounded-xl border border-zinc-300 bg-white text-zinc-800 shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                   aria-label="Open notifications panel"
                   title="Open notifications panel"
                 >
@@ -519,7 +521,7 @@ export function Nav() {
               {mobileNotifOverlay}
               <Link
                 href="/process"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:h-9 sm:w-9 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="hidden size-9 shrink-0 items-center justify-center rounded-xl border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:inline-flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 aria-label="Open process controls"
                 title="Open process controls"
               >
@@ -531,47 +533,17 @@ export function Nav() {
         ) : null}
 
         <div
-          className={`flex flex-wrap items-center gap-2 ${showUtilities ? "ml-auto justify-end" : "ml-auto w-full justify-end sm:w-auto"}`}
+          className={`flex shrink-0 items-center gap-1.5 sm:gap-2 ${showUtilities ? "ml-auto" : "ml-auto w-full justify-end sm:w-auto"}`}
         >
-          {data?.user ? (
-            <>
-              <ThemeToggle />
-              <div
-                className="flex max-w-[14rem] items-center gap-2 rounded-full border border-zinc-300 bg-orange-50 py-1 pl-1 pr-3 text-orange-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-200"
-                title={data.user.email ?? role ?? undefined}
-              >
-                <Avatar className="size-7 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
-                  <AvatarImage src={avatarSrc} alt={data.user.name ?? "Profile"} />
-                  <AvatarFallback className="bg-transparent">
-                    <UserRound className="size-3.5" aria-hidden />
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold leading-4">{roleLabel}</p>
-                  <p className="hidden truncate text-[10px] leading-3 text-zinc-600 dark:text-zinc-500 sm:block">
-                    {userName}
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                className="h-8 rounded-full border-zinc-300 bg-white px-2.5 text-xs text-zinc-900 hover:bg-zinc-100 sm:px-3 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-                onClick={() => void signOut({ callbackUrl: "/" })}
-              >
-                Sign out
-              </Button>
-            </>
-          ) : (
-            <>
-              <ThemeToggle />
-              <Link
-                href="/signin"
-                className="rounded-full bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
-              >
-                Sign in
-              </Link>
-            </>
-          )}
+          <ThemeToggle />
+          {!data?.user ? (
+            <Link
+              href="/signin"
+              className="rounded-full bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
+            >
+              Sign in
+            </Link>
+          ) : null}
         </div>
       </div>
       <TravelOrderApprovalModal

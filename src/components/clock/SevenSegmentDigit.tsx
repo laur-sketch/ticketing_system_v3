@@ -52,7 +52,7 @@ export function SevenSegmentDigit({
     <svg
       viewBox="0 0 30 52"
       className={cn(
-        "block h-auto w-full",
+        "block shrink-0",
         glow && "drop-shadow-[0_0_5px_var(--clock-segment-active)]",
         className,
       )}

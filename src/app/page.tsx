@@ -178,43 +178,52 @@ export default async function Home() {
         : scopedCompanyName ?? (scopedCompanyTeamId ? "Your assigned company" : "No assigned company");
 
     return (
-      <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-6 text-zinc-900 sm:px-4 sm:py-8 dark:bg-[#070d19] dark:text-zinc-100">
-        <div className="mx-auto max-w-6xl space-y-6">
-          <header className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-                {BRAND_TITLE} · Dashboard
-              </p>
-              <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
-                Operational Oversight
-              </h1>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
-                {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                {" · "}
-                {scopeLabel}
-              </p>
-            </div>
+      <main className="min-h-full bg-zinc-50 px-3 py-3 text-zinc-900 sm:px-5 sm:py-4 dark:bg-zinc-950 dark:text-zinc-100">
+        <div className="w-full max-w-none space-y-5">
+          <header className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-700 sm:text-[11px] dark:text-orange-400/95">
+              {BRAND_TITLE} · Dashboard
+            </p>
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+              Operational Oversight
+            </h1>
+            <p className="mt-1 text-xs text-zinc-600 sm:text-sm dark:text-zinc-400">
+              {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
+              {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+              {" · "}
+              {scopeLabel}
+            </p>
           </header>
 
-          <section className="grid gap-4 md:grid-cols-3">
-            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Open Tickets</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{openTickets}</p>
+          <section className="grid grid-cols-3 gap-2 sm:gap-4">
+            <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
+                Open Tickets
+              </p>
+              <p className="mt-2 text-2xl font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
+                {openTickets}
+              </p>
             </article>
-            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Avg. Response</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{formatResponseDuration(avgMins)}</p>
+            <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
+                Avg. Response
+              </p>
+              <p className="mt-2 text-lg font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
+                {formatResponseDuration(avgMins)}
+              </p>
             </article>
-            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Resolution Rate</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">
+            <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
+                Resolution Rate
+              </p>
+              <p className="mt-2 text-lg font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {resolutionRate.toFixed(1)}%
               </p>
             </article>
           </section>
 
-          <section className="grid gap-5 xl:grid-cols-[1.65fr_1fr]">
+          <section className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+            <div className="min-w-0">
             <RecentActivityPanel
               nowMs={now.getTime()}
               activities={activityLog.flatMap((a) =>
@@ -235,9 +244,10 @@ export default async function Home() {
                   : [],
               )}
             />
+            </div>
 
-            <aside className="space-y-5">
-              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
+            <aside className="min-w-0 space-y-5">
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                 <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Priority Stack</h3>
                 <div className="mt-4 space-y-3">
                   {priorityStack.length === 0 ? (
@@ -263,7 +273,7 @@ export default async function Home() {
             </aside>
           </section>
 
-          <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-end justify-between gap-3">
               <div>
                 <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Volume Trends</h2>

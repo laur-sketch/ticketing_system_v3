@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { GlobalSidebar } from "@/components/GlobalSidebar";
@@ -12,6 +12,75 @@ import { RedirectLoadingIndicator } from "@/components/ui/redirect-loading-indic
 import { isAuthRequiredPath, isSessionExpired } from "@/lib/session-expiry-client";
 
 type Props = { children: React.ReactNode };
+
+function useIsDesktopLg() {
+  const [isLg, setIsLg] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setIsLg(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  return isLg;
+}
+
+/** Locks document scroll so only the main pane scrolls; desktop staff chrome only. */
+function useLockDocumentScroll(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyHeight = body.style.height;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    body.style.height = "100%";
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.height = prevBodyHeight;
+    };
+  }, [active]);
+}
+
+function StaffAppShell({ children }: { children: React.ReactNode }) {
+  const isLg = useIsDesktopLg();
+  useLockDocumentScroll(isLg);
+
+  if (!isLg) {
+    return (
+      <div className="flex min-h-dvh flex-1 flex-col bg-zinc-50 text-foreground dark:bg-zinc-950">
+        <RealtimeRefreshBeacon />
+        <GlobalSidebar />
+        <Suspense fallback={null}>
+          <Nav />
+        </Suspense>
+        <div className="min-w-0 flex-1 overflow-x-hidden pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
+          {children}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-0 flex overflow-hidden bg-zinc-50 text-foreground dark:bg-zinc-950">
+      <RealtimeRefreshBeacon />
+      <GlobalSidebar />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950">
+        <Suspense fallback={null}>
+          <Nav />
+        </Suspense>
+        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function AppChrome({ children }: Props) {
   const pathname = usePathname();
@@ -64,18 +133,5 @@ export function AppChrome({ children }: Props) {
     return <CustomerPortalShell>{children}</CustomerPortalShell>;
   }
 
-  return (
-    <div className="flex min-h-screen flex-1 bg-background text-foreground">
-      <RealtimeRefreshBeacon />
-      <GlobalSidebar />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        <Suspense fallback={null}>
-          <Nav />
-        </Suspense>
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
-          {children}
-        </div>
-      </div>
-    </div>
-  );
+  return <StaffAppShell>{children}</StaffAppShell>;
 }
