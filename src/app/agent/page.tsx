@@ -1,14 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Plus } from "lucide-react";
-import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
+import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
+import { Prisma } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
-import {
-  customerHasPendingResolvedTicket,
-  customerPendingTicketHref,
-} from "@/lib/customer-pending-resolution";
 import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board";
+import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
 import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
 import { prisma } from "@/lib/prisma";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
@@ -16,6 +13,11 @@ import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignme
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
+import {
+  getOperatorActionableApprovalLevel,
+  hasHierarchicalApprovals,
+} from "@/lib/travel-order";
+import { listPendingTravelApprovalsForAgent } from "@/lib/travel-order-db";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AutoSubmitForm } from "@/components/AutoSubmitForm";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
@@ -23,7 +25,21 @@ import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRAND_TITLE } from "@/lib/brand";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
+import { REQUEST_TYPES, isRequestTypeId } from "@/lib/request-types";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
+import { paymentProceduralStatusLabel, type PaymentApprovalMeta } from "@/lib/request-for-payment-approval";
+import { loadPaymentApprovalMetaMap } from "@/lib/payment-approval-db";
+import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
+import {
+  itemRequisitionProceduralStatusLabel,
+  type ItemRequisitionApprovalMeta,
+} from "@/lib/item-requisition-approval";
+import { loadItemRequisitionApprovalMetaMap } from "@/lib/item-requisition-approval-db";
+import {
+  fundTransferProceduralStatusLabel,
+  type FundTransferApprovalMeta,
+} from "@/lib/fund-transfer-approval";
+import { loadFundTransferApprovalMetaMap } from "@/lib/fund-transfer-approval-db";
 import { CompanyKanban } from "./company-kanban";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
@@ -43,14 +59,7 @@ type EnrichedAssignedAgent = AgentTicketWithTeam["assignedAgent"] & {
   profileImagePosY?: number | null;
 };
 
-const STATUS_PIPELINE: TicketStatus[] = [
-  "OPEN",
-  "IN_PROGRESS",
-  "PENDING_INFO",
-  "ESCALATED",
-  "FOR_CONFIRMATION",
-  "RESOLVED",
-];
+const STATUS_PIPELINE = ACTIVE_REQUEST_STATUSES;
 
 const statusOptions: Array<{ label: string; value: TicketStatus | "ALL" }> = [
   { label: "All", value: "ALL" },
@@ -90,8 +99,10 @@ export default async function AgentHome({
     notifications?: string | string[];
     view?: string | string[];
     assigned?: string | string[];
-      board?: string | string[];
+    board?: string | string[];
     company?: string | string[];
+    task?: string | string[];
+    requestType?: string | string[];
   }>;
 }) {
   const session = await requireSession();
@@ -103,22 +114,23 @@ export default async function AgentHome({
   if (rawBoard === "department") {
     redirect("/agent?board=company");
   }
-  if (rawBoard === "it-tasks") {
-    redirect("/agent?board=kpi");
+  if (rawBoard === "kpi" || rawBoard === "it-tasks") {
+    const qs = new URLSearchParams();
+    const company = firstQuery(params.company);
+    const assigned = firstQuery(params.assigned);
+    const task = firstQuery(params.task);
+    if (company) qs.set("company", company);
+    if (assigned) qs.set("assigned", assigned);
+    if (task) qs.set("task", task);
+    const s = qs.toString();
+    redirect(s ? `/agent/tasks?${s}` : "/agent/tasks");
   }
-  /** Personnel cannot view the Company Board: force them back to the Ticket Board. */
+  /** Personnel cannot view the Company Board: force them back to the Request Board. */
   if (rawBoard === "company" && session.user.role === "Personnel") {
     redirect("/agent?board=ticket");
   }
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
-  let personnelRequestorIntakeBlock: Awaited<ReturnType<typeof customerHasPendingResolvedTicket>> = null;
-  if (session.user.role === "Personnel") {
-    const em = (session.user.email ?? "").trim().toLowerCase();
-    personnelRequestorIntakeBlock = em
-      ? await customerHasPendingResolvedTicket(em, session.user.authProvider)
-      : null;
-  }
   // Personnel must use board view to be able to drag cards and change status inline.
   const requestedViewMode = firstQuery(params.view) === "table" ? "table" : "board";
   const boardTab = rawBoard === "kpi" ? "kpi" : rawBoard === "company" ? "company" : "ticket";
@@ -129,12 +141,16 @@ export default async function AgentHome({
   const selectedAssigned = firstQuery(params.assigned) ?? "ALL";
   const selectedStatus = firstQuery(params.status) ?? "ALL";
   const selectedPriority = firstQuery(params.priority) ?? "ALL";
+  const requestTypeParam = firstQuery(params.requestType) ?? "ALL";
+  const selectedRequestType =
+    requestTypeParam === "ALL" || isRequestTypeId(requestTypeParam) ? requestTypeParam : "ALL";
   const query = firstQuery(params.q)?.trim() ?? "";
   const sort = firstQuery(params.sort) ?? "updatedAt";
   const dir = firstQuery(params.dir) === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number.parseInt(firstQuery(params.page) ?? "1", 10) || 1);
   const companyLogPage = Math.max(1, Number.parseInt(firstQuery(params.logsPage) ?? "1", 10) || 1);
   const notificationsOpen = firstQuery(params.notifications) === "1";
+  const focusTaskId = firstQuery(params.task)?.trim() || null;
   const boardTicketsPerStatus = 5;
   const pageSize = isBoard && boardTab === "ticket" ? boardTicketsPerStatus : 20;
   const companyLogPageSize = 10;
@@ -170,6 +186,13 @@ export default async function AgentHome({
       ? await resolveStaffCompanyTeamId(session.user.email)
       : null;
 
+  /** Admin/coordinator own queue — used to keep Request Board totals aligned with Company Board. */
+  const adminTicketQueueCompanyId =
+    session.user.role !== "SuperAdmin" &&
+    (session.user.role === "Admin" || companyCoordinator)
+      ? await resolveStaffCompanyTeamId(session.user.email)
+      : null;
+
   const rosterTeamsForFilter = isCompanyBoard
     ? sortByRosterOrder(
         await prisma.team.findMany({
@@ -197,21 +220,33 @@ export default async function AgentHome({
       ).filter((t) => (adminScopedCompanyId ? t.id === adminScopedCompanyId : true))
     : [];
 
+  /** Roster team ids for SuperAdmin Request Board when company = ALL (matches Company Board). */
+  const rosterTeamIdsForTicketScope =
+    boardTab === "ticket" && session.user.role === "SuperAdmin"
+      ? (
+          rosterTeamsForTicketFilter.length > 0
+            ? rosterTeamsForTicketFilter
+            : sortByRosterOrder(
+                await prisma.team.findMany({
+                  where: rosterTeamNameFilter(),
+                  select: { id: true, name: true },
+                }),
+              )
+        ).map((t) => t.id)
+      : [];
+
   if (isCompanyBoard) {
     const priorityForCompany = (selectedPriority === "ALL" ? "ALL" : selectedPriority) as TicketPriority | "ALL";
+    const companyBoardOpts = {
+      session,
+      searchQuery: query,
+      priorityFilter: priorityForCompany,
+      companyTeamIds: selectedCompany === "ALL" ? [] : [selectedCompany],
+      requestTypeFilter: selectedRequestType,
+    } as const;
     const [dep, agg, logs] = await Promise.all([
-      loadCompanyBoard({
-        session,
-        searchQuery: query,
-        priorityFilter: priorityForCompany,
-        companyTeamIds: selectedCompany === "ALL" ? [] : [selectedCompany],
-      }),
-      getCompanyBoardAggregates({
-        session,
-        searchQuery: query,
-        priorityFilter: priorityForCompany,
-        companyTeamIds: selectedCompany === "ALL" ? [] : [selectedCompany],
-      }),
+      loadCompanyBoard(companyBoardOpts),
+      getCompanyBoardAggregates(companyBoardOpts),
       loadTicketActivityLogForSession({ session, limit: 120 }),
     ]);
     companyBoardPayload = dep;
@@ -262,10 +297,32 @@ export default async function AgentHome({
 
   const whereBase: Prisma.TicketWhereInput = {};
   if (session.user.role === "Personnel") {
-    whereBase.assignedAgentId = operator?.id ?? "__none__";
+    Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
   }
-  if (ticketCompanySelected && session.user.role !== "Personnel") {
-    whereBase.teamId = selectedCompany;
+  if (session.user.role !== "Personnel") {
+    let companyScope: Prisma.TicketWhereInput | null = null;
+    if (ticketCompanySelected) {
+      companyScope = { teamId: selectedCompany };
+    } else if (adminTicketQueueCompanyId) {
+      /** Admin/coordinator: default to own queue so totals match Company Board. */
+      companyScope = { teamId: adminTicketQueueCompanyId };
+    } else if (session.user.role === "SuperAdmin" && rosterTeamIdsForTicketScope.length > 0) {
+      /** SuperAdmin with All: roster companies only (same universe as Company Board). */
+      companyScope = { teamId: { in: rosterTeamIdsForTicketScope } };
+    }
+
+    // Company queue = ticket.teamId ("Send request to"). Also surface RFPs where this
+    // staff member is the current procedural assignee (e.g. APPROVED BY from another company).
+    const personalRfpScope =
+      operator?.id != null ? await personnelRequestBoardWhere(operator.id) : null;
+
+    if (companyScope && personalRfpScope) {
+      whereBase.OR = [companyScope, personalRfpScope];
+    } else if (companyScope) {
+      Object.assign(whereBase, companyScope);
+    } else if (personalRfpScope) {
+      Object.assign(whereBase, personalRfpScope);
+    }
   }
   if (effectiveAssigned === "UNASSIGNED") {
     if (session.user.role !== "Personnel") {
@@ -279,13 +336,23 @@ export default async function AgentHome({
   if (selectedPriority !== "ALL") {
     whereBase.priority = selectedPriority as TicketPriority;
   }
+  if (!isCompanyBoard && selectedRequestType !== "ALL") {
+    whereBase.requestType = selectedRequestType;
+  }
   if (query) {
-    whereBase.OR = [
+    const searchOr: Prisma.TicketWhereInput[] = [
       { ticketNumber: { contains: query, mode: "insensitive" } },
       { title: { contains: query, mode: "insensitive" } },
       { contactName: { contains: query, mode: "insensitive" } },
       { contactEmail: { contains: query, mode: "insensitive" } },
     ];
+    // Personnel board may already use OR (assigned + RFP current-step). Nest with AND.
+    if (whereBase.OR) {
+      whereBase.AND = [{ OR: whereBase.OR }, { OR: searchOr }];
+      delete whereBase.OR;
+    } else {
+      whereBase.OR = searchOr;
+    }
   }
 
   const tableWhere: Prisma.TicketWhereInput = { ...whereBase };
@@ -358,7 +425,7 @@ export default async function AgentHome({
       ? prisma.ticket.count({
           where: {
             ...dataWhere,
-            status: { in: ["OPEN", "IN_PROGRESS", "PENDING_INFO"] },
+            status: { in: OPEN_PIPELINE_STATUSES },
           },
         })
       : Promise.resolve(0),
@@ -383,6 +450,11 @@ export default async function AgentHome({
         })
       : Promise.resolve([]),
   ]);
+
+  const pendingTravelApprovals =
+    notificationsOpen && operator?.id
+      ? await listPendingTravelApprovalsForAgent(operator.id)
+      : [];
 
   const pipelineRows = [...ticketsTable, ...ticketsBoard];
   const assigneeColorIdentities = [
@@ -435,6 +507,23 @@ export default async function AgentHome({
   const ticketsTableEnriched = ticketsTable.map(withAssigneeColor);
   const ticketsBoardEnriched = ticketsBoard.map(withAssigneeColor);
 
+  const boardRequestTypeById = new Map<string, string>();
+  let boardPaymentMetaById = new Map<string, PaymentApprovalMeta>();
+  let boardRequisitionMetaById = new Map<string, ItemRequisitionApprovalMeta>();
+  let boardFundTransferMetaById = new Map<string, FundTransferApprovalMeta>();
+  if (isBoard && ticketsBoardEnriched.length > 0) {
+    const ids = ticketsBoardEnriched.map((t) => t.id);
+    const rows = await prisma.$queryRaw<Array<{ id: string; request_type: string | null }>>`
+      SELECT id, request_type FROM tickets WHERE id IN (${Prisma.join(ids)})
+    `;
+    for (const row of rows) {
+      boardRequestTypeById.set(row.id, row.request_type ?? "ISSUE_CONCERN_TICKET");
+    }
+    boardPaymentMetaById = await loadPaymentApprovalMetaMap(ids);
+    boardRequisitionMetaById = await loadItemRequisitionApprovalMetaMap(ids);
+    boardFundTransferMetaById = await loadFundTransferApprovalMetaMap(ids);
+  }
+
   const tickets = isBoard ? ticketsBoardEnriched : ticketsTableEnriched;
   const totalPages =
     isBoard && boardTab === "ticket"
@@ -459,6 +548,9 @@ export default async function AgentHome({
       if (selectedStatus !== "ALL") qs.set("status", selectedStatus);
     }
     if (boardTab !== "kpi" && selectedPriority !== "ALL") qs.set("priority", selectedPriority);
+    if (boardTab !== "kpi" && selectedRequestType !== "ALL") {
+      qs.set("requestType", selectedRequestType);
+    }
     if (query) qs.set("q", query);
     if (sort !== "updatedAt") qs.set("sort", sort);
     if (dir !== "desc") qs.set("dir", dir);
@@ -487,7 +579,7 @@ export default async function AgentHome({
     totalCount === 0
       ? "No results"
       : isBoard && boardTab === "ticket"
-        ? `Page ${page} of ${totalPages} · ${boardTicketsPerStatus} tickets per status · ${totalCount} total`
+        ? `Page ${page} of ${totalPages} · ${boardTicketsPerStatus} requests per status · ${totalCount} total`
         : `Showing ${start}-${end} of ${totalCount} results`;
 
   const ticketsEmpty = tickets.length === 0;
@@ -532,6 +624,26 @@ export default async function AgentHome({
         description: t.description,
         priority: t.priority,
         status: t.status,
+        requestType: boardRequestTypeById.get(t.id) ?? "ISSUE_CONCERN_TICKET",
+        proceduralStatusLabel: (() => {
+          const rt = boardRequestTypeById.get(t.id) ?? "";
+          if (rt === "REQUEST_FOR_PAYMENT") {
+            return paymentProceduralStatusLabel(
+              boardPaymentMetaById.get(t.id)?.proceduralStep ?? "NOTED_BY",
+            );
+          }
+          if (rt === "ITEM_REQUISITION_SLIP") {
+            return itemRequisitionProceduralStatusLabel(
+              boardRequisitionMetaById.get(t.id)?.proceduralStep ?? "CANVASSED_BY",
+            );
+          }
+          if (rt === "FUND_TRANSFER_REQUEST") {
+            return fundTransferProceduralStatusLabel(
+              boardFundTransferMetaById.get(t.id)?.proceduralStep ?? "PREPARED_BY",
+            );
+          }
+          return null;
+        })(),
         updatedAt: t.updatedAt.toISOString(),
         agentName: t.assignedAgent?.name ?? null,
         assigneeColorKey:
@@ -621,11 +733,48 @@ export default async function AgentHome({
                 </Link>
               </div>
               <div className="mt-3 space-y-2">
-                {recentUpdated.length === 0 ? (
+                {pendingTravelApprovals.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+                      Travel order approvals
+                    </p>
+                    {pendingTravelApprovals.map((order) => {
+                      const levels = order.approvalLevels ?? [];
+                      const pending = hasHierarchicalApprovals(levels)
+                        ? getOperatorActionableApprovalLevel(levels, operator?.id ?? null)
+                        : null;
+                      const label = order.kpiMainTask || order.kpiTitle || "Travel Order";
+                      return (
+                        <Link
+                          key={`to-approve-${order.id}`}
+                          href={`/agent/tasks?task=${encodeURIComponent(order.kpiMaintenanceId)}`}
+                          className="block rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 hover:bg-orange-500/15 dark:border-orange-500/30 dark:bg-orange-500/10 dark:hover:bg-orange-500/15"
+                        >
+                          <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                            Pending approval
+                            {pending?.level != null
+                              ? ` · Level ${pending.level}${pending.optional ? " (optional)" : ""}`
+                              : ""}
+                          </p>
+                          <p className="text-xs text-zinc-700 dark:text-zinc-300">{label}</p>
+                          {order.orderRequest ? (
+                            <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                              {order.orderRequest}
+                            </p>
+                          ) : null}
+                          <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                            Awaiting you · {relativeTime(order.updatedAt)}
+                          </p>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {recentUpdated.length === 0 && pendingTravelApprovals.length === 0 ? (
                   <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
                     No recent queue activity.
                   </p>
-                ) : (
+                ) : recentUpdated.length === 0 ? null : (
                   recentUpdated.map((item) => {
                     const notifyAssigneeKey = item.assignedAgent?.email
                       ? (assigneeColorByEmail.get(item.assignedAgent.email.trim().toLowerCase()) ?? null)
@@ -660,10 +809,15 @@ export default async function AgentHome({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-                  {BRAND_TITLE} · Orchestration
+                  {BRAND_TITLE} ·{" "}
+                  {isCompanyBoard ? "Company" : boardTab === "kpi" ? "Tasks" : "Requests"}
                 </p>
                 <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                  {isCompanyBoard ? "Company overview" : "Orchestration Board"}
+                  {isCompanyBoard
+                    ? "Company overview"
+                    : boardTab === "kpi"
+                      ? "Task Board"
+                      : "Request Board"}
                 </h1>
                 <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                   <span className="font-semibold text-orange-700 dark:text-orange-400">
@@ -671,39 +825,21 @@ export default async function AgentHome({
                   </span>{" "}
                   {!isCompanyBoard
                     ? `active ${boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event${activeEvents !== 1 ? "s" : ""}`
-                    : `ticket${activeEvents !== 1 ? "s" : ""}`}
+                    : `request${activeEvents !== 1 ? "s" : ""}`}
                 </p>
               </div>
               <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
-                {session.user.role === "Personnel" && !isCompanyBoard && boardTab === "ticket" ? (
-                  personnelRequestorIntakeBlock != null ? (
-                    <Link
-                      href={customerPendingTicketHref(personnelRequestorIntakeBlock)}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-500/25 dark:text-amber-100"
-                      title="Finish your own request before opening another."
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      Resume {personnelRequestorIntakeBlock.ticketNumber}
-                    </Link>
-                  ) : (
-                    <Link
-                      href="/tickets/new"
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(234,88,12,0.32)] transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-zinc-50 dark:focus:ring-offset-background"
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      Create ticket
-                    </Link>
-                  )
+                {boardTab !== "kpi" ? (
+                  <div className="flex flex-wrap gap-3">
+                    <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
+                    <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
+                    <StatCard
+                      label={isCompanyBoard ? "Transfer pending" : "SLA at Risk"}
+                      value={statSla}
+                      valueClass="text-amber-400"
+                    />
+                  </div>
                 ) : null}
-                <div className="flex flex-wrap gap-3">
-                  <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
-                  <StatCard label="Open" value={statOpen} valueClass="text-orange-400" />
-                  <StatCard
-                    label={isCompanyBoard ? "Transfer pending" : "SLA at Risk"}
-                    value={statSla}
-                    valueClass="text-amber-400"
-                  />
-                </div>
               </div>
             </div>
           </div>
@@ -798,6 +934,22 @@ export default async function AgentHome({
                       </select>
                     </label>
                     ) : null}
+                    <label className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Type:</span>
+                      <select
+                        name="requestType"
+                        key={`requestType-${selectedRequestType}`}
+                        defaultValue={selectedRequestType}
+                        className="min-w-0 flex-1 bg-transparent py-0.5 pr-7 text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 sm:min-w-[12rem] lg:max-w-[28rem]"
+                      >
+                        <option value="ALL">All request types</option>
+                        {REQUEST_TYPES.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.acronym} · {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
                   <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
                     <Tabs value={isCompanyBoard ? "company" : isBoard ? "board" : "table"} className="w-full sm:w-auto">
@@ -855,8 +1007,8 @@ export default async function AgentHome({
                   </p>
                 ) : isCompanyBoard ? (
                   <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                    One column per company with a flat ticket list (number and status). Open a ticket for a read-only
-                    summary; use the ticket board for full details.
+                    One column per company with a flat request list (number and status). Open a request for a read-only
+                    summary; use the request board for full details.
                   </p>
                 ) : null}
               </AutoSubmitForm>
@@ -888,14 +1040,15 @@ export default async function AgentHome({
               <>
                 {ticketsEmpty ? (
                   <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 py-20 text-center dark:border-zinc-800">
-                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">No tickets in the pipeline</p>
+                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">No requests in the pipeline</p>
                     <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-600">
                       {query ||
                       selectedPriority !== "ALL" ||
+                      selectedRequestType !== "ALL" ||
                       ticketCompanySelected ||
                       (ticketAssignedFilterActive && effectiveAssigned !== "ALL")
-                        ? "Adjust filters or switch to Table view for resolved tickets."
-                        : "The queue is clear — new tickets will land in Open."}
+                        ? "Adjust filters or switch to Table view for resolved requests."
+                        : "The queue is clear — new requests will land in Open."}
                     </p>
                   </div>
                 ) : (
@@ -983,6 +1136,7 @@ export default async function AgentHome({
                   showAdminTaskManagement={
                     session.user.role === "SuperAdmin" || session.user.role === "Admin"
                   }
+                  focusTaskId={focusTaskId}
                 />
               </>
             ) : (

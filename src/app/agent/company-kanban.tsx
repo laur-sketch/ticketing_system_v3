@@ -40,9 +40,9 @@ function ticketsForColumn(col: CompanyBoardColumn): CompanyTicketCard[] {
   );
 }
 
-/** Split TKT-2026-00013 into two lines so narrow columns stay readable. */
+/** Split REQ-2026-00013 (or legacy TKT-…) into two lines so narrow columns stay readable. */
 function splitTicketNumber(ticketNumber: string): { head: string; tail: string } {
-  const match = /^(TKT-\d{4})-(\d+)$/i.exec(ticketNumber.trim());
+  const match = /^((?:REQ|TKT)-\d{4})-(\d+)$/i.exec(ticketNumber.trim());
   if (match) return { head: match[1], tail: match[2] };
   const lastDash = ticketNumber.lastIndexOf("-");
   if (lastDash > 0) {
@@ -169,14 +169,14 @@ function CompanyColumnList({ col, density }: { col: CompanyBoardColumn; density:
           {col.companyName}
         </p>
         <p className={cn("mt-0.5 text-zinc-600 dark:text-zinc-500", density.count)}>
-          {tickets.length} ticket{tickets.length === 1 ? "" : "s"}
+          {tickets.length} request{tickets.length === 1 ? "" : "s"}
         </p>
       </div>
 
       <ul className="min-h-0 flex-1 divide-y divide-zinc-200 overflow-y-auto dark:divide-zinc-800">
         {tickets.length === 0 ? (
           <li className={cn("py-8 text-center text-zinc-500 dark:text-zinc-500", density.status)}>
-            No tickets
+            No requests
           </li>
         ) : (
           visibleTickets.map((t) => {

@@ -18,12 +18,21 @@ export async function GET(req: Request) {
   const onDutyOnly = searchParams.get("onDutyOnly") === "1" || searchParams.get("onDutyOnly") === "true";
 
   let companyIdFilter: string | null = null;
-  if (forMainAgentId) {
+  const anyCompany =
+    searchParams.get("anyCompany") === "1" || searchParams.get("anyCompany") === "true";
+  if (anyCompany) {
+    // Explicit cross-company listing (e.g. Travel Order Level 2+ approvers).
+    companyIdFilter = null;
+  } else if (forMainAgentId) {
     const mainCompanyId = await resolveAgentDesignatedCompanyId(forMainAgentId);
     if (!mainCompanyId) return NextResponse.json([]);
     companyIdFilter = mainCompanyId;
   } else if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
     companyIdFilter = companyTeamId;
+  } else if (!perms.canAssignWork && perms.operator?.id) {
+    // Personnel only see colleagues in their own company.
+    companyIdFilter = await resolveAgentDesignatedCompanyId(perms.operator.id);
+    if (!companyIdFilter) return NextResponse.json([]);
   }
 
   // HRIS merged_users is the roster SoT (same as Activities / Personnel).

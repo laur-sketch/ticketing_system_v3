@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { runForConfirmationReminderSweep } from "@/lib/confirmation-reminders";
+import { listPendingTravelApprovalsForAgent } from "@/lib/travel-order-db";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ function parseLastSeenMs(raw: string | null): Date | null {
 
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
-  if (unauthorized) return unauthorized;
+  if (unauthorized || !session) return unauthorized;
 
   void runForConfirmationReminderSweep().catch((error) => {
     console.error("Confirmation reminder sweep failed", error);
@@ -23,17 +24,18 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const lastSeenAt = parseLastSeenMs(searchParams.get("lastSeenMs"));
-  const operator =
-    session.user.role === "Personnel"
-      ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
-      : null;
+  const operator = await findSessionAgentId({
+    email: session.user.email,
+    name: session.user.name,
+  });
+  const operatorId = operator?.id ?? null;
 
-  const [ticketCount, accountRequestCount] = await Promise.all([
+  const [ticketCount, accountRequestCount, pendingTravelApprovals] = await Promise.all([
     prisma.ticket.count({
       where: {
         status: "OPEN",
         ...(lastSeenAt ? { createdAt: { gt: lastSeenAt } } : {}),
-        ...(session.user.role === "Personnel" ? { assignedAgentId: operator?.id ?? "__none__" } : {}),
+        ...(session.user.role === "Personnel" ? { assignedAgentId: operatorId ?? "__none__" } : {}),
       },
     }),
     session.user.role === "Admin" || session.user.role === "SuperAdmin"
@@ -44,13 +46,19 @@ export async function GET(req: Request) {
           },
         })
       : 0,
+    operatorId ? listPendingTravelApprovalsForAgent(operatorId) : Promise.resolve([]),
   ]);
+
+  const travelOrderApprovalIds = pendingTravelApprovals.map((row) => row.id);
+  const travelOrderApprovalCount = travelOrderApprovalIds.length;
 
   return NextResponse.json(
     {
       ticketCount,
       accountRequestCount,
-      total: ticketCount + accountRequestCount,
+      travelOrderApprovalCount,
+      travelOrderApprovalIds,
+      total: ticketCount + accountRequestCount + travelOrderApprovalCount,
     },
     {
       headers: { "cache-control": "private, no-store" },

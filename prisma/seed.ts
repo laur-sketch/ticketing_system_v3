@@ -117,7 +117,7 @@ async function main() {
     updatedOffsetHrs: number;
   }> = [
     {
-      ticketNumber: "TKT-2026-00001",
+      ticketNumber: "REQ-2026-00001",
       title: "Mouse isn't working/cursor isn't appearing",
       description:
         "USB mouse intermittently disconnects from workstation.\nDepartment/Business Unit: IT Operations",
@@ -132,7 +132,7 @@ async function main() {
       updatedOffsetHrs: 1,
     },
     {
-      ticketNumber: "TKT-2026-00002",
+      ticketNumber: "REQ-2026-00002",
       title: "VPN profile not loading for remote users",
       description:
         "New hires cannot retrieve VPN profile from endpoint manager.\nDepartment/Business Unit: Remote Workforce",
@@ -147,7 +147,7 @@ async function main() {
       updatedOffsetHrs: 2,
     },
     {
-      ticketNumber: "TKT-2026-00003",
+      ticketNumber: "REQ-2026-00003",
       title: "Payroll exception for night shift differential",
       description:
         "Shift differential not reflected for April payroll cycle.\nDepartment/Business Unit: Payroll",
@@ -162,7 +162,7 @@ async function main() {
       updatedOffsetHrs: 6,
     },
     {
-      ticketNumber: "TKT-2026-00004",
+      ticketNumber: "REQ-2026-00004",
       title: "Benefits enrollment window extension",
       description:
         "Requesting extension for dependent enrollment.\nDepartment/Business Unit: People Operations",
@@ -177,7 +177,7 @@ async function main() {
       updatedOffsetHrs: 3,
     },
     {
-      ticketNumber: "TKT-2026-00005",
+      ticketNumber: "REQ-2026-00005",
       title: "Database connection spikes from report jobs",
       description:
         "Scheduled reports causing brief latency on ticket API.\nDepartment/Business Unit: Data Platform",
@@ -192,7 +192,7 @@ async function main() {
       updatedOffsetHrs: 2,
     },
     {
-      ticketNumber: "TKT-2026-00006",
+      ticketNumber: "REQ-2026-00006",
       title: "Office access card reprogramming",
       description:
         "Badge reader not syncing for 4th floor.\nDepartment/Business Unit: Facilities",
@@ -207,7 +207,7 @@ async function main() {
       updatedOffsetHrs: 26,
     },
     {
-      ticketNumber: "TKT-2026-00007",
+      ticketNumber: "REQ-2026-00007",
       title: "Email relay blocked by SPF mismatch",
       description:
         "Outbound notifications failing for custom sender domain.\nDepartment/Business Unit: Communications",
@@ -222,7 +222,7 @@ async function main() {
       updatedOffsetHrs: 1,
     },
     {
-      ticketNumber: "TKT-2026-00008",
+      ticketNumber: "REQ-2026-00008",
       title: "Quarterly close checklist sign-off",
       description:
         "Currency columns misaligned in exported board deck.\nDepartment/Business Unit: Finance",

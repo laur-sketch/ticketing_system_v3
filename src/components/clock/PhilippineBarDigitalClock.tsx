@@ -13,7 +13,9 @@ type Props = {
 export function PhilippineBarDigitalClock({ epochMs, className, size = "default" }: Props) {
   const compact = size === "compact";
   const parts = epochMs != null ? formatPhilippineBarClock(epochMs) : null;
-  const digitWidth = compact ? "w-[0.62rem] sm:w-[0.68rem]" : "w-[0.95rem] sm:w-[1.05rem]";
+  const digitClass = compact
+    ? "h-[1.35rem] w-[0.62rem] sm:h-[1.45rem] sm:w-[0.68rem]"
+    : "h-[2rem] w-[0.95rem] sm:h-[2.15rem] sm:w-[1.05rem]";
   const colonClass = compact ? "h-[1.35rem] sm:h-[1.45rem]" : "h-[2rem] sm:h-[2.15rem]";
 
   return (
@@ -34,11 +36,11 @@ export function PhilippineBarDigitalClock({ epochMs, className, size = "default"
           compact ? "gap-[0.06em] px-2 py-1" : "gap-[0.1em] px-4 py-2.5 sm:px-5 sm:py-3",
         )}
       >
-        <SevenSegmentPair text={parts?.hours ?? "--"} digitClassName={digitWidth} />
+        <SevenSegmentPair text={parts?.hours ?? "--"} digitClassName={digitClass} />
         <SevenSegmentColon className={colonClass} compact={compact} />
-        <SevenSegmentPair text={parts?.minutes ?? "--"} digitClassName={digitWidth} />
+        <SevenSegmentPair text={parts?.minutes ?? "--"} digitClassName={digitClass} />
         <SevenSegmentColon className={colonClass} compact={compact} />
-        <SevenSegmentPair text={parts?.seconds ?? "--"} digitClassName={digitWidth} />
+        <SevenSegmentPair text={parts?.seconds ?? "--"} digitClassName={digitClass} />
       </div>
     </div>
   );

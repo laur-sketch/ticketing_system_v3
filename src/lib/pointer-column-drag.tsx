@@ -69,7 +69,7 @@ export function usePointerColumnDrag<T extends string>(options: {
         if (disabled) return;
         if (e.pointerType === "mouse" && e.button !== 0) return;
         const target = e.target as HTMLElement;
-        if (target.closest("a[href], input, select, textarea")) return;
+        if (target.closest("a[href], button, input, select, textarea, label")) return;
 
         const el = e.currentTarget as HTMLElement;
         const rect = el.getBoundingClientRect();
@@ -169,11 +169,12 @@ export function PointerDragGhostLayer({ ghost }: { ghost: PointerDragGhost | nul
   if (!mounted || !ghost || typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="pointer-events-none fixed z-[100] max-w-[min(92vw,320px)] rounded-lg border border-orange-400/50 bg-white/95 px-3 py-2 shadow-2xl ring-2 ring-orange-500/25 dark:border-orange-500/40 dark:bg-zinc-900/95 dark:ring-orange-400/20"
+      className="pointer-events-none fixed z-[400] max-w-[min(92vw,320px)] rounded-lg border border-orange-400/50 bg-white/95 px-3 py-2 shadow-2xl ring-2 ring-orange-500/25 dark:border-orange-500/40 dark:bg-zinc-900/95 dark:ring-orange-400/20"
       style={{
         left: ghost.x - ghost.offsetX,
         top: ghost.y - ghost.offsetY,
       }}
+      aria-hidden
     >
       <p className="line-clamp-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100">{ghost.label}</p>
     </div>,

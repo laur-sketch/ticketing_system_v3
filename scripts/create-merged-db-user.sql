@@ -11,10 +11,12 @@ CREATE DATABASE IF NOT EXISTS `mergeddatabase-dev`
 CREATE USER IF NOT EXISTS 'merge_app'@'localhost' IDENTIFIED BY 'CHANGE_ME_merge_app_password';
 CREATE USER IF NOT EXISTS 'merge_app'@'127.0.0.1' IDENTIFIED BY 'CHANGE_ME_merge_app_password';
 
--- Read-only for the ETL-populated reporting database.
+-- Read-only for the ETL-populated reporting database (app runtime).
 GRANT SELECT ON `mergeddatabase-dev`.* TO 'merge_app'@'localhost';
 GRANT SELECT ON `mergeddatabase-dev`.* TO 'merge_app'@'127.0.0.1';
 
+-- Personnel company/role sync and ETL writes use DATABASE_URL_SECONDARY_SYNC
+-- (typically root or merge_etl), not merge_app.
 -- Optional: allow the merge ETL script (run as merge_etl) to refresh data.
 -- CREATE USER IF NOT EXISTS 'merge_etl'@'localhost' IDENTIFIED BY 'CHANGE_ME_merge_etl_password';
 -- GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER ON `mergeddatabase-dev`.* TO 'merge_etl'@'localhost';

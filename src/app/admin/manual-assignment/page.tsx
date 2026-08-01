@@ -1,10 +1,9 @@
-import type { Prisma, TicketStatus } from "@prisma/client/primary";
+import { Prisma, type TicketStatus } from "@prisma/client/primary";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 import { loadHrisAssignableStaff } from "@/lib/hris-staff-roster";
 import { prisma } from "@/lib/prisma";
-import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { ensureRosterTeamsInDb } from "@/lib/roster-teams";
 import { ManualAssignmentBoard } from "./ui";
@@ -16,55 +15,13 @@ const ACTIVE_STATUSES: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", 
 export default async function ManualAssignmentPage() {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin", "Personnel"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/agent");
 
-  const meEmail = (session.user.email ?? "").trim().toLowerCase();
-  /**
-   * Personnel (company coordinators) stay locked to their designated SBU — no roster filter.
-   * SuperAdmin and JWT Admin use the company dropdown to narrow unassigned tickets and personnel lanes.
-   */
-  const isPersonnelCompanyLock = session.user.role === "Personnel";
-  let scopedCompanyFilterTeamId: string | null = null;
-  let scopedCompanyFilterLabel: string | null = null;
-
-  if (isPersonnelCompanyLock) {
-    const mePortal = await prisma.portalAccount.findFirst({
-      where: { email: { equals: meEmail, mode: "insensitive" } },
-      select: {
-        staffDesignatedCompanyId: true,
-        companyId: true,
-        staffDesignatedCompany: { select: { name: true } },
-        company: { select: { name: true } },
-      },
-    });
-
-    scopedCompanyFilterTeamId = mePortal?.staffDesignatedCompanyId ?? mePortal?.companyId ?? null;
-    scopedCompanyFilterLabel =
-      mePortal?.staffDesignatedCompany?.name?.trim() ?? mePortal?.company?.name?.trim() ?? null;
-  }
-  /**
-   * Company-scoped roles without a designated company should land on an empty
-   * board with a notice rather than seeing everyone.
-   */
-  const scopeUnavailable = isPersonnelCompanyLock && !scopedCompanyFilterTeamId;
-
-  if (!["SuperAdmin", "Admin"].includes(session.user.role)) {
-    const normalizedEmail = (session.user.email ?? "").trim().toLowerCase();
-    const normalizedName = (session.user.name ?? "").trim();
-    const operator = await prisma.agent.findFirst({
-      where: {
-        OR: [
-          normalizedEmail ? { email: normalizedEmail } : undefined,
-          normalizedName ? { name: normalizedName } : undefined,
-        ].filter(Boolean) as Prisma.AgentWhereInput[],
-      },
-      include: { team: true },
-    });
-    const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
-    if (!operator || !companyCoordinator) {
-      redirect("/agent");
-    }
-  }
+  /** SuperAdmin and JWT Admin use the company dropdown to narrow personnel lanes. */
+  const isPersonnelCompanyLock = false;
+  const scopedCompanyFilterTeamId: string | null = null;
+  const scopedCompanyFilterLabel: string | null = null;
+  const scopeUnavailable = false;
 
   await ensureRosterTeamsInDb();
 
@@ -131,6 +88,36 @@ export default async function ManualAssignmentPage() {
     grouped.set(key, [...(grouped.get(key) ?? []), t]);
   }
 
+  const requestTypeById = new Map<string, string>();
+  const allTicketIds = [
+    ...new Set([...scopedUnassigned.map((t) => t.id), ...assignedByAgent.map((t) => t.id)]),
+  ];
+  if (allTicketIds.length > 0) {
+    const rows = await prisma.$queryRaw<Array<{ id: string; request_type: string | null }>>`
+      SELECT id, request_type FROM tickets WHERE id IN (${Prisma.join(allTicketIds)})
+    `;
+    for (const row of rows) {
+      requestTypeById.set(row.id, row.request_type ?? "ISSUE_CONCERN_TICKET");
+    }
+  }
+
+  const toCard = (t: {
+    id: string;
+    ticketNumber: string;
+    title: string;
+    description: string;
+    priority: string;
+    updatedAt: Date;
+  }) => ({
+    id: t.id,
+    ticketNumber: t.ticketNumber,
+    title: t.title,
+    description: t.description,
+    priority: t.priority,
+    updatedAt: t.updatedAt.toISOString(),
+    requestType: requestTypeById.get(t.id) ?? "ISSUE_CONCERN_TICKET",
+  });
+
   const personnel = agentsForBoard.map((a) => {
     const tickets = grouped.get(a.agentId) ?? [];
     return {
@@ -140,14 +127,7 @@ export default async function ManualAssignmentPage() {
       teamLabel: a.teamLabel,
       companyId: a.assignmentCompany?.id ?? null,
       assigneeColorKey: assigneeColorByEmail.get(a.email.trim().toLowerCase()) ?? null,
-      cards: tickets.map((t) => ({
-        id: t.id,
-        ticketNumber: t.ticketNumber,
-        title: t.title,
-        description: t.description,
-        priority: t.priority,
-        updatedAt: t.updatedAt.toISOString(),
-      })),
+      cards: tickets.map(toCard),
     };
   });
 
@@ -161,14 +141,7 @@ export default async function ManualAssignmentPage() {
           ? "Your portal account doesn't have a designated company yet. A SuperAdmin can set one in Personnel → Portal Accounts so you can see your team's lanes."
           : null
       }
-      unassigned={scopedUnassigned.map((t) => ({
-        id: t.id,
-        ticketNumber: t.ticketNumber,
-        title: t.title,
-        description: t.description,
-        priority: t.priority,
-        updatedAt: t.updatedAt.toISOString(),
-      }))}
+      unassigned={scopedUnassigned.map(toCard)}
       personnel={personnel}
     />
   );

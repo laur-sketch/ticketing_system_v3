@@ -10,6 +10,11 @@ import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import type { TicketStatus } from "@prisma/client/primary";
 import { cn } from "@/lib/cn";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
+import { requestTypeAcronym, requestTypeLabel } from "@/lib/request-types";
+import { extractPaymentAccountTitle } from "@/lib/request-for-payment";
+import { parseItemRequisitionDescription } from "@/lib/item-requisition";
+import { extractFundTransferPreview } from "@/lib/fund-transfer-request";
+import { extractJobOrderPreview } from "@/lib/job-order";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 
 export type KanbanTicket = {
@@ -19,6 +24,10 @@ export type KanbanTicket = {
   description: string;
   priority: string;
   status: TicketStatus;
+  /** Intake request type id (ISSUE_CONCERN_TICKET, REQUEST_FOR_PAYMENT, …). */
+  requestType?: string | null;
+  /** e.g. APPROVED BY IS MISSING for Request for Payment. */
+  proceduralStatusLabel?: string | null;
   updatedAt: string;
   agentName: string | null;
   assigneeColorKey?: string | null;
@@ -87,6 +96,26 @@ function statusBadgeLabel(status: TicketStatus) {
   return formatTicketStatusLabel(status).toUpperCase();
 }
 
+function kanbanCardPreview(ticket: KanbanTicket): string {
+  if (ticket.requestType === "REQUEST_FOR_PAYMENT") {
+    const accountTitle = extractPaymentAccountTitle(ticket.description);
+    if (accountTitle) return accountTitle;
+  }
+  if (ticket.requestType === "ITEM_REQUISITION_SLIP") {
+    const purpose = parseItemRequisitionDescription(ticket.description)?.purposeOfRequest?.trim();
+    if (purpose) return purpose.slice(0, 120);
+  }
+  if (ticket.requestType === "FUND_TRANSFER_REQUEST") {
+    const preview = extractFundTransferPreview(ticket.description);
+    if (preview) return preview;
+  }
+  if (ticket.requestType === "JOB_ORDER") {
+    const preview = extractJobOrderPreview(ticket.description);
+    if (preview) return preview;
+  }
+  return (ticket.description || ticket.title).trim();
+}
+
 export function AgentKanban({
   tickets: initialTickets,
   columnTotals,
@@ -108,7 +137,7 @@ export function AgentKanban({
     const nextStatus = targetStatusForColumn(ticket, toColumn);
     if (from === nextStatus) return;
     if (toColumn === "progress" && nextStatus === "IN_PROGRESS" && ticket.priority === "UNSET") {
-      setError("Set a priority level on the ticket before moving it to In progress.");
+      setError("Set a priority level on the request before moving it to In progress.");
       setTimeout(() => setError(null), 6000);
       return;
     }
@@ -220,7 +249,7 @@ export function AgentKanban({
                     <div className="flex gap-1.5 p-2.5 sm:p-3 sm:pt-2">
                       <span
                         {...getCardPointerProps(t.id, {
-                          getLabel: () => `#${t.ticketNumber} · ${(t.description || t.title).slice(0, 80)}`,
+                          getLabel: () => `#${t.ticketNumber} · ${kanbanCardPreview(t).slice(0, 80)}`,
                         })}
                         className={cn(
                           "mt-0.5 flex min-h-11 w-9 shrink-0 touch-none select-none flex-col items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-500 active:bg-orange-50 active:text-orange-600 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:cursor-grab md:active:cursor-grabbing dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-400 dark:active:bg-orange-950/30",
@@ -244,6 +273,12 @@ export function AgentKanban({
                             </span>
                             <div className="flex flex-wrap items-center gap-1 min-[420px]:justify-end">
                               <span
+                                className="rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
+                                title={requestTypeLabel(t.requestType)}
+                              >
+                                {requestTypeAcronym(t.requestType)}
+                              </span>
+                              <span
                                 className={cn(
                                   "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
                                   priorityClass(t.priority),
@@ -262,18 +297,28 @@ export function AgentKanban({
                             </div>
                           </div>
                           <p className="mt-1 line-clamp-3 break-words text-sm font-semibold leading-snug text-zinc-900 hover:underline sm:line-clamp-2 dark:text-zinc-100">
-                            {t.description || t.title}
+                            {kanbanCardPreview(t)}
                           </p>
-                          <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-500">
+                          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-zinc-600 dark:text-zinc-500">
                             <ElapsedFromIso iso={t.updatedAt} className="inline" />
-                            <AssigneeInitialsBadge
-                              agentName={t.agentName}
-                              assigneeColorKey={t.assigneeColorKey}
-                              profileImage={t.assigneeProfileImage}
-                              profileImageZoom={t.assigneeProfileImageZoom}
-                              profileImagePosX={t.assigneeProfileImagePosX}
-                              profileImagePosY={t.assigneeProfileImagePosY}
-                            />
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {t.proceduralStatusLabel ? (
+                                <span
+                                  className="rounded-full border border-amber-400/50 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200"
+                                  title={t.proceduralStatusLabel}
+                                >
+                                  {t.proceduralStatusLabel}
+                                </span>
+                              ) : null}
+                              <AssigneeInitialsBadge
+                                agentName={t.agentName}
+                                assigneeColorKey={t.assigneeColorKey}
+                                profileImage={t.assigneeProfileImage}
+                                profileImageZoom={t.assigneeProfileImageZoom}
+                                profileImagePosX={t.assigneeProfileImagePosX}
+                                profileImagePosY={t.assigneeProfileImagePosY}
+                              />
+                            </div>
                           </div>
                         </AgentTicketDeepLink>
                         {quickMoveTargets(t).length > 0 ? (

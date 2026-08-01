@@ -46,19 +46,35 @@ function sqlId(name: string): string {
 }
 
 function resolveSourceDb(): string {
-  return env("HRIS_MERGE_SOURCE_DB", "hrisdemo");
+  return (
+    process.env.HRIS_LIVE_SOURCE_DB?.trim() ||
+    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
+    "hris-dev"
+  );
 }
 
 function resolveTargetDb(): string {
   return parseMysqlDatabaseName(
     process.env.DATABASE_URL_SECONDARY_SYNC?.trim() ||
       process.env.DATABASE_URL_SECONDARY?.trim() ||
-      "mysql://root@localhost:3306/mergedatabase-demo",
-  ) ?? "mergedatabase-demo";
+      "mysql://root@localhost:3306/mergeddatabase-dev",
+  ) ?? "mergeddatabase-dev";
 }
 
 function resolveSourceTag(): string {
-  return env("HRIS_MERGE_SOURCE_TAG", resolveSourceDb());
+  return (
+    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
+    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
+    "hrisdemo"
+  );
+}
+
+async function schemaExists(db: PrismaClientSecondary, schema: string): Promise<boolean> {
+  const rows = await db.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+    `SELECT COUNT(*) AS n FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
+    schema,
+  );
+  return Number(rows[0]?.n ?? 0) > 0;
 }
 
 async function refreshMergedRolesFromHris(
@@ -226,10 +242,21 @@ async function main() {
   try {
     console.log(`Role sync: ${sourceDb} → ${targetDb} (tag: ${sourceTag})`);
 
-    const mergedUpdated = await refreshMergedRolesFromHris(db, sourceDb, targetDb, sourceTag);
-    console.log(`Merged users refreshed from HRIS: ${mergedUpdated} rows affected`);
+    if (await schemaExists(db, sourceDb)) {
+      // Only refresh rows whose provenance tag matches the live schema we are reading.
+      const refreshTag = sourceDb;
+      const mergedUpdated = await refreshMergedRolesFromHris(db, sourceDb, targetDb, refreshTag);
+      console.log(
+        `Merged users refreshed from HRIS (${sourceDb} → tag ${refreshTag}): ${mergedUpdated} rows affected`,
+      );
+    } else {
+      console.warn(
+        `[sync-merged-roles] source schema "${sourceDb}" not found — skipping live HRIS refresh; syncing portal from existing merged_users.`,
+      );
+    }
 
     await prismaSecondary.$connect();
+    // Portal sync still uses HRIS_MERGE_SOURCE_TAG (often hrisdemo for demo merges).
     const portal = await syncPortalRolesFromMerged(sourceTag);
     console.log(
       `[sync-merged-roles] portal total=${portal.total} synced=${portal.synced} failed=${portal.failed} roleChanges=${portal.roleChanges}`,

@@ -33,6 +33,7 @@ export async function GET(
       contactEmail: true,
       requestorEmail: true,
       assignedAgentId: true,
+      teamId: true,
       intakeScreenshotMeta: true,
     },
   });

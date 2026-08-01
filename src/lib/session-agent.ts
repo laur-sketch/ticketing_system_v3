@@ -10,13 +10,10 @@ type SessionIdentity = {
 function whereFromIdentity(identity: SessionIdentity): Prisma.AgentWhereInput | undefined {
   const normalizedEmail = (identity.email ?? "").trim().toLowerCase();
   const normalizedName = (identity.name ?? "").trim();
-  if (!normalizedEmail && !normalizedName) return undefined;
-  return {
-    OR: [
-      normalizedEmail ? { email: normalizedEmail } : undefined,
-      normalizedName ? { name: normalizedName } : undefined,
-    ].filter(Boolean) as Prisma.AgentWhereInput[],
-  };
+  // Prefer exact email only — never OR-widen with name (avoids binding to another Agent).
+  if (normalizedEmail) return { email: normalizedEmail };
+  if (normalizedName) return { name: normalizedName };
+  return undefined;
 }
 
 async function findMatchingSessionAgents(identity: SessionIdentity) {

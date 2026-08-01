@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { IT_TASK_PILLAR_TITLES, type ItTaskPillarTitle } from "@/lib/it-task-pillar-titles";
+import { IT_TASK_PILLAR_TITLES, JOB_ORDER_REQUEST_PILLAR_TITLE } from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   isInvertedChecklistPillar,
@@ -37,7 +37,7 @@ import {
   USER_SUPPORT_STAR_COLORS,
 } from "@/lib/kinetic-palette";
 
-const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
+const PILLAR_ICONS: Record<string, LucideIcon> = {
   "HELPDESK SUPPORT": Headphones,
   "DATA BACKUP": Cloud,
   "SYSTEM MAINTENANCE": Wrench,
@@ -45,13 +45,23 @@ const PILLAR_ICONS: Record<ItTaskPillarTitle, LucideIcon> = {
   DOCUMENTATION: FileText,
   "USER SUPPORT": Smile,
   "IT PROJECT IMPLEMENTATION": LayoutGrid,
+  [JOB_ORDER_REQUEST_PILLAR_TITLE]: LayoutGrid,
 };
+
+/** Display titles for canonical internal pillar keys. */
+const PILLAR_DISPLAY_NAMES: Record<string, string> = {
+  "HELPDESK SUPPORT": "REQUEST SUPPORT",
+};
+
+export function pillarDisplayName(pillar: string): string {
+  return PILLAR_DISPLAY_NAMES[pillar] ?? pillar;
+}
 
 /** New task groups created on the Task Board don't have a curated icon yet. */
 const DEFAULT_PILLAR_ICON: LucideIcon = ClipboardList;
 
 function pillarIcon(pillar: string): LucideIcon {
-  return PILLAR_ICONS[pillar as ItTaskPillarTitle] ?? DEFAULT_PILLAR_ICON;
+  return PILLAR_ICONS[pillar] ?? DEFAULT_PILLAR_ICON;
 }
 
 /** Helpdesk pillar: closed vs remainder of denominator (cadence-specific). */
@@ -60,7 +70,7 @@ const SEG_COLORS_HELPDESK = {
   remainder: KPI_DONUT_COLORS.remainder,
 } as const;
 
-/** User support pillar: ticket status mix */
+/** User support pillar: request status mix */
 const SEG_COLORS_USER_SUPPORT = USER_SUPPORT_STAR_COLORS;
 
 /** Two-bucket pillars: on-track + on-time vs overdue (same underlying kanban logic). */
@@ -194,7 +204,7 @@ function PillarDonutCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-            {pillar}
+            {pillarDisplayName(pillar)}
           </p>
           <p className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
             {headline}
@@ -319,7 +329,26 @@ const CHECKLIST_PILLAR_CONFIG: Partial<Record<string, ChecklistPillarConfig>> = 
     negativeLabel: "Delayed",
     metricName: "on time",
   },
+  [JOB_ORDER_REQUEST_PILLAR_TITLE]: {
+    positiveLabel: "On time",
+    negativeLabel: "Delayed",
+    metricName: "on time",
+  },
 };
+
+function checklistConfigForPillar(pillar: string): ChecklistPillarConfig {
+  const curated = CHECKLIST_PILLAR_CONFIG[pillar];
+  if (curated) return curated;
+  const upper = pillar.trim().toUpperCase();
+  if (upper.includes("JOB ORDER") || upper.includes("PROJECT")) {
+    return {
+      positiveLabel: "On time",
+      negativeLabel: "Delayed",
+      metricName: "on time",
+    };
+  }
+  return DEFAULT_CHECKLIST_PILLAR_CONFIG;
+}
 
 function checklistProgressSegments(
   view: { positive: number; negative: number },
@@ -489,7 +518,7 @@ function PersonnelMetricStatBox({
   return (
     <div className={cn("rounded-lg border px-2.5 py-2", toneClass)}>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em]">{label}</p>
-      <p className={cn("mt-1 text-xl font-bold tabular-nums", valueClass)}>{value}</p>
+      <p className={cn("mt-1 text-xl font-bold tabular-nums", valueClass)}>{value ?? 0}</p>
       <p className={cn("text-[10px]", subClass)}>{subLabel}</p>
     </div>
   );
@@ -558,11 +587,11 @@ export function ContributorPersonalKpiCard({
 
       <div className="mt-3 space-y-3">
         {row.tickets ? (
-          <PersonnelMetricSection title="Tickets">
+          <PersonnelMetricSection title="Requests">
             <PersonnelMetricStatBox
               label="Closed"
               value={row.tickets.closed}
-              subLabel="tickets closed"
+              subLabel="requests closed"
               tone="green"
             />
             <PersonnelMetricStatBox
@@ -580,7 +609,63 @@ export function ContributorPersonalKpiCard({
           </PersonnelMetricSection>
         ) : null}
 
-        {row.tickets && row.tasks ? (
+        {row.rfpAccounting ? (
+          <>
+            {row.tickets ? (
+              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
+            ) : null}
+            <PersonnelMetricSection title="RFP · Approved By Accounting">
+              <PersonnelMetricStatBox
+                label="Closed"
+                value={row.rfpAccounting.closed}
+                subLabel="steps completed"
+                tone="green"
+              />
+              <PersonnelMetricStatBox
+                label="Pending"
+                value={row.rfpAccounting.pending}
+                subLabel="awaiting accounting"
+                tone="neutral"
+              />
+              <PersonnelMetricStatBox
+                label="Efficiency"
+                value={`${row.rfpAccounting.efficiency}%`}
+                subLabel="completion rate"
+                tone="teal"
+              />
+            </PersonnelMetricSection>
+          </>
+        ) : null}
+
+        {row.rfpFinance ? (
+          <>
+            {row.tickets || row.rfpAccounting ? (
+              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
+            ) : null}
+            <PersonnelMetricSection title="RFP · Approved By Finance">
+              <PersonnelMetricStatBox
+                label="Closed"
+                value={row.rfpFinance.closed}
+                subLabel="steps completed"
+                tone="green"
+              />
+              <PersonnelMetricStatBox
+                label="Pending"
+                value={row.rfpFinance.pending}
+                subLabel="awaiting finance"
+                tone="neutral"
+              />
+              <PersonnelMetricStatBox
+                label="Efficiency"
+                value={`${row.rfpFinance.efficiency}%`}
+                subLabel="completion rate"
+                tone="teal"
+              />
+            </PersonnelMetricSection>
+          </>
+        ) : null}
+
+        {(row.tickets || row.rfpAccounting || row.rfpFinance) && row.tasks ? (
           <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
         ) : null}
 
@@ -678,8 +763,8 @@ function csvLayoutRowsForPillar(args: {
     const percent = (agg?.total ?? 0) > 0 ? `${agg?.percent ?? 0}%` : "0%";
     return [[String(done), "0", String(notStarted), percent]];
   }
-  const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
-  const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const cfg = checklistConfigForPillar(pillar);
+  const invert = cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
   const view = kpiChecklistMetricView(
     {
       total: agg?.total ?? 0,
@@ -748,21 +833,21 @@ function sourceDetailsForPillar(args: {
   if (pillar === "HELPDESK SUPPORT") {
     const total = (helpdeskTickets?.closedCount ?? 0) + (helpdeskTickets?.openTicketsInPeriod ?? 0);
     return {
-      title: "Helpdesk Support Source",
+      title: "Request Support Source",
       rows: [
-        { label: "Collected from", value: "Ticket records plus imported helpdesk CSV snapshots when available" },
-        { label: "Recorded as", value: "Closed vs open ticket counts for the selected working-day range" },
+        { label: "Collected from", value: "Request records plus imported helpdesk CSV snapshots when available" },
+        { label: "Recorded as", value: "Closed vs open request counts for the selected working-day range" },
         { label: "Range", value: reportingPeriodLabel ?? `${helpdeskTickets?.rangeFromYmd ?? "n/a"} to ${helpdeskTickets?.rangeToYmd ?? "n/a"}` },
         { label: "Closed", value: String(helpdeskTickets?.closedCount ?? 0) },
         { label: "Open", value: String(helpdeskTickets?.openTicketsInPeriod ?? 0) },
       ],
       tableColumns: ["Metric", "Value", "How it is used"],
       tableRows: [
-        ["Closed tickets", String(helpdeskTickets?.closedCount ?? 0), "Numerator for helpdesk support percent"],
-        ["Open tickets in period", String(helpdeskTickets?.openTicketsInPeriod ?? 0), "Open workload counted in denominator"],
+        ["Closed requests", String(helpdeskTickets?.closedCount ?? 0), "Numerator for request support percent"],
+        ["Open requests in period", String(helpdeskTickets?.openTicketsInPeriod ?? 0), "Open workload counted in denominator"],
         ["Closed + open total", String(total), "Denominator for the headline percent"],
-        ["Requests in range", String(helpdeskTickets?.requestsInRange ?? 0), "Ticket volume context for the same range"],
-        ["Open backlog", String(helpdeskTickets?.openBacklog ?? 0), "Current non-closed backlog for the selected scope"],
+        ["Requests in range", String(helpdeskTickets?.requestsInRange ?? 0), "Request volume context for the same range"],
+        ["Active requests", String(helpdeskTickets?.openBacklog ?? 0), "Current non-closed backlog for the selected scope"],
         ["Headline percent", helpdeskTickets?.percent == null ? "n/a" : `${helpdeskTickets.percent}%`, "closed / (closed + open)"],
       ],
       csvColumns: IT_SALF_CSV_COLUMNS,
@@ -778,11 +863,11 @@ function sourceDetailsForPillar(args: {
     return {
       title: "User Support Source",
       rows: [
-        { label: "Collected from", value: "Ticket star ratings submitted for tickets in the selected reporting period" },
-        { label: "Recorded as", value: "Average CSAT star rating across rated tickets" },
+        { label: "Collected from", value: "Request star ratings submitted for requests in the selected reporting period" },
+        { label: "Recorded as", value: "Average CSAT star rating across rated requests" },
         { label: "Average rating", value: average == null ? "No ratings yet" : `${average.toFixed(2)} / 5` },
-        { label: "Rated tickets", value: String(rated) },
-        { label: "Total tickets", value: String(total) },
+        { label: "Rated requests", value: String(rated) },
+        { label: "Total requests", value: String(total) },
       ],
       tableColumns: ["Rating", "Count", "Recorded meaning"],
       tableRows: [
@@ -791,19 +876,19 @@ function sourceDetailsForPillar(args: {
           String(row.count),
           row.label,
         ]),
-        ["Rated tickets", String(rated), "Tickets with submitted star ratings"],
-        ["Unrated tickets", String(userSupportTickets?.unratedTickets ?? 0), "Tickets in the selected period without a rating"],
+        ["Rated requests", String(rated), "Requests with submitted star ratings"],
+        ["Unrated requests", String(userSupportTickets?.unratedTickets ?? 0), "Requests in the selected period without a rating"],
       ],
       csvColumns: IT_SALF_CSV_COLUMNS,
       csvRows: csvLayoutRowsForPillar(args),
       showCsvPreview: false,
-      notes: ["This pillar reflects customer star ratings instead of ticket confirmation statuses."],
+      notes: ["This pillar reflects customer star ratings instead of request confirmation statuses."],
     };
   }
   const agg = checklistPillars?.[pillar];
-  const cfg = CHECKLIST_PILLAR_CONFIG[pillar];
+  const cfg = checklistConfigForPillar(pillar);
   const cadenceLabel = metricsCadence.toLowerCase();
-  const invert = cfg?.invertChecklist === true || isInvertedChecklistPillar(pillar);
+  const invert = cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
   const subtaskCsvColumns = agg?.subtaskCsvColumns;
   const subtaskCsvRows = agg?.subtaskCsvRows;
   const hasSubtaskCsvPreview = Boolean(subtaskCsvColumns?.length && subtaskCsvRows?.length);
@@ -830,7 +915,7 @@ function sourceDetailsForPillar(args: {
     invert,
   );
   return {
-    title: `${pillar} Source`,
+    title: `${pillarDisplayName(pillar)} Source`,
     rows: [
       {
         label: "Collected from",
@@ -979,7 +1064,7 @@ export function TaskPillarMetricsGrid({
           return null;
         }
 
-        const cfg = CHECKLIST_PILLAR_CONFIG[pillar] ?? DEFAULT_CHECKLIST_PILLAR_CONFIG;
+        const cfg = checklistConfigForPillar(pillar);
         const agg = checklistPillars?.[pillar] ?? {
           total: 0,
           done: 0,
@@ -1004,7 +1089,7 @@ export function TaskPillarMetricsGrid({
             ? "—"
             : `${view.percent}% ${cfg.metricName}`;
         const subLabel =
-          pillar === "IT PROJECT IMPLEMENTATION"
+          cfg.metricName === "on time"
             ? `${view.positive} on time · ${view.negative} delayed · ${agg.total} sub-tasks`
             : showCountedPeriods
               ? countedPeriodsLabel(agg)

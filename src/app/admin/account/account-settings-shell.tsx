@@ -722,7 +722,7 @@ export function AccountSettingsShell() {
                       : "—"}
                   </p>
                   <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                    Tickets resolved
+                    Requests resolved
                   </p>
                   <div className="mt-4 h-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                     <div

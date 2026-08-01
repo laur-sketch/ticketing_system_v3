@@ -1,10 +1,40 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
-import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { isStaffPortalRole } from "@/lib/staff-role";
 import { logActivity, touchFirstResponse } from "@/lib/ticket-actions";
+import {
+  applyPaymentApprovalAssignees,
+  assigneeFieldForStep,
+  canAssignPaymentApprover,
+  PAYMENT_APPROVAL_STEP_LABELS,
+  paymentProceduralStatusLabel,
+} from "@/lib/request-for-payment-approval";
+import {
+  initPaymentApprovalMetaIfNeeded,
+  savePaymentApprovalMeta,
+} from "@/lib/payment-approval-db";
+import {
+  applyItemRequisitionApprovalAssignees,
+  itemRequisitionAssigneeFieldForStep,
+  ITEM_REQUISITION_APPROVAL_STEP_LABELS,
+  itemRequisitionProceduralStatusLabel,
+} from "@/lib/item-requisition-approval";
+import {
+  initItemRequisitionApprovalMetaIfNeeded,
+  saveItemRequisitionApprovalMeta,
+} from "@/lib/item-requisition-approval-db";
+import {
+  applyFundTransferApprovalAssignees,
+  fundTransferAssigneeFieldForStep,
+  FUND_TRANSFER_APPROVAL_STEP_LABELS,
+  fundTransferProceduralStatusLabel,
+} from "@/lib/fund-transfer-approval";
+import {
+  initFundTransferApprovalMetaIfNeeded,
+  saveFundTransferApprovalMeta,
+} from "@/lib/fund-transfer-approval-db";
+import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 type AssignBody = {
   ticketId?: string;
@@ -25,9 +55,8 @@ export async function POST(req: Request) {
   }
   const isSuperAdmin = session.user.role === "SuperAdmin";
   const isJwtAdmin = session.user.role === "Admin";
-  const requesterIsCompanyAdmin = await portalCompanyAdminPrivilegesForEmail(session.user.email);
 
-  if (!(isSuperAdmin || isJwtAdmin || requesterIsCompanyAdmin)) {
+  if (!(isSuperAdmin || isJwtAdmin)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -44,6 +73,16 @@ export async function POST(req: Request) {
 
     if (!ticket) return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
 
+    const adminCompanyId =
+      isJwtAdmin && !isSuperAdmin ? await resolveStaffCompanyTeamId(session.user.email) : null;
+    if (isJwtAdmin && !isSuperAdmin) {
+      if (!adminCompanyId || ticket.teamId !== adminCompanyId) {
+        return NextResponse.json(
+          { error: "You can only assign tickets in your designated company." },
+          { status: 403 },
+        );
+      }
+    }
     let agent = null as null | { id: string; name: string; email: string; teamId: string };
     if (agentId) {
       const direct = await prisma.agent.findUnique({
@@ -61,8 +100,8 @@ export async function POST(req: Request) {
         where: { email: { equals: direct.email, mode: "insensitive" } },
         select: { role: true },
       });
-      if (!isSuperAdmin && !isStaffPortalRole(targetPortal?.role)) {
-        return NextResponse.json({ error: "Company coordinators can assign only to staff agents." }, { status: 403 });
+      if (!isStaffPortalRole(targetPortal?.role)) {
+        return NextResponse.json({ error: "You can assign only to staff agents." }, { status: 403 });
       }
       agent = direct;
     } else {
@@ -90,26 +129,13 @@ export async function POST(req: Request) {
             teamId: defaultTeamId,
           },
         }));
-      if (!isSuperAdmin && !isStaffPortalRole(account.role)) {
-        return NextResponse.json({ error: "Company coordinators can assign only to staff agents." }, { status: 403 });
-      }
     }
 
-    /**
-     * SuperAdmin and JWT Admin use the assignment board across SBUs.
-     * Others (company coordinators, etc.) assign only within their designated company queue.
-     */
-    if (!isSuperAdmin && !isJwtAdmin) {
-      const scopeTeamId = await resolveStaffCompanyTeamId(session.user.email);
-      if (!scopeTeamId) {
+    if (isJwtAdmin && !isSuperAdmin) {
+      const agentCompanyId = await resolveAgentDesignatedCompanyId(agent.id);
+      if (!adminCompanyId || agentCompanyId !== adminCompanyId) {
         return NextResponse.json(
-          { error: "Your account needs a designated company (Portal Accounts) before assigning tickets." },
-          { status: 403 },
-        );
-      }
-      if (agent.teamId !== scopeTeamId) {
-        return NextResponse.json(
-          { error: "You can only assign tickets to personnel within your designated company." },
+          { error: "You can only assign to personnel in your designated company." },
           { status: 403 },
         );
       }
@@ -119,7 +145,6 @@ export async function POST(req: Request) {
       where: { id: ticketId },
       data: {
         assignedAgentId: agent.id,
-        teamId: ticket.teamId ?? agent.teamId,
       },
       include: {
         assignedAgent: true,
@@ -135,11 +160,80 @@ export async function POST(req: Request) {
       `Assigned to ${updated.assignedAgent?.name ?? agent.name}`,
     );
 
+    // RFP / IRS: board assignee becomes the current procedural approver for this cycle.
+    let assignedAgentIdAfterSync: string | null = updated.assignedAgentId;
+    let assignedAgentNameAfterSync: string | null = updated.assignedAgent?.name ?? agent.name;
+    try {
+      const requestTypeRows = await prisma.$queryRaw<Array<{ request_type: string | null }>>`
+        SELECT request_type FROM tickets WHERE id = ${ticketId} LIMIT 1
+      `;
+      const requestType = (requestTypeRows[0]?.request_type ?? "").trim();
+      if (requestType === "REQUEST_FOR_PAYMENT") {
+        const meta = await initPaymentApprovalMetaIfNeeded(ticketId);
+        if (meta.proceduralStep !== "DONE") {
+          const uniqueness = canAssignPaymentApprover({
+            meta,
+            agentId: agent.id,
+            forStep: meta.proceduralStep,
+          });
+          if (!uniqueness.ok) {
+            return NextResponse.json({ error: uniqueness.error }, { status: 400 });
+          }
+          const field = assigneeFieldForStep(meta.proceduralStep);
+          const nextMeta = applyPaymentApprovalAssignees(meta, { [field]: agent.id });
+          await savePaymentApprovalMeta(ticketId, nextMeta);
+          const pending = paymentProceduralStatusLabel(nextMeta.proceduralStep);
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            `Assigned for ${PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+            pending
+              ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
+              : (updated.assignedAgent?.name ?? agent.name),
+          );
+        }
+      } else if (requestType === "ITEM_REQUISITION_SLIP") {
+        const meta = await initItemRequisitionApprovalMetaIfNeeded(ticketId);
+        if (meta.proceduralStep !== "DONE") {
+          const field = itemRequisitionAssigneeFieldForStep(meta.proceduralStep);
+          const nextMeta = applyItemRequisitionApprovalAssignees(meta, { [field]: agent.id });
+          await saveItemRequisitionApprovalMeta(ticketId, nextMeta);
+          const pending = itemRequisitionProceduralStatusLabel(nextMeta.proceduralStep);
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            `Assigned for ${ITEM_REQUISITION_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+            pending
+              ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
+              : (updated.assignedAgent?.name ?? agent.name),
+          );
+        }
+      } else if (requestType === "FUND_TRANSFER_REQUEST") {
+        const meta = await initFundTransferApprovalMetaIfNeeded(ticketId);
+        if (meta.proceduralStep !== "DONE") {
+          const field = fundTransferAssigneeFieldForStep(meta.proceduralStep);
+          const nextMeta = applyFundTransferApprovalAssignees(meta, { [field]: agent.id });
+          await saveFundTransferApprovalMeta(ticketId, nextMeta);
+          const pending = fundTransferProceduralStatusLabel(nextMeta.proceduralStep);
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            `Assigned for ${FUND_TRANSFER_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+            pending
+              ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
+              : (updated.assignedAgent?.name ?? agent.name),
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("Procedural assignee sync after board assign failed", e);
+    }
+
     return NextResponse.json({
       ok: true,
       ticketId,
-      assignedAgentId: updated.assignedAgentId,
-      assignedAgentName: updated.assignedAgent?.name ?? agent.name,
+      assignedAgentId: assignedAgentIdAfterSync,
+      assignedAgentName: assignedAgentNameAfterSync,
     });
   } catch (e) {
     console.error(e);

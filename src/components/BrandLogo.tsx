@@ -15,10 +15,12 @@ export function BrandLogo({ className, compact = false }: BrandLogoProps) {
       width={320}
       height={96}
       unoptimized
-      className={cn("brightness-[0.96] contrast-[1.18] dark:brightness-100 dark:contrast-100", className)}
-      style={{ objectFit: "contain" }}
+      className={cn(
+        "object-contain brightness-[0.96] contrast-[1.18] dark:brightness-100 dark:contrast-100",
+        className,
+      )}
       data-compact={compact ? "true" : "false"}
-      sizes="(max-width: 768px) 60vw, 280px"
+      sizes="(max-width: 768px) 140px, 280px"
       priority={false}
     />
   );

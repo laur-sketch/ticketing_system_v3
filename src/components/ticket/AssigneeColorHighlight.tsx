@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignment-colors";
 
 type Props = {
-  /** Stored key e.g. RED, BLUE — from portal `staffAssignmentColor`. */
+  /** Stored color: hex (`#rrggbb`) or legacy named key (RED, BLUE, …). */
   assigneeColorKey?: string | null;
   className?: string;
   children: ReactNode;

@@ -58,7 +58,7 @@ export async function proxy(req: NextRequest) {
     if (pathname.startsWith("/admin/manual-assignment")) {
       const denied = requireAuth(req, token, sessionInvalid);
       if (denied) return denied;
-      if (!isAllowed(token!.role as string | undefined, ["Admin", "Personnel"])) {
+      if (!isAllowed(token!.role as string | undefined, ["Admin"])) {
         return NextResponse.redirect(new URL("/", req.url));
       }
       return NextResponse.next();

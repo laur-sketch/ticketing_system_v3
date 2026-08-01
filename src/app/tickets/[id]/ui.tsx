@@ -4,14 +4,22 @@ import type { Ticket, TicketFeedback } from "@prisma/client/primary";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { CancelRequestButton } from "@/components/tickets/CancelRequestButton";
 
 type TicketWithRelations = Ticket & { feedback: TicketFeedback | null };
 
-export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations }) {
+export function CustomerTicketPanel({
+  ticket,
+  canCancelRequest = false,
+}: {
+  ticket: TicketWithRelations;
+  canCancelRequest?: boolean;
+}) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const canCancel = canCancelRequest && !ticket.assignedAgentId && ticket.status !== "CLOSED";
 
   async function postMessage() {
     if (!message.trim()) return;
@@ -38,6 +46,20 @@ export function CustomerTicketPanel({ ticket }: { ticket: TicketWithRelations })
 
   return (
     <div className="space-y-4">
+      {canCancel ? (
+        <article className="rounded-md border border-rose-400/40 bg-rose-500/5 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-rose-500/30 dark:bg-rose-950/20 sm:p-5">
+          <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Cancel request</h2>
+          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+            This request has no assignee yet. You can cancel it to withdraw it from the queue.
+          </p>
+          <CancelRequestButton
+            ticketId={ticket.id}
+            ticketNumber={ticket.ticketNumber}
+            className="mt-3"
+          />
+        </article>
+      ) : null}
+
       <article className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
         <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Add information</h2>
         <p className="mt-1 text-xs text-zinc-500">

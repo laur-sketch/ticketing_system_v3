@@ -54,7 +54,7 @@ describe("KPI task screenshots", () => {
     expect(archive?.pillarBeforeScreenshot?.[0]?.storedFileName).toBe("proof-1.png");
   });
 
-  it("archives numerical records and clears target and actual when recurring tasks reset", () => {
+  it("archives numerical records and clears actual while preserving target on cycle reset", () => {
     const reset = resetAllSubKpiDone({
       segmented: false,
       items: [
@@ -74,7 +74,8 @@ describe("KPI task screenshots", () => {
     const [item] = normalized.flat;
 
     expect(item.done).toBe(false);
-    expect(item.numericalTarget).toBeUndefined();
+    // Target carries into the next period; only the actual is cleared.
+    expect(item.numericalTarget).toBe(100);
     expect(item.numericalValue).toBeUndefined();
 
     const archives = getArchivedNumericalRecords(reset);

@@ -47,6 +47,7 @@ import {
   parseItProjectSubKpis,
 } from "@/lib/it-project-subkpis";
 import { helpdeskSupportPercent } from "@/lib/kpis";
+import { OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { normalizePersonName } from "@/lib/person-name";
 import { DEFAULT_TIME_ZONE, normalizeTimeZone, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
@@ -117,7 +118,7 @@ type ChecklistWorkRow = {
   agentId: string;
   ownerName: string;
   taskId: string | null;
-  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK";
+  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK" | "TRAVEL_ORDER";
   taskTitle: string;
   status: "CURRENT" | "DONE" | "DELAYED";
   dueAt: Date | null;
@@ -361,7 +362,7 @@ async function loadProjectAndChecklistWorkInWindow(
 ): Promise<Map<string, ChecklistWorkRow[]>> {
   const nowMs = Math.min(Date.now(), end.getTime() - 1);
   const kpis = await prismaPrimary.kpiMaintenance.findMany({
-    where: {
+      where: {
       OR: [
         { title: "IT PROJECT IMPLEMENTATION" },
         { isRecurring: false },
@@ -484,6 +485,73 @@ async function loadProjectAndChecklistWorkInWindow(
     }
   }
 
+  return byAgent;
+}
+
+/**
+ * Confirmed Travel Orders in the window — one DONE row per traveler (Field Assignment credit).
+ */
+async function loadConfirmedTravelWorkInWindow(
+  start: Date,
+  end: Date,
+): Promise<Map<string, ChecklistWorkRow[]>> {
+  const { parseTravelerAgentIds } = await import("@/lib/travel-order");
+  const { TRAVEL_ORDER_STATUS } = await import("@/lib/travel-order");
+
+  const rows = await prismaPrimary.$queryRaw<
+    Array<{
+      id: string;
+      order_request: string;
+      traveler_agent_ids: unknown;
+      created_by_agent_id: string | null;
+      updated_at: Date;
+    }>
+  >`
+    SELECT id, order_request, traveler_agent_ids, created_by_agent_id, updated_at
+    FROM travel_orders
+    WHERE status = ${TRAVEL_ORDER_STATUS.CONFIRMED}
+      AND updated_at >= ${start}
+      AND updated_at < ${end}
+  `;
+
+  const agentIds = new Set<string>();
+  const parsed = rows.map((r) => {
+    const travelers = parseTravelerAgentIds(r.traveler_agent_ids, r.created_by_agent_id);
+    for (const id of travelers) agentIds.add(id);
+    return { ...r, travelers };
+  });
+
+  const nameById = new Map<string, string>();
+  if (agentIds.size > 0) {
+    const agents = await prismaPrimary.agent.findMany({
+      where: { id: { in: [...agentIds] } },
+      select: { id: true, name: true },
+    });
+    for (const a of agents) nameById.set(a.id, a.name);
+  }
+
+  const byAgent = new Map<string, ChecklistWorkRow[]>();
+  for (const row of parsed) {
+    const title = (row.order_request?.trim() || "Travel Order").slice(0, 512);
+    const completedAt =
+      row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+    for (const agentId of row.travelers) {
+      const work: ChecklistWorkRow = {
+        agentId,
+        ownerName: nameById.get(agentId) ?? "Traveler",
+        taskId: row.id,
+        taskSource: "TRAVEL_ORDER",
+        taskTitle: title,
+        status: "DONE",
+        dueAt: null,
+        completedAt,
+        delayPenaltyAccrued: 0,
+      };
+      const list = byAgent.get(agentId) ?? [];
+      list.push(work);
+      byAgent.set(agentId, list);
+    }
+  }
   return byAgent;
 }
 
@@ -659,6 +727,7 @@ async function loadTicketCountsByAgent(
   start: Date,
   end: Date,
 ): Promise<Map<string, { closed: number; pending: number }>> {
+  // Same helpdesk pending rules as Issue/Concern — all request types, no requestType filter.
   const [closedByAgent, pendingByAgent] = await Promise.all([
     prismaPrimary.ticket.groupBy({
       by: ["assignedAgentId"],
@@ -672,7 +741,7 @@ async function loadTicketCountsByAgent(
       by: ["assignedAgentId"],
       where: {
         assignedAgentId: { not: null },
-        status: { in: ["OPEN", "IN_PROGRESS"] },
+        status: { in: OPEN_PIPELINE_STATUSES },
       },
       _count: true,
     }),
@@ -768,6 +837,12 @@ export async function runComputeUserEfficiencyBreakdowns(
         period.end,
         timeZone,
       );
+      const travelWork = await loadConfirmedTravelWorkInWindow(period.start, period.end);
+      for (const [agentId, rows] of travelWork) {
+        const list = projectWork.get(agentId) ?? [];
+        list.push(...rows);
+        projectWork.set(agentId, list);
+      }
       // Always load snapshot checklist progress. Applied per person only when that
       // person has no TaskItem and no live project/checklist rows (see below).
       // Do not gate on global `tasks.length` — one board task must not wipe
@@ -895,20 +970,20 @@ export async function runComputeUserEfficiencyBreakdowns(
             ...agentTasks.map((t) => {
               const penalty = boardTaskPenalty(t, nowMs);
               return {
-                taskId: t.id,
-                taskSource: "TASK_ITEM",
-                taskTitle: t.title.slice(0, 512),
-                status: t.status,
-                dueAt: t.dueAt,
+            taskId: t.id,
+            taskSource: "TASK_ITEM",
+            taskTitle: t.title.slice(0, 512),
+            status: t.status,
+            dueAt: t.dueAt,
                 completedAt: t.status === "DONE" ? t.completedAt ?? t.updatedAt : null,
-                efficiencyContribution: t.status === "DONE" ? perDone : 0,
+            efficiencyContribution: t.status === "DONE" ? perDone : 0,
                 delayPenaltyAccrued: penalty,
-                notes:
-                  t.status === "DELAYED"
-                    ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
+            notes:
+              t.status === "DELAYED"
+                ? "Delayed board task — counted in delayedTasks, excluded from taskEfficiency denominator."
                     : penalty > 0
                       ? `Delay penalty accrued: ${penalty} pts`
-                      : null,
+                : null,
               };
             }),
             ...projectRows.map((t) => ({
@@ -925,7 +1000,9 @@ export async function runComputeUserEfficiencyBreakdowns(
                   ? `Delay penalty accrued: ${t.delayPenaltyAccrued} pts`
                   : t.taskSource === "IT_PROJECT_SUBTASK"
                     ? "IT project subtask"
-                    : "Non-recurring KPI checklist item",
+                    : t.taskSource === "TRAVEL_ORDER"
+                      ? "Confirmed Travel Order (traveler)"
+                      : "Non-recurring KPI checklist item",
             })),
           ];
         }

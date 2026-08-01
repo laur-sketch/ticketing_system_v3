@@ -117,7 +117,7 @@ function timestampsForStatus(status: TicketStatus, createdAt: Date, updatedAt: D
 }
 
 async function initialTicketSeq(year: number) {
-  const prefix = `TKT-${year}-`;
+  const prefix = `REQ-${year}-`;
   const latest = await prisma.ticket.findFirst({
     where: { ticketNumber: { startsWith: prefix } },
     orderBy: { ticketNumber: "desc" },
@@ -177,7 +177,7 @@ async function createTickets(count: number, agentIds: string[], rangeStart: Date
   const agentById = new Map(agents.map((a) => [a.id, a]));
 
   const year = rangeEnd.getUTCFullYear();
-  const prefix = `TKT-${year}-`;
+  const prefix = `REQ-${year}-`;
   let seq = await initialTicketSeq(year);
   let created = 0;
 

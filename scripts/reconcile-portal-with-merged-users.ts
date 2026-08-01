@@ -1,7 +1,7 @@
 /**
  * Reconcile portal_accounts with merged_users (merge DB = source of truth).
  * - Resolves username conflicts on portal rows
- * - Links every active merged user via merged_source_user_id
+ * - Links every active merged HRIS user via merged_source_user_id
  * - Marks portal-only duplicates as LEGACY_CONFLICT
  * - Clears portal password_hash on HRIS-linked rows (credentials live in merged_users)
  *
@@ -11,16 +11,8 @@ import {
   canonicalProfileFromMerged,
   syncPortalProfile,
 } from "../src/lib/auth/sync-portal-profile";
-import { MERGED_SOURCE_DATABASE } from "../src/lib/merged-database-sources";
+import { resolveHrisSourceTags } from "../src/lib/merged-database-sources";
 import { prismaPrimary, prismaSecondary } from "../src/lib/prisma";
-
-function resolveSourceTag(): string {
-  return (
-    process.env.HRIS_MERGE_SOURCE_TAG?.trim() ||
-    process.env.HRIS_MERGE_SOURCE_DB?.trim() ||
-    MERGED_SOURCE_DATABASE.HRIS_DEMO
-  );
-}
 
 type MergedRow = {
   source_user_id: bigint;
@@ -63,13 +55,24 @@ async function mergedHasLogin(username: string | null, email: string | null): Pr
 }
 
 async function main() {
-  const sourceTag = resolveSourceTag();
-  const mergedRows = await prismaSecondary.$queryRaw<MergedRow[]>`
+  const sourceTags = resolveHrisSourceTags();
+  const tagList = sourceTags.map(() => "?").join(",");
+  const orderCases = sourceTags.map((_, i) => `WHEN ? THEN ${i}`).join("\n        ");
+  const mergedRows = await prismaSecondary.$queryRawUnsafe<MergedRow[]>(
+    `
     SELECT source_user_id, source_database, username, name, email, role, company_name, position, department
     FROM merged_users
-    WHERE is_active = 1 AND source_database = ${sourceTag}
-    ORDER BY source_user_id
-  `;
+    WHERE is_active = 1 AND source_database IN (${tagList})
+    ORDER BY
+      CASE source_database
+        ${orderCases}
+        ELSE 99
+      END,
+      source_user_id
+    `,
+    ...sourceTags,
+    ...sourceTags,
+  );
 
   let synced = 0;
   let conflictsCleared = 0;
@@ -142,7 +145,8 @@ async function main() {
   }
 
   // HRIS-linked portal rows: keep portal password_hash when PORTAL_CREDENTIALS_SOURCE=portal
-  const portalCredentialSource = process.env.PORTAL_CREDENTIALS_SOURCE?.trim().toLowerCase() === "portal";
+  const portalCredentialSource =
+    process.env.PORTAL_CREDENTIALS_SOURCE?.trim().toLowerCase() === "portal";
   if (!portalCredentialSource) {
     const cleared = await prismaPrimary.portalAccount.updateMany({
       where: {
@@ -175,7 +179,7 @@ async function main() {
   }
 
   console.log("[reconcile-portal-with-merged-users] done");
-  console.log(`  source tag: ${sourceTag}`);
+  console.log(`  source tags: ${sourceTags.join(", ")}`);
   console.log(`  merged users: ${mergedRows.length}`);
   console.log(`  portal profiles synced: ${synced}`);
   console.log(`  username conflicts cleared: ${conflictsCleared}`);

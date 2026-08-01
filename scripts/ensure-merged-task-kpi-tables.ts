@@ -50,6 +50,7 @@ export async function ensureMergedPortalWorkTables(
   sourceTag: string,
 ) {
   await ensureMergedTaskKpiTables(db, targetDb, sourceTag);
+  await ensureMergedTravelOrderTables(db, targetDb, sourceTag);
 
   const target = sqlId(targetDb);
 
@@ -386,6 +387,100 @@ export async function ensureMergedTaskKpiTables(
       merged_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (source_id),
       KEY idx_merged_task_act_task (task_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+}
+
+/** Confirmed Travel Order mirror for MergeDatabase (timestamps + travelers). */
+export async function ensureMergedTravelOrderTables(
+  db: PrismaClientSecondary,
+  targetDb: string,
+  sourceTag: string,
+) {
+  const target = sqlId(targetDb);
+
+  await db.$executeRawUnsafe(`
+    CREATE DATABASE IF NOT EXISTS ${target}
+      CHARACTER SET utf8mb4
+      COLLATE utf8mb4_unicode_ci
+  `);
+
+  await db.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS ${target}.merged_travel_orders (
+      source_id                   VARCHAR(191) NOT NULL,
+      source_database             VARCHAR(64) NOT NULL DEFAULT '${sourceTag}',
+      kpi_maintenance_id          VARCHAR(191) NOT NULL,
+      order_request               TEXT NOT NULL,
+      status                      VARCHAR(32) NOT NULL,
+      vehicle                     VARCHAR(64) NULL,
+      company_team_id             VARCHAR(191) NULL,
+      company_name                VARCHAR(255) NULL,
+      confirmation_by_agent_id    VARCHAR(191) NULL,
+      confirmation_by_agent_email VARCHAR(255) NULL,
+      confirmation_merged_user_id BIGINT UNSIGNED NULL,
+      created_by_agent_id         VARCHAR(191) NULL,
+      created_by_agent_email      VARCHAR(255) NULL,
+      created_by_merged_user_id   BIGINT UNSIGNED NULL,
+      traveler_agent_ids          JSON NULL,
+      traveler_emails             JSON NULL,
+      kpi_percent                 INT NULL,
+      kpi_submitted_at            DATETIME(3) NULL,
+      confirmed_at                DATETIME(3) NOT NULL,
+      created_at                  DATETIME(3) NOT NULL,
+      updated_at                  DATETIME(3) NOT NULL,
+      merged_at                   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (source_id),
+      UNIQUE KEY uq_merged_travel_order_source (source_database, source_id),
+      KEY idx_merged_travel_order_kpi (kpi_maintenance_id),
+      KEY idx_merged_travel_order_company (company_team_id),
+      KEY idx_merged_travel_order_confirmed (confirmed_at),
+      KEY idx_merged_travel_order_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await db.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS ${target}.merged_travel_order_locations (
+      id                        VARCHAR(191) NOT NULL,
+      travel_order_source_id    VARCHAR(191) NOT NULL,
+      source_database           VARCHAR(64) NOT NULL DEFAULT '${sourceTag}',
+      location_source_id        VARCHAR(191) NOT NULL,
+      label                     VARCHAR(512) NOT NULL,
+      sort_order                INT NOT NULL DEFAULT 0,
+      started_at                DATETIME(3) NULL,
+      started_latitude          DECIMAL(10, 7) NULL,
+      started_longitude         DECIMAL(10, 7) NULL,
+      ended_at                  DATETIME(3) NULL,
+      ended_latitude            DECIMAL(10, 7) NULL,
+      ended_longitude           DECIMAL(10, 7) NULL,
+      checked_at                DATETIME(3) NULL,
+      remarks                   TEXT NULL,
+      merged_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_merged_travel_loc (source_database, location_source_id),
+      KEY idx_merged_travel_loc_order (travel_order_source_id),
+      KEY idx_merged_travel_loc_started (started_at),
+      KEY idx_merged_travel_loc_ended (ended_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await db.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS ${target}.merged_travel_order_travelers (
+      id                        VARCHAR(191) NOT NULL,
+      travel_order_source_id    VARCHAR(191) NOT NULL,
+      source_database           VARCHAR(64) NOT NULL DEFAULT '${sourceTag}',
+      agent_id                  VARCHAR(191) NOT NULL,
+      agent_email               VARCHAR(255) NULL,
+      display_name              VARCHAR(255) NOT NULL,
+      merged_source_user_id     BIGINT UNSIGNED NULL,
+      company_team_id           VARCHAR(191) NULL,
+      company_name              VARCHAR(255) NULL,
+      merged_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_merged_travel_traveler (source_database, travel_order_source_id, agent_id),
+      KEY idx_merged_travel_traveler_order (travel_order_source_id),
+      KEY idx_merged_travel_traveler_agent (agent_id),
+      KEY idx_merged_travel_traveler_merged (merged_source_user_id),
+      KEY idx_merged_travel_traveler_company (company_team_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 }

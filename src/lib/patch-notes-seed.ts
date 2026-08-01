@@ -31,6 +31,184 @@ export type PatchNoteSeed = {
 
 export const PATCH_NOTE_SEEDS: PatchNoteSeed[] = [
   {
+    version: "0.6.1",
+    title: "Travel Order two-page UI & confirm sync",
+    releasedAt: "2026-07-28T00:00:00.000Z",
+    content: {
+      newFeatures: [
+        {
+          title: "Travel Order two-page form",
+          description:
+            "Create and review Field Assignment travel orders across two pages with tab and Back/Next navigation for request details and summary.",
+        },
+        {
+          title: "Confirm-time KPI finalize",
+          description:
+            "When a travel order is confirmed, Field Assignment KPI completion is recorded from location progress and the linked task is marked done when ready.",
+        },
+        {
+          title: "Travel Order merge sync",
+          description:
+            "Confirmed travel orders, locations, and travelers sync into the merge database so confirm timestamps and status stay available for reporting.",
+        },
+      ],
+      improvements: [
+        {
+          title: "Travel Order request & summary panels",
+          description:
+            "Request and summary UIs are clearer for editing locations, travelers, and status while working Field Assignment tasks.",
+        },
+        {
+          title: "Efficiency refresh after confirm",
+          description:
+            "Personnel efficiency KPIs recompute in the background after a travel order is confirmed so Insights stay current.",
+        },
+        {
+          title: "Patch Notes version dropdowns",
+          description:
+            "Patch Notes opens as a list of version dropdowns (0.6.1, 0.6.0, 0.5.0, …) so you expand only the release you want to read. SuperAdmin-only in the header.",
+        },
+      ],
+      bugFixes: [],
+    },
+  },
+  {
+    version: "0.6.0",
+    title: "Request-type intake, RFP routing & peer transfer",
+    releasedAt: "2026-07-27T00:00:00.000Z",
+    content: {
+      newFeatures: [
+        {
+          title: "Request-type intake",
+          description:
+            "Choose Issue/Concern Ticket, Request for Payment (R.F.P.), Item Requisition Slip (I.R.S.), Fund Transfer Request (F.T.R.), or Job Order (J.O.) before filling out the create form.",
+        },
+        {
+          title: "Request for Payment procedural routing",
+          description:
+            "R.F.P. requests move through Noted By, Approved By, Approved By Accounting, and Approved By Finance. Approvers are chosen on the form; the request is not green-lit until all four mark Done.",
+        },
+        {
+          title: "Item Requisition & Fund Transfer approvals",
+          description:
+            "I.R.S. and F.T.R. requests follow their own approval steps so supply and fund-transfer work is tracked separately from tickets.",
+        },
+        {
+          title: "Job Order ↔ Project linking",
+          description:
+            "Link a Job Order to a Task Board project so project work and the related job order stay connected.",
+        },
+        {
+          title: "Peer transfer accept / decline",
+          description:
+            "Transfer a request to a colleague with accept or decline, instead of only using admin-style reassignment.",
+        },
+        {
+          title: "Optional subtask remarks",
+          description:
+            "Add remarks when creating or editing sub-tasks, and see them on the task board.",
+        },
+      ],
+      improvements: [
+        {
+          title: "Send Request To company routing",
+          description:
+            "New requests route by the selected company so the correct team queue and board see the work.",
+        },
+        {
+          title: "Request Board scoping for R.F.P.",
+          description:
+            "Personnel see RFPs awaiting their current approval role even when the board assignee has not been synced yet.",
+        },
+        {
+          title: "Subtask-assignee task boards",
+          description:
+            "Operators who are only a subtask helper now see those tasks on their board, not only main-task assignees.",
+        },
+        {
+          title: "Issue/Concern intake lock timing",
+          description:
+            "Issue/Concern intake stays editable until the request is assigned, in progress, or for confirmation.",
+        },
+        {
+          title: "Cancel request control",
+          description:
+            "Requestors can cancel eligible requests from the ticket/request surfaces when the workflow allows it.",
+        },
+      ],
+      bugFixes: [
+        {
+          title: "Merged login and On Duty clock sync",
+          description:
+            "HRIS credentials and On Duty clock display heal correctly, including Taipei-time handling for duty status.",
+        },
+        {
+          title: "Staff assignment colors and merge DB writes",
+          description:
+            "Assignment colors and secondary merge-database writes stay consistent when updating personnel and ticket assignees.",
+        },
+        {
+          title: "R.F.P. peso formatting",
+          description:
+            "Payment amounts format as pesos so R.F.P. values are easier to read during intake and approval.",
+        },
+      ],
+    },
+  },
+  {
+    version: "0.5.0",
+    title: "Field Assignment travel orders & task board ops",
+    releasedAt: "2026-07-24T00:00:00.000Z",
+    content: {
+      newFeatures: [
+        {
+          title: "Field Assignment travel orders",
+          description:
+            "Create travel orders on Field Assignment tasks with locations, vehicle, co-travelers, attachments, and submit-done flow for field work.",
+        },
+        {
+          title: "Hierarchical travel-order approvals",
+          description:
+            "Configure multi-level approvers, including optional levels that can complete the chain early when allowed.",
+        },
+        {
+          title: "Location Start / End GPS",
+          description:
+            "Capture start and end GPS on travel-order locations with map picking so field visits are tracked on site.",
+        },
+        {
+          title: "Dedicated Tasks board",
+          description:
+            "Open Operations → Tasks for assignment-board task details, travel-order summaries, and segmented subtask kanban updates.",
+        },
+      ],
+      improvements: [
+        {
+          title: "Operations / Tickets / Tasks navigation",
+          description:
+            "Staff chrome clarifies Operations, Tickets, and Tasks so field assignment work is easier to find from the header and sidebar.",
+        },
+        {
+          title: "Travel-order notifications",
+          description:
+            "Pending approvals and travel-order status updates surface in notifications so approvers and travelers stay in sync.",
+        },
+        {
+          title: "Copy subtask across segments",
+          description:
+            "Copy a subtask into another segment from the manager popup instead of recreating it by hand.",
+        },
+      ],
+      bugFixes: [
+        {
+          title: "Segmented subtask board updates",
+          description:
+            "Segmented checklists keep clearer kanban columns and manager fields when editing Field Assignment and related tasks.",
+        },
+      ],
+    },
+  },
+  {
     version: "0.4.1",
     title: "Seek Assistance, roster search & branding",
     releasedAt: "2026-07-18T00:00:00.000Z",

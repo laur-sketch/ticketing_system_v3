@@ -433,10 +433,10 @@ export function PersonnelClient({
     "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
   )} max-w-full sm:max-w-[140px]`;
 
-  const assignmentSelectClass = `${cn(
+  const assignmentInputClass = `${cn(
     "w-full min-w-0 rounded-md border border-zinc-300 bg-zinc-50 px-1.5 py-1 text-[11px] text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
     "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
-  )} max-w-full sm:max-w-[128px]`;
+  )} max-w-full sm:max-w-[7.5rem]`;
 
   function showStaffDesignatedCompany(role: string) {
     const n = normalizePortalRole(role) ?? role;
@@ -470,9 +470,9 @@ export function PersonnelClient({
   }, [filteredPortalAccounts, portalRegistryPageClamped]);
 
   return (
-    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0a0b12] dark:text-zinc-100 sm:px-4 md:py-5">
+    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 sm:px-4 md:py-5">
       <div className="mx-auto max-w-[min(100%,1600px)] space-y-4">
-        <header className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800/90 dark:bg-[#12161c] md:p-5">
+        <header className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 md:p-5">
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-400/95">
             {BRAND_TITLE} · Admin console
           </p>
@@ -620,7 +620,7 @@ export function PersonnelClient({
               {pendingAccountRequests.map((r) => (
                 <li
                   key={r.id}
-                  className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-[#0f1218] sm:flex-row sm:items-center sm:justify-between"
+                  className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div>
                     <p className="text-sm font-semibold text-zinc-900 dark:text-white">
@@ -690,7 +690,7 @@ export function PersonnelClient({
                   rosterCompanies={rosterCompanies}
                   registryFiltersActive={registryFiltersActive}
                 />
-                <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
+                <div className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-zinc-900">
                 <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800/80">
                   <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-700 dark:text-zinc-400">
                     Company roster
@@ -706,11 +706,11 @@ export function PersonnelClient({
                         <th className="w-[16%] px-3 py-2">Name</th>
                         <th className="w-[10%] px-3 py-2">User</th>
                         <th className="w-[22%] px-3 py-2">Email</th>
-                        <th className="w-[10%] px-3 py-2">Status</th>
-                        <th className="w-[10%] px-3 py-2">Roles</th>
+                        <th className="w-[12%] px-3 py-2">Roles</th>
                         <th className="w-[14%] px-3 py-2">Company</th>
                         <th className="w-[12%] px-3 py-2">Color</th>
                         <th className="w-[6%] px-3 py-2 text-right">Act.</th>
+                        <th className="w-[8%] px-3 py-2">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
@@ -734,16 +734,6 @@ export function PersonnelClient({
                             <td className="truncate px-3 py-2 text-zinc-600 dark:text-slate-400" title={row.email}>
                               {row.email}
                             </td>
-                            <td className="max-w-0 px-2 py-2">
-                              <span
-                                className={cn(
-                                  "inline-flex max-w-full truncate rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase leading-tight tracking-wide",
-                                  accountStatusClass(row.accountStatus),
-                                )}
-                              >
-                                {row.accountStatus}
-                              </span>
-                            </td>
                             <td className="truncate px-3 py-2 text-zinc-700 dark:text-zinc-300">
                               {normalizePortalRole(row.staffRole) ?? row.staffRole}
                             </td>
@@ -757,10 +747,20 @@ export function PersonnelClient({
                                 onChange={(next) =>
                                   void updateStaffAssignmentColor(row.mergedSourceUserId, next)
                                 }
-                                selectClassName={assignmentSelectClass}
+                                selectClassName={assignmentInputClass}
                               />
                             </td>
                             <td className="px-3 py-2 text-right text-[10px] text-zinc-500">—</td>
+                            <td className="max-w-0 px-2 py-2">
+                              <span
+                                className={cn(
+                                  "inline-flex max-w-full truncate rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase leading-tight tracking-wide",
+                                  accountStatusClass(row.accountStatus),
+                                )}
+                              >
+                                {row.accountStatus}
+                              </span>
+                            </td>
                           </tr>
                         ))
                       )}
@@ -798,7 +798,7 @@ export function PersonnelClient({
               registryFiltersActive={registryFiltersActive}
             />
 
-            <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-[#0f1218]">
+            <section className="rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800/90 dark:bg-zinc-900">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[720px] table-fixed border-collapse divide-y divide-zinc-200 text-[11px] dark:divide-zinc-800/90">
                   <thead className="bg-zinc-100 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-500">
@@ -806,11 +806,11 @@ export function PersonnelClient({
                       <th className="w-[15%] px-2 py-2">Name</th>
                       <th className="w-[10%] px-2 py-2">User</th>
                       <th className="w-[20%] px-2 py-2">Email</th>
-                      <th className="w-[9%] px-2 py-2">Status</th>
-                      <th className="w-[10%] px-2 py-2">Role</th>
+                      <th className="w-[12%] px-2 py-2">Role</th>
                       <th className="w-[16%] px-2 py-2">Company</th>
                       <th className="w-[12%] px-2 py-2">Color</th>
-                      <th className="w-[8%] px-2 py-2 text-right">Act.</th>
+                      <th className="w-[7%] px-2 py-2 text-right">Act.</th>
+                      <th className="w-[8%] px-2 py-2">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800/80">
@@ -834,16 +834,6 @@ export function PersonnelClient({
                           <td className="truncate px-2 py-1.5 text-zinc-600 dark:text-slate-400" title={row.email}>
                             {row.email}
                           </td>
-                          <td className="max-w-0 px-1 py-1">
-                            <span
-                              className={cn(
-                                "inline-flex max-w-full truncate rounded border px-1 py-0.5 text-[8px] font-bold uppercase leading-tight tracking-wide",
-                                accountStatusClass(row.accountStatus),
-                              )}
-                            >
-                              {row.accountStatus}
-                            </span>
-                          </td>
                           <td className="px-2 py-1.5">
                             <select
                               disabled={roleBusyId === row.mergedSourceUserId}
@@ -851,7 +841,7 @@ export function PersonnelClient({
                               onChange={(e) =>
                                 void updateMergedUserRole(row.mergedSourceUserId, e.target.value)
                               }
-                              className={assignmentSelectClass}
+                              className={teamSelectClass}
                               title="Portal role"
                             >
                               {PORTAL_ROLES.map((r) => (
@@ -886,10 +876,20 @@ export function PersonnelClient({
                               onChange={(next) =>
                                 void updateStaffAssignmentColor(row.mergedSourceUserId, next)
                               }
-                              selectClassName={assignmentSelectClass}
+                              selectClassName={assignmentInputClass}
                             />
                           </td>
                           <td className="px-2 py-1 text-right text-[10px] text-zinc-500">—</td>
+                          <td className="max-w-0 px-1 py-1">
+                            <span
+                              className={cn(
+                                "inline-flex max-w-full truncate rounded border px-1 py-0.5 text-[8px] font-bold uppercase leading-tight tracking-wide",
+                                accountStatusClass(row.accountStatus),
+                              )}
+                            >
+                              {row.accountStatus}
+                            </span>
+                          </td>
                         </tr>
                       ))
                     )}

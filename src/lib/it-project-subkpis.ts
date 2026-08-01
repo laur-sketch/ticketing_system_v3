@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
 import {
   collectAllSubKpiItems,
+  isUnsegmentedSegmentId,
   kpiChecklistProgress,
   normalizeSubKpis,
   type KpiChecklistProgress,
@@ -15,8 +16,15 @@ import { hasValidActualDate, normalizeOptionalUsDate } from "@/lib/us-date-forma
 export type ItProjectPhase = {
   id: string;
   name: string;
-  /** Phase target / due date (YYYY-MM-DD). Subtask due dates must be on or before this when set. */
+  /**
+   * Phase target / due date (YYYY-MM-DD).
+   * Auto-derived as the latest subtask due date when subtasks have due dates.
+   */
   dueDate?: string | null;
+  assignedAgentId?: string | null;
+  assignedAgentName?: string | null;
+  /** Calendar day (YYYY-MM-DD) when a delay notification was last sent for this phase. */
+  lastDelayNotifiedOn?: string | null;
   items: SubKpiItem[];
 };
 
@@ -79,6 +87,12 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   const delayPenaltyFrequency = r?.delayPenaltyFrequency
     ? normalizeDelayPenaltyFrequency(r.delayPenaltyFrequency)
     : null;
+  const startedAt = typeof r?.startedAt === "string" && r.startedAt.trim() ? r.startedAt.trim() : "";
+  const endedAt = typeof r?.endedAt === "string" && r.endedAt.trim() ? r.endedAt.trim() : "";
+  const startedLatitude = parseOptionalCoord(r?.startedLatitude, -90, 90);
+  const startedLongitude = parseOptionalCoord(r?.startedLongitude, -180, 180);
+  const endedLatitude = parseOptionalCoord(r?.endedLatitude, -90, 90);
+  const endedLongitude = parseOptionalCoord(r?.endedLongitude, -180, 180);
   return {
     id,
     title,
@@ -92,6 +106,12 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
     ...(actualDate ? { actualDate } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(endedAt ? { endedAt } : {}),
+    ...(startedLatitude != null ? { startedLatitude } : {}),
+    ...(startedLongitude != null ? { startedLongitude } : {}),
+    ...(endedLatitude != null ? { endedLatitude } : {}),
+    ...(endedLongitude != null ? { endedLongitude } : {}),
     ...(dailyPenaltyAmount != null ? { dailyPenaltyAmount } : {}),
     ...(delayPenaltyFrequency ? { delayPenaltyFrequency } : {}),
     ...(assistanceRequested ? { assistanceRequested: true } : {}),
@@ -100,17 +120,36 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
   };
 }
 
+function parseOptionalCoord(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value < min || value > max) return null;
+  return value;
+}
+
 function phaseFromRaw(raw: unknown, fallbackName: string): ItProjectPhase | null {
   if (!isPlainObject(raw)) return null;
   const name = String(raw.name ?? "").trim() || fallbackName;
   const id = String(raw.id ?? "").trim() || crypto.randomUUID();
   const dueDate = normalizeOptionalUsDate(raw.dueDate);
+  const assignedAgentId =
+    typeof raw.assignedAgentId === "string" ? raw.assignedAgentId.trim() : "";
+  const assignedAgentName =
+    typeof raw.assignedAgentName === "string" ? raw.assignedAgentName.trim() : "";
+  const lastDelayNotifiedOn = normalizeOptionalUsDate(raw.lastDelayNotifiedOn);
   const items = Array.isArray(raw.items)
     ? (raw.items as unknown[])
         .map((it) => (isPlainObject(it) ? itemFromRaw(it) : null))
         .filter((x): x is SubKpiItem => x != null && x.title.length > 0)
     : [];
-  return { id, name, ...(dueDate ? { dueDate } : {}), items };
+  return {
+    id,
+    name,
+    ...(dueDate ? { dueDate } : {}),
+    ...(assignedAgentId ? { assignedAgentId } : {}),
+    ...(assignedAgentName ? { assignedAgentName } : {}),
+    ...(lastDelayNotifiedOn ? { lastDelayNotifiedOn } : {}),
+    items,
+  };
 }
 
 export type ItProjectStoredEnvelope = {
@@ -153,6 +192,9 @@ export function wrapItProjectSubKpis(data: ItProjectData): Prisma.InputJsonValue
       id: p.id,
       name: p.name,
       ...(p.dueDate ? { dueDate: p.dueDate } : {}),
+      ...(p.assignedAgentId ? { assignedAgentId: p.assignedAgentId } : {}),
+      ...(p.assignedAgentName ? { assignedAgentName: p.assignedAgentName } : {}),
+      ...(p.lastDelayNotifiedOn ? { lastDelayNotifiedOn: p.lastDelayNotifiedOn } : {}),
       items: p.items.map((it) => ({
         id: it.id,
         title: it.title,
@@ -166,6 +208,12 @@ export function wrapItProjectSubKpis(data: ItProjectData): Prisma.InputJsonValue
         ...(it.startDate ? { startDate: it.startDate } : {}),
         ...(it.dueDate ? { dueDate: it.dueDate } : {}),
         ...(it.actualDate ? { actualDate: it.actualDate } : {}),
+        ...(it.startedAt ? { startedAt: it.startedAt } : {}),
+        ...(it.endedAt ? { endedAt: it.endedAt } : {}),
+        ...(typeof it.startedLatitude === "number" ? { startedLatitude: it.startedLatitude } : {}),
+        ...(typeof it.startedLongitude === "number" ? { startedLongitude: it.startedLongitude } : {}),
+        ...(typeof it.endedLatitude === "number" ? { endedLatitude: it.endedLatitude } : {}),
+        ...(typeof it.endedLongitude === "number" ? { endedLongitude: it.endedLongitude } : {}),
         ...(typeof it.dailyPenaltyAmount === "number" ? { dailyPenaltyAmount: it.dailyPenaltyAmount } : {}),
         ...(it.delayPenaltyFrequency ? { delayPenaltyFrequency: it.delayPenaltyFrequency } : {}),
         ...(it.assistanceRequested ? { assistanceRequested: true } : {}),
@@ -319,33 +367,76 @@ export type ItProjectPhaseDraft = {
   items: Array<{ title: string; dueDate: string }>;
 };
 
-/** True when subtask due is on or before phase due (both YYYY-MM-DD). */
+/** Latest subtask due date (YYYY-MM-DD), or null when none are set. */
+export function phaseTargetDateFromSubtasks(
+  phase: Pick<ItProjectPhase, "items">,
+): string | null {
+  let max: string | null = null;
+  for (const it of phase.items) {
+    const due = normalizeOptionalUsDate(it.dueDate);
+    if (!due) continue;
+    if (!max || due > max) max = due;
+  }
+  return max;
+}
+
+/** Phase's own target date (ignores main project target). */
+export function resolvePhaseOwnTargetDate(phase: ItProjectPhase): string | null {
+  return normalizeOptionalUsDate(phase.dueDate) ?? phaseTargetDateFromSubtasks(phase);
+}
+
+/**
+ * Effective phase target for delay tracking.
+ * Main project target (pillarDueDate) overrides the phase's own target when set.
+ */
+export function resolvePhaseEffectiveTargetDate(
+  phase: ItProjectPhase,
+  mainProjectDueDate?: string | null,
+): string | null {
+  const main = normalizeOptionalUsDate(mainProjectDueDate);
+  if (main) return main;
+  return resolvePhaseOwnTargetDate(phase);
+}
+
+/** Apply max-subtask-due as phase.dueDate when present; never clear an explicit phase target. */
+export function syncPhaseDueFromSubtasks(phase: ItProjectPhase): ItProjectPhase {
+  const derived = phaseTargetDateFromSubtasks(phase);
+  const explicit = normalizeOptionalUsDate(phase.dueDate);
+  if (derived && explicit) {
+    return { ...phase, dueDate: derived > explicit ? derived : explicit };
+  }
+  if (derived) return { ...phase, dueDate: derived };
+  if (explicit) return { ...phase, dueDate: explicit };
+  const next = { ...phase };
+  delete (next as { dueDate?: string }).dueDate;
+  return next;
+}
+
+export function syncAllPhaseDueDates(data: ItProjectData): ItProjectData {
+  return {
+    ...data,
+    phases: data.phases.map(syncPhaseDueFromSubtasks),
+  };
+}
+
+/**
+ * @deprecated Phase due now tracks the latest subtask due; kept for callers that still
+ * validate pairings. Always returns true when either side is missing.
+ */
 export function isSubtaskDueWithinPhaseDue(
   subtaskDue: string | null | undefined,
   phaseDue: string | null | undefined,
 ): boolean {
   const sub = normalizeOptionalUsDate(subtaskDue);
   const phase = normalizeOptionalUsDate(phaseDue);
-  if (!phase) return true;
-  if (!sub) return false;
-  return sub <= phase;
+  if (!sub || !phase) return true;
+  return true;
 }
 
+/** Phase due is derived from subtasks — no pairwise constraint to enforce. */
 export function validateItProjectPhaseDueConstraints(
-  data: ItProjectData,
+  _data: ItProjectData,
 ): { ok: true } | { ok: false; error: string } {
-  for (const phase of data.phases) {
-    const phaseDue = normalizeOptionalUsDate(phase.dueDate);
-    if (!phaseDue) continue;
-    for (const it of phase.items) {
-      if (!isSubtaskDueWithinPhaseDue(it.dueDate, phaseDue)) {
-        return {
-          ok: false,
-          error: `Sub-task "${it.title}" due date must be on or before phase "${phase.name}" due date (${phaseDue}).`,
-        };
-      }
-    }
-  }
   return { ok: true };
 }
 
@@ -359,7 +450,6 @@ export function buildItProjectFromPhaseDrafts(
   for (let i = 0; i < phasesInput.length; i++) {
     const row = phasesInput[i]!;
     const name = row.name.trim() || `Phase ${i + 1}`;
-    const phaseDue = normalizeOptionalUsDate(row.dueDate);
     const items: SubKpiItem[] = [];
     for (const it of row.items) {
       const title = it.title.trim();
@@ -368,17 +458,18 @@ export function buildItProjectFromPhaseDrafts(
       if (!dueDate) {
         return { ok: false, error: `Each sub-task in "${name}" needs a due date (MM/DD/YYYY).` };
       }
-      if (phaseDue && dueDate > phaseDue) {
-        return {
-          ok: false,
-          error: `Sub-task "${title}" due date must be on or before phase "${name}" due date.`,
-        };
-      }
       items.push({ id: crypto.randomUUID(), title, done: false, dueDate });
     }
     if (items.length === 0) {
       return { ok: false, error: `Phase "${name}" needs at least one sub-task with a due date.` };
     }
+    const derivedDue = phaseTargetDateFromSubtasks({ items });
+    // Prefer explicit phase due when later than derived; otherwise track latest subtask.
+    const explicitPhaseDue = normalizeOptionalUsDate(row.dueDate);
+    const phaseDue =
+      explicitPhaseDue && (!derivedDue || explicitPhaseDue >= derivedDue)
+        ? explicitPhaseDue
+        : derivedDue;
     phases.push({
       id: crypto.randomUUID(),
       name,
@@ -387,6 +478,219 @@ export function buildItProjectFromPhaseDrafts(
     });
   }
   return { ok: true, data: { activePhaseId: phases[0]!.id, phases } };
+}
+
+/** True when this KPI row should use the Kanban Timeline Tracker. */
+export function usesProjectTimelineTracker(subKpis: unknown): boolean {
+  return isItProjectEnvelope(subKpis);
+}
+
+/**
+ * Seed an it_project phase envelope for JO-linked Projects (keeps existing envelope meta).
+ * Uses existing flat checklist items when present; otherwise starts with an empty Phase 1.
+ * When `targetDueDate` is set, applies it as the main project target and to phases/items missing dues.
+ */
+export function seedJoLinkedProjectTimeline(
+  raw: unknown,
+  opts?: { targetDueDate?: string | null },
+): Prisma.InputJsonValue {
+  const target = normalizeOptionalUsDate(opts?.targetDueDate);
+
+  const applyTargetToPhases = (data: ItProjectData): ItProjectData => {
+    if (!target) return data;
+    // Fill missing phase targets from the main project date. Do not stamp the project
+    // target onto every subtask — that would overwrite distinct phase dues via sync.
+    return {
+      ...data,
+      phases: data.phases.map((phase) => ({
+        ...phase,
+        dueDate: normalizeOptionalUsDate(phase.dueDate) ?? target,
+      })),
+    };
+  };
+
+  const withMainTarget = (json: Prisma.InputJsonValue): Prisma.InputJsonValue => {
+    if (!target || !isPlainObject(json)) return json;
+    return { ...json, pillarDueDate: target } as Prisma.InputJsonValue;
+  };
+
+  if (isItProjectEnvelope(raw)) {
+    const synced = applyTargetToPhases(parseItProjectSubKpis(raw));
+    return withMainTarget(updateItProjectPhases(raw, synced));
+  }
+
+  // "Make Phases" create draft: named checklist segments → timeline phases.
+  const norm = normalizeSubKpis(raw);
+  if (norm.segmented) {
+    const named = norm.segments.filter((seg) => !isUnsegmentedSegmentId(seg.id));
+    const unassigned =
+      norm.segments.find((seg) => isUnsegmentedSegmentId(seg.id))?.items.map((it) => ({ ...it })) ??
+      [];
+    if (named.length > 0 || unassigned.length > 0) {
+      const phases: ItProjectPhase[] = [];
+      if (named.length === 0) {
+        let items = unassigned;
+        if (target) {
+          items = items.map((it) =>
+            normalizeOptionalUsDate(it.dueDate) ? it : { ...it, dueDate: target },
+          );
+        }
+        phases.push(
+          items.length > 0
+            ? syncPhaseDueFromSubtasks({
+                id: crypto.randomUUID(),
+                name: "Phase 1",
+                ...(target ? { dueDate: target } : {}),
+                items,
+              })
+            : {
+                id: crypto.randomUUID(),
+                name: "Phase 1",
+                ...(target ? { dueDate: target } : {}),
+                items,
+              },
+        );
+      } else {
+        for (let i = 0; i < named.length; i++) {
+          const seg = named[i]!;
+          let items = seg.items.map((it) => ({ ...it }));
+          if (i === 0 && unassigned.length > 0) {
+            items = [...unassigned, ...items];
+          }
+          const phaseDue = normalizeOptionalUsDate(seg.dueDate) ?? target;
+          // Phase target is authoritative; do not wipe it when subtasks have no dues.
+          phases.push({
+            id: crypto.randomUUID(),
+            name: seg.label.trim() || `Phase ${i + 1}`,
+            ...(phaseDue ? { dueDate: phaseDue } : {}),
+            items,
+          });
+        }
+      }
+      return withMainTarget(
+        updateItProjectPhases(raw, {
+          activePhaseId: phases[0]!.id,
+          phases,
+        }),
+      );
+    }
+  }
+
+  const flat = collectAllSubKpiItems(norm);
+  let items: SubKpiItem[] = flat.length > 0 ? flat.map((it) => ({ ...it })) : [];
+  if (target) {
+    items = items.map((it) =>
+      normalizeOptionalUsDate(it.dueDate) ? it : { ...it, dueDate: target },
+    );
+  }
+  const phaseId = crypto.randomUUID();
+  const phaseBase: ItProjectPhase = {
+    id: phaseId,
+    name: "Phase 1",
+    ...(target ? { dueDate: target } : {}),
+    items,
+  };
+  // Keep explicit JO target on empty phases; sync only when subtasks can derive a due.
+  const phase =
+    items.length > 0 ? syncPhaseDueFromSubtasks(phaseBase) : phaseBase;
+  return withMainTarget(updateItProjectPhases(raw, { activePhaseId: phaseId, phases: [phase] }));
+}
+
+/** True when any timeline phase is past its target and still incomplete. */
+export function itProjectHasAnyPhaseDelay(
+  subKpis: unknown,
+  nowMs: number,
+  timeZone: string,
+  mainProjectDueDate?: string | null,
+): boolean {
+  if (!isItProjectEnvelope(subKpis)) return false;
+  return parseItProjectSubKpis(subKpis).phases.some((phase) =>
+    isItProjectPhaseDelayed(phase, timeZone, nowMs, mainProjectDueDate),
+  );
+}
+
+export function isItProjectPhaseComplete(phase: ItProjectPhase): boolean {
+  if (phase.items.length === 0) return false;
+  return phase.items.every((it) => isItProjectSubTaskComplete(it));
+}
+
+/** Phase is delayed when target date is before today and phase is incomplete. */
+export function isItProjectPhaseDelayed(
+  phase: ItProjectPhase,
+  timeZone = "Asia/Manila",
+  nowMs: number = Date.now(),
+  mainProjectDueDate?: string | null,
+): boolean {
+  if (isItProjectPhaseComplete(phase)) return false;
+  const target = resolvePhaseEffectiveTargetDate(phase, mainProjectDueDate);
+  if (!target) return false;
+  const today = DateTime.fromMillis(nowMs)
+    .setZone(normalizeTimeZone(timeZone))
+    .toFormat("yyyy-MM-dd");
+  return target < today;
+}
+
+export function phaseDelayNotifyAssignees(
+  phase: ItProjectPhase,
+  cardAssignedAgentId?: string | null,
+): string[] {
+  if (phase.assignedAgentId?.trim()) {
+    return [phase.assignedAgentId.trim()];
+  }
+  const fromItems = phase.items
+    .filter((it) => !isItProjectSubTaskComplete(it))
+    .map((it) => it.assignedAgentId?.trim())
+    .filter((id): id is string => Boolean(id));
+  if (fromItems.length > 0) return [...new Set(fromItems)];
+  const card = cardAssignedAgentId?.trim();
+  return card ? [card] : [];
+}
+
+export type PhaseDelayNotification = {
+  phaseId: string;
+  phaseName: string;
+  targetDate: string;
+  agentIds: string[];
+};
+
+/**
+ * Mark delayed phases as notified for today (dedupe). Returns updated JSON + new alerts.
+ */
+export function applyPhaseDelayNotifications(
+  raw: unknown,
+  opts: {
+    timeZone?: string;
+    nowMs?: number;
+    cardAssignedAgentId?: string | null;
+    mainProjectDueDate?: string | null;
+  } = {},
+): { json: Prisma.InputJsonValue; notifications: PhaseDelayNotification[] } {
+  const timeZone = opts.timeZone ?? "Asia/Manila";
+  const nowMs = opts.nowMs ?? Date.now();
+  const today = DateTime.fromMillis(nowMs)
+    .setZone(normalizeTimeZone(timeZone))
+    .toFormat("yyyy-MM-dd");
+  const data = syncAllPhaseDueDates(parseItProjectSubKpis(raw));
+  const notifications: PhaseDelayNotification[] = [];
+  const phases = data.phases.map((phase) => {
+    if (!isItProjectPhaseDelayed(phase, timeZone, nowMs, opts.mainProjectDueDate)) return phase;
+    const target = resolvePhaseEffectiveTargetDate(phase, opts.mainProjectDueDate) ?? "";
+    if (!target) return phase;
+    if (phase.lastDelayNotifiedOn === today) return phase;
+    const agentIds = phaseDelayNotifyAssignees(phase, opts.cardAssignedAgentId);
+    if (agentIds.length === 0) return phase;
+    notifications.push({
+      phaseId: phase.id,
+      phaseName: phase.name,
+      targetDate: target,
+      agentIds,
+    });
+    return { ...phase, lastDelayNotifiedOn: today };
+  });
+  return {
+    json: updateItProjectPhases(raw, { ...data, phases }),
+    notifications,
+  };
 }
 
 function mapPhases(
@@ -443,6 +747,24 @@ export function updateItProjectPhases(
   );
 }
 
+/** Set or clear a phase's own target date (does not change subtask dues). */
+export function setItProjectPhaseDueDate(
+  raw: unknown,
+  phaseId: string,
+  dueDate: string | null,
+): Prisma.InputJsonValue {
+  const data = parseItProjectSubKpis(raw);
+  const due = normalizeOptionalUsDate(dueDate);
+  const phases = data.phases.map((phase) => {
+    if (phase.id !== phaseId) return phase;
+    if (due) return { ...phase, dueDate: due };
+    const next = { ...phase };
+    delete (next as { dueDate?: string }).dueDate;
+    return next;
+  });
+  return updateItProjectPhases(raw, { ...data, phases });
+}
+
 export function setItProjectSubKpiSchedule(
   raw: unknown,
   subKpiId: string,
@@ -453,15 +775,11 @@ export function setItProjectSubKpiSchedule(
   const act = meta.actualDate === undefined ? undefined : normalizeOptionalUsDate(meta.actualDate);
   const start = meta.startDate === undefined ? undefined : normalizeOptionalUsDate(meta.startDate);
 
-  const touch = (it: SubKpiItem, phase: ItProjectPhase): SubKpiItem => {
+  const touch = (it: SubKpiItem): SubKpiItem => {
     if (it.id !== subKpiId) return it;
     let next = { ...it };
     if (due !== undefined) {
       if (due) {
-        if (!isSubtaskDueWithinPhaseDue(due, phase.dueDate)) {
-          // Keep previous due when invalid; caller should validate first.
-          return it;
-        }
         next = { ...next, dueDate: due };
       } else delete (next as { dueDate?: string }).dueDate;
     }
@@ -485,49 +803,75 @@ export function setItProjectSubKpiSchedule(
     return next;
   };
 
-  return updateItProjectPhases(
-    raw,
+  const next = syncAllPhaseDueDates(
     mapPhases(data, (phase) => ({
       ...phase,
-      items: phase.items.map((it) => touch(it, phase)),
+      items: phase.items.map(touch),
     })),
   );
+
+  return updateItProjectPhases(raw, next);
 }
 
-/** Start / End lifecycle for an IT project sub-task (Asia/Manila calendar day). */
+export type SubKpiLifecycleGps = {
+  latitude?: number | null;
+  longitude?: number | null;
+  capturedAt?: string | null;
+};
+
+/** Start / End lifecycle for an IT project sub-task (calendar day + optional GPS). */
 export function setItProjectSubKpiLifecycle(
   raw: unknown,
   subKpiId: string,
   action: "start" | "end",
   timeZone = "Asia/Manila",
+  gps?: SubKpiLifecycleGps | null,
 ): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
   const data = parseItProjectSubKpis(raw);
-  const today = DateTime.now().setZone(normalizeTimeZone(timeZone)).toFormat("yyyy-MM-dd");
+  const zone = normalizeTimeZone(timeZone);
+  const now = DateTime.now().setZone(zone);
+  const today = now.toFormat("yyyy-MM-dd");
+  const capturedAt =
+    typeof gps?.capturedAt === "string" && gps.capturedAt.trim()
+      ? gps.capturedAt.trim()
+      : now.toISO();
+  const lat =
+    typeof gps?.latitude === "number" && Number.isFinite(gps.latitude) ? gps.latitude : null;
+  const lng =
+    typeof gps?.longitude === "number" && Number.isFinite(gps.longitude) ? gps.longitude : null;
   let found = false;
 
   const touch = (it: SubKpiItem): SubKpiItem => {
     if (it.id !== subKpiId) return it;
     found = true;
     if (action === "start") {
-      if (normalizeOptionalUsDate(it.startDate) || hasValidActualDate(it)) {
+      if (normalizeOptionalUsDate(it.startDate) || hasValidActualDate(it) || it.startedAt) {
         return it;
       }
       return {
         ...it,
         startDate: today,
+        startedAt: capturedAt ?? now.toISO(),
+        ...(lat != null ? { startedLatitude: lat } : {}),
+        ...(lng != null ? { startedLongitude: lng } : {}),
         projectStatus: normalizeItProjectStatus(it.projectStatus) === "Done" ? "Done" : "On Going",
       };
     }
     // end
-    if (!normalizeOptionalUsDate(it.startDate) && !hasValidActualDate(it)) {
+    if (!normalizeOptionalUsDate(it.startDate) && !it.startedAt && !hasValidActualDate(it)) {
       return it;
     }
     return {
       ...it,
       actualDate: today,
       done: true,
+      endedAt: capturedAt ?? now.toISO(),
+      ...(lat != null ? { endedLatitude: lat } : {}),
+      ...(lng != null ? { endedLongitude: lng } : {}),
       projectStatus: "Done",
-      ...(normalizeOptionalUsDate(it.startDate) ? {} : { startDate: today }),
+      ...(normalizeOptionalUsDate(it.startDate) || it.startedAt
+        ? {}
+        : { startDate: today, startedAt: capturedAt ?? now.toISO() }),
     };
   };
 
@@ -539,15 +883,20 @@ export function setItProjectSubKpiLifecycle(
   if (!found) return { ok: false, error: "Sub-task not found." };
 
   const target = itProjectAllItems(next).find((it) => it.id === subKpiId);
-  if (action === "start" && target && !normalizeOptionalUsDate(target.startDate)) {
+  if (action === "start" && target && !normalizeOptionalUsDate(target.startDate) && !target.startedAt) {
     return { ok: false, error: "Could not start this sub-task." };
   }
   if (action === "end") {
     const prev = itProjectAllItems(data).find((it) => it.id === subKpiId);
-    if (prev && !normalizeOptionalUsDate(prev.startDate) && !hasValidActualDate(prev)) {
+    if (
+      prev &&
+      !normalizeOptionalUsDate(prev.startDate) &&
+      !prev.startedAt &&
+      !hasValidActualDate(prev)
+    ) {
       return { ok: false, error: "Start the sub-task before ending it." };
     }
-    if (prev && hasValidActualDate(prev)) {
+    if (prev && (hasValidActualDate(prev) || prev.endedAt)) {
       return { ok: false, error: "Sub-task is already completed." };
     }
   }
@@ -560,6 +909,40 @@ export function findItProjectPhaseForSubKpi(
   subKpiId: string,
 ): ItProjectPhase | null {
   return data.phases.find((p) => p.items.some((it) => it.id === subKpiId)) ?? null;
+}
+
+/** Move a sub-task into another phase (Timeline Tracker). */
+export function moveItProjectSubKpiToPhase(
+  raw: unknown,
+  subKpiId: string,
+  targetPhaseId: string,
+): { ok: true; json: Prisma.InputJsonValue } | { ok: false; error: string } {
+  const id = String(subKpiId ?? "").trim();
+  const phaseId = String(targetPhaseId ?? "").trim();
+  if (!id) return { ok: false, error: "Sub-task id is required." };
+  if (!phaseId) return { ok: false, error: "Phase id is required." };
+
+  const data = parseItProjectSubKpis(raw);
+  if (!data.phases.some((p) => p.id === phaseId)) {
+    return { ok: false, error: "Phase not found." };
+  }
+
+  let moved: SubKpiItem | null = null;
+  const stripped = data.phases.map((phase) => {
+    const idx = phase.items.findIndex((it) => it.id === id);
+    if (idx < 0) return phase;
+    moved = phase.items[idx]!;
+    return { ...phase, items: phase.items.filter((it) => it.id !== id) };
+  });
+  if (!moved) return { ok: false, error: "Sub-task not found." };
+
+  const phases = stripped.map((phase) =>
+    phase.id === phaseId ? { ...phase, items: [...phase.items, moved!] } : phase,
+  );
+  return {
+    ok: true,
+    json: updateItProjectPhases(raw, { ...data, phases }),
+  };
 }
 
 export function setItProjectSubKpiAssignee(

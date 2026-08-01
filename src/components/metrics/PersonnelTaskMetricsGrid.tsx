@@ -22,12 +22,17 @@ export function PersonnelTaskMetricsGrid({
   const totals = rows.reduce(
     (acc, row) => {
       const ticketClosed = row.tickets?.closed ?? 0;
+      const rfpClosed =
+        (row.rfpAccounting?.closed ?? 0) + (row.rfpFinance?.closed ?? 0);
       const taskClosed = row.tasks?.closed ?? 0;
-      const efficiencies = [row.tickets?.efficiency, row.tasks?.efficiency].filter(
-        (value): value is number => value != null,
-      );
+      const efficiencies = [
+        row.tickets?.efficiency,
+        row.rfpAccounting?.efficiency,
+        row.rfpFinance?.efficiency,
+        row.tasks?.efficiency,
+      ].filter((value): value is number => value != null);
       return {
-        closed: acc.closed + ticketClosed + taskClosed,
+        closed: acc.closed + ticketClosed + rfpClosed + taskClosed,
         efficiencySum: acc.efficiencySum + efficiencies.reduce((sum, value) => sum + value, 0),
         efficiencyCount: acc.efficiencyCount + efficiencies.length,
       };
@@ -55,9 +60,9 @@ export function PersonnelTaskMetricsGrid({
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
           ) : null}
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
-            Each card shows Tickets (Closed, Pending, Efficiency) and Tasks (Done, Missed, Efficiency).
+            Each card shows Requests, RFP Accounting, RFP Finance (when applicable), and Tasks.
             Task efficiency shows the net rate after delay penalties when applicable, with a note for penalty points.
-            The center badge averages ticket and task efficiency.
+            The center badge averages available efficiency rates.
             Mon–Sat task periods; Sundays excluded.
           </p>
         </div>
@@ -99,7 +104,7 @@ export function PersonnelTaskMetricsGrid({
               No personnel task metrics for this scope
             </p>
             <p className="mt-1 max-w-md text-xs text-zinc-600 dark:text-zinc-500">
-              Try another company, cadence, or reporting range. Metrics appear when personnel have ticket or
+              Try another company, cadence, or reporting range. Metrics appear when personnel have request or
               checklist work in the selected period.
             </p>
           </div>

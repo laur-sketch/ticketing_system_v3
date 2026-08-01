@@ -104,8 +104,16 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "staff-header-compact":
       return (
-        <div className="flex items-center">
-          <BrandLogo className="h-10 w-auto max-w-[180px] shrink-0 object-contain object-left sm:h-11" />
+        <div className="flex h-10 max-w-full items-center gap-2.5 overflow-hidden sm:h-11">
+          <BrandLogo className="h-full w-auto max-w-[min(140px,38vw)] shrink-0 object-contain object-left sm:max-w-[160px]" />
+          <div className="hidden min-w-0 lg:block">
+            <p className="truncate text-sm font-bold leading-tight tracking-wide text-zinc-900 dark:text-zinc-100">
+              {BRAND_TITLE}
+            </p>
+            <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+              {BRAND_TAGLINE_STAFF}
+            </p>
+          </div>
         </div>
       );
   }

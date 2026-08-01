@@ -4,19 +4,21 @@
  * Credential sign-in checks merged_users first, then portal_accounts.
  *
  * Usage:
+ *   npx tsx scripts/reset-all-login-passwords.ts --confirm
  *   npx tsx scripts/reset-all-login-passwords.ts --confirm aci12345
  */
 import bcrypt from "bcryptjs";
 import { PrismaClient as PrismaClientPrimary } from "@prisma/client/primary";
 import { PrismaClient as PrismaClientSecondary } from "@prisma/client/secondary";
-
-const DEFAULT_PASSWORD = "aci12345";
+import { DEFAULT_PASSWORD_RESET } from "../src/lib/default-reset-password";
 
 function parseArgs(argv: string[]) {
   const confirm = argv.includes("--confirm");
   const args = argv.filter((a) => a !== "--confirm");
   const password =
-    process.env.RESET_ALL_LOGIN_PASSWORDS?.trim() || args.join(" ").trim() || DEFAULT_PASSWORD;
+    process.env.RESET_ALL_LOGIN_PASSWORDS?.trim() ||
+    args.join(" ").trim() ||
+    DEFAULT_PASSWORD_RESET;
   return { confirm, password };
 }
 

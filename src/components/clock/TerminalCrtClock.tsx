@@ -38,14 +38,16 @@ function TerminalTraceDecor({ side }: { side: "left" | "right" }) {
 export function TerminalCrtClock({ epochMs, className, size = "default" }: Props) {
   const compact = size === "compact";
   const parts = epochMs != null ? formatPhilippineBarClock(epochMs) : null;
-  const digitWidth = compact ? "w-[0.62rem] sm:w-[0.68rem]" : "w-[1.15rem] sm:w-[1.35rem]";
+  const digitClass = compact
+    ? "h-[1.35rem] w-[0.62rem] sm:h-[1.45rem] sm:w-[0.68rem]"
+    : "h-[2.35rem] w-[1.15rem] sm:h-[2.65rem] sm:w-[1.35rem]";
   const colonClass = compact ? "h-[1.35rem] sm:h-[1.45rem]" : "h-[2.35rem] sm:h-[2.65rem]";
 
   return (
     <div
       className={cn(
         "select-none",
-        compact ? "w-auto" : "w-full max-w-[22rem]",
+        compact ? "w-auto shrink-0" : "w-full max-w-[22rem]",
         className,
       )}
       aria-live="polite"
@@ -92,21 +94,21 @@ export function TerminalCrtClock({ epochMs, className, size = "default" }: Props
           >
             <SevenSegmentPair
               text={parts?.hours ?? "--"}
-              digitClassName={digitWidth}
+              digitClassName={digitClass}
               slashedZero
               glow
             />
             <SevenSegmentColon className={cn(colonClass, "text-[var(--terminal-accent)]")} compact={compact} />
             <SevenSegmentPair
               text={parts?.minutes ?? "--"}
-              digitClassName={digitWidth}
+              digitClassName={digitClass}
               slashedZero
               glow
             />
             <SevenSegmentColon className={cn(colonClass, "text-[var(--terminal-accent)]")} compact={compact} />
             <SevenSegmentPair
               text={parts?.seconds ?? "--"}
-              digitClassName={digitWidth}
+              digitClassName={digitClass}
               slashedZero
               glow
             />

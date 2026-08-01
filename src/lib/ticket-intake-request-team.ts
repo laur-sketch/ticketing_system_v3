@@ -1,9 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
+import { COMPANY_ROSTER, rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 
 /**
- * Maps customer free-text "Request to Company/SBU" to a roster Team row.
- * Falls back to the customer's assigned company queue when no roster name matches.
+ * Maps free-text "Send request to" / Company/SBU to a roster Team row.
+ *
+ * Matching order: exact name → longest substring containment (avoids short
+ * codes like "AGC" winning over "AGC Holdings"). Optional fallback is only for
+ * legacy callers; intake should prefer `fallbackTeamId: null` so unmatched
+ * text routes to OUTSIDE COMPANY instead of the creator's company.
  */
 export async function resolveCustomerRequestTeam(params: {
   requestText: string;
@@ -24,14 +28,17 @@ export async function resolveCustomerRequestTeam(params: {
   const exact = teams.find((t) => t.name.toLowerCase() === lower);
   if (exact) return { team: exact, matched: true };
 
-  for (const t of teams) {
+  // Prefer longer roster names so "AGC Holdings" beats "AGC".
+  const byLengthDesc = [...teams].sort((a, b) => b.name.length - a.name.length);
+
+  for (const t of byLengthDesc) {
     const tn = t.name.toLowerCase();
-    if (lower.includes(tn)) return { team: t, matched: true };
+    if (tn.length >= 2 && lower.includes(tn)) return { team: t, matched: true };
   }
 
-  for (const t of teams) {
+  for (const t of byLengthDesc) {
     const tn = t.name.toLowerCase();
-    if (tn.includes(lower) && lower.length >= 2) return { team: t, matched: true };
+    if (lower.length >= 2 && tn.includes(lower)) return { team: t, matched: true };
   }
 
   if (params.fallbackTeamId) {
@@ -40,4 +47,34 @@ export async function resolveCustomerRequestTeam(params: {
   }
 
   return null;
+}
+
+/** Resolve a roster team by id (Send Request To dropdown). */
+export async function resolveRosterTeamById(
+  teamId: string,
+): Promise<{ id: string; name: string } | null> {
+  const id = teamId.trim();
+  if (!id) return null;
+  const team = await prisma.team.findUnique({
+    where: { id },
+    select: { id: true, name: true },
+  });
+  if (!team || !(COMPANY_ROSTER as readonly string[]).includes(team.name)) {
+    return null;
+  }
+  return team;
+}
+
+/** Exact roster name match (case-insensitive). No fuzzy / fallback. */
+export async function resolveRosterTeamByExactName(
+  name: string,
+): Promise<{ id: string; name: string } | null> {
+  const raw = name.trim();
+  if (!raw) return null;
+  const teams = await prisma.team.findMany({
+    where: rosterTeamNameFilter(),
+    select: { id: true, name: true },
+  });
+  const lower = raw.toLowerCase();
+  return teams.find((t) => t.name.toLowerCase() === lower) ?? null;
 }

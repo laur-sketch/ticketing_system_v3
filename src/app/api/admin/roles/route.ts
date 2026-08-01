@@ -4,7 +4,7 @@ import { ensureAgentRowForPortalStaff, pickCanonicalAgentForPortal } from "@/lib
 import { rosterTeamNameFilter, sortByRosterOrder, COMPANY_ROSTER } from "@/lib/company-roster";
 import { requireRole } from "@/lib/access";
 import { createStaffPortalAccount, findPortalByEmailOnly } from "@/lib/portal-account";
-import { isPersonnelAssignmentColorKey } from "@/lib/personnel-assignment-colors";
+import { normalizePersonnelAssignmentColor } from "@/lib/personnel-assignment-colors";
 import {
   getPortalStaffAssignmentColor,
   loadPortalStaffAssignmentColorMap,
@@ -170,11 +170,14 @@ export async function PATCH(req: Request) {
     if (raw === null || raw === "") {
       assignmentColorNext = null;
     } else {
-      const key = String(raw).trim().toUpperCase();
-      if (!isPersonnelAssignmentColorKey(key)) {
-        return NextResponse.json({ error: "Invalid assignment color." }, { status: 400 });
+      const normalized = normalizePersonnelAssignmentColor(String(raw));
+      if (!normalized) {
+        return NextResponse.json(
+          { error: "Invalid assignment color. Use a hex code like #FF5733." },
+          { status: 400 },
+        );
       }
-      assignmentColorNext = key;
+      assignmentColorNext = normalized;
     }
     try {
       await setPortalStaffAssignmentColor(id, assignmentColorNext);
@@ -325,11 +328,14 @@ export async function PATCH(req: Request) {
           { status: 400 },
         );
       }
-      const key = String(raw).trim().toUpperCase();
-      if (!isPersonnelAssignmentColorKey(key)) {
-        return NextResponse.json({ error: "Invalid assignment color." }, { status: 400 });
+      const normalized = normalizePersonnelAssignmentColor(String(raw));
+      if (!normalized) {
+        return NextResponse.json(
+          { error: "Invalid assignment color. Use a hex code like #FF5733." },
+          { status: 400 },
+        );
       }
-      assignmentColorNext = key;
+      assignmentColorNext = normalized;
     }
   }
 

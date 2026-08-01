@@ -1,12 +1,11 @@
 ﻿import Link from "next/link";
-import { redirect } from "next/navigation";
 import { ArrowRight, LogIn, Shield, Users } from "lucide-react";
 import { LandingAccessVisual } from "@/components/landing/LandingAccessVisual";
 import { LandingHeroVisual } from "@/components/landing/LandingHeroVisual";
 import { LandingWorkflowVisual } from "@/components/landing/LandingWorkflowVisual";
 import { LandingGallery } from "@/components/landing/LandingGallery";
 import { TaskCommandLanding } from "@/components/landing/TaskCommandLanding";
-import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
+import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import { BrandLockup } from "@/components/BrandLockup";
@@ -14,10 +13,12 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import {
   customerHasPendingResolvedTicket,
   customerPendingTicketHref,
-  listTicketsAwaitingCustomerConfirmation,
 } from "@/lib/customer-pending-resolution";
 import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { findSessionAgentId } from "@/lib/session-agent";
+import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -45,10 +46,6 @@ function priorityTone(priority: TicketPriority) {
 export default async function Home() {
   const session = await safeGetServerSession();
 
-  if (session?.user?.role === "Personnel") {
-    redirect("/agent");
-  }
-
   if (session?.user?.role === "Customer") {
     const email = session.user.email ?? "";
     const first = session.user.name?.split(" ")[0] ?? "there";
@@ -65,16 +62,40 @@ export default async function Home() {
     );
   }
 
-  if (session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin") {
-    const adminEmail = (session.user.email ?? "").trim().toLowerCase();
-    const pendingRequestorTickets = adminEmail
-      ? await listTicketsAwaitingCustomerConfirmation(adminEmail, session.user.authProvider)
-      : [];
-
+  if (
+    session?.user?.role === "SuperAdmin" ||
+    session?.user?.role === "Admin" ||
+    session?.user?.role === "Personnel"
+  ) {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const isSuperAdmin = session.user.role === "SuperAdmin";
+    const isPersonnel = session.user.role === "Personnel";
+    const scopedCompanyTeamId =
+      isSuperAdmin || isPersonnel ? null : await resolveStaffCompanyTeamId(session.user.email);
+    const personnelAgent = isPersonnel
+      ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
+      : null;
+    // SuperAdmin: all tickets. Admin: assigned company. Personnel: own assignments + current-step RFPs/ACAs.
+    const ticketScope: Prisma.TicketWhereInput = isPersonnel
+      ? await personnelRequestBoardWhere(personnelAgent?.id)
+      : isSuperAdmin
+        ? {}
+        : { teamId: scopedCompanyTeamId ?? "__none__" };
+    const scopedCompanyName =
+      !isSuperAdmin && !isPersonnel && scopedCompanyTeamId
+        ? (
+            await prisma.team.findUnique({
+              where: { id: scopedCompanyTeamId },
+              select: { name: true },
+            })
+          )?.name ?? null
+        : null;
+
     const activeStatuses: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", "ESCALATED"];
-    const activeWhere = { status: { in: activeStatuses } } as const;
+    const activeWhere = { status: { in: activeStatuses }, ...ticketScope } as const;
+    /** Priority Stack: only live queue work — exclude done / confirmation / delayed side states. */
+    const priorityStackStatuses: TicketStatus[] = ["OPEN", "IN_PROGRESS"];
 
     const [
       openTickets,
@@ -87,17 +108,18 @@ export default async function Home() {
       resolvedLast24h,
     ] = await Promise.all([
       prisma.ticket.count({ where: activeWhere }),
-      prisma.ticket.count(),
+      prisma.ticket.count({ where: ticketScope }),
       prisma.ticket.count({
-        where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] } },
+        where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] }, ...ticketScope },
       }),
       prisma.ticket.findMany({
-        where: { firstResponseAt: { not: null } },
+        where: { firstResponseAt: { not: null }, ...ticketScope },
         select: { createdAt: true, firstResponseAt: true },
         take: 60,
         orderBy: { updatedAt: "desc" },
       }),
       prisma.ticketActivity.findMany({
+        where: { ticket: ticketScope },
         orderBy: { createdAt: "desc" },
         take: 250,
         select: {
@@ -117,16 +139,21 @@ export default async function Home() {
         },
       }),
       prisma.ticket.findMany({
-        where: { ...activeWhere, priority: { in: ["URGENT", "HIGH"] } },
+        where: {
+          status: { in: priorityStackStatuses },
+          priority: { in: ["URGENT", "HIGH"] },
+          ...ticketScope,
+        },
         orderBy: { updatedAt: "desc" },
         take: 6,
         select: { id: true, title: true, priority: true, category: true },
       }),
-      prisma.ticket.count({ where: { createdAt: { gte: yesterday } } }),
+      prisma.ticket.count({ where: { createdAt: { gte: yesterday }, ...ticketScope } }),
       prisma.ticket.count({
         where: {
           status: { in: ["FOR_CONFIRMATION", "RESOLVED", "CLOSED"] },
           resolvedAt: { gte: yesterday },
+          ...ticketScope,
         },
       }),
     ]);
@@ -145,115 +172,71 @@ export default async function Home() {
     const priorityStack = priorityStackSeed
       .sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "URGENT" ? -1 : 1))
       .slice(0, 3);
+    const scopeLabel = isPersonnel
+      ? "Your assigned work"
+      : isSuperAdmin
+        ? "All companies"
+        : scopedCompanyName ?? (scopedCompanyTeamId ? "Your assigned company" : "No assigned company");
+    const dashboardTitle = isPersonnel ? "My Work" : "Operational Oversight";
+    const openLabel = isPersonnel ? "My open" : "Open Tickets";
+    const responseLabel = isPersonnel ? "My avg. response" : "Avg. Response";
+    const resolutionLabel = isPersonnel ? "My resolution" : "Resolution Rate";
+    const newVolumeLabel = isPersonnel ? "New in my queue (24h)" : "New Tickets (24h)";
+    const resolvedVolumeLabel = isPersonnel ? "Closed from my queue (24h)" : "Resolved (24h)";
+    const volumeBlurb = isPersonnel
+      ? "Activity on tickets assigned to you over the last 24 hours"
+      : "Ticket distribution over the last 24 hours";
+    const priorityEmpty = isPersonnel
+      ? "No high-priority items in your queue."
+      : "No high-priority active items.";
 
     return (
-      <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-6 text-zinc-900 sm:px-4 sm:py-8 dark:bg-[#070d19] dark:text-zinc-100">
-        <div className="mx-auto max-w-6xl space-y-6">
-          <header className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-                {BRAND_TITLE} Â· Ticket dashboard
-              </p>
-              <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
-                Operational Oversight
-              </h1>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} Â·{" "}
-                {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-              </p>
-            </div>
-            <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              {pendingRequestorTickets.length > 0 ? (
-                <Link
-                  href="/my-requests"
-                  className="inline-flex justify-center rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-4 py-2 text-center text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-emerald-500/25 dark:text-emerald-100"
-                >
-                  Confirm {pendingRequestorTickets.length} request
-                  {pendingRequestorTickets.length === 1 ? "" : "s"}
-                </Link>
-              ) : null}
-              <Link
-                href="/my-requests"
-                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              >
-                My requests
-              </Link>
-              <Link
-                href="/agent"
-                className="inline-flex justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-center text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-              >
-                Ticket Queue
-              </Link>
-              <Link
-                href="/admin/ticket-requests"
-                className="inline-flex justify-center rounded-lg bg-orange-600 px-4 py-2 text-center text-sm font-semibold text-white shadow-[0_10px_28px_rgba(234,88,12,0.28)] transition hover:bg-orange-500"
-              >
-                Create requests
-              </Link>
-            </div>
+      <main className="min-h-full bg-zinc-50 px-3 py-3 text-zinc-900 sm:px-5 sm:py-4 dark:bg-zinc-950 dark:text-zinc-100">
+        <div className="w-full max-w-none space-y-5">
+          <header className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-700 sm:text-[11px] dark:text-orange-400/95">
+              {BRAND_TITLE} · Dashboard
+            </p>
+            <h1 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+              {dashboardTitle}
+            </h1>
+            <p className="mt-1 text-xs text-zinc-600 sm:text-sm dark:text-zinc-400">
+              {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
+              {now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+              {" · "}
+              {scopeLabel}
+            </p>
           </header>
 
-          {pendingRequestorTickets.length > 0 ? (
-            <section className="rounded-2xl border border-emerald-500/35 bg-gradient-to-br from-emerald-500/12 via-white to-white p-5 shadow-sm dark:border-emerald-500/30 dark:from-emerald-500/10 dark:via-[#0b1220] dark:to-[#0b1220]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-800 dark:text-emerald-300">
-                Action required
+          <section className="grid grid-cols-3 gap-2 sm:gap-4">
+            <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
+                {openLabel}
               </p>
-              <h2 className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-                {pendingRequestorTickets.length} of your submitted ticket
-                {pendingRequestorTickets.length === 1 ? " needs" : "s need"} confirmation
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Verify the resolution and submit your star rating to close each request.
+              <p className="mt-2 text-2xl font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
+                {openTickets}
               </p>
-              <ul className="mt-4 space-y-2">
-                {pendingRequestorTickets.slice(0, 4).map((ticket) => (
-                  <li key={ticket.id}>
-                    <Link
-                      href={customerPendingTicketHref(ticket)}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/25 bg-white/80 px-4 py-3 text-sm transition hover:border-emerald-500/50 hover:bg-emerald-50/60 dark:border-emerald-500/20 dark:bg-zinc-950/40 dark:hover:bg-emerald-500/10"
-                    >
-                      <span className="font-mono text-xs font-bold text-emerald-800 dark:text-emerald-300">
-                        {ticket.ticketNumber}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
-                        {ticket.title}
-                      </span>
-                      <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                        Confirm →
-                      </span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-              {pendingRequestorTickets.length > 4 ? (
-                <Link
-                  href="/my-requests"
-                  className="mt-3 inline-block text-sm font-semibold text-emerald-800 hover:underline dark:text-emerald-300"
-                >
-                  View all on My requests
-                </Link>
-              ) : null}
-            </section>
-          ) : null}
-
-          <section className="grid gap-4 md:grid-cols-3">
-            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Open Tickets</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{openTickets}</p>
             </article>
-            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Avg. Response</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">{formatResponseDuration(avgMins)}</p>
+            <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
+                {responseLabel}
+              </p>
+              <p className="mt-2 text-lg font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
+                {formatResponseDuration(avgMins)}
+              </p>
             </article>
-            <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-500">Resolution Rate</p>
-              <p className="mt-3 text-3xl font-bold leading-none text-zinc-900 sm:text-4xl md:text-5xl dark:text-zinc-100">
+            <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
+                {resolutionLabel}
+              </p>
+              <p className="mt-2 text-lg font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {resolutionRate.toFixed(1)}%
               </p>
             </article>
           </section>
 
-          <section className="grid gap-5 xl:grid-cols-[1.65fr_1fr]">
+          <section className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+            <div className="min-w-0">
             <RecentActivityPanel
               nowMs={now.getTime()}
               activities={activityLog.flatMap((a) =>
@@ -274,13 +257,14 @@ export default async function Home() {
                   : [],
               )}
             />
+            </div>
 
-            <aside className="space-y-5">
-              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
+            <aside className="min-w-0 space-y-5">
+              <article className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
                 <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Priority Stack</h3>
                 <div className="mt-4 space-y-3">
                   {priorityStack.length === 0 ? (
-                    <p className="text-sm text-zinc-600 dark:text-zinc-500">No high-priority active items.</p>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-500">{priorityEmpty}</p>
                   ) : (
                     priorityStack.map((item) => (
                       <div
@@ -302,11 +286,11 @@ export default async function Home() {
             </aside>
           </section>
 
-          <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#0b1220]">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-end justify-between gap-3">
               <div>
                 <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Volume Trends</h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-500">Ticket distribution over the last 24 hours</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-500">{volumeBlurb}</p>
               </div>
               <div className="flex items-center gap-4 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
                 <span className="inline-flex items-center gap-1.5">
@@ -322,13 +306,13 @@ export default async function Home() {
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900">
                 <p className="text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  New Tickets (24h)
+                  {newVolumeLabel}
                 </p>
                 <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-100">{newLast24h}</p>
               </div>
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900">
                 <p className="text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  Resolved (24h)
+                  {resolvedVolumeLabel}
                 </p>
                 <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-100">{resolvedLast24h}</p>
               </div>
