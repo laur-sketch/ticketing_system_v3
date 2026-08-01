@@ -18,6 +18,7 @@ import { prisma } from "@/lib/prisma";
 import { BRAND_TITLE } from "@/lib/brand";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentId } from "@/lib/session-agent";
+import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { safeGetServerSession } from "@/lib/server-session";
 
@@ -75,9 +76,9 @@ export default async function Home() {
     const personnelAgent = isPersonnel
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
-    // SuperAdmin: all tickets. Admin: assigned company. Personnel: own assigned work only.
+    // SuperAdmin: all tickets. Admin: assigned company. Personnel: own assignments + current-step RFPs/ACAs.
     const ticketScope: Prisma.TicketWhereInput = isPersonnel
-      ? { assignedAgentId: personnelAgent?.id ?? "__none__" }
+      ? await personnelRequestBoardWhere(personnelAgent?.id)
       : isSuperAdmin
         ? {}
         : { teamId: scopedCompanyTeamId ?? "__none__" };
@@ -176,6 +177,18 @@ export default async function Home() {
       : isSuperAdmin
         ? "All companies"
         : scopedCompanyName ?? (scopedCompanyTeamId ? "Your assigned company" : "No assigned company");
+    const dashboardTitle = isPersonnel ? "My Work" : "Operational Oversight";
+    const openLabel = isPersonnel ? "My open" : "Open Tickets";
+    const responseLabel = isPersonnel ? "My avg. response" : "Avg. Response";
+    const resolutionLabel = isPersonnel ? "My resolution" : "Resolution Rate";
+    const newVolumeLabel = isPersonnel ? "New in my queue (24h)" : "New Tickets (24h)";
+    const resolvedVolumeLabel = isPersonnel ? "Closed from my queue (24h)" : "Resolved (24h)";
+    const volumeBlurb = isPersonnel
+      ? "Activity on tickets assigned to you over the last 24 hours"
+      : "Ticket distribution over the last 24 hours";
+    const priorityEmpty = isPersonnel
+      ? "No high-priority items in your queue."
+      : "No high-priority active items.";
 
     return (
       <main className="min-h-full bg-zinc-50 px-3 py-3 text-zinc-900 sm:px-5 sm:py-4 dark:bg-zinc-950 dark:text-zinc-100">
@@ -185,7 +198,7 @@ export default async function Home() {
               {BRAND_TITLE} · Dashboard
             </p>
             <h1 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
-              Operational Oversight
+              {dashboardTitle}
             </h1>
             <p className="mt-1 text-xs text-zinc-600 sm:text-sm dark:text-zinc-400">
               {now.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
@@ -198,7 +211,7 @@ export default async function Home() {
           <section className="grid grid-cols-3 gap-2 sm:gap-4">
             <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
               <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
-                Open Tickets
+                {openLabel}
               </p>
               <p className="mt-2 text-2xl font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {openTickets}
@@ -206,7 +219,7 @@ export default async function Home() {
             </article>
             <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
               <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
-                Avg. Response
+                {responseLabel}
               </p>
               <p className="mt-2 text-lg font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {formatResponseDuration(avgMins)}
@@ -214,7 +227,7 @@ export default async function Home() {
             </article>
             <article className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
               <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-xs">
-                Resolution Rate
+                {resolutionLabel}
               </p>
               <p className="mt-2 text-lg font-bold leading-none text-zinc-900 sm:mt-3 sm:text-4xl md:text-5xl dark:text-zinc-100">
                 {resolutionRate.toFixed(1)}%
@@ -251,7 +264,7 @@ export default async function Home() {
                 <h3 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Priority Stack</h3>
                 <div className="mt-4 space-y-3">
                   {priorityStack.length === 0 ? (
-                    <p className="text-sm text-zinc-600 dark:text-zinc-500">No high-priority active items.</p>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-500">{priorityEmpty}</p>
                   ) : (
                     priorityStack.map((item) => (
                       <div
@@ -277,7 +290,7 @@ export default async function Home() {
             <div className="flex items-end justify-between gap-3">
               <div>
                 <h2 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Volume Trends</h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-500">Ticket distribution over the last 24 hours</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-500">{volumeBlurb}</p>
               </div>
               <div className="flex items-center gap-4 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
                 <span className="inline-flex items-center gap-1.5">
@@ -293,13 +306,13 @@ export default async function Home() {
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900">
                 <p className="text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  New Tickets (24h)
+                  {newVolumeLabel}
                 </p>
                 <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-100">{newLast24h}</p>
               </div>
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900">
                 <p className="text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  Resolved (24h)
+                  {resolvedVolumeLabel}
                 </p>
                 <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-100">{resolvedLast24h}</p>
               </div>

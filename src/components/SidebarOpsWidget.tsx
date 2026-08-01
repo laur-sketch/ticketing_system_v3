@@ -31,6 +31,7 @@ type SidebarSummary = {
   escalated: number;
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
+  selfOnDuty: boolean | null;
 };
 
 type ShortcutDef = {
@@ -73,6 +74,7 @@ const EMPTY: SidebarSummary = {
   escalated: 0,
   onDutyCount: 0,
   onDutyPreview: [],
+  selfOnDuty: null,
 };
 
 function shortcutsStorageKey(email: string, role: string) {
@@ -148,6 +150,8 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
           escalated: Math.max(0, Number(payload.escalated) || 0),
           onDutyCount: Math.max(0, Number(payload.onDutyCount) || 0),
           onDutyPreview: Array.isArray(payload.onDutyPreview) ? payload.onDutyPreview.slice(0, 2) : [],
+          selfOnDuty:
+            typeof payload.selfOnDuty === "boolean" ? payload.selfOnDuty : null,
         });
         setFailed(false);
       } catch {
@@ -202,19 +206,19 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
     <div
       className={cn(
         "shrink-0 border-t border-zinc-200/80 dark:border-zinc-800",
-        compact ? "px-3 py-2.5" : "px-2 py-2",
+        compact ? "px-3 py-3" : "px-2.5 py-2.5",
         className,
       )}
     >
-      <div className="rounded-xl border border-zinc-200 bg-white/80 p-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+      <div className="rounded-xl border border-zinc-200 bg-white/80 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
             Queue
           </p>
           {loading ? <Loader2 size={12} className="animate-spin text-zinc-400" aria-hidden /> : null}
         </div>
 
-        <div className="mt-1.5 grid grid-cols-3 gap-1">
+        <div className="mt-2 grid grid-cols-3 gap-1.5">
           <QueueStat href="/agent?status=OPEN" label="Open" value={summary.open} tone="sky" />
           <QueueStat
             href="/agent?status=IN_PROGRESS"
@@ -224,54 +228,85 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
           />
           <QueueStat
             href="/agent?status=ESCALATED"
-            label="Esc."
+            label="Esc"
             value={summary.escalated}
             tone="rose"
           />
         </div>
 
-        <div className="mt-2 border-t border-zinc-200/80 pt-2 dark:border-zinc-800">
-          <div className="flex items-center justify-between gap-2">
-            <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-              <Users size={11} aria-hidden />
-              On duty
-            </p>
-            <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
-              {summary.onDutyCount}
-            </span>
-          </div>
-
-          {failed && data == null ? (
-            <p className="mt-1.5 text-[11px] text-zinc-500">Couldn’t load live status.</p>
-          ) : summary.onDutyPreview.length === 0 ? (
-            <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-500">No one clocked in yet.</p>
+        <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
+          {!isAdmin ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                Status
+              </p>
+              {failed && data == null ? (
+                <p className="min-w-0 text-right text-[11px] text-zinc-500">Unavailable</p>
+              ) : (
+                <p
+                  className={cn(
+                    "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                    summary.selfOnDuty
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                      : "bg-zinc-100 text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-flex size-1.5 shrink-0 rounded-full",
+                      summary.selfOnDuty ? "bg-emerald-500" : "bg-zinc-400",
+                    )}
+                    aria-hidden
+                  />
+                  {summary.selfOnDuty ? "On duty" : "Off duty"}
+                </p>
+              )}
+            </div>
           ) : (
-            <ul className="mt-1.5 space-y-1">
-              {summary.onDutyPreview.map((person) => (
-                <li key={person.id} className="flex min-w-0 items-center gap-2">
-                  <span className="inline-flex size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-200">
-                    {person.name}
-                  </span>
-                </li>
-              ))}
-              {summary.onDutyCount > summary.onDutyPreview.length ? (
-                <li>
-                  <Link
-                    href="/admin/activities"
-                    className="text-[10px] font-semibold text-orange-700 hover:underline dark:text-orange-300"
-                  >
-                    +{summary.onDutyCount - summary.onDutyPreview.length} more
-                  </Link>
-                </li>
-              ) : null}
-            </ul>
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  <Users size={11} aria-hidden />
+                  On duty
+                </p>
+                <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
+                  {summary.onDutyCount}
+                </span>
+              </div>
+
+              {failed && data == null ? (
+                <p className="mt-1.5 text-[11px] text-zinc-500">Couldn’t load live status.</p>
+              ) : summary.onDutyPreview.length === 0 ? (
+                <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-500">No one clocked in yet.</p>
+              ) : (
+                <ul className="mt-1.5 space-y-1">
+                  {summary.onDutyPreview.map((person) => (
+                    <li key={person.id} className="flex min-w-0 items-center gap-2">
+                      <span className="inline-flex size-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-200">
+                        {person.name}
+                      </span>
+                    </li>
+                  ))}
+                  {summary.onDutyCount > summary.onDutyPreview.length ? (
+                    <li>
+                      <Link
+                        href="/admin/activities"
+                        className="text-[10px] font-semibold text-orange-700 hover:underline dark:text-orange-300"
+                      >
+                        +{summary.onDutyCount - summary.onDutyPreview.length} more
+                      </Link>
+                    </li>
+                  ) : null}
+                </ul>
+              )}
+            </>
           )}
         </div>
 
-        <div className="mt-2 border-t border-zinc-200/80 pt-2 dark:border-zinc-800">
+        <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
               Shortcuts
             </p>
             {editing ? (
@@ -310,7 +345,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
               <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-500">
                 Pick up to {MAX_SHORTCUTS} · {selectedIds.length}/{MAX_SHORTCUTS} selected
               </p>
-              <div className="mt-1.5 grid grid-cols-3 gap-1">
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
                 {available.map((item) => {
                   const Icon = item.icon;
                   const selected = selectedIds.includes(item.id);
@@ -322,7 +357,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
                       onClick={() => toggleShortcut(item.id)}
                       disabled={atLimit}
                       className={cn(
-                        "relative flex flex-col items-center gap-0.5 rounded-lg border px-1 py-1.5 text-center transition",
+                        "relative flex min-w-0 flex-col items-center gap-1 rounded-lg border px-1 py-2 text-center transition",
                         selected
                           ? "border-orange-500/50 bg-orange-500/15 dark:border-orange-400/40 dark:bg-orange-500/15"
                           : "border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950/70",
@@ -336,13 +371,13 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
                         </span>
                       ) : null}
                       <Icon
-                        size={13}
+                        size={14}
                         className={cn(
                           selected ? "text-orange-700 dark:text-orange-300" : "text-zinc-500 dark:text-zinc-400",
                         )}
                         aria-hidden
                       />
-                      <span className="text-[8px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                      <span className="w-full truncate text-[9px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
                         {item.label}
                       </span>
                     </button>
@@ -351,18 +386,18 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
               </div>
             </>
           ) : (
-            <div className="mt-1.5 grid grid-cols-3 gap-1">
+            <div className="mt-2 grid grid-cols-3 gap-1.5">
               {shortcuts.map((item) => {
                 const Icon = item.icon;
                 return (
                   <Link
                     key={item.id}
                     href={item.href}
-                    className="flex flex-col items-center gap-0.5 rounded-lg border border-zinc-200 bg-zinc-50 px-1 py-1.5 text-center transition hover:border-orange-400/40 hover:bg-orange-500/10 dark:border-zinc-700 dark:bg-zinc-950/70 dark:hover:border-orange-500/30 dark:hover:bg-orange-500/10"
+                    className="flex min-w-0 flex-col items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 px-1 py-2 text-center transition hover:border-orange-400/40 hover:bg-orange-500/10 dark:border-zinc-700 dark:bg-zinc-950/70 dark:hover:border-orange-500/30 dark:hover:bg-orange-500/10"
                     title={item.label}
                   >
-                    <Icon size={13} className="text-orange-600 dark:text-orange-300" aria-hidden />
-                    <span className="text-[8px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                    <Icon size={14} className="text-orange-600 dark:text-orange-300" aria-hidden />
+                    <span className="w-full truncate text-[9px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
                       {item.label}
                     </span>
                   </Link>
@@ -398,14 +433,16 @@ function QueueStat({
   return (
     <Link
       href={href}
-      className="rounded-lg bg-zinc-50 px-1.5 py-1.5 text-center transition hover:bg-zinc-100 dark:bg-zinc-950/70 dark:hover:bg-zinc-950"
+      className="min-w-0 rounded-lg bg-zinc-50 px-1 py-2 text-center transition hover:bg-zinc-100 dark:bg-zinc-950/70 dark:hover:bg-zinc-950"
       title={`${label}: ${value}`}
     >
-      <p className={cn("flex items-center justify-center gap-0.5 text-[9px] font-bold uppercase tracking-wide", toneClass)}>
-        <Icon size={9} aria-hidden />
+      <Icon size={11} className={cn("mx-auto", toneClass)} aria-hidden />
+      <p className={cn("mt-1 truncate text-[9px] font-bold uppercase tracking-wide", toneClass)}>
         {label}
       </p>
-      <p className="mt-0.5 text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">{value}</p>
+      <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-100">
+        {value}
+      </p>
     </Link>
   );
 }

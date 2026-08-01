@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { requireRole } from "@/lib/access";
 import { findSessionAgentId } from "@/lib/session-agent";
-import { loadOnDutySnapshot } from "@/lib/load-on-duty-snapshot";
+import { isAgentOnDutyFromMergedDb, loadOnDutySnapshot } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
+import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { withTtlCache } from "@/lib/ttl-cache";
 
@@ -15,6 +16,8 @@ type SidebarSummary = {
   escalated: number;
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
+  /** Personnel only: whether this user is clocked in today. */
+  selfOnDuty: boolean | null;
 };
 
 async function buildSidebarSummary(input: {
@@ -31,13 +34,32 @@ async function buildSidebarSummary(input: {
     : null;
 
   const ticketScope: Prisma.TicketWhereInput = isPersonnel
-    ? { assignedAgentId: personnelAgent?.id ?? "__none__" }
+    ? await personnelRequestBoardWhere(personnelAgent?.id)
     : isSuperAdmin
       ? {}
       : { teamId: scopedCompanyTeamId ?? "__none__" };
 
   const countStatus = (status: TicketStatus) =>
     prisma.ticket.count({ where: { status, ...ticketScope } });
+
+  if (isPersonnel) {
+    const [open, inProgress, escalated, selfOnDuty] = await Promise.all([
+      countStatus("OPEN"),
+      countStatus("IN_PROGRESS"),
+      countStatus("ESCALATED"),
+      personnelAgent?.id
+        ? isAgentOnDutyFromMergedDb(personnelAgent.id)
+        : Promise.resolve(false),
+    ]);
+    return {
+      open,
+      inProgress,
+      escalated,
+      onDutyCount: selfOnDuty ? 1 : 0,
+      onDutyPreview: [],
+      selfOnDuty,
+    };
+  }
 
   const [open, inProgress, escalated, onDuty] = await Promise.all([
     countStatus("OPEN"),
@@ -56,6 +78,7 @@ async function buildSidebarSummary(input: {
       name: a.name,
       companyName: a.companyName,
     })),
+    selfOnDuty: null,
   };
 }
 

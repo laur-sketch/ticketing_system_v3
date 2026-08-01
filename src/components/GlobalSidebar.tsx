@@ -245,7 +245,7 @@ function SidebarProfileFooter({
         href="/admin/account"
         onClick={onNavigate}
         className={cn(
-          "flex items-center gap-3 rounded-xl px-2.5 py-2 transition",
+          "flex items-center gap-2.5 rounded-xl px-2 py-2 transition",
           mobile
             ? accountActive
               ? "bg-orange-500/15 ring-1 ring-inset ring-orange-400/25"
@@ -254,7 +254,7 @@ function SidebarProfileFooter({
               ? "bg-orange-500/15 ring-1 ring-inset ring-orange-500/25"
               : "hover:bg-zinc-100 dark:hover:bg-zinc-900",
         )}
-        title={userEmail}
+        title={`${userName} · ${userEmail}`}
       >
         <Avatar className="size-10 shrink-0 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
           <AvatarImage src={avatarSrc} alt={userName} />
@@ -265,24 +265,24 @@ function SidebarProfileFooter({
         <div className="min-w-0 flex-1">
           <p
             className={cn(
-              "truncate text-sm font-semibold",
+              "truncate text-sm font-semibold leading-snug",
               mobile ? "text-zinc-50" : "text-zinc-900 dark:text-zinc-100",
-            )}
-          >
-            {roleLabel}
-          </p>
-          <p
-            className={cn(
-              "truncate text-[11px]",
-              mobile ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400",
             )}
           >
             {userName}
           </p>
+          <p
+            className={cn(
+              "truncate text-[11px] leading-snug",
+              mobile ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400",
+            )}
+          >
+            {roleLabel}
+          </p>
         </div>
         <UserCircle
-          size={16}
-          className={cn(mobile ? "text-zinc-500" : "text-zinc-400")}
+          size={15}
+          className={cn("shrink-0", mobile ? "text-zinc-500" : "text-zinc-400")}
           aria-hidden
         />
       </Link>
@@ -445,16 +445,6 @@ function GlobalSidebarInner() {
                     </div>
                   );
                 })}
-
-                <div className="space-y-1.5 border-t border-white/10 pt-4">
-                  <p className="px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Quick</p>
-                  <NavLinkRow
-                    href="/process"
-                    label="Process"
-                    active={navLinkActive(pathname, "/process")}
-                    onNavigate={closeMobile}
-                  />
-                </div>
               </nav>
 
               <SidebarOpsWidget compact />
@@ -502,93 +492,100 @@ function GlobalSidebarInner() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <nav
+          <div
             className={cn(
-              "min-h-0 flex-1 overflow-hidden px-2 py-2 text-sm",
-              collapsed && "flex flex-col items-center",
+              "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+              collapsed && "flex flex-col",
             )}
           >
-            <div className={cn(collapsed ? "flex flex-col items-center gap-1.5" : "space-y-2.5")}>
-              {links.map((item) => {
-                if (item.kind === "group") {
-                  if (collapsed) {
+            <nav
+              className={cn(
+                "px-2 py-2 text-sm",
+                collapsed && "flex flex-col items-center",
+              )}
+            >
+              <div className={cn(collapsed ? "flex flex-col items-center gap-1.5" : "space-y-2.5")}>
+                {links.map((item) => {
+                  if (item.kind === "group") {
+                    if (collapsed) {
+                      return (
+                        <div key={`group-${item.label}`} className="flex w-full flex-col items-center gap-1">
+                          {item.children.map((child) => {
+                            const ChildIcon = iconForLink(child.label);
+                            const active = navChildActive(pathname, searchParams, child);
+                            return (
+                              <Link
+                                key={`${child.href}-${child.label}`}
+                                href={child.href}
+                                title={child.label}
+                                className={cn(
+                                  "inline-flex size-9 items-center justify-center rounded-xl transition",
+                                  active
+                                    ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
+                                    : "text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+                                )}
+                              >
+                                <ChildIcon size={16} strokeWidth={2.2} />
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
                     return (
-                      <div key={`group-${item.label}`} className="flex w-full flex-col items-center gap-1">
-                        {item.children.map((child) => {
-                          const ChildIcon = iconForLink(child.label);
-                          const active = navChildActive(pathname, searchParams, child);
-                          return (
-                            <Link
+                      <div key={`group-${item.label}`} className="space-y-0.5">
+                        <p className="px-2.5 text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-500">
+                          {item.label}
+                        </p>
+                        <div className="space-y-0.5">
+                          {item.children.map((child) => (
+                            <NavLinkRow
                               key={`${child.href}-${child.label}`}
                               href={child.href}
-                              title={child.label}
-                              className={cn(
-                                "inline-flex size-9 items-center justify-center rounded-xl transition",
-                                active
-                                  ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                                  : "text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
-                              )}
-                            >
-                              <ChildIcon size={16} strokeWidth={2.2} />
-                            </Link>
-                          );
-                        })}
+                              label={child.label}
+                              active={navChildActive(pathname, searchParams, child)}
+                              dense
+                            />
+                          ))}
+                        </div>
                       </div>
                     );
                   }
-                  return (
-                    <div key={`group-${item.label}`} className="space-y-0.5">
-                      <p className="px-2.5 text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-500">
-                        {item.label}
-                      </p>
-                      <div className="space-y-0.5">
-                        {item.children.map((child) => (
-                          <NavLinkRow
-                            key={`${child.href}-${child.label}`}
-                            href={child.href}
-                            label={child.label}
-                            active={navChildActive(pathname, searchParams, child)}
-                            dense
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                }
 
-                const active = navLinkActive(pathname, item.href);
-                const Icon = iconForLink(item.label);
-                if (collapsed) {
+                  const active = navLinkActive(pathname, item.href);
+                  const Icon = iconForLink(item.label);
+                  if (collapsed) {
+                    return (
+                      <Link
+                        key={`${item.href}-${item.label}`}
+                        href={item.href}
+                        title={item.label}
+                        className={cn(
+                          "inline-flex size-9 items-center justify-center rounded-xl transition",
+                          active
+                            ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
+                            : "text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+                        )}
+                      >
+                        <Icon size={16} strokeWidth={2.2} />
+                      </Link>
+                    );
+                  }
                   return (
-                    <Link
+                    <NavLinkRow
                       key={`${item.href}-${item.label}`}
                       href={item.href}
-                      title={item.label}
-                      className={cn(
-                        "inline-flex size-9 items-center justify-center rounded-xl transition",
-                        active
-                          ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                          : "text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
-                      )}
-                    >
-                      <Icon size={16} strokeWidth={2.2} />
-                    </Link>
+                      label={item.label}
+                      active={active}
+                      dense
+                    />
                   );
-                }
-                return (
-                  <NavLinkRow
-                    key={`${item.href}-${item.label}`}
-                    href={item.href}
-                    label={item.label}
-                    active={active}
-                    dense
-                  />
-                );
-              })}
-            </div>
-          </nav>
+                })}
+              </div>
+            </nav>
 
-          {!collapsed ? <SidebarOpsWidget /> : null}
+            {!collapsed ? <SidebarOpsWidget /> : null}
+          </div>
 
           <SidebarProfileFooter
             variant="desktop"
