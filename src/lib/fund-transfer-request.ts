@@ -44,13 +44,13 @@ export function formatFundTransferRequestDescription(fields: FundTransferRequest
   return lines.join("\n");
 }
 
-/** Display amount with peso sign and two decimal places (e.g. ₱150000.00). */
+/** Display amount with peso sign, thousands separators, and two decimals (e.g. ₱150,000.00). */
 export function formatFundTransferPeso(raw: string | null | undefined): string {
   const v = (raw ?? "").trim();
   if (!v) return "";
   const n = Number(v.replace(/[₱,\s]/g, ""));
   if (!Number.isFinite(n)) return v;
-  return `₱${n.toFixed(2)}`;
+  return `₱${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Pull purpose/reason (preferred) or amount for board card previews. */

@@ -42,13 +42,13 @@ export type PaymentRequestFields = {
   notes?: string;
 };
 
-/** Display amount with peso sign and two decimal places (e.g. ₱10000.00). */
+/** Display amount with peso sign, thousands separators, and two decimals (e.g. ₱10,000.00). */
 export function formatPaymentPeso(raw: string | null | undefined): string {
   const v = (raw ?? "").trim();
   if (!v) return "";
   const n = Number(v.replace(/[₱,\s]/g, ""));
   if (!Number.isFinite(n)) return v;
-  return `₱${n.toFixed(2)}`;
+  return `₱${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Normalize typed amount to two decimal places (no currency symbol). */
