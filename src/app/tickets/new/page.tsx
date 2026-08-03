@@ -40,8 +40,16 @@ import {
 import { MAX_SCREENSHOT_BYTES, MAX_SCREENSHOT_COUNT } from "@/lib/ticket-intake-screenshots-constants";
 import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 import { DatePickerField } from "@/components/ui/DatePickerField";
-import { Paperclip, Plus, Trash2 } from "lucide-react";
 import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchField";
+import { AcaIntakeFields } from "@/components/tickets/AcaIntakeFields";
+import { Paperclip, Plus, Trash2 } from "lucide-react";
+import { resolveAcaAuthority } from "@/lib/aca-authority-matrix";
+import { parseAcaAmountNumber } from "@/lib/authority-to-conduct-activity";
+
+function todayIsoDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function pickImageFiles(list: File[]) {
   return list.filter((f) => {
@@ -84,9 +92,11 @@ function NewTicketPageInner() {
   const showTypeSelection = activeRequestType == null;
   const showRequestForm = activeRequestType != null;
   const isPaymentRequest = activeRequestType === "REQUEST_FOR_PAYMENT";
+  const isAcaRequest = activeRequestType === "AUTHORITY_TO_CONDUCT_ACTIVITY";
   const isRequisitionRequest = activeRequestType === "ITEM_REQUISITION_SLIP";
   const isFundTransferRequest = activeRequestType === "FUND_TRANSFER_REQUEST";
   const isJobOrderRequest = activeRequestType === "JOB_ORDER";
+  const usesCompanyScopedApprovers = isPaymentRequest || isAcaRequest;
   const [requisitionItems, setRequisitionItems] = useState<RequisitionLineItem[]>([
     emptyRequisitionLineItem(0),
   ]);
@@ -141,6 +151,25 @@ function NewTicketPageInner() {
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [staffDesignatedCompany, setStaffDesignatedCompany] = useState<{ id: string; name: string } | null>(null);
   const [staffDesignatedLoading, setStaffDesignatedLoading] = useState(false);
+  const [paymentSendToCompanyId, setPaymentSendToCompanyId] = useState("");
+  const [acaDepartmentStore, setAcaDepartmentStore] = useState("");
+  const [acaCategory, setAcaCategory] = useState("");
+  const [acaNatureOfRequest, setAcaNatureOfRequest] = useState("");
+  const [acaEstimatedCost, setAcaEstimatedCost] = useState("");
+  const [acaBudgetAmount, setAcaBudgetAmount] = useState("");
+  const [acaDescription, setAcaDescription] = useState("");
+  const [acaObjective, setAcaObjective] = useState("");
+  const [acaDateSubmitted, setAcaDateSubmitted] = useState(todayIsoDate);
+  const [acaImplementationDate, setAcaImplementationDate] = useState("");
+  const [acaSubmittedByName, setAcaSubmittedByName] = useState("");
+  const [acaRelatedTicketIds, setAcaRelatedTicketIds] = useState("");
+  const [acaRecommendedByAgentId, setAcaRecommendedByAgentId] = useState("");
+  const [acaFinanceManagerAgentId, setAcaFinanceManagerAgentId] = useState("");
+  const [acaApprovingAgentIds, setAcaApprovingAgentIds] = useState<string[]>([]);
+  const [acaApproverAgents, setAcaApproverAgents] = useState<
+    Array<{ id: string; name: string; email?: string | null }>
+  >([]);
+  const [acaApproversLoading, setAcaApproversLoading] = useState(false);
 
   const screenshotPreviews = useMemo(
     () =>
@@ -250,6 +279,70 @@ function NewTicketPageInner() {
       cancelled = true;
     };
   }, [sessionStatus, session?.user?.role, session?.user?.email]);
+
+  useEffect(() => {
+    if (!isAcaRequest) {
+      setAcaApproverAgents([]);
+      setAcaRecommendedByAgentId("");
+      setAcaFinanceManagerAgentId("");
+      setAcaApprovingAgentIds([]);
+      return;
+    }
+    const sendToCompanyId = paymentSendToCompanyId.trim();
+    if (!sendToCompanyId) {
+      setAcaApproverAgents([]);
+      return;
+    }
+    let cancelled = false;
+    setAcaApproversLoading(true);
+    void fetch(`/api/agents?company=${encodeURIComponent(sendToCompanyId)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: Array<{ id: string; name: string; email?: string | null }>) => {
+        if (cancelled) return;
+        const list = Array.isArray(rows) ? rows : [];
+        setAcaApproverAgents(list);
+        const ids = new Set(list.map((a) => a.id));
+        setAcaRecommendedByAgentId((prev) => (prev && ids.has(prev) ? prev : ""));
+        setAcaFinanceManagerAgentId((prev) => (prev && ids.has(prev) ? prev : ""));
+        setAcaApprovingAgentIds((prev) => prev.map((id) => (id && ids.has(id) ? id : "")));
+      })
+      .catch(() => {
+        if (!cancelled) setAcaApproverAgents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAcaApproversLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAcaRequest, paymentSendToCompanyId]);
+
+  useEffect(() => {
+    if (!isAcaRequest) return;
+    const name = session?.user?.name?.trim();
+    if (name) setAcaSubmittedByName((prev) => prev || name);
+  }, [isAcaRequest, session?.user?.name]);
+
+  const acaResolution = useMemo(() => {
+    if (!isAcaRequest || !acaCategory || !acaNatureOfRequest) return null;
+    const amount = parseAcaAmountNumber(acaEstimatedCost);
+    if (amount == null) return null;
+    return resolveAcaAuthority({
+      category: acaCategory,
+      natureOfRequest: acaNatureOfRequest,
+      estimatedCost: amount,
+    });
+  }, [isAcaRequest, acaCategory, acaNatureOfRequest, acaEstimatedCost]);
+
+  useEffect(() => {
+    if (!isAcaRequest) return;
+    const seats = acaResolution?.requiresAca ? acaResolution.approvingSeatCount : 0;
+    setAcaApprovingAgentIds((prev) => {
+      const next = Array.from({ length: seats }, (_, i) => prev[i] ?? "");
+      if (next.length === prev.length && next.every((v, i) => v === prev[i])) return prev;
+      return next;
+    });
+  }, [isAcaRequest, acaResolution?.requiresAca, acaResolution?.approvingSeatCount]);
 
   const isCustomer = session?.user?.role === "Customer";
   const isPersonnelIntake = session?.user?.role === "Personnel";
@@ -436,6 +529,11 @@ function NewTicketPageInner() {
     }
     return teams;
   }, [isStaffRequestorIntake, isAdminStaffIntake, companyTeams, staffDesignatedCompany]);
+
+  const acaSendToCompanyName = useMemo(() => {
+    if (!paymentSendToCompanyId) return "";
+    return sendRequestToOptions.find((t) => t.id === paymentSendToCompanyId)?.name ?? "";
+  }, [paymentSendToCompanyId, sendRequestToOptions]);
 
   const mergeScreenshotFiles = useCallback((picked: File[]) => {
     setScreenshots((prev) => {
@@ -653,6 +751,62 @@ function NewTicketPageInner() {
           setLoading(false);
           return;
         }
+      } else if (isAcaRequest) {
+        const departmentStore =
+          acaDepartmentStore.trim() || String(form.get("department") || "").trim();
+        if (
+          !departmentStore ||
+          !acaCategory.trim() ||
+          !acaNatureOfRequest.trim() ||
+          !acaEstimatedCost.trim() ||
+          !acaBudgetAmount.trim() ||
+          !acaDescription.trim() ||
+          !acaObjective.trim() ||
+          !acaDateSubmitted.trim() ||
+          !acaImplementationDate.trim()
+        ) {
+          setError("Complete all required ACA fields before submitting.");
+          setLoading(false);
+          return;
+        }
+        if (!acaResolution?.ok) {
+          setError(acaResolution?.error || "Select a valid Category, Nature, and Estimated Cost.");
+          setLoading(false);
+          return;
+        }
+        if (!acaResolution.requiresAca) {
+          setError(
+            acaResolution.guidance ||
+              "ACA is not required for this amount. Do not submit this request type.",
+          );
+          setLoading(false);
+          return;
+        }
+        if (!acaRecommendedByAgentId || !acaFinanceManagerAgentId) {
+          setError("Assign Recommended By and Finance Manager before submitting.");
+          setLoading(false);
+          return;
+        }
+        if (
+          acaApprovingAgentIds.length !== acaResolution.approvingSeatCount ||
+          acaApprovingAgentIds.some((id) => !id.trim())
+        ) {
+          setError(
+            `Assign all ${acaResolution.approvingSeatCount} approving seat(s) before submitting.`,
+          );
+          setLoading(false);
+          return;
+        }
+        const roleIds = [
+          acaRecommendedByAgentId,
+          acaFinanceManagerAgentId,
+          ...acaApprovingAgentIds,
+        ];
+        if (new Set(roleIds).size !== roleIds.length) {
+          setError("Each ACA approval seat must be a different person.");
+          setLoading(false);
+          return;
+        }
       } else if (!issue.trim()) {
         setError("Please describe the request.");
         setLoading(false);
@@ -773,10 +927,54 @@ function NewTicketPageInner() {
         }
       };
 
+      const appendAcaFields = (target: FormData | Record<string, unknown>) => {
+        if (!isAcaRequest) return;
+        const departmentStore =
+          acaDepartmentStore.trim() || String(form.get("department") || "").trim();
+        const approvingJson = JSON.stringify(acaApprovingAgentIds);
+        if (target instanceof FormData) {
+          target.append("department", departmentStore);
+          target.append("acaCategory", acaCategory.trim());
+          target.append("acaNatureOfRequest", acaNatureOfRequest.trim());
+          target.append("acaEstimatedCost", acaEstimatedCost.trim());
+          target.append("acaBudgetAmount", acaBudgetAmount.trim());
+          target.append("acaDescription", acaDescription.trim());
+          target.append("acaObjective", acaObjective.trim());
+          target.append("acaDateSubmitted", acaDateSubmitted.trim());
+          target.append("acaImplementationDate", acaImplementationDate.trim());
+          target.append("acaSubmittedByName", acaSubmittedByName.trim());
+          if (acaRelatedTicketIds.trim()) {
+            target.append("acaRelatedTicketIds", acaRelatedTicketIds.trim());
+          }
+          target.append("acaRecommendedByAgentId", acaRecommendedByAgentId);
+          target.append("acaFinanceManagerAgentId", acaFinanceManagerAgentId);
+          target.append("acaApprovingAgentIds", approvingJson);
+          target.append("issue", acaDescription.trim());
+        } else {
+          target.department = departmentStore;
+          target.acaCategory = acaCategory.trim();
+          target.acaNatureOfRequest = acaNatureOfRequest.trim();
+          target.acaEstimatedCost = acaEstimatedCost.trim();
+          target.acaBudgetAmount = acaBudgetAmount.trim();
+          target.acaDescription = acaDescription.trim();
+          target.acaObjective = acaObjective.trim();
+          target.acaDateSubmitted = acaDateSubmitted.trim();
+          target.acaImplementationDate = acaImplementationDate.trim();
+          target.acaSubmittedByName = acaSubmittedByName.trim();
+          if (acaRelatedTicketIds.trim()) {
+            target.acaRelatedTicketIds = acaRelatedTicketIds.trim();
+          }
+          target.acaRecommendedByAgentId = acaRecommendedByAgentId;
+          target.acaFinanceManagerAgentId = acaFinanceManagerAgentId;
+          target.acaApprovingAgentIds = acaApprovingAgentIds;
+          target.issue = acaDescription.trim();
+        }
+      };
+
       let res: Response;
       if (screenshots.length > 0) {
         const fd = new FormData();
-        if (!isRequisitionRequest) {
+        if (!isRequisitionRequest && !isAcaRequest) {
           fd.append("issue", issue);
         }
         fd.append("requestType", activeRequestType ?? DEFAULT_REQUEST_TYPE);
@@ -785,6 +983,7 @@ function NewTicketPageInner() {
         appendFundTransferFields(fd);
         appendJobOrderFields(fd);
         appendApprovalAssignees(fd);
+        appendAcaFields(fd);
         if (isCustomer) {
           fd.append("requestToCompanySbu", String(form.get("requestToCompanySbu") || "").trim());
           fd.append("branch", String(form.get("branch") || "").trim());
@@ -792,7 +991,9 @@ function NewTicketPageInner() {
             "department",
             isFundTransferRequest
               ? requestingDepartmentBusinessUnit
-              : String(form.get("department") || "").trim(),
+              : isAcaRequest
+                ? acaDepartmentStore.trim()
+                : String(form.get("department") || "").trim(),
           );
           fd.append("assignedCompanyText", String(form.get("assignedCompanyText") || "").trim());
           if (googleOAuthCustomer) {
@@ -807,7 +1008,9 @@ function NewTicketPageInner() {
             "department",
             isFundTransferRequest
               ? requestingDepartmentBusinessUnit
-              : String(form.get("department") || "").trim(),
+              : isAcaRequest
+                ? acaDepartmentStore.trim()
+                : String(form.get("department") || "").trim(),
           );
         } else {
           fd.append("companyTeamId", String(form.get("companyTeamId") || ""));
@@ -823,7 +1026,7 @@ function NewTicketPageInner() {
         });
       } else {
         const payload: Record<string, unknown> = {
-          issue,
+          issue: isAcaRequest ? acaDescription.trim() : issue,
           requestType: activeRequestType ?? DEFAULT_REQUEST_TYPE,
         };
         appendPaymentFields(payload);
@@ -831,12 +1034,15 @@ function NewTicketPageInner() {
         appendFundTransferFields(payload);
         appendJobOrderFields(payload);
         appendApprovalAssignees(payload);
+        appendAcaFields(payload);
         if (isCustomer) {
           payload.requestToCompanySbu = String(form.get("requestToCompanySbu") || "").trim();
           payload.branch = String(form.get("branch") || "").trim();
           payload.department = isFundTransferRequest
             ? requestingDepartmentBusinessUnit
-            : String(form.get("department") || "").trim();
+            : isAcaRequest
+              ? acaDepartmentStore.trim()
+              : String(form.get("department") || "").trim();
           payload.assignedCompanyText = String(form.get("assignedCompanyText") || "").trim();
           if (googleOAuthCustomer) {
             payload.customerOrgRole = String(form.get("customerOrgRole") || "").trim() || "Personnel";
@@ -848,7 +1054,9 @@ function NewTicketPageInner() {
           payload.branch = String(form.get("branch") || "").trim();
           payload.department = isFundTransferRequest
             ? requestingDepartmentBusinessUnit
-            : String(form.get("department") || "").trim();
+            : isAcaRequest
+              ? acaDepartmentStore.trim()
+              : String(form.get("department") || "").trim();
         } else {
           payload.companyTeamId = String(form.get("companyTeamId") || "");
           payload.contactName = String(form.get("contactName") || "").trim();
@@ -977,7 +1185,7 @@ function NewTicketPageInner() {
             {isStaffRequestorIntake ? (
               <>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  {isFundTransferRequest ? "Prepared By" : "Requestor"}
+                  {isFundTransferRequest || isPaymentRequest || isAcaRequest ? "PREPARED BY:" : "Requestor"}
                   <Input
                     name="contactName"
                     required
@@ -1048,6 +1256,12 @@ function NewTicketPageInner() {
                       value={selectedCompanyTeamId}
                       onChange={(e) => setSelectedCompanyTeamId(e.target.value)}
                       disabled={companiesLoading}
+                      value={usesCompanyScopedApprovers ? paymentSendToCompanyId : undefined}
+                      onChange={
+                        usesCompanyScopedApprovers
+                          ? (e) => setPaymentSendToCompanyId(e.target.value)
+                          : undefined
+                      }
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
                       <option value="">
@@ -1068,7 +1282,9 @@ function NewTicketPageInner() {
                     >
                       {isFundTransferRequest
                         ? "Requesting department/business unit"
-                        : "Department"}
+                        : isAcaRequest
+                          ? "Department / Store"
+                          : "Department"}
                     </label>
                     <input
                       id={isFundTransferRequest ? "intake-requesting-department" : "intake-department"}
@@ -1077,8 +1293,14 @@ function NewTicketPageInner() {
                           ? "requestingDepartmentBusinessUnit"
                           : "department"
                       }
-                      required={isFundTransferRequest}
-                      maxLength={isFundTransferRequest ? 200 : 120}
+                      required={isFundTransferRequest || isAcaRequest}
+                      maxLength={isFundTransferRequest || isAcaRequest ? 200 : 120}
+                      value={isAcaRequest ? acaDepartmentStore : undefined}
+                      onChange={
+                        isAcaRequest
+                          ? (e) => setAcaDepartmentStore(e.target.value)
+                          : undefined
+                      }
                       placeholder="e.g. IT, Finance, Operations"
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
@@ -1688,6 +1910,47 @@ function NewTicketPageInner() {
                   {renderOptionalFieldAttachments("ticket-screenshots-job-order")}
                 </div>
               </div>
+            ) : isAcaRequest ? (
+              <AcaIntakeFields
+                companyName={acaSendToCompanyName}
+                category={acaCategory}
+                onCategoryChange={setAcaCategory}
+                natureOfRequest={acaNatureOfRequest}
+                onNatureOfRequestChange={setAcaNatureOfRequest}
+                estimatedCost={acaEstimatedCost}
+                onEstimatedCostChange={setAcaEstimatedCost}
+                budgetAmount={acaBudgetAmount}
+                onBudgetAmountChange={setAcaBudgetAmount}
+                description={acaDescription}
+                onDescriptionChange={setAcaDescription}
+                objective={acaObjective}
+                onObjectiveChange={setAcaObjective}
+                dateSubmitted={acaDateSubmitted}
+                onDateSubmittedChange={setAcaDateSubmitted}
+                implementationDate={acaImplementationDate}
+                onImplementationDateChange={setAcaImplementationDate}
+                submittedByName={acaSubmittedByName}
+                onSubmittedByNameChange={setAcaSubmittedByName}
+                relatedTicketIds={acaRelatedTicketIds}
+                onRelatedTicketIdsChange={setAcaRelatedTicketIds}
+                resolution={acaResolution}
+                companyUsers={acaApproverAgents}
+                companyUsersLoading={acaApproversLoading}
+                sendToCompanySelected={Boolean(paymentSendToCompanyId.trim())}
+                recommendedByAgentId={acaRecommendedByAgentId}
+                onRecommendedByAgentIdChange={setAcaRecommendedByAgentId}
+                financeManagerAgentId={acaFinanceManagerAgentId}
+                onFinanceManagerAgentIdChange={setAcaFinanceManagerAgentId}
+                approvingAgentIds={acaApprovingAgentIds}
+                onApprovingAgentIdChange={(index, value) =>
+                  setAcaApprovingAgentIds((prev) => {
+                    const next = [...prev];
+                    next[index] = value;
+                    return next;
+                  })
+                }
+                renderAttachments={renderOptionalFieldAttachments}
+              />
             ) : (
               <div>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">

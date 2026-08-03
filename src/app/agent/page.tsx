@@ -29,6 +29,9 @@ import { REQUEST_TYPES, isRequestTypeId } from "@/lib/request-types";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
 import { paymentProceduralStatusLabel, type PaymentApprovalMeta } from "@/lib/request-for-payment-approval";
 import { loadPaymentApprovalMetaMap } from "@/lib/payment-approval-db";
+import { loadAcaApprovalMetaMap } from "@/lib/aca-approval-db";
+import { acaProceduralStatusLabel } from "@/lib/aca-approval";
+import type { AcaApprovalMeta } from "@/lib/aca-approval";
 import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import {
   itemRequisitionProceduralStatusLabel,
@@ -512,6 +515,7 @@ export default async function AgentHome({
   let boardPaymentMetaById = new Map<string, PaymentApprovalMeta>();
   let boardRequisitionMetaById = new Map<string, ItemRequisitionApprovalMeta>();
   let boardFundTransferMetaById = new Map<string, FundTransferApprovalMeta>();
+  let boardAcaMetaById = new Map<string, AcaApprovalMeta>();
   if (isBoard && ticketsBoardEnriched.length > 0) {
     const ids = ticketsBoardEnriched.map((t) => t.id);
     const rows = await prisma.$queryRaw<Array<{ id: string; request_type: string | null }>>`
@@ -523,6 +527,7 @@ export default async function AgentHome({
     boardPaymentMetaById = await loadPaymentApprovalMetaMap(ids);
     boardRequisitionMetaById = await loadItemRequisitionApprovalMetaMap(ids);
     boardFundTransferMetaById = await loadFundTransferApprovalMetaMap(ids);
+    boardAcaMetaById = await loadAcaApprovalMetaMap(ids);
   }
 
   const tickets = isBoard ? ticketsBoardEnriched : ticketsTableEnriched;
@@ -642,6 +647,9 @@ export default async function AgentHome({
             return fundTransferProceduralStatusLabel(
               boardFundTransferMetaById.get(t.id)?.proceduralStep ?? "PREPARED_BY",
             );
+          }
+          if (rt === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+            return acaProceduralStatusLabel(boardAcaMetaById.get(t.id) ?? null);
           }
           return null;
         })(),

@@ -215,6 +215,8 @@ model Ticket {
   itemRequisitionApprovalMeta Json?    @map("item_requisition_approval_meta")
   /// Fund transfer request approval assignees + procedural step (JSON).
   fundTransferApprovalMeta Json?       @map("fund_transfer_approval_meta")
+  /// Authority to Conduct Activity approval assignees + procedural step (JSON).
+  acaApprovalMeta Json?                @map("aca_approval_meta")
   /// Job Order (J.O.) → Task Board project link (`KpiMaintenance` with isProject).
   linkedKpiMaintenanceId String?       @map("linked_kpi_maintenance_id")
   linkedKpiMaintenance   KpiMaintenance? @relation("JobOrderProject", fields: [linkedKpiMaintenanceId], references: [id], onDelete: SetNull)

@@ -8,6 +8,7 @@ import {
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { parseTaskMetricsTaskType } from "@/lib/task-metrics-task-type";
 
 export async function GET(req: Request) {
   const startedAt = Date.now();
@@ -17,6 +18,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const { from, to } = parseKpiRangeFromQuery(searchParams.get("from"), searchParams.get("to"));
   const helpdeskCadence = parseHelpdeskCadence(searchParams.get("helpdeskCadence"));
+  const taskType = parseTaskMetricsTaskType(searchParams.get("taskType"));
 
   const operator =
     session?.user?.role === "Personnel"
@@ -40,11 +42,11 @@ export async function GET(req: Request) {
     { from, to },
     { assignedAgentId, assignedAgentIds },
     helpdeskCadence,
-    { timeZone },
+    { timeZone, taskType },
   );
   if (process.env.NODE_ENV === "development") {
     console.info(
-      `[perf] GET /api/kpis/task-metrics ${Date.now() - startedAt}ms cadence=${helpdeskCadence} from=${from.toISOString()} to=${to.toISOString()}`,
+      `[perf] GET /api/kpis/task-metrics ${Date.now() - startedAt}ms cadence=${helpdeskCadence} taskType=${taskType} from=${from.toISOString()} to=${to.toISOString()}`,
     );
   }
   return NextResponse.json(payload, {
@@ -53,4 +55,3 @@ export async function GET(req: Request) {
     },
   });
 }
-

@@ -6,20 +6,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
-  BookOpen,
+  Building2,
   Check,
   CheckCircle2,
   CheckSquare,
   CircleDot,
   ClipboardList,
-  GitBranch,
-  Inbox,
   Kanban,
   LifeBuoy,
   Loader2,
   Pencil,
   PlusSquare,
   Ticket,
+  UserRound,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -29,6 +28,9 @@ type SidebarSummary = {
   open: number;
   inProgress: number;
   forConfirmation: number;
+  tasksCurrent: number;
+  tasksDone: number;
+  tasksDelayed: number;
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
   selfOnDuty: boolean | null;
@@ -50,28 +52,52 @@ type Props = {
 
 const MAX_SHORTCUTS = 6;
 
+/** Legacy shortcut ids remapped after catalog changes. */
+const SHORTCUT_ID_ALIASES: Record<string, string> = {
+  metrics: "request-mr",
+  reports: "task-mr",
+  assign: "a-board",
+  requests: "r-board",
+};
+
 const SHORTCUT_CATALOG: ShortcutDef[] = [
   { id: "create", href: "/tickets/new", label: "Create", icon: PlusSquare },
-  { id: "assign", href: "/admin/manual-assignment", label: "Assign", icon: Kanban, adminOnly: true },
-  { id: "requests", href: "/agent", label: "Requests", icon: Ticket },
+  { id: "a-board", href: "/admin/manual-assignment", label: "a.board", icon: Kanban, adminOnly: true },
+  { id: "c-board", href: "/agent?board=company", label: "c.board", icon: Building2, adminOnly: true },
+  { id: "r-board", href: "/agent?board=ticket", label: "r.board", icon: Ticket },
+  { id: "m-requests", href: "/my-requests", label: "m.requests", icon: UserRound },
   { id: "tasks", href: "/agent/tasks", label: "Tasks", icon: CheckSquare },
   { id: "people", href: "/admin/personnel", label: "People", icon: Users, adminOnly: true },
   { id: "activities", href: "/admin/activities", label: "Activity", icon: Activity, adminOnly: true },
   { id: "alerts", href: "/admin/escalation-triggers", label: "Alerts", icon: LifeBuoy, adminOnly: true },
-  { id: "inbox", href: "/admin/ticket-requests", label: "Inbox", icon: Inbox, adminOnly: true },
-  { id: "process", href: "/process", label: "Process", icon: GitBranch },
-  { id: "docs", href: "/tickets/knowledge", label: "Docs", icon: BookOpen },
-  { id: "metrics", href: "/insights", label: "Metrics", icon: BarChart3 },
-  { id: "reports", href: "/reports", label: "Reports", icon: ClipboardList, adminOnly: true },
+  { id: "request-mr", href: "/insights?tab=ticket-metrics", label: "Request M&R", icon: BarChart3 },
+  { id: "task-mr", href: "/insights?tab=task-metrics", label: "Task M&R", icon: ClipboardList },
 ];
 
-const DEFAULT_ADMIN_IDS = ["create", "assign", "requests", "tasks", "people", "metrics"] as const;
-const DEFAULT_PERSONNEL_IDS = ["create", "requests", "tasks", "process", "docs", "metrics"] as const;
+const DEFAULT_ADMIN_IDS = [
+  "create",
+  "a-board",
+  "c-board",
+  "r-board",
+  "request-mr",
+  "task-mr",
+] as const;
+const DEFAULT_PERSONNEL_IDS = [
+  "create",
+  "r-board",
+  "m-requests",
+  "tasks",
+  "request-mr",
+  "task-mr",
+] as const;
 
 const EMPTY: SidebarSummary = {
   open: 0,
   inProgress: 0,
   forConfirmation: 0,
+  tasksCurrent: 0,
+  tasksDone: 0,
+  tasksDelayed: 0,
   onDutyCount: 0,
   onDutyPreview: [],
   selfOnDuty: null,
@@ -93,6 +119,7 @@ function normalizeIds(raw: unknown, isAdmin: boolean): string[] {
   const allowed = new Set(catalogForRole(isAdmin).map((item) => item.id));
   if (!Array.isArray(raw)) return defaultIds(isAdmin);
   const cleaned = raw
+    .map((id) => (typeof id === "string" ? SHORTCUT_ID_ALIASES[id] ?? id : id))
     .filter((id): id is string => typeof id === "string" && allowed.has(id))
     .filter((id, index, arr) => arr.indexOf(id) === index)
     .slice(0, MAX_SHORTCUTS);
@@ -148,6 +175,9 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
           open: Math.max(0, Number(payload.open) || 0),
           inProgress: Math.max(0, Number(payload.inProgress) || 0),
           forConfirmation: Math.max(0, Number(payload.forConfirmation) || 0),
+          tasksCurrent: Math.max(0, Number(payload.tasksCurrent) || 0),
+          tasksDone: Math.max(0, Number(payload.tasksDone) || 0),
+          tasksDelayed: Math.max(0, Number(payload.tasksDelayed) || 0),
           onDutyCount: Math.max(0, Number(payload.onDutyCount) || 0),
           onDutyPreview: Array.isArray(payload.onDutyPreview) ? payload.onDutyPreview.slice(0, 2) : [],
           selfOnDuty:
@@ -216,7 +246,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
       <div className="rounded-xl border border-zinc-200 bg-white/80 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-            Queue
+            Requests
           </p>
           {loading ? <Loader2 size={12} className="animate-spin text-zinc-400" aria-hidden /> : null}
         </div>
@@ -235,6 +265,34 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
             value={summary.forConfirmation}
             tone="emerald"
           />
+        </div>
+
+        <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+              Tasks
+            </p>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            <QueueStat
+              href="/agent/tasks"
+              label="Current"
+              value={summary.tasksCurrent}
+              tone="sky"
+            />
+            <QueueStat
+              href="/agent/tasks"
+              label="Done"
+              value={summary.tasksDone}
+              tone="orange"
+            />
+            <QueueStat
+              href="/agent/tasks"
+              label="Delayed"
+              value={summary.tasksDelayed}
+              tone="rose"
+            />
+          </div>
         </div>
 
         <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">

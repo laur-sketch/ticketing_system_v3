@@ -9,6 +9,7 @@ import {
   resolveAdminOnDutyCompanyFilter,
   resolveStaffCompanyTeamId,
 } from "@/lib/staff-company-scope";
+import { countTaskBoardLanes } from "@/lib/task-board-lane-counts";
 import { withTtlCache } from "@/lib/ttl-cache";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,9 @@ type SidebarSummary = {
   inProgress: number;
   /** FOR_CONFIRMATION + RESOLVED (awaiting requestor sign-off). */
   forConfirmation: number;
+  tasksCurrent: number;
+  tasksDone: number;
+  tasksDelayed: number;
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
   /** Personnel only: whether this user is clocked in today. */
@@ -52,18 +56,26 @@ async function buildSidebarSummary(input: {
     });
 
   if (isPersonnel) {
-    const [open, inProgress, forConfirmation, selfOnDuty] = await Promise.all([
+    const [open, inProgress, forConfirmation, selfOnDuty, taskLanes] = await Promise.all([
       countStatus("OPEN"),
       countStatus("IN_PROGRESS"),
       countForConfirmation(),
       personnelAgent?.id
         ? isAgentOnDutyFromMergedDb(personnelAgent.id)
         : Promise.resolve(false),
+      countTaskBoardLanes({
+        role: input.role,
+        email: input.email,
+        name: input.name,
+      }),
     ]);
     return {
       open,
       inProgress,
       forConfirmation,
+      tasksCurrent: taskLanes.current,
+      tasksDone: taskLanes.done,
+      tasksDelayed: taskLanes.delayed,
       onDutyCount: selfOnDuty ? 1 : 0,
       onDutyPreview: [],
       selfOnDuty,
@@ -72,7 +84,7 @@ async function buildSidebarSummary(input: {
 
   const onDutyCompanyFilter = await resolveAdminOnDutyCompanyFilter(input.role, input.email);
 
-  const [open, inProgress, forConfirmation, onDuty] = await Promise.all([
+  const [open, inProgress, forConfirmation, onDuty, taskLanes] = await Promise.all([
     countStatus("OPEN"),
     countStatus("IN_PROGRESS"),
     countForConfirmation(),
@@ -82,12 +94,20 @@ async function buildSidebarSummary(input: {
       onDutyOnly: true,
       ...(onDutyCompanyFilter ? { companyFilter: onDutyCompanyFilter } : {}),
     }),
+    countTaskBoardLanes({
+      role: input.role,
+      email: input.email,
+      name: input.name,
+    }),
   ]);
 
   return {
     open,
     inProgress,
     forConfirmation,
+    tasksCurrent: taskLanes.current,
+    tasksDone: taskLanes.done,
+    tasksDelayed: taskLanes.delayed,
     onDutyCount: onDuty.onDutyCount,
     onDutyPreview: onDuty.agents.slice(0, 4).map((a) => ({
       id: a.id,

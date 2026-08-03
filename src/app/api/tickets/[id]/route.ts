@@ -28,19 +28,27 @@ import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import {
   adminOutsideCompanyScope,
+  isCurrentAcaStepAssignee,
+  isCurrentPaymentStepAssignee,
   isTicketAssignee,
   personnelForbiddenForTicket,
 } from "@/lib/ticket-staff-access";
 import {
   applyPaymentApprovalAssignees,
   assigneeFieldForStep,
+  assigneeIdForStep,
   canAssignPaymentApprover,
   canCompletePaymentApprovalStep,
+  canMarkPaymentStepApproved,
   completePaymentApprovalStep,
   currentPaymentStepBoardAssigneeId,
+  isPaymentStepApprovedAck,
+  markPaymentStepApproved,
   PAYMENT_APPROVAL_FIELD_LABELS,
   PAYMENT_APPROVAL_STEP_LABELS,
+  paymentApprovalParticipantIds,
   paymentProceduralStatusLabel,
+  paymentStepRequiresApprovedAck,
   type PaymentApprovalAssignees,
   type PaymentApprovalStep,
 } from "@/lib/request-for-payment-approval";
@@ -79,6 +87,14 @@ import {
   initFundTransferApprovalMetaIfNeeded,
   saveFundTransferApprovalMeta,
 } from "@/lib/fund-transfer-approval-db";
+import {
+  acaProceduralStatusLabel,
+  canCompleteAcaApprovalStep,
+  completeAcaApprovalStep,
+  currentAcaBoardAssigneeId,
+  currentAcaLevel,
+} from "@/lib/aca-approval";
+import { loadAcaApprovalMeta, saveAcaApprovalMeta } from "@/lib/aca-approval-db";
 import {
   applyRequisitionPricingDerivedFields,
   formatItemRequisitionDescription,
@@ -196,8 +212,11 @@ export async function GET(
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const operator = await findSessionAgentWithTeam({
+    email: session.user.email,
+    name: session.user.name,
+  });
   if (session.user.role === "Personnel") {
-    const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
     if (
       await personnelForbiddenForTicket({
         email: session.user.email,
@@ -208,13 +227,24 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
+  const ownsTicket =
+    isTicketAssignee({
+      operatorId: operator?.id,
+      sessionEmail: session.user.email,
+      ticket,
+    }) ||
+    isCurrentPaymentStepAssignee(ticket, operator?.id) ||
+    isCurrentAcaStepAssignee(ticket, operator?.id);
+  // Cross-company Admins may still read tickets they own as board/RFP/ACA-step assignee
+  // (e.g. NOTED BY from the preparer company on a ticket routed to another company).
   if (
-    await adminOutsideCompanyScope({
+    !ownsTicket &&
+    (await adminOutsideCompanyScope({
       role: session.user.role,
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
-    })
+    }))
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -254,17 +284,24 @@ export async function PATCH(
     sessionEmail: session.user.email,
     ticket,
   });
+  const isPaymentStepOperator = isCurrentPaymentStepAssignee(ticket, operator?.id);
+  const isAcaStepOperator = isCurrentAcaStepAssignee(ticket, operator?.id);
   const canPrioritize = roleIsAdmin || isAssignedOperator;
   if (session.user.role === "Customer" && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  // Cross-company Admins may still act when they own the board assignment or the
+  // current RFP/ACA procedural step (NOTED BY can be AGC while the ticket is routed to ACI).
   if (
-    await adminOutsideCompanyScope({
+    !isAssignedOperator &&
+    !isPaymentStepOperator &&
+    !isAcaStepOperator &&
+    (await adminOutsideCompanyScope({
       role: session.user.role,
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
-    })
+    }))
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -394,79 +431,32 @@ export async function PATCH(
         );
       }
 
-      // RFP / IRS: For Confirmation completes the current approval step.
-      // Intermediate steps stay in active work; only DONE proceeds to customer confirmation.
+      // RFP / ACA: For Confirmation is locked until the full procedural chain is green-lit (DONE).
+      // IRS / Fund Transfer may still advance a step via For Confirmation.
       let paymentProceduralNote: string | null = null;
       if (nextStatus === "FOR_CONFIRMATION") {
         const requestType = await loadTicketRequestType(id);
         if (requestType === "REQUEST_FOR_PAYMENT") {
           const meta = await initPaymentApprovalMetaIfNeeded(id);
           if (meta.proceduralStep !== "DONE") {
-            const gate = canCompletePaymentApprovalStep({
-              meta,
-              actorAgentId: operator?.id ?? null,
-              ticketAssignedAgentId: ticket.assignedAgentId,
-            });
-            if (!gate.ok) {
-              return NextResponse.json({ error: gate.error }, { status: 403 });
-            }
-            if (!ticket.assignedAgentId) {
-              return NextResponse.json(
-                { error: "A ticket must be assigned before approval can advance." },
-                { status: 400 },
-              );
-            }
-            const uniqueness = canAssignPaymentApprover({
-              meta,
-              agentId: ticket.assignedAgentId,
-              forStep: meta.proceduralStep,
-            });
-            if (!uniqueness.ok) {
-              return NextResponse.json({ error: uniqueness.error }, { status: 400 });
-            }
-            // Stamp the board assignee as the completer for this procedural role.
-            const stepField = assigneeFieldForStep(meta.proceduralStep);
-            const stamped = applyPaymentApprovalAssignees(meta, {
-              [stepField]: ticket.assignedAgentId,
-            });
-            const advanced = completePaymentApprovalStep(stamped);
-            const saved = await savePaymentApprovalMeta(id, advanced, meta.proceduralStep);
-            if (!saved.ok) {
-              return NextResponse.json(
-                { error: "Payment approval was updated by someone else. Refresh and try again." },
-                { status: 409 },
-              );
-            }
-            const completedLabel = PAYMENT_APPROVAL_STEP_LABELS[meta.proceduralStep];
-            await logActivity(
-              id,
-              "AGENT",
-              `Payment approval · ${completedLabel}`,
-              `${completedLabel} completed via For Confirmation move.`,
+            return NextResponse.json(
+              {
+                error:
+                  "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY, APPROVED BY ACCOUNTING, and APPROVED BY FINANCE before proceeding.",
+              },
+              { status: 400 },
             );
-            paymentProceduralNote = paymentProceduralStatusLabel(advanced.proceduralStep);
-            if (advanced.proceduralStep !== "DONE") {
-              // Keep IN_PROGRESS; hand board ownership to the next role assignee when known.
-              data.status = "IN_PROGRESS";
-              data.resolvedAt = null;
-              const nextAssigneeId = currentPaymentStepBoardAssigneeId(advanced);
-              if (nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId) {
-                data.assignedAgent = { connect: { id: nextAssigneeId } };
-              }
-              if (paymentProceduralNote) {
-                await logActivity(id, "SYSTEM", "Payment approval pending", paymentProceduralNote);
-              }
-              await logActivity(
-                id,
-                "SYSTEM",
-                nextAssigneeId
-                  ? "Assigned to next approval role"
-                  : "Next approval available",
-                nextAssigneeId
-                  ? "Request moved to the next role assignee’s board."
-                  : "Use Ticket Controls → Submit for Next Approval to send this request to the next role.",
-              );
-            }
+          }
+        } else if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+          const meta = await loadAcaApprovalMeta(id);
+          if (!meta || meta.proceduralStep !== "DONE") {
+            return NextResponse.json(
+              {
+                error:
+                  "This Authority to Conduct Activity is not green-lit yet. Complete Recommended By, Finance Manager, and all approving seats before proceeding.",
+              },
+              { status: 400 },
+            );
           }
         } else if (requestType === "ITEM_REQUISITION_SLIP") {
           const meta = await initItemRequisitionApprovalMetaIfNeeded(id);
@@ -658,6 +648,22 @@ export async function PATCH(
           { status: 403 },
         );
       }
+      const transferRequestType = await loadTicketRequestType(id);
+      if (transferRequestType === "REQUEST_FOR_PAYMENT") {
+        const paymentMeta = await initPaymentApprovalMetaIfNeeded(id);
+        if (
+          paymentMeta.proceduralStep === "NOTED_BY" ||
+          paymentMeta.proceduralStep === "APPROVED_BY"
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Transfer is not available while this request is on NOTED BY or APPROVED BY. Mark Done to advance the procedural step first.",
+            },
+            { status: 400 },
+          );
+        }
+      }
       const transferPending = await loadTransferPending();
       if (transferPending) {
         return NextResponse.json({ error: "A transfer request is already pending." }, { status: 400 });
@@ -675,6 +681,12 @@ export async function PATCH(
         if (recipientAgentId === ticket.assignedAgentId) {
           return NextResponse.json({ error: "Choose a different person to transfer to." }, { status: 400 });
         }
+        if (!ticket.assignedAgentId || !operator?.id || ticket.assignedAgentId !== operator.id) {
+          return NextResponse.json(
+            { error: "Only the assigned personnel can request transfer." },
+            { status: 403 },
+          );
+        }
         const recipient = await prisma.agent.findUnique({
           where: { id: recipientAgentId },
           select: { id: true, name: true, email: true, teamId: true },
@@ -686,6 +698,7 @@ export async function PATCH(
           typeof body.reason === "string" && body.reason.trim()
             ? body.reason.trim()
             : "Unable to resolve with current assignment.";
+        const fromAgent = ticket.assignedAgent;
         await logActivity(
           id,
           "AGENT",
@@ -693,6 +706,8 @@ export async function PATCH(
           serializeTransferRequest({
             recipientAgentId: recipient.id,
             recipientAgentName: recipient.name,
+            fromAgentId: ticket.assignedAgentId,
+            fromAgentName: fromAgent?.name ?? operator.name ?? null,
             recipientPortalAccountId: null,
             recipientSuperAdmin: false,
             targetTeamId: null,
@@ -700,13 +715,21 @@ export async function PATCH(
             reason: reasonText,
           }),
         );
+        // Park the request on the recipient’s board until they accept or decline.
         const updated = await prisma.ticket.update({
           where: { id },
           data: {
-            status: ticket.status === "OPEN" ? "ESCALATED" : ticket.status,
+            assignedAgentId: recipient.id,
+            status: "ESCALATED",
           },
           include: { team: true, assignedAgent: true },
         });
+        await logActivity(
+          id,
+          "SYSTEM",
+          "Transfer pending on recipient board",
+          `Request moved to ${recipient.name}’s board pending accept/decline.`,
+        );
         return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
       }
 
@@ -816,7 +839,8 @@ export async function PATCH(
         );
       }
 
-      // Peer transfer: assign to the accepting user.
+      // Peer transfer: already parked on recipient’s board at request time — confirm keep.
+      // For RFP on Accounting/Finance, also update that procedural assignee to the recipient.
       if (parsed?.recipientAgentId) {
         const recipient = await prisma.agent.findUnique({
           where: { id: parsed.recipientAgentId },
@@ -825,11 +849,51 @@ export async function PATCH(
         if (!recipient) {
           return NextResponse.json({ error: "Transfer recipient no longer exists." }, { status: 400 });
         }
+
+        const transferRequestType = await loadTicketRequestType(id);
+        let paymentMetaAfter: Awaited<ReturnType<typeof initPaymentApprovalMetaIfNeeded>> | null =
+          null;
+        if (transferRequestType === "REQUEST_FOR_PAYMENT") {
+          const meta = await initPaymentApprovalMetaIfNeeded(id);
+          const step = meta.proceduralStep;
+          if (step === "APPROVED_BY_ACCOUNTING" || step === "APPROVED_BY_FINANCE") {
+            const uniqueness = canAssignPaymentApprover({
+              meta,
+              agentId: recipient.id,
+              forStep: step,
+            });
+            if (!uniqueness.ok) {
+              return NextResponse.json({ error: uniqueness.error }, { status: 400 });
+            }
+            const field = assigneeFieldForStep(step);
+            const updatedMeta = applyPaymentApprovalAssignees(meta, {
+              [field]: recipient.id,
+            });
+            const saved = await savePaymentApprovalMeta(id, updatedMeta, step);
+            if (!saved.ok) {
+              return NextResponse.json(
+                { error: "Payment approval was updated by someone else. Refresh and try again." },
+                { status: 409 },
+              );
+            }
+            paymentMetaAfter = updatedMeta;
+            await logActivity(
+              id,
+              "SYSTEM",
+              "Payment approval assignee updated",
+              `${PAYMENT_APPROVAL_STEP_LABELS[step]} reassigned to ${recipient.name} on transfer accept.`,
+            );
+          }
+        }
+
         const updated = await prisma.ticket.update({
           where: { id },
           data: {
             assignedAgentId: recipient.id,
-            status: ticket.status === "ESCALATED" ? "IN_PROGRESS" : ticket.status === "OPEN" ? "IN_PROGRESS" : ticket.status,
+            status:
+              ticket.status === "ESCALATED" || ticket.status === "OPEN"
+                ? "IN_PROGRESS"
+                : ticket.status,
           },
           include: { team: true, assignedAgent: true },
         });
@@ -839,9 +903,12 @@ export async function PATCH(
           "Transfer approved",
           typeof body.note === "string" && body.note.trim()
             ? body.note.trim()
-            : `Transfer accepted — assigned to ${recipient.name}.`,
+            : `Transfer accepted — request stays with ${recipient.name}.`,
         );
-        return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
+        return NextResponse.json({
+          ...(await ticketJsonWithAssigneeColor(updated)),
+          ...(paymentMetaAfter ? { paymentApprovalMeta: paymentMetaAfter } : {}),
+        });
       }
 
       // Legacy: move to unassigned company queue.
@@ -912,6 +979,63 @@ export async function PATCH(
           { status: 403 },
         );
       }
+
+      // Peer transfer declined: return the request to the original requester’s board.
+      if (parsed?.recipientAgentId) {
+        const restoreAgentId = parsed.fromAgentId?.trim() || null;
+        if (!restoreAgentId) {
+          await logActivity(
+            id,
+            "AGENT",
+            "Transfer rejected",
+            typeof body.note === "string" && body.note.trim()
+              ? body.note.trim()
+              : "Transfer declined — original requester was not recorded; assignment unchanged.",
+          );
+          const updated = await prisma.ticket.findUnique({
+            where: { id },
+            include: { team: true, assignedAgent: true },
+          });
+          return NextResponse.json(await ticketJsonWithAssigneeColor(updated!));
+        }
+        const restoreAgent = await prisma.agent.findUnique({
+          where: { id: restoreAgentId },
+          select: { id: true, name: true },
+        });
+        if (!restoreAgent) {
+          return NextResponse.json(
+            { error: "Original requester no longer exists; cannot return the transfer." },
+            { status: 400 },
+          );
+        }
+        const updated = await prisma.ticket.update({
+          where: { id },
+          data: {
+            assignedAgentId: restoreAgent.id,
+            status:
+              ticket.status === "ESCALATED" || ticket.status === "OPEN"
+                ? "IN_PROGRESS"
+                : ticket.status,
+          },
+          include: { team: true, assignedAgent: true },
+        });
+        await logActivity(
+          id,
+          "AGENT",
+          "Transfer rejected",
+          typeof body.note === "string" && body.note.trim()
+            ? body.note.trim()
+            : `Transfer declined — returned to ${restoreAgent.name}.`,
+        );
+        await logActivity(
+          id,
+          "SYSTEM",
+          "Assigned to transfer requester",
+          `Request returned to ${restoreAgent.name}’s board.`,
+        );
+        return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
+      }
+
       await logActivity(
         id,
         "AGENT",
@@ -1220,7 +1344,7 @@ export async function PATCH(
       });
     }
 
-    if (action === "request_payment_approval") {
+      if (action === "request_payment_approval") {
       if (!canStaffMutateTicket) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
@@ -1245,6 +1369,26 @@ export async function PATCH(
         return NextResponse.json({ error: "All payment approval steps are already complete." }, { status: 400 });
       }
       const step = meta.proceduralStep;
+      // Assignee must mark Done before they can Submit for Next Approval.
+      if (isAssignedOperator && operator?.id) {
+        const doneGate = canCompletePaymentApprovalStep({
+          meta,
+          actorAgentId: operator.id,
+          ticketAssignedAgentId: ticket.assignedAgentId,
+        });
+        const priorIds = paymentApprovalParticipantIds(meta);
+        const currentAssignee = assigneeIdForStep(meta, step);
+        if (currentAssignee) priorIds.delete(currentAssignee);
+        const alreadyApprovedEarlier = priorIds.has(operator.id);
+        if (doneGate.ok && !alreadyApprovedEarlier) {
+          return NextResponse.json(
+            {
+              error: "Mark Done on this step before submitting for the next approval.",
+            },
+            { status: 400 },
+          );
+        }
+      }
       const approverId =
         typeof body.approverAgentId === "string" && body.approverAgentId.trim()
           ? body.approverAgentId.trim()
@@ -1255,11 +1399,14 @@ export async function PATCH(
       const companyAnchorId = ticket.assignedAgentId ?? operator.id;
       const requesterCompanyId = await resolveAgentDesignatedCompanyId(companyAnchorId);
       const approverCompanyId = await resolveAgentDesignatedCompanyId(approverId);
-      if (!requesterCompanyId || !approverCompanyId || requesterCompanyId !== approverCompanyId) {
-        return NextResponse.json(
-          { error: "You can only request approval from users in the same company as this request." },
-          { status: 403 },
-        );
+      // APPROVED BY may be chosen from any company on create; keep that path open here too.
+      if (step !== "APPROVED_BY") {
+        if (!requesterCompanyId || !approverCompanyId || requesterCompanyId !== approverCompanyId) {
+          return NextResponse.json(
+            { error: "You can only request approval from users in the same company as this request." },
+            { status: 403 },
+          );
+        }
       }
       const approver = await prisma.agent.findUnique({
         where: { id: approverId },
@@ -1310,6 +1457,76 @@ export async function PATCH(
       });
     }
 
+    if (action === "approve_payment_step") {
+      if (!isAdminOrAgent) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const requestType = await loadTicketRequestType(id);
+      if (requestType !== "REQUEST_FOR_PAYMENT") {
+        return NextResponse.json(
+          { error: "Payment approval applies only to Request for Payment." },
+          { status: 400 },
+        );
+      }
+      const meta = await initPaymentApprovalMetaIfNeeded(id);
+      const gate = canMarkPaymentStepApproved({
+        meta,
+        actorAgentId: operator?.id ?? null,
+        ticketAssignedAgentId: ticket.assignedAgentId,
+      });
+      if (!gate.ok) {
+        return NextResponse.json({ error: gate.error }, { status: 403 });
+      }
+      if (!ticket.assignedAgentId) {
+        return NextResponse.json(
+          { error: "A ticket must be assigned to personnel before approval can be recorded." },
+          { status: 400 },
+        );
+      }
+      const step = meta.proceduralStep;
+      if (step === "DONE") {
+        return NextResponse.json(
+          { error: "All payment approval steps are already complete." },
+          { status: 400 },
+        );
+      }
+      const uniqueness = canAssignPaymentApprover({
+        meta,
+        agentId: ticket.assignedAgentId,
+        forStep: step,
+      });
+      if (!uniqueness.ok) {
+        return NextResponse.json({ error: uniqueness.error }, { status: 400 });
+      }
+      const stepField = assigneeFieldForStep(step);
+      const stamped = applyPaymentApprovalAssignees(meta, {
+        [stepField]: ticket.assignedAgentId,
+      });
+      const approved = markPaymentStepApproved(stamped);
+      const saved = await savePaymentApprovalMeta(id, approved, step);
+      if (!saved.ok) {
+        return NextResponse.json(
+          { error: "Payment approval was updated by someone else. Refresh and try again." },
+          { status: 409 },
+        );
+      }
+      const label = PAYMENT_APPROVAL_STEP_LABELS[step];
+      await logActivity(
+        id,
+        "AGENT",
+        `Payment approved · ${label}`,
+        `${label} approved. Click Done to hand off to the next role.`,
+      );
+      const updated = await prisma.ticket.findUnique({
+        where: { id },
+        include: { team: true, assignedAgent: true },
+      });
+      return NextResponse.json({
+        ...(updated ? await ticketJsonWithAssigneeColor(updated) : {}),
+        paymentApprovalMeta: approved,
+      });
+    }
+
     if (action === "complete_payment_approval_step") {
       if (!isAdminOrAgent) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -1340,6 +1557,17 @@ export async function PATCH(
       if (previousStep === "DONE") {
         return NextResponse.json(
           { error: "All payment approval steps are already complete." },
+          { status: 400 },
+        );
+      }
+      if (
+        paymentStepRequiresApprovedAck(previousStep) &&
+        !isPaymentStepApprovedAck(meta, previousStep)
+      ) {
+        return NextResponse.json(
+          {
+            error: `Click Approved for ${PAYMENT_APPROVAL_STEP_LABELS[previousStep]} before Done.`,
+          },
           { status: 400 },
         );
       }
@@ -1380,7 +1608,8 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
-              ...(nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId
+              // Always hand the Request Board to the next procedural assignee when known.
+              ...(nextAssigneeId
                 ? { assignedAgent: { connect: { id: nextAssigneeId } } }
                 : {}),
             },
@@ -2250,6 +2479,131 @@ export async function PATCH(
       return NextResponse.json({
         ...(await ticketJsonWithAssigneeColor(updated)),
         fundTransferApprovalMeta: advanced,
+      });
+    }
+
+    if (action === "complete_aca_approval_step") {
+      if (!isAdminOrAgent) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const requestType = await loadTicketRequestType(id);
+      if (requestType !== "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+        return NextResponse.json(
+          { error: "ACA approval steps apply only to Authority to Conduct Activity." },
+          { status: 400 },
+        );
+      }
+      const meta = await loadAcaApprovalMeta(id);
+      if (!meta) {
+        return NextResponse.json({ error: "ACA approval metadata was not found." }, { status: 400 });
+      }
+      const gate = canCompleteAcaApprovalStep({
+        meta,
+        actorAgentId: operator?.id ?? null,
+        ticketAssignedAgentId: ticket.assignedAgentId,
+      });
+      if (!gate.ok) {
+        return NextResponse.json({ error: gate.error }, { status: 403 });
+      }
+      if (!ticket.assignedAgentId) {
+        return NextResponse.json(
+          { error: "A ticket must be assigned to personnel before approval can advance." },
+          { status: 400 },
+        );
+      }
+      const previousStep = meta.proceduralStep;
+      if (previousStep === "DONE") {
+        return NextResponse.json(
+          { error: "All ACA approval steps are already complete." },
+          { status: 400 },
+        );
+      }
+      const comment =
+        typeof body.comment === "string" && body.comment.trim() ? body.comment.trim() : null;
+      const advanced = completeAcaApprovalStep(meta, { comment });
+      const saved = await saveAcaApprovalMeta(id, advanced, previousStep);
+      if (!saved.ok) {
+        return NextResponse.json(
+          { error: "ACA approval was updated by someone else. Refresh and try again." },
+          { status: 409 },
+        );
+      }
+      const completedLevel = meta.levels.find((l) => l.key === previousStep);
+      const completedLabel = completedLevel?.label ?? previousStep;
+      await logActivity(
+        id,
+        "AGENT",
+        `ACA approval · ${completedLabel}`,
+        comment
+          ? `${completedLabel} marked complete. Comment: ${comment}`
+          : `${completedLabel} marked complete.`,
+      );
+
+      const allDone = advanced.proceduralStep === "DONE";
+      const nextAssigneeId = allDone ? null : currentAcaBoardAssigneeId(advanced);
+      const updated = await prisma.ticket.update({
+        where: { id },
+        data: allDone
+          ? { status: "FOR_CONFIRMATION", resolvedAt: new Date() }
+          : {
+              status: "IN_PROGRESS",
+              resolvedAt: null,
+              ...(nextAssigneeId
+                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
+                : {}),
+            },
+        include: { team: true, assignedAgent: true },
+      });
+
+      if (allDone) {
+        await logActivity(
+          id,
+          "SYSTEM",
+          "ACA approval complete",
+          "All Authority to Conduct Activity approval seats are complete. Sent for customer confirmation.",
+        );
+        await logActivity(id, "AGENT", "Status → FOR_CONFIRMATION", "All ACA approvals complete.");
+        const smtpRecipient =
+          (updated as unknown as { requestorEmail?: string | null }).requestorEmail?.trim() ||
+          updated.contactEmail;
+        await sendResolutionEmail({
+          ticketId: updated.id,
+          ticketNumber: updated.ticketNumber,
+          title: updated.title,
+          recipientEmail: smtpRecipient,
+          recipientName: updated.contactName,
+          resolutionNotes: updated.resolutionNotes,
+        });
+        await logActivity(
+          id,
+          "SYSTEM",
+          "Resolution email sent",
+          `Mandatory rating request sent to ${smtpRecipient}.`,
+        );
+      } else {
+        const pending = acaProceduralStatusLabel(advanced);
+        const nextLevel = currentAcaLevel(advanced);
+        if (pending) {
+          await logActivity(id, "SYSTEM", "ACA approval pending", pending);
+        }
+        await logActivity(
+          id,
+          "SYSTEM",
+          nextAssigneeId
+            ? "Assigned to next ACA approval role"
+            : "Next ACA approval available",
+          nextAssigneeId
+            ? `Request moved to ${nextLevel?.label ?? "next role"} assignee’s Request Board.`
+            : "Assign the next ACA seat from Ticket Controls.",
+        );
+        if (ticket.status !== "IN_PROGRESS") {
+          await logActivity(id, "AGENT", "Status → IN_PROGRESS", pending ?? undefined);
+        }
+      }
+
+      return NextResponse.json({
+        ...(await ticketJsonWithAssigneeColor(updated)),
+        acaApprovalMeta: advanced,
       });
     }
 

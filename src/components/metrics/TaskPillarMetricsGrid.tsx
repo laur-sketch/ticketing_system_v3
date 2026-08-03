@@ -13,15 +13,14 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { IT_TASK_PILLAR_TITLES, JOB_ORDER_REQUEST_PILLAR_TITLE } from "@/lib/it-task-pillar-titles";
+import { JOB_ORDER_REQUEST_PILLAR_TITLE } from "@/lib/it-task-pillar-titles";
 import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   isInvertedChecklistPillar,
-  incidentMetricPercents,
   kpiChecklistMetricView,
-  type KpiChecklistProgress,
 } from "@/lib/kpi-subkpis";
 import type {
+  TaskChecklistIncludedTask,
   TaskChecklistPillarMetrics,
   TaskMetricsHelpdeskTickets,
   TaskMetricsUserSupportTickets,
@@ -45,12 +44,22 @@ const PILLAR_ICONS: Record<string, LucideIcon> = {
   DOCUMENTATION: FileText,
   "USER SUPPORT": Smile,
   "IT PROJECT IMPLEMENTATION": LayoutGrid,
+  PROJECTS: LayoutGrid,
   [JOB_ORDER_REQUEST_PILLAR_TITLE]: LayoutGrid,
 };
 
 /** Display titles for canonical internal pillar keys. */
 const PILLAR_DISPLAY_NAMES: Record<string, string> = {
   "HELPDESK SUPPORT": "REQUEST SUPPORT",
+  "ONE-OFF": "One-Off",
+  DAILY: "Daily",
+  WEEKLY: "Weekly",
+  MONTHLY: "Monthly",
+  QUARTERLY: "Quarterly",
+  "FIELD ASSIGNMENT": "Field Assignment",
+  PROJECTS: "Projects",
+  "IT PROJECT IMPLEMENTATION": "Projects",
+  "JOB ORDER REQUEST": "Projects",
 };
 
 export function pillarDisplayName(pillar: string): string {
@@ -102,43 +111,6 @@ function donutSlicePath(
 
 type DonutSegment = { key: string; label: string; value: number; color: string };
 const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
-const MONITORING_CSV_COLUMNS = ["DONE", "ON GOING", "NOT STARTED", "EFF %"];
-const DAILY_PROGRESS_CSV_COLUMNS = ["DATE", "DONE", "ON GOING", "NOT STARTED", "EFF %"];
-/** Cybersecurity / network: unchecked = safe, checked = breached. */
-const INCIDENT_DAILY_CSV_COLUMNS = ["DATE", "SAFE", "BREACHED", "EFF %"];
-
-function dailyProgressCsvColumnsForPillar(pillar: string, hasDailyRows: boolean): string[] {
-  if (!hasDailyRows) {
-    return pillar === "MONITORING" ? MONITORING_CSV_COLUMNS : IT_SALF_CSV_COLUMNS;
-  }
-  if (isInvertedChecklistPillar(pillar)) return INCIDENT_DAILY_CSV_COLUMNS;
-  return DAILY_PROGRESS_CSV_COLUMNS;
-}
-
-function dailyProgressCsvRow(
-  row: KpiChecklistProgress & { date: string },
-  invert: boolean,
-): string[] {
-  if (invert) {
-    const { safePercent, breachedPercent, effPercent } = incidentMetricPercents(row);
-    return [
-      formatDailyProgressDate(row.date),
-      row.total > 0 ? String(safePercent) : "—",
-      row.total > 0 ? String(breachedPercent) : "—",
-      effPercent == null ? "—" : `${effPercent}%`,
-    ];
-  }
-  const dailyView = kpiChecklistMetricView(row, false);
-  const donePercent = dailyView.percent;
-  const notStartedPercent = Math.max(0, 100 - donePercent);
-  return [
-    formatDailyProgressDate(row.date),
-    String(donePercent),
-    "0",
-    String(notStartedPercent),
-    row.total > 0 ? `${dailyView.percent}%` : "—",
-  ];
-}
 
 function PillarDonutCard({
   pillar,
@@ -329,6 +301,11 @@ const CHECKLIST_PILLAR_CONFIG: Partial<Record<string, ChecklistPillarConfig>> = 
     negativeLabel: "Delayed",
     metricName: "on time",
   },
+  PROJECTS: {
+    positiveLabel: "On time",
+    negativeLabel: "Delayed",
+    metricName: "on time",
+  },
   [JOB_ORDER_REQUEST_PILLAR_TITLE]: {
     positiveLabel: "On time",
     negativeLabel: "Delayed",
@@ -400,10 +377,6 @@ function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
   ];
 }
 
-function countedPeriodsLabel(agg: { periodsCounted?: number; periodsInRange?: number }): string {
-  return `Counted periods: ${agg.periodsCounted ?? 0} of ${agg.periodsInRange ?? 0}`;
-}
-
 function spreadsheetColumnLabel(index: number): string {
   let n = index + 1;
   let label = "";
@@ -461,16 +434,6 @@ function csvDateLabelForCadence(cadence: KpiFrequencyCode, label: string): strin
   if (cadence === "MONTHLY") return label;
   if (cadence === "QUARTERLY") return `Quarterly: ${label}`;
   return label;
-}
-
-function formatDailyProgressDate(ymd: string): string {
-  const parsed = new Date(`${ymd}T00:00:00`);
-  if (!Number.isFinite(parsed.getTime())) return ymd;
-  return parsed.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 function PersonnelMetricStatBox({
@@ -889,6 +852,7 @@ function sourceDetailsForPillar(args: {
   csvRows: string[][];
   showCsvPreview: boolean;
   notes: string[];
+  includedTasks: TaskChecklistIncludedTask[];
 } {
   const { pillar, metricsCadence, reportingPeriodLabel, helpdeskTickets, userSupportTickets, checklistPillars } = args;
   if (pillar === "HELPDESK SUPPORT") {
@@ -915,6 +879,7 @@ function sourceDetailsForPillar(args: {
       csvRows: csvLayoutRowsForPillar(args),
       showCsvPreview: false,
       notes: ["The headline percent is closed / (closed + open) for the selected cadence."],
+      includedTasks: [],
     };
   }
   if (pillar === "USER SUPPORT") {
@@ -944,28 +909,13 @@ function sourceDetailsForPillar(args: {
       csvRows: csvLayoutRowsForPillar(args),
       showCsvPreview: false,
       notes: ["This pillar reflects customer star ratings instead of request confirmation statuses."],
+      includedTasks: [],
     };
   }
   const agg = checklistPillars?.[pillar];
   const cfg = checklistConfigForPillar(pillar);
   const cadenceLabel = metricsCadence.toLowerCase();
   const invert = cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
-  const subtaskCsvColumns = agg?.subtaskCsvColumns;
-  const subtaskCsvRows = agg?.subtaskCsvRows;
-  const hasSubtaskCsvPreview = Boolean(subtaskCsvColumns?.length && subtaskCsvRows?.length);
-  const dailyCsvRows = (agg?.dailyProgressRows ?? []).map((row) =>
-    dailyProgressCsvRow(row, invert),
-  );
-  const sourceCsvRows = hasSubtaskCsvPreview
-    ? subtaskCsvRows!
-    : dailyCsvRows.length > 0
-      ? dailyCsvRows
-      : agg?.csvRows && agg.csvRows.length > 0
-        ? agg.csvRows
-        : csvLayoutRowsForPillar(args);
-  const csvColumns = hasSubtaskCsvPreview
-    ? subtaskCsvColumns!
-    : dailyProgressCsvColumnsForPillar(pillar, dailyCsvRows.length > 0);
   const view = kpiChecklistMetricView(
     {
       total: agg?.total ?? 0,
@@ -980,13 +930,7 @@ function sourceDetailsForPillar(args: {
     rows: [
       {
         label: "Collected from",
-        value: hasSubtaskCsvPreview
-          ? "Live Task Board sub-tasks for this pillar (snapshots for past periods, live checkboxes for the active period)"
-          : dailyCsvRows.length
-          ? "Daily KPI maintenance period snapshots for this reporting range"
-          : agg?.csvRows?.length
-          ? "Imported IT SALF CSV rows for the selected reporting range"
-          : "Task Board KPI checklist rows under this pillar",
+        value: "Task Board KPI checklist rows under this pillar",
       },
       { label: "Recorded as", value: "KPI maintenance period snapshots, with the current active period read live" },
       { label: "Cadence", value: metricsCadence },
@@ -1016,23 +960,14 @@ function sourceDetailsForPillar(args: {
       ["Periods in range", String(agg?.periodsInRange ?? 0), "All expected periods for the selected cadence/range"],
       ["Cadence", metricsCadence, `Recurring ${cadenceLabel} KPI rows selected for this pillar`],
     ],
-    csvColumns,
-    csvRows: sourceCsvRows,
-    showCsvPreview: true,
+    csvColumns: [],
+    csvRows: [],
+    showCsvPreview: false,
     notes: [
-      hasSubtaskCsvPreview
-        ? metricsCadence === "MONTHLY"
-          ? "CSV preview lists Jan.–Dec. rows for the report year with one column per current sub-task (TRUE/FALSE) plus EFF %."
-          : "CSV preview lists one row per working day with sub-task columns from the current Task Board definition (TRUE/FALSE) plus EFF %."
-        : dailyCsvRows.length
-        ? invert
-          ? "CSV preview lists daily SAFE / BREACHED percentages from snapshots (unchecked = safe, checked = breached). EFF % is 0% only when BREACHED is 100; days without snapshot data are omitted."
-          : "CSV preview lists daily progress rows from the same snapshots used by this metric."
-        : agg?.csvRows?.length
-        ? "Weekly and monthly extended views show the matching rows from the imported IT SALF CSV files."
-        : "Checkboxes on the Task Board are the source of completion data.",
+      "Checkboxes on the Task Board are the source of completion data.",
       "Past periods come from immutable snapshots; the active period uses live Task Board checkbox state.",
     ],
+    includedTasks: agg?.includedTasks ?? [],
   };
 }
 
@@ -1043,6 +978,10 @@ export function TaskPillarMetricsGrid({
   helpdeskTickets,
   userSupportTickets,
   includeChecklistPillars = true,
+  includeTicketPillars = true,
+  preferPillarOrder = null,
+  showEmptyPillars = false,
+  canExtendView = false,
 }: {
   /** Checklist pillar metrics from snapshots (range-aware averages). */
   checklistPillars: TaskChecklistPillarMetrics | null;
@@ -1051,6 +990,14 @@ export function TaskPillarMetricsGrid({
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
   includeChecklistPillars?: boolean;
+  /** When false, hide Helpdesk / User Support ticket donuts (task-type filter). */
+  includeTicketPillars?: boolean;
+  /** Optional fixed donut order (e.g. Task frequency buckets). */
+  preferPillarOrder?: string[] | null;
+  /** When true, still render preferred-order donuts with zero totals. */
+  showEmptyPillars?: boolean;
+  /** SuperAdmin / Admin: allow inspecting the Task Board rows inside a donut. */
+  canExtendView?: boolean;
 }) {
   const [inspectedPillar, setInspectedPillar] = useState<string | null>(null);
   const [extendedView, setExtendedView] = useState(false);
@@ -1064,12 +1011,22 @@ export function TaskPillarMetricsGrid({
         checklistPillars,
       })
     : null;
+  const canShowExtendedTasks =
+    canExtendView && (inspected?.includedTasks.length ?? 0) > 0;
 
-  /** Canonical pillars first, then any new task groups found in the computed metrics. */
-  const dynamicPillars = Object.keys(checklistPillars ?? {})
-    .filter((p) => !(IT_TASK_PILLAR_TITLES as readonly string[]).includes(p))
-    .sort();
-  const pillars: string[] = [...IT_TASK_PILLAR_TITLES, ...dynamicPillars];
+  const mainTaskPillars = Object.keys(checklistPillars ?? {})
+    .filter((p) => p !== "HELPDESK SUPPORT" && p !== "USER SUPPORT")
+    .sort((a, b) => a.localeCompare(b));
+  const orderedMain =
+    preferPillarOrder && preferPillarOrder.length > 0
+      ? [
+          ...preferPillarOrder,
+          ...mainTaskPillars.filter((p) => !preferPillarOrder.includes(p)),
+        ]
+      : mainTaskPillars;
+  const pillars: string[] = includeTicketPillars
+    ? ["HELPDESK SUPPORT", "USER SUPPORT", ...orderedMain]
+    : orderedMain;
 
   return (
     <div className="space-y-3">
@@ -1134,14 +1091,12 @@ export function TaskPillarMetricsGrid({
           periodsCounted: 0,
           periodsInRange: 0,
         };
-        if (agg.total <= 0) {
+        if (agg.total <= 0 && !showEmptyPillars) {
           return null;
         }
         const invert =
           cfg.invertChecklist === true || isInvertedChecklistPillar(pillar);
         const view = kpiChecklistMetricView(agg, invert);
-        /** Dynamic task groups show the counted-periods sublabel like the standard checklist groups. */
-        const showCountedPeriods = pillar !== "SYSTEM MAINTENANCE";
         const segments = checklistProgressSegments(view, cfg.positiveLabel, cfg.negativeLabel, {
           hideZeroNegative: invert,
         });
@@ -1152,9 +1107,7 @@ export function TaskPillarMetricsGrid({
         const subLabel =
           cfg.metricName === "on time"
             ? `${view.positive} on time · ${view.negative} delayed · ${agg.total} sub-tasks`
-            : showCountedPeriods
-              ? countedPeriodsLabel(agg)
-              : undefined;
+            : undefined;
         return (
           <PillarDonutCard
             key={pillar}
@@ -1175,12 +1128,15 @@ export function TaskPillarMetricsGrid({
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6"
           role="dialog"
           aria-modal="true"
-          onClick={() => setInspectedPillar(null)}
+          onClick={() => {
+            setInspectedPillar(null);
+            setExtendedView(false);
+          }}
         >
           <div
             className={cn(
               "flex max-h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950",
-              extendedView ? "max-w-4xl" : "max-w-lg",
+              extendedView && canShowExtendedTasks ? "max-w-3xl" : "max-w-lg",
             )}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1188,26 +1144,26 @@ export function TaskPillarMetricsGrid({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
-                  Task metrics source
+                  {extendedView && canShowExtendedTasks ? "Tasks in this donut" : "Task metrics source"}
                 </p>
                 <h3 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">{inspected.title}</h3>
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                {canShowExtendedTasks ? (
+                  <button
+                    type="button"
+                    onClick={() => setExtendedView((v) => !v)}
+                    className="rounded-full border border-orange-300 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800 hover:bg-orange-100 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
+                  >
+                    {extendedView ? "Source summary" : "Extended view"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() => setExtendedView((v) => !v)}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-xs font-semibold",
-                    extendedView
-                      ? "border-orange-500 bg-orange-500/15 text-orange-800 dark:text-orange-100"
-                      : "border-zinc-300 text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800",
-                  )}
-                >
-                  {extendedView ? "Compact view" : "Extend view"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInspectedPillar(null)}
+                  onClick={() => {
+                    setInspectedPillar(null);
+                    setExtendedView(false);
+                  }}
                   className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                 >
                   Close
@@ -1216,162 +1172,97 @@ export function TaskPillarMetricsGrid({
             </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-            <dl className="mt-4 divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
-              {inspected.rows.map((row) => (
-                <div key={row.label} className="grid gap-1 py-2 sm:grid-cols-[10rem_1fr]">
-                  <dt className="font-semibold text-zinc-600 dark:text-zinc-400">{row.label}</dt>
-                  <dd className="text-zinc-950 dark:text-zinc-100">{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-            <ul className="mt-4 space-y-1 rounded-xl bg-zinc-100 p-3 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-              {inspected.notes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-            {extendedView ? (
-              <div className="mt-4 overflow-hidden rounded-xl border border-zinc-300 bg-zinc-50 shadow-inner dark:border-zinc-700 dark:bg-zinc-900/70">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
-                  <div>
-                    <p className="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      {inspected.showCsvPreview ? "CSV Preview" : "Extended Details"}
-                    </p>
-                    {inspected.showCsvPreview ? (
-                      <p className="mt-0.5 font-mono text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                        {inspected.title.replace(/\s+/g, "_").toLowerCase()}_metrics.csv
-                      </p>
-                    ) : null}
-                  </div>
-                  <p className="rounded-full border border-zinc-300 bg-white px-2.5 py-1 font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400">
-                    {inspected.showCsvPreview
-                      ? `${inspected.csvRows.length} rows · ${inspected.csvColumns.length} columns`
-                      : `${inspected.tableRows.length} details`}
-                  </p>
-                </div>
-                {inspected.showCsvPreview ? (
-                  <>
-                    <div className="border-b border-zinc-300 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
-                      <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {inspected.csvColumns.join(",")}
-                      </p>
-                    </div>
-                    <div className="max-h-[30vh] overflow-auto bg-white dark:bg-zinc-950">
-                      <table className="w-full min-w-[760px] border-collapse text-left font-mono text-xs">
-                        <thead className="bg-zinc-200 text-[10px] font-bold uppercase tracking-[0.08em] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                          <tr>
-                            <th className="w-12 border-b border-r border-zinc-300 px-2 py-1.5 text-center dark:border-zinc-700">
-                              #
-                            </th>
-                            {inspected.csvColumns.map((col, colIndex) => (
-                              <th
-                                key={`col-label-${col}-${colIndex}`}
-                                className="border-b border-r border-zinc-300 px-3 py-1.5 text-center dark:border-zinc-700"
+            {extendedView && canShowExtendedTasks ? (
+              <div className="mt-4 space-y-3">
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  Live Task Board rows currently mapped into this donut ({inspected.includedTasks.length}{" "}
+                  {inspected.includedTasks.some((t) => (t.phases?.length ?? 0) > 0) ? "project" : "task"}
+                  {inspected.includedTasks.length === 1 ? "" : "s"}).
+                </p>
+                <ul className="space-y-3">
+                  {inspected.includedTasks.map((task) => {
+                    const showPhases = (task.phases?.length ?? 0) > 0;
+                    return (
+                      <li
+                        key={task.id}
+                        className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-zinc-950 dark:text-zinc-50">{task.title}</p>
+                            {task.assigneeName || task.frequency ? (
+                              <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                {[task.frequency, task.assigneeName].filter(Boolean).join(" · ")}
+                              </p>
+                            ) : null}
+                          </div>
+                          <p className="shrink-0 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                            {showPhases
+                              ? `${task.percent}% · ${task.done}/${task.total} complete`
+                              : `${task.done}/${task.total} done · ${task.percent}%`}
+                          </p>
+                        </div>
+                        {showPhases ? (
+                          <ul className="mt-2 space-y-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                            {task.phases!.map((phase) => (
+                              <li
+                                key={`${task.id}:${phase.id}`}
+                                className="flex items-center justify-between gap-2 text-xs text-zinc-700 dark:text-zinc-300"
                               >
-                                {spreadsheetColumnLabel(colIndex)}
-                              </th>
+                                <span className="min-w-0 truncate font-medium">{phase.name}</span>
+                                <span className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                                  {phase.done}/{phase.total} · {phase.percent}%
+                                </span>
+                              </li>
                             ))}
-                          </tr>
-                          <tr>
-                            <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
-                              1
-                            </th>
-                            {inspected.csvColumns.map((_, colIndex) => (
-                              <th
-                                key={`blank-1-${colIndex}`}
-                                className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
-                              />
-                            ))}
-                          </tr>
-                          <tr>
-                            <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
-                              2
-                            </th>
-                            {inspected.csvColumns.map((_, colIndex) => (
-                              <th
-                                key={`blank-2-${colIndex}`}
-                                className="border-b border-r border-zinc-300 bg-white px-3 py-2 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
-                              />
-                            ))}
-                          </tr>
-                          <tr>
-                            <th className="w-12 border-b border-r border-zinc-300 bg-zinc-100 px-2 py-2 text-center dark:border-zinc-700 dark:bg-zinc-900">
-                              3
-                            </th>
-                            {inspected.csvColumns.map((col, colIndex) => (
-                              <th
-                                key={`${col}-${colIndex}`}
-                                className="border-b border-r border-zinc-300 bg-zinc-100 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+                          </ul>
+                        ) : task.items.length > 0 ? (
+                          <ul className="mt-2 space-y-1 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                            {task.items.map((item) => (
+                              <li
+                                key={`${task.id}:${item.id}`}
+                                className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
                               >
-                                {col}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {inspected.csvRows.map((row, rowIndex) => (
-                            <tr key={`${row[0]}-${rowIndex}`} className="bg-white even:bg-zinc-50 dark:bg-zinc-950 dark:even:bg-zinc-900/40">
-                              <td className="border-r border-b border-zinc-200 bg-zinc-100 px-2 py-2 text-center text-[10px] font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500">
-                                {rowIndex + 4}
-                              </td>
-                              {row.map((cell, cellIndex) => (
-                                <td
-                                  key={`${row[0]}-${cellIndex}`}
+                                <span
                                   className={cn(
-                                    "border-r border-b border-zinc-200 px-3 py-2 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-300",
-                                    cellIndex === 0 && "font-semibold text-zinc-950 dark:text-zinc-100",
-                                    cellIndex === 1 && "tabular-nums text-orange-700 dark:text-orange-300",
+                                    "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold",
+                                    item.done
+                                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                      : "bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
                                   )}
+                                  aria-hidden
                                 >
-                                  {csvBooleanCellDisplay(cell)}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                ) : null}
-                <div className={cn("bg-zinc-50 px-3 py-3 dark:bg-zinc-900/70", inspected.showCsvPreview && "border-t border-zinc-300 dark:border-zinc-700")}>
-                  <p className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                    {inspected.showCsvPreview ? "Extra source details" : "Source details"}
-                  </p>
-                  <div className="max-h-40 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                    <table className="w-full min-w-[640px] border-collapse font-mono text-[11px]">
-                      <thead className="bg-zinc-100 text-left text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                        <tr>
-                          {inspected.tableColumns.map((col) => (
-                            <th key={col} className="border-b border-r border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
-                              {col}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {inspected.tableRows.map((row, rowIndex) => (
-                          <tr key={`extra-${row[0]}-${rowIndex}`} className="bg-white even:bg-zinc-50 dark:bg-zinc-950 dark:even:bg-zinc-900/40">
-                            {row.map((cell, cellIndex) => (
-                              <td
-                                key={`extra-${row[0]}-${cellIndex}`}
-                                className="border-b border-r border-zinc-200 px-2 py-1.5 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-300"
-                              >
-                                {cell}
-                              </td>
+                                  {item.done ? "✓" : "○"}
+                                </span>
+                                <span className={item.done ? "line-through opacity-70" : undefined}>
+                                  {item.title}
+                                </span>
+                              </li>
                             ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                {inspected.showCsvPreview ? (
-                  <div className="flex items-center justify-between gap-2 border-t border-zinc-300 bg-zinc-100 px-3 py-2 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-                    <span>UTF-8 · comma-separated values</span>
-                    <span>Generated from current Task Metrics payload</span>
-                  </div>
-                ) : null}
+                          </ul>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-            ) : null}
+            ) : (
+              <>
+                <dl className="mt-4 divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
+                  {inspected.rows.map((row) => (
+                    <div key={row.label} className="grid gap-1 py-2 sm:grid-cols-[10rem_1fr]">
+                      <dt className="font-semibold text-zinc-600 dark:text-zinc-400">{row.label}</dt>
+                      <dd className="text-zinc-950 dark:text-zinc-100">{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <ul className="mt-4 space-y-1 rounded-xl bg-zinc-100 p-3 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                  {inspected.notes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             </div>
           </div>
         </div>

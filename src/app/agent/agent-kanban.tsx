@@ -113,6 +113,10 @@ function kanbanCardPreview(ticket: KanbanTicket): string {
     const preview = extractJobOrderPreview(ticket.description);
     if (preview) return preview;
   }
+  if (ticket.requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+    const nature = ticket.description.match(/^Nature of Request:\s*(.*)$/im)?.[1]?.trim();
+    if (nature) return nature.slice(0, 120);
+  }
   return (ticket.description || ticket.title).trim();
 }
 

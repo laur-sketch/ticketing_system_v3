@@ -6,6 +6,7 @@ import { canViewerApproveTransfer, parseTransferRequestDetail } from "@/lib/tick
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { safeReturnToParam } from "@/lib/safe-return-to";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { AgentWorkspace } from "./workspace";
 import { AgentTicketModalShell } from "@/components/ticket/AgentTicketModalShell";
 import { requestTypeLabel } from "@/lib/request-types";
@@ -18,7 +19,8 @@ import {
 } from "@/lib/item-requisition-approval-db";
 import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
 import { stampFundTransferCreatorOnCreate } from "@/lib/fund-transfer-approval-db";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { acaProceduralStatusLabel } from "@/lib/aca-approval";
+import { loadAcaApprovalMeta } from "@/lib/aca-approval-db";
 
 export const dynamic = "force-dynamic";
 
@@ -91,6 +93,11 @@ export default async function AgentTicketPage({
   const isFundTransferRequest =
     requestTypeId === "FUND_TRANSFER_REQUEST" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("FUND TRANSFER");
+  const isAcaRequest =
+    requestTypeId === "AUTHORITY_TO_CONDUCT_ACTIVITY" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes(
+      "AUTHORITY TO CONDUCT ACTIVITY",
+    );
   const paymentApprovalMeta = isPaymentRequest
     ? ((await loadPaymentApprovalMeta(ticketForWorkspace.id)) ??
       (await initPaymentApprovalMetaIfNeeded(ticketForWorkspace.id)))
@@ -110,6 +117,9 @@ export default async function AgentTicketPage({
         teamId: ticketForWorkspace.teamId,
       })
     : null;
+  const acaApprovalMeta = isAcaRequest
+    ? await loadAcaApprovalMeta(ticketForWorkspace.id)
+    : null;
   const paymentProceduralLabel = paymentApprovalMeta
     ? paymentProceduralStatusLabel(paymentApprovalMeta.proceduralStep)
     : null;
@@ -119,8 +129,12 @@ export default async function AgentTicketPage({
   const fundTransferProceduralLabel = fundTransferApprovalMeta
     ? fundTransferProceduralStatusLabel(fundTransferApprovalMeta.proceduralStep)
     : null;
+  const acaProceduralLabel = acaApprovalMeta ? acaProceduralStatusLabel(acaApprovalMeta) : null;
   const proceduralStatusLabel =
-    paymentProceduralLabel ?? requisitionProceduralLabel ?? fundTransferProceduralLabel;
+    paymentProceduralLabel ??
+    requisitionProceduralLabel ??
+    fundTransferProceduralLabel ??
+    acaProceduralLabel;
   const paymentApprovalAgentNames: Record<string, string> = {};
   if (paymentApprovalMeta) {
     const ids = [
@@ -167,6 +181,19 @@ export default async function AgentTicketPage({
       for (const a of agents) fundTransferApprovalAgentNames[a.id] = a.name;
     }
   }
+  const acaApprovalAgentNames: Record<string, string> = {};
+  if (acaApprovalMeta) {
+    const ids = acaApprovalMeta.levels
+      .map((l) => l.agentId)
+      .filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const agents = await prisma.agent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      });
+      for (const a of agents) acaApprovalAgentNames[a.id] = a.name;
+    }
+  }
   const requestTypeLabelText =
     requestTypeActivity?.detail?.trim() ||
     requestTypeLabel(requestTypeId ?? "");
@@ -203,6 +230,13 @@ export default async function AgentTicketPage({
   const isAdmin = session.user.role === "SuperAdmin" || session.user.role === "Admin";
   const isSuperAdmin = session.user.role === "SuperAdmin";
   const isPersonnel = session.user.role === "Personnel";
+  const adminCompanyTeamId =
+    session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;
+  const canAssignPaymentAccountingFinance =
+    isSuperAdmin ||
+    (session.user.role === "Admin" &&
+      Boolean(adminCompanyTeamId) &&
+      adminCompanyTeamId === ticketForWorkspace.teamId);
   const isAssignedOperator = !!operator && operator.id === ticketForWorkspace.assignedAgentId;
   const canUpdatePriority = isAdmin || companyCoordinator || isAssignedOperator;
   const canRequestTransfer = isAssignedOperator;
@@ -251,7 +285,7 @@ export default async function AgentTicketPage({
           <div className="grid grid-cols-1 gap-4 border-t border-white/10 pt-3 sm:grid-cols-2 sm:gap-6">
             <div className="min-w-0 space-y-1">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                {isFundTransferRequest ? "Prepared By: " : "Requestor: "}
+                {isFundTransferRequest || isPaymentRequest ? "Prepared By: " : "Requestor: "}
                 <span className="text-zinc-300 normal-case tracking-normal">{ticketForWorkspace.contactName}</span>
               </p>
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
@@ -314,11 +348,15 @@ export default async function AgentTicketPage({
             isFundTransferRequest={isFundTransferRequest}
             fundTransferApprovalMeta={fundTransferApprovalMeta}
             fundTransferApprovalAgentNames={fundTransferApprovalAgentNames}
+            isAcaRequest={isAcaRequest}
+            acaApprovalMeta={acaApprovalMeta}
+            acaApprovalAgentNames={acaApprovalAgentNames}
             sessionAgentId={operator?.id ?? null}
             isSuperAdmin={isSuperAdmin}
-            canSetApprovalAssignees={isAdmin || isPersonnel}
+            canSetApprovalAssignees={isSuperAdmin}
             requestorCompanyTeamId={requestorCompanyTeamId}
             isPersonnel={isPersonnel}
+            canAssignPaymentAccountingFinance={canAssignPaymentAccountingFinance}
             canCreateJobOrderProject={isAdmin || companyCoordinator}
             canRequestJobOrderProject={isPersonnel && isAssignedOperator && !isAdmin && !companyCoordinator}
           />

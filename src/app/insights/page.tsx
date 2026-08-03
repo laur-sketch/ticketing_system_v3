@@ -1,7 +1,8 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -40,6 +41,10 @@ import {
   resolveTaskMetricsQueryRange,
   taskMetricsMergedPeriod,
 } from "@/lib/task-metrics-range";
+import {
+  TASK_METRICS_TASK_TYPE_OPTIONS,
+  type TaskMetricsTaskType,
+} from "@/lib/task-metrics-task-type";
 
 type KpiPayload = {
   range: { from: string; to: string };
@@ -84,6 +89,11 @@ type TaskMetricsViewMode = "company" | "personnel";
 
 type InsightsTab = "ticket-metrics" | "task-metrics" | "kpi-mgmt";
 
+function parseInsightsTab(raw: string | null): InsightsTab | null {
+  if (raw === "ticket-metrics" || raw === "task-metrics" || raw === "kpi-mgmt") return raw;
+  return null;
+}
+
 function formatDuration(ms: number | null) {
   if (ms === null) return "—";
   const hours = ms / 3_600_000;
@@ -97,11 +107,28 @@ function pct(n: number | null) {
 }
 
 export default function InsightsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-[112rem] px-3 py-6 text-sm text-zinc-600 dark:text-zinc-400">
+          Loading metrics…
+        </main>
+      }
+    >
+      <InsightsPageInner />
+    </Suspense>
+  );
+}
+
+function InsightsPageInner() {
   const { data: session } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const isPersonnel = session?.user?.role === "Personnel";
   const isAdminRole = session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
   const isCompanyScopedAdmin = session?.user?.role === "Admin";
-  const [activeTab, setActiveTab] = useState<InsightsTab>("ticket-metrics");
+  const tabFromUrl = parseInsightsTab(searchParams.get("tab"));
+  const [activeTab, setActiveTab] = useState<InsightsTab>(tabFromUrl ?? "ticket-metrics");
   const [data, setData] = useState<KpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [volumeChartView, setVolumeChartView] = useState<"density" | "line">("density");
@@ -153,6 +180,7 @@ export default function InsightsPage() {
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
   const [taskMetricsViewMode, setTaskMetricsViewMode] = useState<TaskMetricsViewMode>("company");
+  const [taskMetricsTaskType, setTaskMetricsTaskType] = useState<TaskMetricsTaskType>("task");
 
   const loadKpis = useCallback(async () => {
     setError(null);
@@ -195,6 +223,10 @@ export default function InsightsPage() {
     });
     if (selectedTaskMetricCompany) {
       qs.set("companyId", selectedTaskMetricCompany);
+    }
+    // Task Type only scopes company-view donuts.
+    if (taskMetricsViewMode === "company") {
+      qs.set("taskType", taskMetricsTaskType);
     }
     try {
       const res = await fetch(`/api/kpis/task-metrics?${qs.toString()}`, { cache: "no-store" });
@@ -241,6 +273,8 @@ export default function InsightsPage() {
     taskMetricsTo,
     recurrenceTz,
     selectedTaskMetricCompany,
+    taskMetricsTaskType,
+    taskMetricsViewMode,
   ]);
 
   function handleTaskMetricsCadenceChange(next: KpiFrequencyCode) {
@@ -331,14 +365,30 @@ export default function InsightsPage() {
     return () => clearInterval(id);
   }, [activeTab, loadTaskMetrics]);
 
+  const selectTab = useCallback(
+    (value: InsightsTab) => {
+      setActiveTab(value);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("tab", value);
+      router.replace(`/insights?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
+
+  useEffect(() => {
+    if (tabFromUrl && tabFromUrl !== activeTab) {
+      queueMicrotask(() => setActiveTab(tabFromUrl));
+    }
+  }, [tabFromUrl, activeTab]);
+
   useEffect(() => {
     if (!showKpiTasksTab && activeTab === "kpi-mgmt") {
-      queueMicrotask(() => setActiveTab("ticket-metrics"));
+      queueMicrotask(() => selectTab("ticket-metrics"));
     }
     if (!showTaskReportingTabs && activeTab === "task-metrics") {
-      queueMicrotask(() => setActiveTab("ticket-metrics"));
+      queueMicrotask(() => selectTab("ticket-metrics"));
     }
-  }, [showKpiTasksTab, showTaskReportingTabs, activeTab]);
+  }, [showKpiTasksTab, showTaskReportingTabs, activeTab, selectTab]);
 
   const charts = data?.charts ?? {
     days: [],
@@ -390,14 +440,14 @@ export default function InsightsPage() {
               {isPersonnel ? "Personal performance intelligence" : "Operations intelligence"}
             </h1>
         </div>
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as InsightsTab)} className="mt-6">
+        <Tabs value={activeTab} onValueChange={(value) => selectTab(value as InsightsTab)} className="mt-6">
           <TabsList className="flex flex-wrap rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
             <TabsTrigger value="ticket-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
               {isPersonnel ? "My Request Metrics and Reports" : "Request Metrics and Reports"}
             </TabsTrigger>
             {showTaskReportingTabs ? (
               <TabsTrigger value="task-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                Task Metrics
+                Task Metrics and Reports
               </TabsTrigger>
             ) : null}
             {showKpiTasksTab ? (
@@ -448,7 +498,10 @@ export default function InsightsPage() {
             lockCompanySelection={isCompanyScopedAdmin}
             metricsViewMode={taskMetricsViewMode}
             onMetricsViewModeChange={setTaskMetricsViewMode}
+            taskType={taskMetricsTaskType}
+            onTaskTypeChange={setTaskMetricsTaskType}
             allowAllCompaniesInPersonnel={true}
+            canExtendView={isAdminRole}
           />
         </div>
       
@@ -743,7 +796,10 @@ function TaskMetricsPanel({
   lockCompanySelection,
   metricsViewMode,
   onMetricsViewModeChange,
+  taskType,
+  onTaskTypeChange,
   allowAllCompaniesInPersonnel,
+  canExtendView = false,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   personnelTicketMetrics: PersonnelTicketMetric[];
@@ -771,7 +827,10 @@ function TaskMetricsPanel({
   lockCompanySelection: boolean;
   metricsViewMode: TaskMetricsViewMode;
   onMetricsViewModeChange: (mode: TaskMetricsViewMode) => void;
+  taskType: TaskMetricsTaskType;
+  onTaskTypeChange: (v: TaskMetricsTaskType) => void;
   allowAllCompaniesInPersonnel: boolean;
+  canExtendView?: boolean;
 }) {
   const freq = taskMetricsCadence;
   const isDaily = freq === "DAILY";
@@ -805,6 +864,7 @@ function TaskMetricsPanel({
 
   // Personnel view reads the stored KPI from mergedatabase-demo (merged_users +
   // merged_user_efficiency_breakdowns) so stored values can be verified.
+  // Primary owns live task updates; sync dumps overall KPI here.
   const [mergedPersonnelRows, setMergedPersonnelRows] = useState<MergedPersonnelEfficiencyRow[]>([]);
   type MergedPersonnelEfficiencyRow = {
     sourceUserId: string;
@@ -1200,9 +1260,11 @@ function TaskMetricsPanel({
           <div
             className={cn(
               "grid w-full gap-3 sm:items-end",
-              showPersonnelCompanyFilter || showCompanyScopeFilter
-                ? "sm:grid-cols-[minmax(12rem,18rem)_auto]"
-                : "sm:grid-cols-1",
+              showCompanyScopeFilter
+                ? "sm:grid-cols-[minmax(12rem,18rem)_minmax(10rem,14rem)_auto]"
+                : showPersonnelCompanyFilter
+                  ? "sm:grid-cols-[minmax(12rem,18rem)_auto]"
+                  : "sm:grid-cols-1",
             )}
           >
             {showCompanyScopeFilter ? (
@@ -1249,6 +1311,24 @@ function TaskMetricsPanel({
                   </select>
                 </label>
               )
+            ) : null}
+            {showCompanyScopeFilter ? (
+              <label className="flex min-w-0 flex-col gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+                  Task type
+                </span>
+                <select
+                  value={taskType}
+                  onChange={(e) => onTaskTypeChange(e.target.value as TaskMetricsTaskType)}
+                  className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
+                >
+                  {TASK_METRICS_TASK_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             ) : null}
             <div className="flex flex-col gap-1.5">
               <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
@@ -1357,6 +1437,16 @@ function TaskMetricsPanel({
             helpdeskTickets={helpdeskTickets}
             userSupportTickets={userSupportTickets}
             includeChecklistPillars={showCompanyTaskMetrics}
+            includeTicketPillars={false}
+            preferPillarOrder={
+              taskType === "task"
+                ? ["ONE-OFF", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"]
+                : taskType === "field"
+                  ? ["FIELD ASSIGNMENT"]
+                  : ["PROJECTS"]
+            }
+            showEmptyPillars={taskType === "task" || taskType === "field" || taskType === "project"}
+            canExtendView={canExtendView}
           />
         ) : (
           <>

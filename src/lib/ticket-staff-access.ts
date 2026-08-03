@@ -13,15 +13,22 @@ import {
   currentPaymentStepBoardAssigneeId,
   parsePaymentApprovalMeta,
 } from "@/lib/request-for-payment-approval";
+import {
+  currentAcaBoardAssigneeId,
+  parseAcaApprovalMeta,
+} from "@/lib/aca-approval";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
 
 type TicketAccessShape = {
+  id?: string;
   teamId: string | null;
   assignedAgentId: string | null;
   assignedAgent?: { email?: string | null; teamId?: string | null } | null;
   paymentApprovalMeta?: unknown;
   itemRequisitionApprovalMeta?: unknown;
   fundTransferApprovalMeta?: unknown;
+  acaApprovalMeta?: unknown;
   contactEmail?: string | null;
   requestorEmail?: string | null;
 };
@@ -117,6 +124,17 @@ export function isCurrentPaymentStepAssignee(
   return isCurrentProceduralStepAssignee(ticket, operatorId);
 }
 
+/** True when the actor is the current ACA procedural-step assignee. */
+export function isCurrentAcaStepAssignee(
+  ticket: TicketAccessShape,
+  operatorId: string | null | undefined,
+): boolean {
+  if (!operatorId) return false;
+  const meta = parseAcaApprovalMeta(ticket.acaApprovalMeta);
+  if (!meta) return false;
+  return currentAcaBoardAssigneeId(meta) === operatorId;
+}
+
 /**
  * Company-scoped Admin (JWT Admin) may only touch tickets routed to their
  * designated company. SuperAdmin is never blocked here.
@@ -135,10 +153,35 @@ export async function adminOutsideCompanyScope(args: {
   return args.ticketTeamId !== scoped;
 }
 
+/** True when `operatorId` is the named recipient of a still-pending peer transfer. */
+export async function isPendingTransferRecipient(
+  ticketId: string | null | undefined,
+  operatorId: string | null | undefined,
+): Promise<boolean> {
+  if (!ticketId || !operatorId) return false;
+  const transferAudit = await prisma.ticketActivity.findMany({
+    where: {
+      ticketId,
+      summary: { in: ["Transfer requested", "Transfer approved", "Transfer rejected"] },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { summary: true, detail: true },
+  });
+  let pendingRecipientId: string | null = null;
+  for (const row of transferAudit) {
+    if (row.summary === "Transfer requested") {
+      pendingRecipientId = parseTransferRequestDetail(row.detail)?.recipientAgentId ?? null;
+    } else if (row.summary === "Transfer approved" || row.summary === "Transfer rejected") {
+      pendingRecipientId = null;
+    }
+  }
+  return pendingRecipientId === operatorId;
+}
+
 /**
  * Personnel may read/mutate when they are the requestor, board assignee,
- * current RFP/IRS/FTR step assignee, or company coordinator for the ticket's company.
- * Peers on the same team are denied.
+ * current RFP/IRS/FTR/ACA step assignee, pending transfer recipient, or company
+ * coordinator for the ticket's company. Peers on the same team are denied.
  */
 export async function personnelForbiddenForTicket(args: {
   email?: string | null;
@@ -149,6 +192,8 @@ export async function personnelForbiddenForTicket(args: {
   if (isTicketAssignee({ operatorId, sessionEmail: email, ticket })) return false;
   if (isTicketRequestor(ticket, email)) return false;
   if (isCurrentProceduralStepAssignee(ticket, operatorId)) return false;
+  if (isCurrentAcaStepAssignee(ticket, operatorId)) return false;
+  if (await isPendingTransferRecipient(ticket.id, operatorId)) return false;
 
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(email);
   if (!companyCoordinator) return true;

@@ -1,0 +1,112 @@
+import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
+import { taskKanbanDerivedStatus } from "@/lib/kpi-cycle-state";
+import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
+import {
+  itProjectChecklistProgressFromRaw,
+  usesProjectTimelineTracker,
+} from "@/lib/it-project-subkpis";
+import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { hasSubKpiAssignedTo, kpiChecklistProgress } from "@/lib/kpi-subkpis";
+import { prisma } from "@/lib/prisma";
+import { findSessionAgentId } from "@/lib/session-agent";
+import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import type { Prisma } from "@prisma/client/primary";
+
+export type TaskBoardLaneCounts = {
+  current: number;
+  done: number;
+  delayed: number;
+};
+
+function isTimelineBoardRecord(record: { title?: string | null; subKpis?: unknown }): boolean {
+  return (
+    isItProjectImplementationPillar(String(record.title ?? "")) ||
+    usesProjectTimelineTracker(record.subKpis)
+  );
+}
+
+function progressForRow(row: {
+  title: string;
+  mainTask: string | null;
+  subKpis: unknown;
+}): { total: number; done: number } {
+  if (isTimelineBoardRecord(row)) {
+    return itProjectChecklistProgressFromRaw(row.subKpis);
+  }
+  return kpiChecklistProgress(row.subKpis, kpiMainTaskLabel(row));
+}
+
+/**
+ * Count Task Board cards in Current / Done / Delayed for the sidebar widget,
+ * scoped like the agent task board for the signed-in role.
+ */
+export async function countTaskBoardLanes(input: {
+  role: string;
+  email: string | null | undefined;
+  name: string | null | undefined;
+  timeZone?: string;
+}): Promise<TaskBoardLaneCounts> {
+  const isSuperAdmin = input.role === "SuperAdmin";
+  const isPersonnel = input.role === "Personnel";
+  const operator = await findSessionAgentId({ email: input.email, name: input.name });
+  const timeZone = input.timeZone?.trim() || DEFAULT_TIME_ZONE;
+  const nowMs = Date.now();
+
+  let where: Prisma.KpiMaintenanceWhereInput = {};
+  if (!isSuperAdmin && !isPersonnel) {
+    const scopedCompanyTeamId = await resolveStaffCompanyTeamId(input.email);
+    if (!scopedCompanyTeamId) {
+      return { current: 0, done: 0, delayed: 0 };
+    }
+    const agentIds = await loadAgentIdsForCompanyTeam(scopedCompanyTeamId);
+    const companyScopeOr: Prisma.KpiMaintenanceWhereInput[] = [
+      { assignedAgentId: null, scopedCompanyTeamId },
+    ];
+    if (agentIds.length > 0) {
+      companyScopeOr.unshift({ assignedAgentId: { in: agentIds } });
+    }
+    where = { OR: companyScopeOr };
+  }
+
+  let rows = await prisma.kpiMaintenance.findMany({
+    where,
+    select: {
+      id: true,
+      title: true,
+      mainTask: true,
+      subKpis: true,
+      isRecurring: true,
+      assignedAgentId: true,
+    },
+  });
+
+  if (isPersonnel) {
+    if (!operator?.id) return { current: 0, done: 0, delayed: 0 };
+    const { kpiIdsWhereAgentIsTravelOrderTraveler } = await import("@/lib/travel-order-db");
+    const travelerKpiIds = await kpiIdsWhereAgentIsTravelOrderTraveler(operator.id);
+    rows = rows.filter(
+      (row) =>
+        row.assignedAgentId === operator.id ||
+        hasSubKpiAssignedTo(row.subKpis, operator.id) ||
+        travelerKpiIds.has(row.id),
+    );
+  }
+
+  let current = 0;
+  let done = 0;
+  let delayed = 0;
+  for (const row of rows) {
+    const p = progressForRow(row);
+    const status = taskKanbanDerivedStatus(row, {
+      total: p.total,
+      done: p.done,
+      nowMs,
+      timeZone,
+    });
+    if (status === "DONE") done += 1;
+    else if (status === "DELAYED") delayed += 1;
+    else current += 1;
+  }
+
+  return { current, done, delayed };
+}

@@ -2,6 +2,9 @@ export type TransferRequestPayload = {
   /** Agent who should receive the ticket when they accept. */
   recipientAgentId: string | null;
   recipientAgentName?: string | null;
+  /** Assignee who initiated the transfer (restored on decline). */
+  fromAgentId?: string | null;
+  fromAgentName?: string | null;
   /** @deprecated Legacy admin-reviewer portal id (queue transfer). */
   recipientPortalAccountId: string | null;
   /** @deprecated Legacy SuperAdmin reviewer flag. */
@@ -26,6 +29,8 @@ export function parseTransferRequestDetail(detail: string | null | undefined): T
       return {
         recipientAgentId: typeof o.recipientAgentId === "string" ? o.recipientAgentId : null,
         recipientAgentName: typeof o.recipientAgentName === "string" ? o.recipientAgentName : null,
+        fromAgentId: typeof o.fromAgentId === "string" ? o.fromAgentId : null,
+        fromAgentName: typeof o.fromAgentName === "string" ? o.fromAgentName : null,
         recipientPortalAccountId:
           typeof o.recipientPortalAccountId === "string" ? o.recipientPortalAccountId : null,
         recipientSuperAdmin: o.recipientSuperAdmin === true,
@@ -40,6 +45,8 @@ export function parseTransferRequestDetail(detail: string | null | undefined): T
   return {
     recipientAgentId: null,
     recipientAgentName: null,
+    fromAgentId: null,
+    fromAgentName: null,
     recipientPortalAccountId: null,
     recipientSuperAdmin: false,
     targetTeamId: null,
@@ -59,7 +66,9 @@ export function formatTransferRequestDetail(detail: string | null | undefined): 
       (parsed.recipientSuperAdmin ? "SuperAdmin" : null) ||
       "a colleague";
     const reason = parsed.reason?.trim();
-    return reason ? `Transfer to ${who}: ${reason}` : `Transfer to ${who}`;
+    const base = reason ? `Transfer to ${who}: ${reason}` : `Transfer to ${who}`;
+    const from = parsed.fromAgentName?.trim();
+    return from ? `${base} (from ${from})` : base;
   }
   return parsed.reason?.trim() || detail?.trim() || null;
 }

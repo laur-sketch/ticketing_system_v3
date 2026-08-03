@@ -30,6 +30,13 @@ export const REQUEST_TYPES = [
     acronym: "J.O.",
     description: "Submit a job order for project or task work (building, dates, and nature of concern).",
   },
+  {
+    id: "AUTHORITY_TO_CONDUCT_ACTIVITY",
+    label: "AUTHORITY TO CONDUCT ACTIVITY",
+    acronym: "A.C.A.",
+    description:
+      "Request authority to conduct a major expenditure or strategic activity per the Authority Matrix.",
+  },
 ] as const;
 
 export type RequestTypeId = (typeof REQUEST_TYPES)[number]["id"];

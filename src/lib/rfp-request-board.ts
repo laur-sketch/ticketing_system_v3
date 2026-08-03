@@ -13,6 +13,51 @@ import {
   currentPaymentStepBoardAssigneeId,
   parsePaymentApprovalMeta,
 } from "@/lib/request-for-payment-approval";
+import {
+  currentAcaBoardAssigneeId,
+  parseAcaApprovalMeta,
+} from "@/lib/aca-approval";
+import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
+
+/**
+ * Ticket ids with a pending peer transfer addressed to `agentId`
+ * (so the recipient sees them even if assignment has not moved yet).
+ */
+export async function loadTicketIdsPendingTransferToAgent(
+  agentId: string,
+): Promise<string[]> {
+  if (!agentId) return [];
+  const rows = await prisma.ticketActivity.findMany({
+    where: {
+      summary: { in: ["Transfer requested", "Transfer approved", "Transfer rejected"] },
+      ticket: {
+        status: { in: ACTIVE_REQUEST_STATUSES },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      ticketId: true,
+      summary: true,
+      detail: true,
+    },
+  });
+
+  const pendingRecipientByTicket = new Map<string, string | null>();
+  for (const row of rows) {
+    if (row.summary === "Transfer requested") {
+      const parsed = parseTransferRequestDetail(row.detail);
+      pendingRecipientByTicket.set(row.ticketId, parsed?.recipientAgentId ?? null);
+    } else if (row.summary === "Transfer approved" || row.summary === "Transfer rejected") {
+      pendingRecipientByTicket.set(row.ticketId, null);
+    }
+  }
+
+  const ids: string[] = [];
+  for (const [ticketId, recipientId] of pendingRecipientByTicket) {
+    if (recipientId === agentId) ids.push(ticketId);
+  }
+  return ids;
+}
 
 /**
  * RFP ticket ids whose current procedural role assignee is `agentId`
@@ -106,8 +151,37 @@ export async function loadFtrTicketIdsForCurrentStepAssignee(
 }
 
 /**
+ * ACA ticket ids whose current procedural-step assignee is `agentId`.
+ */
+export async function loadAcaTicketIdsForCurrentStepAssignee(
+  agentId: string,
+): Promise<string[]> {
+  if (!agentId) return [];
+  const rows = await prisma.$queryRaw<
+    Array<{ id: string; assigned_agent_id: string | null; aca_approval_meta: unknown }>
+  >`
+    SELECT id, assigned_agent_id, aca_approval_meta
+    FROM tickets
+    WHERE request_type = 'AUTHORITY_TO_CONDUCT_ACTIVITY'
+      AND aca_approval_meta IS NOT NULL
+      AND status::text IN (${Prisma.join([...ACTIVE_REQUEST_STATUSES])})
+  `;
+
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (row.assigned_agent_id === agentId) continue;
+    const meta = parseAcaApprovalMeta(row.aca_approval_meta);
+    if (!meta) continue;
+    if (currentAcaBoardAssigneeId(meta) === agentId) {
+      ids.push(row.id);
+    }
+  }
+  return ids;
+}
+
+/**
  * Prisma where fragment: Personnel sees own assignments + procedural requests
- * awaiting their current role (RFP / IRS / FTR).
+ * awaiting their current role (RFP / IRS / FTR / ACA) + pending transfers to them.
  */
 export async function personnelRequestBoardWhere(
   agentId: string | null | undefined,
@@ -115,12 +189,14 @@ export async function personnelRequestBoardWhere(
   if (!agentId) {
     return { assignedAgentId: "__none__" };
   }
-  const [rfpIds, irsIds, ftrIds] = await Promise.all([
+  const [rfpIds, irsIds, ftrIds, acaIds, transferIds] = await Promise.all([
     loadRfpTicketIdsForCurrentStepAssignee(agentId),
     loadIrsTicketIdsForCurrentStepAssignee(agentId),
     loadFtrTicketIdsForCurrentStepAssignee(agentId),
+    loadAcaTicketIdsForCurrentStepAssignee(agentId),
+    loadTicketIdsPendingTransferToAgent(agentId),
   ]);
-  const extraIds = [...new Set([...rfpIds, ...irsIds, ...ftrIds])];
+  const extraIds = [...new Set([...rfpIds, ...irsIds, ...ftrIds, ...acaIds, ...transferIds])];
   if (extraIds.length === 0) {
     return { assignedAgentId: agentId };
   }

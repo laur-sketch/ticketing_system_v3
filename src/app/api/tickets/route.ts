@@ -84,6 +84,16 @@ import {
   saveFundTransferApprovalMeta,
   stampFundTransferCreatorOnCreate,
 } from "@/lib/fund-transfer-approval-db";
+import { resolveAcaAuthority } from "@/lib/aca-authority-matrix";
+import {
+  formatAcaRequestDescription,
+  formatAcaRequestTitle,
+  normalizeAcaAmountInput,
+  parseAcaAmountNumber,
+  resolveAcaFormCode,
+} from "@/lib/authority-to-conduct-activity";
+import { acaProceduralStatusLabel, defaultAcaApprovalMeta } from "@/lib/aca-approval";
+import { saveAcaApprovalMeta } from "@/lib/aca-approval-db";
 
 function pickAgentId(v: unknown): string | null {
   if (v === null || v === "") return null;
@@ -131,7 +141,7 @@ export async function GET(req: Request) {
   const limitParam = Number.parseInt(searchParams.get("limit") ?? "50", 10);
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 50;
   const operator =
-    session.user.role === "Personnel"
+    session.user.role === "Personnel" || session.user.role === "Admin" || session.user.role === "SuperAdmin"
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
 
@@ -141,12 +151,15 @@ export async function GET(req: Request) {
   let adminCompanyWhere: Prisma.TicketWhereInput | null = null;
   if (session.user.role === "Admin") {
     const scoped = await resolveStaffCompanyTeamId(session.user.email);
+    const personalRfpScope = await personnelRequestBoardWhere(operator?.id);
     if (!scoped) {
-      adminCompanyWhere = { teamId: "__none__" };
+      adminCompanyWhere = personalRfpScope;
     } else if (teamIdParam && teamIdParam !== scoped) {
       return NextResponse.json({ error: "Forbidden company filter." }, { status: 403 });
     } else {
-      adminCompanyWhere = { teamId: scoped };
+      adminCompanyWhere = {
+        OR: [{ teamId: scoped }, personalRfpScope],
+      };
     }
   }
 
@@ -251,6 +264,19 @@ export async function POST(req: Request) {
     let targetDateRaw: string | undefined;
     let expectedDurationRaw: string | undefined;
     let approvalAssigneesRaw: unknown;
+    let acaCategoryRaw: string | undefined;
+    let acaNatureOfRequestRaw: string | undefined;
+    let acaEstimatedCostRaw: string | undefined;
+    let acaBudgetAmountRaw: string | undefined;
+    let acaDescriptionRaw: string | undefined;
+    let acaObjectiveRaw: string | undefined;
+    let acaDateSubmittedRaw: string | undefined;
+    let acaImplementationDateRaw: string | undefined;
+    let acaSubmittedByNameRaw: string | undefined;
+    let acaRelatedTicketIdsRaw: string | undefined;
+    let acaRecommendedByAgentIdRaw: string | undefined;
+    let acaFinanceManagerAgentIdRaw: string | undefined;
+    let acaApprovingAgentIdsRaw: unknown;
     let screenshotFiles: File[] | undefined;
 
     if (contentType.includes("multipart/form-data")) {
@@ -336,6 +362,38 @@ export async function POST(req: Request) {
       expectedDurationRaw = ed != null ? String(ed) : undefined;
       const aa = fd.get("approvalAssignees");
       approvalAssigneesRaw = aa != null ? String(aa) : undefined;
+      const acaCat = fd.get("acaCategory");
+      acaCategoryRaw = acaCat != null ? String(acaCat) : undefined;
+      const acaNat = fd.get("acaNatureOfRequest");
+      acaNatureOfRequestRaw = acaNat != null ? String(acaNat) : undefined;
+      const acaEst = fd.get("acaEstimatedCost");
+      acaEstimatedCostRaw = acaEst != null ? String(acaEst) : undefined;
+      const acaBud = fd.get("acaBudgetAmount");
+      acaBudgetAmountRaw = acaBud != null ? String(acaBud) : undefined;
+      const acaDesc = fd.get("acaDescription");
+      acaDescriptionRaw = acaDesc != null ? String(acaDesc) : undefined;
+      const acaObj = fd.get("acaObjective");
+      acaObjectiveRaw = acaObj != null ? String(acaObj) : undefined;
+      const acaDs = fd.get("acaDateSubmitted");
+      acaDateSubmittedRaw = acaDs != null ? String(acaDs) : undefined;
+      const acaImpl = fd.get("acaImplementationDate");
+      acaImplementationDateRaw = acaImpl != null ? String(acaImpl) : undefined;
+      const acaSub = fd.get("acaSubmittedByName");
+      acaSubmittedByNameRaw = acaSub != null ? String(acaSub) : undefined;
+      const acaRel = fd.get("acaRelatedTicketIds");
+      acaRelatedTicketIdsRaw = acaRel != null ? String(acaRel) : undefined;
+      const acaRec = fd.get("acaRecommendedByAgentId");
+      acaRecommendedByAgentIdRaw = acaRec != null ? String(acaRec) : undefined;
+      const acaFin = fd.get("acaFinanceManagerAgentId");
+      acaFinanceManagerAgentIdRaw = acaFin != null ? String(acaFin) : undefined;
+      const acaApp = fd.get("acaApprovingAgentIds");
+      if (typeof acaApp === "string" && acaApp.trim()) {
+        try {
+          acaApprovingAgentIdsRaw = JSON.parse(acaApp);
+        } catch {
+          return NextResponse.json({ error: "Invalid ACA approving assignees payload." }, { status: 400 });
+        }
+      }
       const raw = fd.getAll("screenshots");
       screenshotFiles = raw.filter((x): x is File => x instanceof File && x.size > 0);
       const v = validateScreenshotFiles(screenshotFiles);
@@ -402,6 +460,31 @@ export async function POST(req: Request) {
       expectedDurationRaw =
         typeof body.expectedDuration === "string" ? body.expectedDuration : undefined;
       approvalAssigneesRaw = body.approvalAssignees;
+      acaCategoryRaw = typeof body.acaCategory === "string" ? body.acaCategory : undefined;
+      acaNatureOfRequestRaw =
+        typeof body.acaNatureOfRequest === "string" ? body.acaNatureOfRequest : undefined;
+      acaEstimatedCostRaw =
+        typeof body.acaEstimatedCost === "string" ? body.acaEstimatedCost : undefined;
+      acaBudgetAmountRaw =
+        typeof body.acaBudgetAmount === "string" ? body.acaBudgetAmount : undefined;
+      acaDescriptionRaw =
+        typeof body.acaDescription === "string" ? body.acaDescription : undefined;
+      acaObjectiveRaw = typeof body.acaObjective === "string" ? body.acaObjective : undefined;
+      acaDateSubmittedRaw =
+        typeof body.acaDateSubmitted === "string" ? body.acaDateSubmitted : undefined;
+      acaImplementationDateRaw =
+        typeof body.acaImplementationDate === "string" ? body.acaImplementationDate : undefined;
+      acaSubmittedByNameRaw =
+        typeof body.acaSubmittedByName === "string" ? body.acaSubmittedByName : undefined;
+      acaRelatedTicketIdsRaw =
+        typeof body.acaRelatedTicketIds === "string" ? body.acaRelatedTicketIds : undefined;
+      acaRecommendedByAgentIdRaw =
+        typeof body.acaRecommendedByAgentId === "string" ? body.acaRecommendedByAgentId : undefined;
+      acaFinanceManagerAgentIdRaw =
+        typeof body.acaFinanceManagerAgentId === "string"
+          ? body.acaFinanceManagerAgentId
+          : undefined;
+      acaApprovingAgentIdsRaw = body.acaApprovingAgentIds;
     }
 
     const intakeApprovalAssignees = parseApprovalAssigneesPayload(approvalAssigneesRaw);
@@ -626,6 +709,172 @@ export async function POST(req: Request) {
       }
     }
 
+    let acaCreateSeed: ReturnType<typeof defaultAcaApprovalMeta> | null = null;
+    let acaFormattedTitle: string | null = null;
+    let acaFormattedDescription: string | null = null;
+    if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+      const departmentStore = (departmentRaw ?? "").trim();
+      const acaCategory = (acaCategoryRaw ?? "").trim();
+      const acaNature = (acaNatureOfRequestRaw ?? "").trim();
+      const estimatedCostNormalized =
+        normalizeAcaAmountInput(acaEstimatedCostRaw ?? "") || (acaEstimatedCostRaw ?? "").trim();
+      const budgetAmountNormalized =
+        normalizeAcaAmountInput(acaBudgetAmountRaw ?? "") || (acaBudgetAmountRaw ?? "").trim();
+      const acaDescription = (acaDescriptionRaw ?? issueText).trim();
+      const acaObjective = (acaObjectiveRaw ?? "").trim();
+      const dateSubmitted = (acaDateSubmittedRaw ?? "").trim();
+      const implementationDate = (acaImplementationDateRaw ?? "").trim();
+      const submittedByName =
+        (acaSubmittedByNameRaw ?? "").trim() || (session.user.name ?? "").trim() || "Requester";
+      const relatedTicketIds = (acaRelatedTicketIdsRaw ?? "").trim();
+      const recommendedByAgentId = (acaRecommendedByAgentIdRaw ?? "").trim();
+      const financeManagerAgentId = (acaFinanceManagerAgentIdRaw ?? "").trim();
+      const approvingAgentIds = Array.isArray(acaApprovingAgentIdsRaw)
+        ? acaApprovingAgentIdsRaw
+            .map((v) => (typeof v === "string" ? v.trim() : ""))
+            .filter(Boolean)
+        : typeof acaApprovingAgentIdsRaw === "string" && acaApprovingAgentIdsRaw.trim()
+          ? (() => {
+              try {
+                const parsed = JSON.parse(acaApprovingAgentIdsRaw) as unknown;
+                return Array.isArray(parsed)
+                  ? parsed.map((v) => (typeof v === "string" ? v.trim() : "")).filter(Boolean)
+                  : [];
+              } catch {
+                return [];
+              }
+            })()
+          : [];
+
+      if (
+        !departmentStore ||
+        !acaCategory ||
+        !acaNature ||
+        !estimatedCostNormalized ||
+        !budgetAmountNormalized ||
+        !acaDescription ||
+        !acaObjective ||
+        !dateSubmitted ||
+        !implementationDate
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Department/Store, Category, Nature of Request, Estimated Cost, Budget Amount, Description, Objective, Date Submitted, and Implementation Date are required for ACA.",
+          },
+          { status: 400 },
+        );
+      }
+
+      const estimatedCostNum = parseAcaAmountNumber(estimatedCostNormalized);
+      if (estimatedCostNum == null) {
+        return NextResponse.json({ error: "Estimated cost must be a valid amount." }, { status: 400 });
+      }
+
+      const resolution = resolveAcaAuthority({
+        category: acaCategory,
+        natureOfRequest: acaNature,
+        estimatedCost: estimatedCostNum,
+      });
+      if (!resolution.ok) {
+        return NextResponse.json(
+          { error: resolution.error || "Could not resolve Authority Matrix requirements." },
+          { status: 400 },
+        );
+      }
+      if (!resolution.requiresAca) {
+        return NextResponse.json(
+          {
+            error:
+              resolution.guidance ||
+              "ACA is not required for this amount. Do not submit an Authority to Conduct Activity.",
+          },
+          { status: 400 },
+        );
+      }
+      if (!recommendedByAgentId || !financeManagerAgentId) {
+        return NextResponse.json(
+          { error: "Recommended By and Finance Manager assignees are required." },
+          { status: 400 },
+        );
+      }
+      if (approvingAgentIds.length !== resolution.approvingSeatCount) {
+        return NextResponse.json(
+          {
+            error: `Assign exactly ${resolution.approvingSeatCount} approving seat(s) for ${resolution.approvingLabel ?? "this path"}.`,
+          },
+          { status: 400 },
+        );
+      }
+      if (approvingAgentIds.some((id) => !id)) {
+        return NextResponse.json({ error: "All approving seats must be assigned." }, { status: 400 });
+      }
+
+      const roleIds = [recommendedByAgentId, financeManagerAgentId, ...approvingAgentIds];
+      if (new Set(roleIds).size !== roleIds.length) {
+        return NextResponse.json(
+          { error: "Each ACA approval seat must be assigned to a different person." },
+          { status: 400 },
+        );
+      }
+
+      const found = await prisma.agent.findMany({
+        where: { id: { in: roleIds } },
+        select: { id: true },
+      });
+      if (found.length !== new Set(roleIds).size) {
+        return NextResponse.json(
+          { error: "One or more selected ACA approvers were not found." },
+          { status: 400 },
+        );
+      }
+
+      const acaFields = {
+        departmentStore,
+        category: acaCategory,
+        natureOfRequest: acaNature,
+        estimatedCost: estimatedCostNormalized,
+        budgetAmount: budgetAmountNormalized,
+        description: acaDescription,
+        objective: acaObjective,
+        dateSubmitted,
+        implementationDate,
+        submittedByName,
+        relatedTicketIds,
+      };
+      acaFormattedTitle = formatAcaRequestTitle(acaFields);
+      acaFormattedDescription = formatAcaRequestDescription(acaFields);
+
+      const creatorAgent = await findSessionAgentId({
+        email: session.user.email,
+        name: session.user.name,
+      });
+      acaCreateSeed = defaultAcaApprovalMeta({
+        resolution,
+        submittedByAgentId: creatorAgent?.id ?? null,
+        recommendedByAgentId,
+        financeManagerAgentId,
+        approvingAgentIds,
+        fields: {
+          implementationDate,
+          estimatedCost: estimatedCostNormalized,
+          budgetAmount: budgetAmountNormalized,
+          departmentStore,
+          category: acaCategory,
+          natureOfRequest: acaNature,
+          submittedByName,
+          description: acaDescription,
+          objective: acaObjective,
+          relatedTicketIds: relatedTicketIds
+            ? relatedTicketIds
+                .split(/[,;\s]+/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : [],
+        },
+      });
+    }
+
     const sessionCompanyId =
       typeof session.user.companyId === "string" && session.user.companyId.trim()
         ? session.user.companyId.trim()
@@ -663,6 +912,9 @@ export async function POST(req: Request) {
     } else if (jobOrderFields) {
       normalizedTitle = (title || formatJobOrderTitle(jobOrderFields)).trim();
       normalizedDescription = formatJobOrderDescription(jobOrderFields);
+    } else if (acaFormattedTitle && acaFormattedDescription) {
+      normalizedTitle = (title || acaFormattedTitle).trim();
+      normalizedDescription = acaFormattedDescription;
     }
 
     if (!normalizedTitle || !normalizedDescription || !effectiveName || !effectiveRequestorEmail || !effectiveContactEmail) {
@@ -970,7 +1222,7 @@ export async function POST(req: Request) {
         ticket.id,
         "SYSTEM",
         "Payment approval started",
-        paymentProceduralStatusLabel(meta.proceduralStep) ?? "PREPARED BY IS MISSING",
+        paymentProceduralStatusLabel(meta.proceduralStep) ?? "NOTED BY IS MISSING",
       );
     }
     if (requestType === "ITEM_REQUISITION_SLIP") {
@@ -1074,6 +1326,36 @@ export async function POST(req: Request) {
         "Fund transfer approval started",
         fundTransferProceduralStatusLabel(meta.proceduralStep) ??
           "RECOMMENDING APPROVAL IS MISSING",
+      );
+    }
+    if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY" && acaCreateSeed) {
+      const meta = {
+        ...acaCreateSeed,
+        formCode: resolveAcaFormCode(team?.name),
+      };
+      await saveAcaApprovalMeta(ticket.id, meta);
+      const boardAssigneeId =
+        meta.levels.find((l) => l.key === meta.proceduralStep)?.agentId ?? null;
+      if (boardAssigneeId) {
+        await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            assignedAgent: { connect: { id: boardAssigneeId } },
+            status: "IN_PROGRESS",
+          },
+        });
+      }
+      await logActivity(
+        ticket.id,
+        "SYSTEM",
+        "ACA approval started",
+        acaProceduralStatusLabel(meta) ?? "RECOMMENDED BY IS MISSING",
+      );
+      await logActivity(
+        ticket.id,
+        "SYSTEM",
+        "ACA approvers assigned",
+        `${meta.matrixSnapshot.guidance} Request is not green-lit until all seats mark Done.`,
       );
     }
     const requestSbuFreeText = customerRequestSbuText;
