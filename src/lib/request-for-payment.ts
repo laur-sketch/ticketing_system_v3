@@ -81,7 +81,11 @@ export function formatPaymentRequestDescription(fields: PaymentRequestFields): s
   if (accountTitle) {
     lines.push(`Account title: ${accountTitle}`);
   }
-  lines.push(`Amount: ${amountDisplay}`, `Mode of payment: ${fields.modeOfPayment.trim()}`);
+  lines.push(`Amount: ${amountDisplay}`);
+  const mode = fields.modeOfPayment.trim();
+  if (mode) {
+    lines.push(`Mode of payment: ${mode}`);
+  }
   const delivery = (fields.deliveryOfCheck ?? "").trim();
   if (delivery) {
     lines.push(`Delivery of check: ${delivery}`);
@@ -134,7 +138,7 @@ export function parsePaymentRequestDescription(
   const accountTitle = fieldFromDescription(raw, "Account title");
   const amount = fieldFromDescription(raw, "Amount");
   const modeOfPayment = fieldFromDescription(raw, "Mode of payment");
-  if (!payee && !inPaymentOf && !accountTitle && !amount && !modeOfPayment) {
+  if (!payee && !inPaymentOf && !accountTitle && !amount) {
     return null;
   }
   const notesMatch = /(?:^|\n)Additional notes:\s*\n([\s\S]*)$/i.exec(raw);
@@ -147,5 +151,77 @@ export function parsePaymentRequestDescription(
     deliveryOfCheck: fieldFromDescription(raw, "Delivery of check") ?? undefined,
     bankNameAccountNumber: fieldFromDescription(raw, "Bank name / account number") ?? undefined,
     notes: notesMatch?.[1]?.trim() || undefined,
+  };
+}
+
+export type PaymentModePatch = {
+  modeOfPayment: string;
+  deliveryOfCheck?: string;
+  bankNameAccountNumber?: string;
+};
+
+/** Validate mode / delivery / bank fields filled at APPROVED BY ACCOUNTING. */
+export function validatePaymentModeFields(
+  patch: PaymentModePatch,
+): { ok: true; fields: PaymentModePatch } | { ok: false; error: string } {
+  const modeOfPayment = patch.modeOfPayment.trim();
+  const deliveryOfCheck = (patch.deliveryOfCheck ?? "").trim();
+  const bankNameAccountNumber = (patch.bankNameAccountNumber ?? "").trim();
+  if (!modeOfPayment) {
+    return { ok: false, error: "Mode of payment is required." };
+  }
+  if (!(MODE_OF_PAYMENT_OPTIONS as readonly string[]).includes(modeOfPayment)) {
+    return { ok: false, error: "Invalid mode of payment." };
+  }
+  if (modeOfPayment === MODE_OF_PAYMENT_CHECK) {
+    if (!deliveryOfCheck) {
+      return { ok: false, error: "Delivery of check is required when Mode of payment is Check." };
+    }
+    if (!(DELIVERY_OF_CHECK_OPTIONS as readonly string[]).includes(deliveryOfCheck)) {
+      return { ok: false, error: "Invalid delivery of check." };
+    }
+  }
+  if (paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) && !bankNameAccountNumber) {
+    return {
+      ok: false,
+      error:
+        "Bank name / account number is required for Online Deposit or Online direct to Payee's Bank Account #.",
+    };
+  }
+  if (
+    modeOfPayment.length > 120 ||
+    deliveryOfCheck.length > 80 ||
+    bankNameAccountNumber.length > 200
+  ) {
+    return { ok: false, error: "A payment mode field exceeds the maximum length." };
+  }
+  return {
+    ok: true,
+    fields: {
+      modeOfPayment,
+      deliveryOfCheck: modeOfPayment === MODE_OF_PAYMENT_CHECK ? deliveryOfCheck : "",
+      bankNameAccountNumber: paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck)
+        ? bankNameAccountNumber
+        : "",
+    },
+  };
+}
+
+/** Merge mode-of-payment fields into an existing RFP description body. */
+export function applyPaymentModeToFields(
+  existing: PaymentRequestFields,
+  patch: PaymentModePatch,
+): PaymentRequestFields {
+  const mode = patch.modeOfPayment.trim();
+  const delivery =
+    mode === MODE_OF_PAYMENT_CHECK ? (patch.deliveryOfCheck ?? "").trim() : "";
+  const bank = paymentModeRequiresBankDetails(mode, delivery)
+    ? (patch.bankNameAccountNumber ?? "").trim()
+    : "";
+  return {
+    ...existing,
+    modeOfPayment: mode,
+    deliveryOfCheck: delivery || undefined,
+    bankNameAccountNumber: bank || undefined,
   };
 }

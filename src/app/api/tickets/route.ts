@@ -248,6 +248,7 @@ export async function POST(req: Request) {
     let modeOfPaymentRaw: string | undefined;
     let deliveryOfCheckRaw: string | undefined;
     let bankNameAccountNumberRaw: string | undefined;
+    let deferPaymentModeToAccountingRaw: string | boolean | undefined;
     let requisitionItemsRaw: unknown;
     let purposeOfRequestRaw: string | undefined;
     let fundTransferAmountRaw: string | undefined;
@@ -318,6 +319,8 @@ export async function POST(req: Request) {
       deliveryOfCheckRaw = doc != null ? String(doc) : undefined;
       const bna = fd.get("bankNameAccountNumber");
       bankNameAccountNumberRaw = bna != null ? String(bna) : undefined;
+      const deferMop = fd.get("deferPaymentModeToAccounting");
+      deferPaymentModeToAccountingRaw = deferMop != null ? String(deferMop) : undefined;
       const ri = fd.get("requisitionItems");
       if (typeof ri === "string" && ri.trim()) {
         try {
@@ -435,6 +438,11 @@ export async function POST(req: Request) {
         typeof body.deliveryOfCheck === "string" ? body.deliveryOfCheck : undefined;
       bankNameAccountNumberRaw =
         typeof body.bankNameAccountNumber === "string" ? body.bankNameAccountNumber : undefined;
+      deferPaymentModeToAccountingRaw =
+        typeof body.deferPaymentModeToAccounting === "boolean" ||
+        typeof body.deferPaymentModeToAccounting === "string"
+          ? body.deferPaymentModeToAccounting
+          : undefined;
       requisitionItemsRaw = body.requisitionItems;
       purposeOfRequestRaw =
         typeof body.purposeOfRequest === "string" ? body.purposeOfRequest : undefined;
@@ -618,30 +626,45 @@ export async function POST(req: Request) {
     const modeOfPayment = (modeOfPaymentRaw ?? "").trim();
     const deliveryOfCheck = (deliveryOfCheckRaw ?? "").trim();
     const bankNameAccountNumber = (bankNameAccountNumberRaw ?? "").trim();
+    const deferPaymentModeToAccounting =
+      deferPaymentModeToAccountingRaw === true ||
+      deferPaymentModeToAccountingRaw === "true" ||
+      deferPaymentModeToAccountingRaw === "1" ||
+      deferPaymentModeToAccountingRaw === "on";
     if (requestType === "REQUEST_FOR_PAYMENT") {
-      if (!payee || !inPaymentOf || !amount || !modeOfPayment) {
+      if (!payee || !inPaymentOf || !amount) {
         return NextResponse.json(
           {
-            error:
-              "Payee, In payment of, Amount, and Mode of payment are required for a payment request.",
+            error: "Payee, In payment of, and Amount are required for a payment request.",
           },
           { status: 400 },
         );
       }
-      if (modeOfPayment === MODE_OF_PAYMENT_CHECK && !deliveryOfCheck) {
-        return NextResponse.json(
-          { error: "Delivery of check is required when Mode of payment is Check." },
-          { status: 400 },
-        );
-      }
-      if (paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) && !bankNameAccountNumber) {
-        return NextResponse.json(
-          {
-            error:
-              "Bank name / account number is required for Online Deposit or Online direct to Payee's Bank Account #.",
-          },
-          { status: 400 },
-        );
+      if (!deferPaymentModeToAccounting) {
+        if (!modeOfPayment) {
+          return NextResponse.json(
+            {
+              error:
+                "Mode of payment is required, or enable Let Accounting and Finance Handle it.",
+            },
+            { status: 400 },
+          );
+        }
+        if (modeOfPayment === MODE_OF_PAYMENT_CHECK && !deliveryOfCheck) {
+          return NextResponse.json(
+            { error: "Delivery of check is required when Mode of payment is Check." },
+            { status: 400 },
+          );
+        }
+        if (paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) && !bankNameAccountNumber) {
+          return NextResponse.json(
+            {
+              error:
+                "Bank name / account number is required for Online Deposit or Online direct to Payee's Bank Account #.",
+            },
+            { status: 400 },
+          );
+        }
       }
       if (
         payee.length > 200 ||
@@ -896,9 +919,9 @@ export async function POST(req: Request) {
         inPaymentOf,
         accountTitle,
         amount: amountNormalized,
-        modeOfPayment,
-        deliveryOfCheck,
-        bankNameAccountNumber,
+        modeOfPayment: deferPaymentModeToAccounting ? "" : modeOfPayment,
+        deliveryOfCheck: deferPaymentModeToAccounting ? "" : deliveryOfCheck,
+        bankNameAccountNumber: deferPaymentModeToAccounting ? "" : bankNameAccountNumber,
         notes: issueText,
       };
       normalizedTitle = (title || formatPaymentRequestTitle(paymentFields)).trim();
@@ -1191,6 +1214,16 @@ export async function POST(req: Request) {
     await logActivity(ticket.id, "USER", "Request type", requestTypeLabel(requestType));
     if (requestType === "REQUEST_FOR_PAYMENT") {
       let meta = await initPaymentApprovalMetaIfNeeded(ticket.id);
+      if (deferPaymentModeToAccounting) {
+        meta = { ...meta, deferPaymentModeToAccounting: true };
+        await savePaymentApprovalMeta(ticket.id, meta);
+        await logActivity(
+          ticket.id,
+          "USER",
+          "Payment mode deferred",
+          "Mode of payment will be set by Accounting on the ticket.",
+        );
+      }
       if (intakeApprovalAssignees) {
         const nextAssignees: Partial<PaymentApprovalAssignees> = {
           notedByAgentId: pickAgentId(intakeApprovalAssignees.notedByAgentId),
@@ -1199,6 +1232,9 @@ export async function POST(req: Request) {
           financeAgentId: pickAgentId(intakeApprovalAssignees.financeAgentId),
         };
         meta = applyPaymentApprovalAssignees(meta, nextAssignees);
+        if (deferPaymentModeToAccounting) {
+          meta = { ...meta, deferPaymentModeToAccounting: true };
+        }
         await savePaymentApprovalMeta(ticket.id, meta);
         const boardAssigneeId = currentPaymentStepBoardAssigneeId(meta);
         if (boardAssigneeId) {
@@ -1420,11 +1456,13 @@ export async function POST(req: Request) {
         "Amount",
         formatPaymentPeso(amount) || amount,
       );
-      await logActivity(ticket.id, "USER", "Mode of payment", modeOfPayment);
-      if (deliveryOfCheck) {
+      if (modeOfPayment && !deferPaymentModeToAccounting) {
+        await logActivity(ticket.id, "USER", "Mode of payment", modeOfPayment);
+      }
+      if (deliveryOfCheck && !deferPaymentModeToAccounting) {
         await logActivity(ticket.id, "USER", "Delivery of check", deliveryOfCheck);
       }
-      if (bankNameAccountNumber) {
+      if (bankNameAccountNumber && !deferPaymentModeToAccounting) {
         await logActivity(ticket.id, "USER", "Bank name / account number", bankNameAccountNumber);
       }
     }

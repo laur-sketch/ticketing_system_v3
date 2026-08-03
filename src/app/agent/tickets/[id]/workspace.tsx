@@ -1,12 +1,16 @@
 "use client";
 
 import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchField";
+import { TicketDetailsPrintButton } from "@/components/tickets/TicketDetailsPrintButton";
 import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client/primary";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
+import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
+import { requestTypeLabel } from "@/lib/request-types";
+import type { TicketPrintField, TicketPrintModel } from "@/lib/ticket-details-print";
 import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
-import { parsePaymentRequestDescription, formatPaymentPeso, formatPaymentRequestTitle } from "@/lib/request-for-payment";
+import { parsePaymentRequestDescription, formatPaymentPeso, formatPaymentRequestTitle, MODE_OF_PAYMENT_CHECK, MODE_OF_PAYMENT_OPTIONS, DELIVERY_OF_CHECK_OPTIONS, paymentModeRequiresBankDetails } from "@/lib/request-for-payment";
 import {
   parseItemRequisitionDescription,
   computeRequisitionPriceQuotation,
@@ -186,6 +190,11 @@ export function AgentWorkspace({
       terms: string;
     }>
   >([]);
+  const [paymentModeDraft, setPaymentModeDraft] = useState({
+    modeOfPayment: "",
+    deliveryOfCheck: "",
+    bankNameAccountNumber: "",
+  });
 
   useEffect(() => {
     setApprovalDraft({
@@ -297,6 +306,22 @@ export function AgentWorkspace({
     () => parsePaymentRequestDescription(ticket.description),
     [ticket.description],
   );
+
+  useEffect(() => {
+    if (!paymentDetails) {
+      setPaymentModeDraft({
+        modeOfPayment: "",
+        deliveryOfCheck: "",
+        bankNameAccountNumber: "",
+      });
+      return;
+    }
+    setPaymentModeDraft({
+      modeOfPayment: paymentDetails.modeOfPayment || "",
+      deliveryOfCheck: paymentDetails.deliveryOfCheck || "",
+      bankNameAccountNumber: paymentDetails.bankNameAccountNumber || "",
+    });
+  }, [paymentDetails]);
 
   const requisitionDetails = useMemo(
     () => parseItemRequisitionDescription(ticket.description),
@@ -427,6 +452,14 @@ export function AgentWorkspace({
       sessionAgentId &&
       ticket.assignedAgentId === sessionAgentId &&
       !sessionAlreadyApprovedThisRequest,
+  );
+  const canEditPaymentMode = Boolean(
+    isAgentViewer &&
+      isPaymentRequest &&
+      currentPaymentStep === "APPROVED_BY_ACCOUNTING" &&
+      isTicketAssignee &&
+      (paymentApprovalMeta?.deferPaymentModeToAccounting === true ||
+        !paymentDetails?.modeOfPayment?.trim()),
   );
   const currentStepNeedsApprovedAck = Boolean(
     currentPaymentStep && paymentStepRequiresApprovedAck(currentPaymentStep),
@@ -610,6 +643,302 @@ export function AgentWorkspace({
     return { state, rejectedReason };
   }, [ticket.activities]);
 
+  const createdAtLabel = (
+    ticket.createdAt instanceof Date ? ticket.createdAt : new Date(ticket.createdAt)
+  ).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+
+  const printModel = useMemo((): TicketPrintModel => {
+    const requestType =
+      ticket.requestType && typeof ticket.requestType === "string"
+        ? requestTypeLabel(ticket.requestType)
+        : paymentDetails
+          ? requestTypeLabel("REQUEST_FOR_PAYMENT")
+          : requisitionDetails
+            ? requestTypeLabel("ITEM_REQUISITION_SLIP")
+            : fundTransferDetails
+              ? requestTypeLabel("FUND_TRANSFER_REQUEST")
+              : acaDetails
+                ? requestTypeLabel("AUTHORITY_TO_CONDUCT_ACTIVITY")
+                : isJobOrderRequest
+                  ? requestTypeLabel("JOB_ORDER")
+                  : requestTypeLabel("ISSUE_CONCERN_TICKET");
+
+    const title = paymentDetails
+      ? formatPaymentRequestTitle({
+          payee: paymentDetails.payee,
+          inPaymentOf: paymentDetails.inPaymentOf,
+          amount: paymentDetails.amount,
+        }) || ticket.title
+      : ticket.title;
+
+    const proceduralLabel =
+      paymentProceduralLabel ??
+      requisitionProceduralLabel ??
+      fundTransferProceduralLabel ??
+      acaProceduralLabelText ??
+      null;
+
+    const fields: TicketPrintField[] = [];
+    let table: TicketPrintModel["table"] = null;
+    let notes: string | null = null;
+    const approvals: NonNullable<TicketPrintModel["approvals"]> = [];
+
+    if (paymentDetails) {
+      fields.push(
+        { label: "Payee", value: paymentDetails.payee || "—" },
+        { label: "In payment of", value: paymentDetails.inPaymentOf || "—" },
+        { label: "Account title", value: paymentDetails.accountTitle || "—" },
+        {
+          label: "Amount",
+          value: paymentDetails.amount
+            ? formatPaymentPeso(paymentDetails.amount) || paymentDetails.amount
+            : "—",
+        },
+        { label: "Mode of payment", value: paymentDetails.modeOfPayment || "—" },
+      );
+      if (paymentDetails.deliveryOfCheck) {
+        fields.push({ label: "Delivery of check", value: paymentDetails.deliveryOfCheck });
+      }
+      if (paymentDetails.bankNameAccountNumber) {
+        fields.push({
+          label: "Bank name / account number",
+          value: paymentDetails.bankNameAccountNumber,
+        });
+      }
+      if (paymentDetails.notes) notes = paymentDetails.notes;
+      if (paymentApprovalMeta) {
+        for (const step of PAYMENT_APPROVAL_STEPS) {
+          const agentId = assigneeIdForStep(paymentApprovalMeta, step);
+          const name = agentId
+            ? paymentApprovalAgentNames[agentId]?.trim() || "Unknown"
+            : "—";
+          approvals.push({
+            label: PAYMENT_APPROVAL_STEP_LABELS[step],
+            name,
+            done: Boolean(paymentApprovalMeta.completed[step]),
+          });
+        }
+      }
+    } else if (requisitionDetails) {
+      const showPricing =
+        requisitionDetails.items.some(
+          (i) => i.priceQuotation || i.unitPrice || i.total || i.nameOfSupplier || i.terms,
+        ) || Boolean(isRequisitionRequest && ticket.assignedAgentId);
+      table = {
+        headers: showPricing
+          ? ["Item #", "Qty", "Unit", "Particular", "Unit price", "Quotation", "Supplier", "Terms"]
+          : ["Item #", "Qty", "Unit", "Particular"],
+        rows: requisitionDetails.items.map((item) => {
+          const base = [
+            item.itemNumber || "—",
+            item.quantity || "—",
+            item.unit || "—",
+            item.particular || "—",
+          ];
+          if (!showPricing) return base;
+          return [
+            ...base,
+            formatRequisitionPeso(item.unitPrice) || "—",
+            formatRequisitionPeso(
+              item.priceQuotation || computeRequisitionPriceQuotation(item),
+            ) || "—",
+            item.nameOfSupplier || "—",
+            item.terms || "—",
+          ];
+        }),
+      };
+      fields.push({
+        label: "Grand total",
+        value: formatRequisitionPeso(requisitionListedItemsTotal) || "—",
+      });
+      if (requisitionDetails.purposeOfRequest) {
+        notes = requisitionDetails.purposeOfRequest;
+      }
+      if (itemRequisitionApprovalMeta) {
+        for (const step of ITEM_REQUISITION_APPROVAL_STEPS) {
+          const agentId = itemRequisitionAssigneeIdForStep(itemRequisitionApprovalMeta, step);
+          approvals.push({
+            label: ITEM_REQUISITION_APPROVAL_STEP_LABELS[step],
+            name: agentId
+              ? itemRequisitionApprovalAgentNames[agentId]?.trim() || "Unknown"
+              : "—",
+            done: Boolean(itemRequisitionApprovalMeta.completed[step]),
+          });
+        }
+      }
+    } else if (fundTransferDetails) {
+      fields.push(
+        {
+          label: "Requesting department/business unit",
+          value: fundTransferDetails.requestingDepartmentBusinessUnit || "—",
+        },
+        {
+          label: "Fund transfer amount",
+          value: formatFundTransferPeso(fundTransferDetails.fundTransferAmount) || "—",
+        },
+        {
+          label: "From account",
+          value: [
+            fundTransferDetails.fromAccountName,
+            fundTransferDetails.fromAccountNumber,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "—",
+        },
+        {
+          label: "To account",
+          value: [
+            fundTransferDetails.toAccountName,
+            fundTransferDetails.toAccountNumber,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "—",
+        },
+        { label: "Bank name", value: fundTransferDetails.bankName || "—" },
+        { label: "Bank address", value: fundTransferDetails.bankAddress || "—" },
+      );
+      if (fundTransferDetails.reason) notes = fundTransferDetails.reason;
+      if (fundTransferApprovalMeta) {
+        for (const step of FUND_TRANSFER_APPROVAL_STEPS) {
+          const agentId = fundTransferAssigneeIdForStep(fundTransferApprovalMeta, step);
+          const assigneeName = agentId
+            ? fundTransferApprovalAgentNames[agentId]?.trim() || null
+            : null;
+          const name =
+            step === "PREPARED_BY"
+              ? assigneeName || ticket.contactName?.trim() || "—"
+              : assigneeName || "—";
+          approvals.push({
+            label: FUND_TRANSFER_APPROVAL_STEP_LABELS[step],
+            name,
+            done: Boolean(fundTransferApprovalMeta.completed[step]),
+          });
+        }
+      }
+    } else if (acaDetails) {
+      fields.push(
+        {
+          label: "Form",
+          value: `${acaApprovalMeta?.formCode || ticket.team?.name || "ACA"} · ${ticket.ticketNumber}`,
+        },
+        {
+          label: "Department / Store",
+          value: acaDetails.departmentStore || acaApprovalMeta?.departmentStore || "—",
+        },
+        { label: "Category", value: acaDetails.category || acaApprovalMeta?.category || "—" },
+        {
+          label: "Nature of request",
+          value: acaDetails.natureOfRequest || acaApprovalMeta?.natureOfRequest || "—",
+        },
+        {
+          label: "Estimated cost",
+          value:
+            formatAcaPeso(acaDetails.estimatedCost) ||
+            formatAcaPeso(acaApprovalMeta?.estimatedCost) ||
+            "—",
+        },
+        {
+          label: "Budget amount",
+          value:
+            formatAcaPeso(acaDetails.budgetAmount) ||
+            formatAcaPeso(acaApprovalMeta?.budgetAmount) ||
+            "—",
+        },
+        { label: "Date submitted", value: acaDetails.dateSubmitted || "—" },
+        {
+          label: "Implementation date",
+          value: acaDetails.implementationDate || acaApprovalMeta?.implementationDate || "—",
+        },
+        {
+          label: "Submitted by",
+          value: acaDetails.submittedByName || acaApprovalMeta?.submittedByName || "—",
+        },
+      );
+      const desc = acaDetails.description || acaApprovalMeta?.description || "";
+      const objective = acaDetails.objective || acaApprovalMeta?.objective || "";
+      notes = [desc && `Description:\n${desc}`, objective && `Objective:\n${objective}`]
+        .filter(Boolean)
+        .join("\n\n");
+      if (acaApprovalMeta) {
+        for (const level of acaApprovalMeta.levels) {
+          approvals.push({
+            label: level.label,
+            name: level.agentId
+              ? acaApprovalAgentNames[level.agentId]?.trim() || "Unknown"
+              : "—",
+            done: Boolean(level.approvedAt),
+          });
+        }
+      }
+    } else if (isJobOrderRequest && jobOrderDetails) {
+      fields.push(
+        {
+          label: "Nature of concern",
+          value:
+            jobOrderDetails.natureOfConcern.length > 0
+              ? jobOrderDetails.natureOfConcern.join(", ")
+              : "—",
+        },
+        { label: "Building", value: jobOrderDetails.building || "—" },
+        { label: "Expected duration", value: jobOrderDetails.expectedDuration || "—" },
+        { label: "Start date", value: jobOrderDetails.startDate || "—" },
+        { label: "Target date", value: jobOrderDetails.targetDate || "—" },
+      );
+      if (jobOrderDetails.notes) notes = jobOrderDetails.notes;
+    } else {
+      notes = cleanedDescription || ticket.description || null;
+    }
+
+    return {
+      ticketNumber: ticket.ticketNumber,
+      requestTypeLabel: requestType,
+      priority: formatTicketPriorityLabel(ticket.priority),
+      status: formatTicketStatusLabel(ticket.status),
+      proceduralLabel,
+      createdAtLabel,
+      title,
+      fields,
+      table,
+      notes,
+      approvals,
+      meta: [
+        { label: "Requestor", value: ticket.contactName?.trim() || "—" },
+        { label: "Company", value: ticket.team?.name?.trim() || "—" },
+        {
+          label: "Assignee",
+          value: ticket.assignedAgent?.name?.trim() || "Unassigned",
+        },
+      ],
+    };
+  }, [
+    ticket,
+    paymentDetails,
+    requisitionDetails,
+    fundTransferDetails,
+    acaDetails,
+    jobOrderDetails,
+    isJobOrderRequest,
+    cleanedDescription,
+    paymentProceduralLabel,
+    requisitionProceduralLabel,
+    fundTransferProceduralLabel,
+    acaProceduralLabelText,
+    paymentApprovalMeta,
+    paymentApprovalAgentNames,
+    itemRequisitionApprovalMeta,
+    itemRequisitionApprovalAgentNames,
+    fundTransferApprovalMeta,
+    fundTransferApprovalAgentNames,
+    acaApprovalMeta,
+    acaApprovalAgentNames,
+    isRequisitionRequest,
+    requisitionListedItemsTotal,
+    createdAtLabel,
+  ]);
+
   return (
     <div className="grid min-w-0 gap-4 pb-1 sm:gap-5 xl:grid-cols-[minmax(0,1.85fr)_minmax(280px,1fr)] xl:items-start">
       <div className="min-w-0 space-y-4">
@@ -622,6 +951,7 @@ export function AgentWorkspace({
             <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-700 dark:bg-zinc-700/70 dark:text-zinc-200">
               {formatTicketPriorityLabel(ticket.priority)}
             </span>
+            <TicketDetailsPrintButton model={printModel} />
           </div>
             <time
               dateTime={
@@ -632,13 +962,7 @@ export function AgentWorkspace({
               className="shrink-0 text-right text-xs font-semibold normal-case tracking-normal text-zinc-600 dark:text-zinc-300 sm:text-sm"
               title="Request created"
             >
-              {(ticket.createdAt instanceof Date
-                ? ticket.createdAt
-                : new Date(ticket.createdAt)
-              ).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })}
+              {createdAtLabel}
             </time>
           </div>
           <h2 className="mt-2 break-words text-lg font-bold tracking-tight text-zinc-950 sm:text-2xl md:text-3xl dark:text-zinc-100">
@@ -706,34 +1030,155 @@ export function AgentWorkspace({
                 </div>
               </dl>
               <dl className="space-y-2 text-sm">
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Mode of payment
-                  </dt>
-                  <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                    {paymentDetails.modeOfPayment || "—"}
-                  </dd>
-                </div>
-                {paymentDetails.deliveryOfCheck ? (
-                  <div>
-                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                      Delivery of check
-                    </dt>
-                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                      {paymentDetails.deliveryOfCheck}
-                    </dd>
-                  </div>
-                ) : null}
-                {paymentDetails.bankNameAccountNumber ? (
-                  <div>
-                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                      Bank name / account number
-                    </dt>
-                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                      {paymentDetails.bankNameAccountNumber}
-                    </dd>
-                  </div>
-                ) : null}
+                {canEditPaymentMode ? (
+                  <>
+                    <div>
+                      <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                        Mode of payment
+                      </dt>
+                      <dd className="mt-1">
+                        <select
+                          value={paymentModeDraft.modeOfPayment}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setPaymentModeDraft((prev) => ({
+                              ...prev,
+                              modeOfPayment: next,
+                              deliveryOfCheck:
+                                next === MODE_OF_PAYMENT_CHECK ? prev.deliveryOfCheck : "",
+                              bankNameAccountNumber: paymentModeRequiresBankDetails(
+                                next,
+                                next === MODE_OF_PAYMENT_CHECK ? prev.deliveryOfCheck : "",
+                              )
+                                ? prev.bankNameAccountNumber
+                                : "",
+                            }));
+                          }}
+                          className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-orange-500 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                        >
+                          <option value="">Select mode of payment</option>
+                          {MODE_OF_PAYMENT_OPTIONS.map((mode) => (
+                            <option key={mode} value={mode}>
+                              {mode}
+                            </option>
+                          ))}
+                        </select>
+                      </dd>
+                    </div>
+                    {paymentModeDraft.modeOfPayment === MODE_OF_PAYMENT_CHECK ? (
+                      <div>
+                        <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                          Delivery of check
+                        </dt>
+                        <dd className="mt-1">
+                          <select
+                            value={paymentModeDraft.deliveryOfCheck}
+                            onChange={(e) => {
+                              const next = e.target.value;
+                              setPaymentModeDraft((prev) => ({
+                                ...prev,
+                                deliveryOfCheck: next,
+                                bankNameAccountNumber: paymentModeRequiresBankDetails(
+                                  prev.modeOfPayment,
+                                  next,
+                                )
+                                  ? prev.bankNameAccountNumber
+                                  : "",
+                              }));
+                            }}
+                            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-orange-500 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                          >
+                            <option value="">Select delivery of check</option>
+                            {DELIVERY_OF_CHECK_OPTIONS.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        </dd>
+                      </div>
+                    ) : null}
+                    {paymentModeRequiresBankDetails(
+                      paymentModeDraft.modeOfPayment,
+                      paymentModeDraft.deliveryOfCheck,
+                    ) ? (
+                      <div>
+                        <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                          Bank name / account number
+                        </dt>
+                        <dd className="mt-1">
+                          <input
+                            type="text"
+                            value={paymentModeDraft.bankNameAccountNumber}
+                            onChange={(e) =>
+                              setPaymentModeDraft((prev) => ({
+                                ...prev,
+                                bankNameAccountNumber: e.target.value,
+                              }))
+                            }
+                            maxLength={200}
+                            placeholder="e.g. BDO · 0012-3456-7890"
+                            className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm text-zinc-900 outline-none focus:border-orange-500 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                          />
+                        </dd>
+                      </div>
+                    ) : null}
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          patch({
+                            action: "update_payment_mode",
+                            modeOfPayment: paymentModeDraft.modeOfPayment,
+                            deliveryOfCheck: paymentModeDraft.deliveryOfCheck,
+                            bankNameAccountNumber: paymentModeDraft.bankNameAccountNumber,
+                          })
+                        }
+                        className="min-h-9 rounded-lg border border-orange-500/40 bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                      >
+                        Save
+                      </button>
+                      <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Save this section before marking APPROVED BY ACCOUNTING as Done.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                        Mode of payment
+                      </dt>
+                      <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                        {paymentDetails.modeOfPayment ||
+                          (paymentApprovalMeta?.deferPaymentModeToAccounting
+                            ? "To be set by Accounting"
+                            : "—")}
+                      </dd>
+                    </div>
+                    {paymentDetails.deliveryOfCheck ? (
+                      <div>
+                        <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                          Delivery of check
+                        </dt>
+                        <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                          {paymentDetails.deliveryOfCheck}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {paymentDetails.bankNameAccountNumber ? (
+                      <div>
+                        <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                          Bank name / account number
+                        </dt>
+                        <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                          {paymentDetails.bankNameAccountNumber}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </>
+                )}
                 {paymentDetails.notes ? (
                   <div>
                     <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">

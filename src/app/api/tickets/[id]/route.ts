@@ -53,6 +53,12 @@ import {
   type PaymentApprovalStep,
 } from "@/lib/request-for-payment-approval";
 import {
+  applyPaymentModeToFields,
+  formatPaymentRequestDescription,
+  parsePaymentRequestDescription,
+  validatePaymentModeFields,
+} from "@/lib/request-for-payment";
+import {
   initPaymentApprovalMetaIfNeeded,
   savePaymentApprovalMeta,
 } from "@/lib/payment-approval-db";
@@ -1527,6 +1533,86 @@ export async function PATCH(
       });
     }
 
+    if (action === "update_payment_mode") {
+      if (!isAdminOrAgent) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const requestType = await loadTicketRequestType(id);
+      if (requestType !== "REQUEST_FOR_PAYMENT") {
+        return NextResponse.json(
+          { error: "Mode of payment updates apply only to Request for Payment." },
+          { status: 400 },
+        );
+      }
+      const meta = await initPaymentApprovalMetaIfNeeded(id);
+      if (meta.proceduralStep !== "APPROVED_BY_ACCOUNTING") {
+        return NextResponse.json(
+          {
+            error:
+              "Mode of payment can only be set when the request is on APPROVED BY ACCOUNTING.",
+          },
+          { status: 400 },
+        );
+      }
+      const existing = parsePaymentRequestDescription(ticket.description);
+      if (!existing) {
+        return NextResponse.json(
+          { error: "Could not parse payment details for this request." },
+          { status: 400 },
+        );
+      }
+      const maySetMode =
+        meta.deferPaymentModeToAccounting === true || !existing.modeOfPayment.trim();
+      if (!maySetMode) {
+        return NextResponse.json(
+          {
+            error:
+              "Mode of payment was already set at intake. Only deferred requests can update it here.",
+          },
+          { status: 400 },
+        );
+      }
+      if (!ticket.assignedAgentId || operator?.id !== ticket.assignedAgentId) {
+        return NextResponse.json(
+          { error: "Only the assigned Accounting personnel can set Mode of payment." },
+          { status: 403 },
+        );
+      }
+      const validated = validatePaymentModeFields({
+        modeOfPayment: typeof body.modeOfPayment === "string" ? body.modeOfPayment : "",
+        deliveryOfCheck: typeof body.deliveryOfCheck === "string" ? body.deliveryOfCheck : "",
+        bankNameAccountNumber:
+          typeof body.bankNameAccountNumber === "string" ? body.bankNameAccountNumber : "",
+      });
+      if (!validated.ok) {
+        return NextResponse.json({ error: validated.error }, { status: 400 });
+      }
+      const merged = applyPaymentModeToFields(existing, validated.fields);
+      const description = formatPaymentRequestDescription(merged);
+      const updated = await prisma.ticket.update({
+        where: { id },
+        data: { description },
+        include: { team: true, assignedAgent: true },
+      });
+      await logActivity(
+        id,
+        "AGENT",
+        "Mode of payment updated",
+        [
+          validated.fields.modeOfPayment,
+          validated.fields.deliveryOfCheck
+            ? `Delivery: ${validated.fields.deliveryOfCheck}`
+            : null,
+          validated.fields.bankNameAccountNumber
+            ? `Bank: ${validated.fields.bankNameAccountNumber}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      );
+      return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
+    }
+
     if (action === "complete_payment_approval_step") {
       if (!isAdminOrAgent) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -1570,6 +1656,22 @@ export async function PATCH(
           },
           { status: 400 },
         );
+      }
+      if (previousStep === "APPROVED_BY_ACCOUNTING") {
+        const paymentFields = parsePaymentRequestDescription(ticket.description);
+        const modeCheck = validatePaymentModeFields({
+          modeOfPayment: paymentFields?.modeOfPayment ?? "",
+          deliveryOfCheck: paymentFields?.deliveryOfCheck ?? "",
+          bankNameAccountNumber: paymentFields?.bankNameAccountNumber ?? "",
+        });
+        if (!modeCheck.ok) {
+          return NextResponse.json(
+            {
+              error: `${modeCheck.error} Set Mode of payment on this request before marking Accounting Done.`,
+            },
+            { status: 400 },
+          );
+        }
       }
       const uniqueness = canAssignPaymentApprover({
         meta,

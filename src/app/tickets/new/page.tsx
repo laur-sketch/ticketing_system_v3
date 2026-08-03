@@ -83,6 +83,7 @@ function NewTicketPageInner() {
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [modeOfPayment, setModeOfPayment] = useState("");
   const [deliveryOfCheck, setDeliveryOfCheck] = useState("");
+  const [letAccountingHandlePaymentMode, setLetAccountingHandlePaymentMode] = useState(false);
   const [draftRequestType, setDraftRequestType] =
     useState<RequestTypeId>(DEFAULT_REQUEST_TYPE);
   const activeRequestType = useMemo(() => {
@@ -691,23 +692,30 @@ function NewTicketPageInner() {
       const bankAddress = String(form.get("bankAddress") || "").trim();
 
       if (isPaymentRequest) {
-        if (!payee || !inPaymentOf || !amount || !modeOfPaymentValue) {
-          setError("Payee, In payment of, Amount, and Mode of payment are required.");
+        if (!payee || !inPaymentOf || !amount) {
+          setError("Payee, In payment of, and Amount are required.");
           setLoading(false);
           return;
         }
-        if (modeOfPaymentValue === MODE_OF_PAYMENT_CHECK && !deliveryOfCheckValue) {
-          setError("Delivery of check is required when Mode of payment is Check.");
-          setLoading(false);
-          return;
-        }
-        if (
-          paymentModeRequiresBankDetails(modeOfPaymentValue, deliveryOfCheckValue) &&
-          !bankNameAccountNumber
-        ) {
-          setError("Bank name / account number is required for this mode of payment.");
-          setLoading(false);
-          return;
+        if (!letAccountingHandlePaymentMode) {
+          if (!modeOfPaymentValue) {
+            setError("Mode of payment is required, or check Let Accounting and Finance Handle it.");
+            setLoading(false);
+            return;
+          }
+          if (modeOfPaymentValue === MODE_OF_PAYMENT_CHECK && !deliveryOfCheckValue) {
+            setError("Delivery of check is required when Mode of payment is Check.");
+            setLoading(false);
+            return;
+          }
+          if (
+            paymentModeRequiresBankDetails(modeOfPaymentValue, deliveryOfCheckValue) &&
+            !bankNameAccountNumber
+          ) {
+            setError("Bank name / account number is required for this mode of payment.");
+            setLoading(false);
+            return;
+          }
         }
       } else if (isRequisitionRequest) {
         const requisitionCheck = validateItemRequisitionFields({
@@ -843,17 +851,26 @@ function NewTicketPageInner() {
           target.append("inPaymentOf", inPaymentOf);
           target.append("accountTitle", accountTitle);
           target.append("amount", amount);
-          target.append("modeOfPayment", modeOfPaymentValue);
-          if (deliveryOfCheckValue) target.append("deliveryOfCheck", deliveryOfCheckValue);
-          if (bankNameAccountNumber) target.append("bankNameAccountNumber", bankNameAccountNumber);
+          target.append(
+            "deferPaymentModeToAccounting",
+            letAccountingHandlePaymentMode ? "true" : "false",
+          );
+          if (!letAccountingHandlePaymentMode) {
+            target.append("modeOfPayment", modeOfPaymentValue);
+            if (deliveryOfCheckValue) target.append("deliveryOfCheck", deliveryOfCheckValue);
+            if (bankNameAccountNumber) target.append("bankNameAccountNumber", bankNameAccountNumber);
+          }
         } else {
           target.payee = payee;
           target.inPaymentOf = inPaymentOf;
           target.accountTitle = accountTitle;
           target.amount = amount;
-          target.modeOfPayment = modeOfPaymentValue;
-          if (deliveryOfCheckValue) target.deliveryOfCheck = deliveryOfCheckValue;
-          if (bankNameAccountNumber) target.bankNameAccountNumber = bankNameAccountNumber;
+          target.deferPaymentModeToAccounting = letAccountingHandlePaymentMode;
+          if (!letAccountingHandlePaymentMode) {
+            target.modeOfPayment = modeOfPaymentValue;
+            if (deliveryOfCheckValue) target.deliveryOfCheck = deliveryOfCheckValue;
+            if (bankNameAccountNumber) target.bankNameAccountNumber = bankNameAccountNumber;
+          }
         }
       };
 
@@ -1484,62 +1501,94 @@ function NewTicketPageInner() {
                   </label>
                 </div>
 
-                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  Mode of payment:
-                  <Select
-                    name="modeOfPayment"
-                    required
-                    value={modeOfPayment}
+                <label className="flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-200">
+                  <input
+                    type="checkbox"
+                    checked={letAccountingHandlePaymentMode}
                     onChange={(e) => {
-                      const next = e.target.value;
-                      setModeOfPayment(next);
-                      if (next !== MODE_OF_PAYMENT_CHECK) {
+                      const checked = e.target.checked;
+                      setLetAccountingHandlePaymentMode(checked);
+                      if (checked) {
+                        setModeOfPayment("");
                         setDeliveryOfCheck("");
                       }
                     }}
-                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  >
-                    <option value="">Select mode of payment</option>
-                    {MODE_OF_PAYMENT_OPTIONS.map((mode) => (
-                      <option key={mode} value={mode}>
-                        {mode}
-                      </option>
-                    ))}
-                  </Select>
+                    className="mt-0.5 size-4 shrink-0 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                  />
+                  <span>
+                    <span className="font-medium">Let Accounting and Finance Handle it</span>
+                    <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                      When checked, Mode of payment is filled later on the ticket at APPROVED BY
+                      ACCOUNTING.
+                    </span>
+                  </span>
                 </label>
 
-                {modeOfPayment === MODE_OF_PAYMENT_CHECK ? (
-                  <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Delivery of check
-                    <Select
-                      name="deliveryOfCheck"
-                      required
-                      value={deliveryOfCheck}
-                      onChange={(e) => setDeliveryOfCheck(e.target.value)}
-                      className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    >
-                      <option value="">Select delivery of check</option>
-                      {DELIVERY_OF_CHECK_OPTIONS.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                ) : null}
+                {!letAccountingHandlePaymentMode ? (
+                  <>
+                    <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      Mode of payment:
+                      <Select
+                        name="modeOfPayment"
+                        required
+                        value={modeOfPayment}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setModeOfPayment(next);
+                          if (next !== MODE_OF_PAYMENT_CHECK) {
+                            setDeliveryOfCheck("");
+                          }
+                        }}
+                        className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      >
+                        <option value="">Select mode of payment</option>
+                        {MODE_OF_PAYMENT_OPTIONS.map((mode) => (
+                          <option key={mode} value={mode}>
+                            {mode}
+                          </option>
+                        ))}
+                      </Select>
+                    </label>
 
-                {paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) ? (
-                  <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Bank name / account number
-                    <Input
-                      name="bankNameAccountNumber"
-                      required
-                      maxLength={200}
-                      placeholder="e.g. BDO · 0012-3456-7890"
-                      className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    />
-                  </label>
-                ) : null}
+                    {modeOfPayment === MODE_OF_PAYMENT_CHECK ? (
+                      <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        Delivery of check
+                        <Select
+                          name="deliveryOfCheck"
+                          required
+                          value={deliveryOfCheck}
+                          onChange={(e) => setDeliveryOfCheck(e.target.value)}
+                          className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                        >
+                          <option value="">Select delivery of check</option>
+                          {DELIVERY_OF_CHECK_OPTIONS.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </Select>
+                      </label>
+                    ) : null}
+
+                    {paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) ? (
+                      <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        Bank name / account number
+                        <Input
+                          name="bankNameAccountNumber"
+                          required
+                          maxLength={200}
+                          placeholder="e.g. BDO · 0012-3456-7890"
+                          className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                        />
+                      </label>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-400">
+                    Mode of payment, delivery of check, and bank details will appear on the ticket
+                    details for Accounting to complete.
+                  </p>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">

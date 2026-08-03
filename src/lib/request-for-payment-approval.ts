@@ -43,6 +43,11 @@ export type PaymentApprovalMeta = PaymentApprovalAssignees & {
    * but board handoff waits for Done).
    */
   stepApproved: Partial<Record<PaymentApprovalAckStep, string>>;
+  /**
+   * Intake chose “Let Accounting and Finance Handle it” — mode of payment is
+   * filled on ticket details at APPROVED BY ACCOUNTING instead of at create.
+   */
+  deferPaymentModeToAccounting?: boolean;
 };
 
 export const PAYMENT_APPROVAL_STEP_LABELS: Record<PaymentApprovalStep, string> = {
@@ -134,6 +139,7 @@ export function parsePaymentApprovalMeta(raw: unknown): PaymentApprovalMeta | nu
     proceduralStep: step,
     completed,
     stepApproved,
+    deferPaymentModeToAccounting: o.deferPaymentModeToAccounting === true,
   };
 }
 
