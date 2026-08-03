@@ -20,7 +20,7 @@ import { isTicketRequestorRole, ticketRequestorNavLabel } from "@/lib/ticket-req
 
 export const dynamic = "force-dynamic";
 
-type ColumnId = "open" | "inProgress" | "forConfirmation";
+type ColumnId = "open" | "inProgress" | "forConfirmation" | "closed";
 
 type ColumnDef = {
   id: ColumnId;
@@ -60,6 +60,16 @@ const COLUMNS: ColumnDef[] = [
       dot: "bg-emerald-500",
       label: "text-emerald-800 dark:text-emerald-300",
       ring: "ring-emerald-500/30",
+    },
+  },
+  {
+    id: "closed",
+    title: "Closed",
+    match: (s) => s === "CLOSED",
+    tone: {
+      dot: "bg-zinc-500",
+      label: "text-zinc-700 dark:text-zinc-300",
+      ring: "ring-zinc-500/30",
     },
   },
 ];
@@ -281,15 +291,16 @@ export default async function MyRequestsPage({
         </header>
 
         {/* Stat tiles */}
-        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="Total" value={counts.total} accent={false} />
           <StatTile label="Open" value={counts.open} accent="orange" />
           <StatTile label="In progress" value={counts.inProgress} accent="amber" />
           <StatTile label="For confirmation" value={counts.forConfirmation} accent="emerald" />
+          <StatTile label="Closed" value={counts.closed} accent={false} />
         </section>
 
         {/* Kanban */}
-        <section className="-mx-1 grid gap-4 px-1 md:mx-0 md:px-0 md:grid-cols-3">
+        <section className="-mx-1 grid gap-4 px-1 md:mx-0 md:px-0 md:grid-cols-2 xl:grid-cols-4">
           {COLUMNS.map((col) => {
             const list = tickets.filter((t) => col.match(t.status));
             return (
@@ -324,7 +335,9 @@ export default async function MyRequestsPage({
                         ? "No open requests. Submit a request to get started."
                         : col.id === "inProgress"
                           ? "Nothing being worked on right now."
-                          : "Nothing waiting on your confirmation."}
+                          : col.id === "forConfirmation"
+                            ? "Nothing waiting on your confirmation."
+                            : "No closed requests yet."}
                     </div>
                   ) : (
                     list.map((t) => {
@@ -423,18 +436,6 @@ export default async function MyRequestsPage({
           })}
         </section>
 
-        {/* Closed footnote */}
-        {counts.closed > 0 ? (
-          <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-            {counts.closed} closed ticket{counts.closed === 1 ? "" : "s"} not shown.{" "}
-            <Link
-              href="/my-tickets"
-              className="font-semibold text-orange-700 hover:underline dark:text-orange-400"
-            >
-              View full history
-            </Link>
-          </p>
-        ) : null}
       </div>
     </main>
   );

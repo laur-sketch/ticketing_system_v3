@@ -11,7 +11,7 @@ import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
 import { cn } from "@/lib/cn";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import { BRAND_TITLE } from "@/lib/brand";
-import { extractPaymentAccountTitle } from "@/lib/request-for-payment";
+import { extractPaymentBoardPreview } from "@/lib/request-for-payment";
 import { parseItemRequisitionDescription } from "@/lib/item-requisition";
 import { extractFundTransferPreview } from "@/lib/fund-transfer-request";
 import { extractJobOrderPreview } from "@/lib/job-order";
@@ -34,11 +34,11 @@ type TicketCard = {
   requestType?: string | null;
 };
 
-/** Match ticket-board card title (RFP → account title; IRS → purpose; otherwise cleaned description/title). */
+/** Match ticket-board card title (RFP → in payment of + amount; IRS/FTR → purpose; otherwise cleaned description/title). */
 function assignmentCardPreview(ticket: TicketCard): string {
   if (ticket.requestType === "REQUEST_FOR_PAYMENT") {
-    const accountTitle = extractPaymentAccountTitle(ticket.description);
-    if (accountTitle) return accountTitle;
+    const preview = extractPaymentBoardPreview(ticket.description);
+    if (preview) return preview;
   }
   if (ticket.requestType === "ITEM_REQUISITION_SLIP") {
     const purpose = parseItemRequisitionDescription(ticket.description)?.purposeOfRequest?.trim();

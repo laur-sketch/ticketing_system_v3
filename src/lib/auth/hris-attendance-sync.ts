@@ -67,7 +67,7 @@ export async function runHrisAttendanceSync(): Promise<HrisAttendanceSyncResult>
     SELECT MAX(clock_in_at) AS since FROM merged_attendance_clock_in
   `;
   const watermark = sinceRows[0]?.since ?? new Date(Date.now() - 30 * 86_400_000);
-  const since = new Date(watermark.getTime() - 6 * 3_600_000); // 6h overlap
+  const since = new Date(watermark.getTime() - 24 * 3_600_000); // 24h overlap for late verifies
   const sinceStr = since.toISOString().slice(0, 19).replace("T", " ");
 
   const upserted = await prismaSecondary.$executeRawUnsafe(

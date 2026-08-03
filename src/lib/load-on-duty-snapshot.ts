@@ -20,7 +20,40 @@ import { isStaffPortalRole } from "@/lib/staff-role";
 import {
   buildCanonicalMergedIdMap,
   canonicalMergedId,
+  type MergedIdentityRow,
 } from "@/lib/sync/merged-person-identity";
+
+type MergedIdentitySqlRow = {
+  source_user_id: bigint;
+  name: string;
+  email: string | null;
+};
+
+/** Load active merged identities + map synthetic portal ids → HRIS clock-in ids. */
+async function loadCanonicalMergedIdMap(): Promise<Map<string, bigint>> {
+  const rows = await prismaSecondary.$queryRaw<MergedIdentitySqlRow[]>`
+    SELECT source_user_id, name, email
+    FROM merged_users
+    WHERE is_active = 1
+  `;
+  const identity: MergedIdentityRow[] = rows.map((r) => ({
+    sourceUserId: r.source_user_id,
+    name: r.name,
+    email: r.email,
+  }));
+  return buildCanonicalMergedIdMap(identity);
+}
+
+function hasClockInForSourceId(
+  clockIns: ReadonlyMap<string, Date>,
+  sourceUserId: bigint,
+  canonicalMap: ReadonlyMap<string, bigint>,
+): boolean {
+  const raw = sourceUserId.toString();
+  if (clockIns.has(raw)) return true;
+  const canonical = canonicalMergedId(sourceUserId, canonicalMap).toString();
+  return clockIns.has(canonical);
+}
 
 export type OnDutyAgentSnapshot = {
   id: string;
@@ -233,24 +266,33 @@ export async function loadOnDutyAgentIdSet(
   const staff = portals.filter((p) => isStaffPortalRole(p.role) && p.mergedSourceUserId != null);
   if (staff.length === 0) return new Set();
 
-  const agents = await prisma.agent.findMany({
-    where:
-      agentIds && agentIds.length > 0
-        ? { id: { in: [...agentIds] } }
-        : {
-            email: {
-              in: staff.map((p) => p.email.trim().toLowerCase()).filter(Boolean),
+  const [agents, canonicalMap] = await Promise.all([
+    prisma.agent.findMany({
+      where:
+        agentIds && agentIds.length > 0
+          ? { id: { in: [...agentIds] } }
+          : {
+              email: {
+                in: staff.map((p) => p.email.trim().toLowerCase()).filter(Boolean),
+              },
             },
-          },
-    select: { id: true, email: true, name: true, createdAt: true },
-  });
+      select: { id: true, email: true, name: true, createdAt: true },
+    }),
+    loadCanonicalMergedIdMap(),
+  ]);
 
-  const clockIns = await loadTodayClockInsBySourceUserId(staff.map((p) => p.mergedSourceUserId!));
+  const lookupIds = new Set<bigint>();
+  for (const portal of staff) {
+    const raw = portal.mergedSourceUserId!;
+    lookupIds.add(raw);
+    lookupIds.add(canonicalMergedId(raw, canonicalMap));
+  }
+
+  const clockIns = await loadTodayClockInsBySourceUserId([...lookupIds]);
   const onDuty = new Set<string>();
 
   for (const portal of staff) {
-    const key = portal.mergedSourceUserId!.toString();
-    if (!clockIns.has(key)) continue;
+    if (!hasClockInForSourceId(clockIns, portal.mergedSourceUserId!, canonicalMap)) continue;
     const canon = pickCanonicalAgentForPortal(portal, agents);
     if (canon) onDuty.add(canon.id);
   }
@@ -280,6 +322,9 @@ export async function isAgentOnDutyFromMergedDb(agentId: string): Promise<boolea
   });
   if (!match?.mergedSourceUserId) return false;
 
-  const clockIns = await loadTodayClockInsBySourceUserId([match.mergedSourceUserId]);
-  return clockIns.has(match.mergedSourceUserId.toString());
+  const canonicalMap = await loadCanonicalMergedIdMap();
+  const raw = match.mergedSourceUserId;
+  const canonical = canonicalMergedId(raw, canonicalMap);
+  const clockIns = await loadTodayClockInsBySourceUserId([raw, canonical]);
+  return hasClockInForSourceId(clockIns, raw, canonicalMap);
 }

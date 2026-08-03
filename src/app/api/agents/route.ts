@@ -5,6 +5,7 @@ import { loadOnDutyAgentIdSet } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
+import { rosterTeamNameFilter } from "@/lib/company-roster";
 
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
@@ -27,10 +28,16 @@ export async function GET(req: Request) {
     const mainCompanyId = await resolveAgentDesignatedCompanyId(forMainAgentId);
     if (!mainCompanyId) return NextResponse.json([]);
     companyIdFilter = mainCompanyId;
-  } else if (perms.canAssignWork && companyTeamId && companyTeamId !== "ALL") {
-    companyIdFilter = companyTeamId;
+  } else if (companyTeamId && companyTeamId !== "ALL") {
+    // Honor explicit company for Admin and Personnel (RFP send-to Accounting/Finance, etc.).
+    const team = await prisma.team.findFirst({
+      where: { id: companyTeamId, ...rosterTeamNameFilter() },
+      select: { id: true },
+    });
+    if (!team) return NextResponse.json([]);
+    companyIdFilter = team.id;
   } else if (!perms.canAssignWork && perms.operator?.id) {
-    // Personnel only see colleagues in their own company.
+    // Personnel with no company param: colleagues in their own company only.
     companyIdFilter = await resolveAgentDesignatedCompanyId(perms.operator.id);
     if (!companyIdFilter) return NextResponse.json([]);
   }

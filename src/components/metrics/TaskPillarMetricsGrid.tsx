@@ -618,7 +618,7 @@ export function ContributorPersonalKpiCard({
               <PersonnelMetricStatBox
                 label="Closed"
                 value={row.rfpAccounting.closed}
-                subLabel="steps completed"
+                subLabel="confirmed requests"
                 tone="green"
               />
               <PersonnelMetricStatBox
@@ -646,7 +646,7 @@ export function ContributorPersonalKpiCard({
               <PersonnelMetricStatBox
                 label="Closed"
                 value={row.rfpFinance.closed}
-                subLabel="steps completed"
+                subLabel="confirmed requests"
                 tone="green"
               />
               <PersonnelMetricStatBox
@@ -665,7 +665,68 @@ export function ContributorPersonalKpiCard({
           </>
         ) : null}
 
-        {(row.tickets || row.rfpAccounting || row.rfpFinance) && row.tasks ? (
+        {row.irsCanvass ? (
+          <>
+            {row.tickets || row.rfpAccounting || row.rfpFinance ? (
+              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
+            ) : null}
+            <PersonnelMetricSection title="IRS · Canvassed By">
+              <PersonnelMetricStatBox
+                label="Closed"
+                value={row.irsCanvass.closed}
+                subLabel="confirmed requests"
+                tone="green"
+              />
+              <PersonnelMetricStatBox
+                label="Pending"
+                value={row.irsCanvass.pending}
+                subLabel="awaiting canvass"
+                tone="neutral"
+              />
+              <PersonnelMetricStatBox
+                label="Efficiency"
+                value={`${row.irsCanvass.efficiency}%`}
+                subLabel="completion rate"
+                tone="teal"
+              />
+            </PersonnelMetricSection>
+          </>
+        ) : null}
+
+        {row.ftrPrepared ? (
+          <>
+            {row.tickets || row.rfpAccounting || row.rfpFinance || row.irsCanvass ? (
+              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
+            ) : null}
+            <PersonnelMetricSection title="FTR · Prepared By">
+              <PersonnelMetricStatBox
+                label="Closed"
+                value={row.ftrPrepared.closed}
+                subLabel="confirmed requests"
+                tone="green"
+              />
+              <PersonnelMetricStatBox
+                label="Pending"
+                value={row.ftrPrepared.pending}
+                subLabel="awaiting prepare"
+                tone="neutral"
+              />
+              <PersonnelMetricStatBox
+                label="Efficiency"
+                value={`${row.ftrPrepared.efficiency}%`}
+                subLabel="completion rate"
+                tone="teal"
+              />
+            </PersonnelMetricSection>
+          </>
+        ) : null}
+
+        {(row.tickets ||
+          row.rfpAccounting ||
+          row.rfpFinance ||
+          row.irsCanvass ||
+          row.ftrPrepared) &&
+        row.tasks ? (
           <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
         ) : null}
 

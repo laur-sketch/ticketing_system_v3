@@ -481,7 +481,8 @@ async function upsertPortalAccount(
       }
     }
 
-    // Keep portal email aligned with merged_users when the address is free.
+    // Keep portal email aligned with merged_users when the address is free
+    // (or only held by a reclaimable / non-HRIS row).
     let emailUpdate: string | undefined;
     if (email && existing.email.trim().toLowerCase() !== email) {
       const emailConflict = await prismaPrimary.portalAccount.findFirst({
@@ -489,9 +490,29 @@ async function upsertPortalAccount(
           email: { equals: email, mode: "insensitive" },
           NOT: { id: existing.id },
         },
-        select: { id: true },
+        select: { id: true, mergedSourceUserId: true, accountStatus: true },
       });
-      if (!emailConflict) emailUpdate = email;
+      if (!emailConflict) {
+        emailUpdate = email;
+      } else {
+        const conflictHris = emailConflict.mergedSourceUserId;
+        const canTake =
+          emailConflict.accountStatus === "LEGACY_CONFLICT" ||
+          conflictHris == null ||
+          isSyntheticHrisSourceId(conflictHris) ||
+          (profile.hrisSourceUserId != null && conflictHris === profile.hrisSourceUserId);
+        if (canTake) {
+          await prismaPrimary.portalAccount.update({
+            where: { id: emailConflict.id },
+            data: {
+              email: `freed+${emailConflict.id}@portal.local`,
+              mergedSourceUserId: null,
+              accountStatus: "LEGACY_CONFLICT",
+            },
+          });
+          emailUpdate = email;
+        }
+      }
     }
 
     await prismaPrimary.portalAccount.update({
@@ -529,43 +550,52 @@ async function upsertPortalAccount(
   }
 
   const id = randomUUID();
-  const created = await prismaPrimary.portalAccount.create({
-    data: {
-      id,
-      email,
-      username,
-      name: profile.name,
-      role: mapped.portalRole,
-      headPrivileges: mapped.headPrivileges,
-      passwordHash: null,
-      authUserId,
-      mergedSourceUserId: profile.hrisSourceUserId ?? null,
-      emailVerifiedAt: profile.emailVerified ? new Date() : null,
-      profileImage: profile.image ?? null,
-      profileSyncedAt: new Date(),
-      staffDesignatedCompanyId: isStaff && teamId ? teamId : null,
-      ...(profile.oauth
-        ? {
-            oauthProvider: profile.oauth.provider,
-            oauthSubject: profile.oauth.providerAccountId,
-          }
-        : {}),
-    },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      headPrivileges: true,
-      username: true,
-      companyId: true,
-      staffDesignatedCompanyId: true,
-      profileImage: true,
-      authUserId: true,
-    },
-  });
-
-  return { portal: created, created: true };
+  try {
+    const created = await prismaPrimary.portalAccount.create({
+      data: {
+        id,
+        email,
+        username,
+        name: profile.name,
+        role: mapped.portalRole,
+        headPrivileges: mapped.headPrivileges,
+        passwordHash: null,
+        authUserId,
+        mergedSourceUserId: profile.hrisSourceUserId ?? null,
+        emailVerifiedAt: profile.emailVerified ? new Date() : null,
+        profileImage: profile.image ?? null,
+        profileSyncedAt: new Date(),
+        staffDesignatedCompanyId: isStaff && teamId ? teamId : null,
+        ...(profile.oauth
+          ? {
+              oauthProvider: profile.oauth.provider,
+              oauthSubject: profile.oauth.providerAccountId,
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        headPrivileges: true,
+        username: true,
+        companyId: true,
+        staffDesignatedCompanyId: true,
+        profileImage: true,
+        authUserId: true,
+      },
+    });
+    return { portal: created, created: true };
+  } catch (e) {
+    const code =
+      e && typeof e === "object" && "code" in e ? String((e as { code?: unknown }).code) : "";
+    if (code !== "P2002") throw e;
+    // Race: another request created the row — update the existing portal instead.
+    const raced = await findExistingPortal(email, username, profile.hrisSourceUserId);
+    if (!raced) throw e;
+    return upsertPortalAccount(profile, authUserId, mapped, teamId, forceRoleRefresh);
+  }
 }
 
 async function ensureAgentRow(portal: ExistingPortalRow): Promise<void> {

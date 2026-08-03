@@ -30,6 +30,7 @@ export async function GET(
   const ticket = await prisma.ticket.findUnique({
     where: { id },
     select: {
+      id: true,
       contactEmail: true,
       requestorEmail: true,
       assignedAgentId: true,

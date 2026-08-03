@@ -17,6 +17,7 @@ type CompanyUserSearchFieldProps = {
   onChange: (agentId: string) => void;
   disabled?: boolean;
   placeholder?: string;
+  required?: boolean;
   /** Agent ids that must not be selectable (e.g. prior approvers on this request). */
   excludedIds?: ReadonlySet<string> | string[];
   emptyMessage?: string;
@@ -33,6 +34,7 @@ export function CompanyUserSearchField({
   onChange,
   disabled = false,
   placeholder = "Search company users…",
+  required = false,
   excludedIds,
   emptyMessage = "No matching users.",
 }: CompanyUserSearchFieldProps) {
@@ -97,6 +99,8 @@ export function CompanyUserSearchField({
           disabled={disabled}
           placeholder={placeholder}
           autoComplete="off"
+          required={required && !value}
+          aria-required={required || undefined}
           onFocus={() => setOpen(true)}
           onChange={(e) => {
             setQuery(e.target.value);

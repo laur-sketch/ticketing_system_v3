@@ -253,7 +253,7 @@ export async function GET(req: Request) {
         timeZone,
       );
 
-    const patch: Prisma.KpiMaintenanceUpdateInput = {};
+    const patch: Prisma.KpiMaintenanceUpdateManyMutationInput = {};
     const expectedKey = computePeriodKey(freq, row.recurrenceWeekday, row.recurrenceMonthDay, now, timeZone);
 
     if (!row.periodCycleStartAt) {
@@ -338,9 +338,15 @@ export async function GET(req: Request) {
     }
 
     if (Object.keys(patch).length > 0) {
+      // Conditional update: skip if another concurrent GET already rolled this row.
       updates.push(
-        prisma.kpiMaintenance.update({
-          where: { id: row.id },
+        prisma.kpiMaintenance.updateMany({
+          where: {
+            id: row.id,
+            periodKey: row.periodKey,
+            periodCycleStartAt: row.periodCycleStartAt,
+            lastFullCompletionAt: row.lastFullCompletionAt,
+          },
           data: patch,
         }),
       );

@@ -33,6 +33,18 @@ export type PersonnelCombinedMetricCard = {
     pending: number;
     efficiency: number;
   } | null;
+  /** IRS Canvassed By role KPI. */
+  irsCanvass: {
+    closed: number;
+    pending: number;
+    efficiency: number;
+  } | null;
+  /** FTR Prepared By role KPI. */
+  ftrPrepared: {
+    closed: number;
+    pending: number;
+    efficiency: number;
+  } | null;
   tasks: {
     closed: number;
     pending: number;
@@ -61,6 +73,8 @@ export function combinedPersonnelEfficiency(row: PersonnelCombinedMetricCard): n
     row.tickets?.efficiency,
     row.rfpAccounting?.efficiency,
     row.rfpFinance?.efficiency,
+    row.irsCanvass?.efficiency,
+    row.ftrPrepared?.efficiency,
     row.tasks?.efficiency,
   ].filter((value): value is number => value != null);
   if (values.length === 0) return null;
@@ -267,6 +281,8 @@ export function mergePersonnelMetricCards(
       tickets: null,
       rfpAccounting: null,
       rfpFinance: null,
+      irsCanvass: null,
+      ftrPrepared: null,
       tasks: null,
     };
     // The same person can own several agent rows (legacy emails, duplicate
@@ -293,6 +309,8 @@ export function mergePersonnelMetricCards(
       tickets: null,
       rfpAccounting: null,
       rfpFinance: null,
+      irsCanvass: null,
+      ftrPrepared: null,
       tasks: null,
     };
     const normalized = normalizePersonnelTaskTotals(task.total, task.done);

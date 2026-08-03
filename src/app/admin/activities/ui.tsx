@@ -12,6 +12,8 @@ type Props = {
   onDutyActiveCount: number;
   initialOnDutyCompanies: string[];
   onDutyPageSize: number;
+  lockedCompanyFilter?: string | null;
+  scopeLabel?: string | null;
 };
 
 export function ActivitiesClient({
@@ -22,6 +24,8 @@ export function ActivitiesClient({
   onDutyActiveCount,
   initialOnDutyCompanies,
   onDutyPageSize,
+  lockedCompanyFilter = null,
+  scopeLabel = null,
 }: Props) {
   return (
     <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 sm:px-4 md:py-5">
@@ -30,16 +34,25 @@ export function ActivitiesClient({
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-400/95">
             {BRAND_TITLE} · Admin console
           </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Activities</h1>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">
+            Activities
+          </h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
             Merge-database personnel with live On Duty / Offline status from today&apos;s HRIS
             clock-ins. Updates every 10 seconds.
+            {scopeLabel ? (
+              <>
+                {" "}
+                Showing <span className="font-medium text-zinc-800 dark:text-zinc-200">{scopeLabel}</span>.
+              </>
+            ) : null}
           </p>
         </header>
 
         <OnDutyPanel
           variant="cards"
-          showCompanyFilter
+          showCompanyFilter={!lockedCompanyFilter}
+          lockedCompanyFilter={lockedCompanyFilter}
           pageSize={onDutyPageSize}
           initialAgents={initialOnDutyAgents}
           initialPage={initialOnDutyPage}

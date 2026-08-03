@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, rm, writeFile } from "fs/promises";
 import path from "path";
 import { MAX_TASK_SCREENSHOT_BYTES } from "@/lib/task-screenshot-constants";
 import type { TaskScreenshotMetaItem } from "@/lib/task-screenshot-meta";
@@ -7,6 +7,14 @@ import { validateTaskScreenshotFile } from "@/lib/task-screenshots";
 
 export function travelOrderUploadDir(kpiId: string, travelOrderId: string): string {
   return path.join(process.cwd(), "uploads", "kpi-maintenance", kpiId, "travel-order", travelOrderId);
+}
+
+/** Best-effort cleanup when Field Assignment create rolls back after partial uploads. */
+export async function removeTravelOrderUploadDir(
+  kpiId: string,
+  travelOrderId: string,
+): Promise<void> {
+  await rm(travelOrderUploadDir(kpiId, travelOrderId), { recursive: true, force: true });
 }
 
 export async function persistTravelOrderImage(

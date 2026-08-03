@@ -19,10 +19,10 @@ import {
   type RequestTypeId,
 } from "@/lib/request-types";
 import {
-  DELIVERY_OF_CHECK_ONLINE_DEPOSIT,
   DELIVERY_OF_CHECK_OPTIONS,
   MODE_OF_PAYMENT_CHECK,
   MODE_OF_PAYMENT_OPTIONS,
+  paymentModeRequiresBankDetails,
 } from "@/lib/request-for-payment";
 import {
   emptyRequisitionLineItem,
@@ -41,6 +41,7 @@ import { MAX_SCREENSHOT_BYTES, MAX_SCREENSHOT_COUNT } from "@/lib/ticket-intake-
 import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { Paperclip, Plus, Trash2 } from "lucide-react";
+import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchField";
 
 function pickImageFiles(list: File[]) {
   return list.filter((f) => {
@@ -101,6 +102,26 @@ function NewTicketPageInner() {
     if (label) setJobOrderExpectedDuration(label);
   }, [isJobOrderRequest, jobOrderStartDate, jobOrderTargetDate]);
   const [purposeOfRequest, setPurposeOfRequest] = useState("");
+  const [selectedCompanyTeamId, setSelectedCompanyTeamId] = useState("");
+  const [requestorApprovalAgents, setRequestorApprovalAgents] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  const [sendToApprovalAgents, setSendToApprovalAgents] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  const [approvalAgents, setApprovalAgents] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  const [paymentAssignees, setPaymentAssignees] = useState({
+    notedByAgentId: "",
+    approvedByAgentId: "",
+    accountingAgentId: "",
+    financeAgentId: "",
+  });
+  const [fundTransferAssignees, setFundTransferAssignees] = useState({
+    recommendingApprovalAgentId: "",
+    approvedByAgentId: "",
+  });
   const detailsField = useMemo(
     () => ({
       label: "Issue",
@@ -236,7 +257,97 @@ function NewTicketPageInner() {
     session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
   /** Admin/SuperAdmin use the same intake field layout as Personnel. */
   const isStaffRequestorIntake = isPersonnelIntake || isAdminStaffIntake;
+  const canSetIntakeAssignees =
+    isStaffRequestorIntake && (isPaymentRequest || isFundTransferRequest);
   const isRequestorIntakeLockRole = isTicketRequestorRole(session?.user?.role);
+
+  useEffect(() => {
+    if (!isStaffRequestorIntake || !staffDesignatedCompany?.id) return;
+    setSelectedCompanyTeamId((prev) => prev || staffDesignatedCompany.id);
+  }, [isStaffRequestorIntake, staffDesignatedCompany?.id]);
+
+  useEffect(() => {
+    if (!canSetIntakeAssignees) {
+      setRequestorApprovalAgents([]);
+      setSendToApprovalAgents([]);
+      setApprovalAgents([]);
+      return;
+    }
+    let cancelled = false;
+
+    async function loadCompanyAgents(companyId: string | null | undefined) {
+      const id = (companyId ?? "").trim();
+      if (!id) return [] as Array<{ id: string; name: string; email: string }>;
+      const res = await fetch(`/api/agents?company=${encodeURIComponent(id)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: string; name: string; email: string }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    void (async () => {
+      if (isPaymentRequest) {
+        const [requestorRows, sendToRows] = await Promise.all([
+          loadCompanyAgents(staffDesignatedCompany?.id),
+          loadCompanyAgents(selectedCompanyTeamId),
+        ]);
+        if (cancelled) return;
+        setRequestorApprovalAgents(requestorRows);
+        setSendToApprovalAgents(sendToRows);
+        setApprovalAgents([]);
+        return;
+      }
+      const rows = await loadCompanyAgents(selectedCompanyTeamId);
+      if (cancelled) return;
+      setApprovalAgents(rows);
+      setRequestorApprovalAgents([]);
+      setSendToApprovalAgents([]);
+    })().catch(() => {
+      if (cancelled) return;
+      setRequestorApprovalAgents([]);
+      setSendToApprovalAgents([]);
+      setApprovalAgents([]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    canSetIntakeAssignees,
+    isPaymentRequest,
+    selectedCompanyTeamId,
+    staffDesignatedCompany?.id,
+  ]);
+
+  // Drop payment assignees that no longer belong to the scoped company roster.
+  useEffect(() => {
+    if (!isPaymentRequest) return;
+    const requestorIds = new Set(requestorApprovalAgents.map((a) => a.id));
+    const sendToIds = new Set(sendToApprovalAgents.map((a) => a.id));
+    setPaymentAssignees((prev) => {
+      const next = {
+        notedByAgentId:
+          prev.notedByAgentId && requestorIds.has(prev.notedByAgentId) ? prev.notedByAgentId : "",
+        approvedByAgentId:
+          prev.approvedByAgentId && sendToIds.has(prev.approvedByAgentId)
+            ? prev.approvedByAgentId
+            : "",
+        accountingAgentId:
+          prev.accountingAgentId && sendToIds.has(prev.accountingAgentId)
+            ? prev.accountingAgentId
+            : "",
+        financeAgentId:
+          prev.financeAgentId && sendToIds.has(prev.financeAgentId) ? prev.financeAgentId : "",
+      };
+      return next.notedByAgentId === prev.notedByAgentId &&
+        next.approvedByAgentId === prev.approvedByAgentId &&
+        next.accountingAgentId === prev.accountingAgentId &&
+        next.financeAgentId === prev.financeAgentId
+        ? prev
+        : next;
+    });
+  }, [isPaymentRequest, requestorApprovalAgents, sendToApprovalAgents]);
   /** Issue/Concern only — other request types stay creatable. */
   const issueConcernLocked =
     isRequestorIntakeLockRole && intakeGateReady && !intake.canCreateIssueConcern;
@@ -286,6 +397,13 @@ function NewTicketPageInner() {
     setRequisitionItems([emptyRequisitionLineItem(0)]);
     setPurposeOfRequest("");
     setScreenshots([]);
+    setPaymentAssignees({
+      notedByAgentId: "",
+      approvedByAgentId: "",
+      accountingAgentId: "",
+      financeAgentId: "",
+    });
+    setFundTransferAssignees({ recommendingApprovalAgentId: "", approvedByAgentId: "" });
     router.push(`/tickets/new?type=${encodeURIComponent(id)}`);
   }
 
@@ -475,8 +593,8 @@ function NewTicketPageInner() {
       const bankAddress = String(form.get("bankAddress") || "").trim();
 
       if (isPaymentRequest) {
-        if (!payee || !inPaymentOf || !accountTitle || !amount || !modeOfPaymentValue) {
-          setError("Payee, In payment of, Account title, Amount, and Mode of payment are required.");
+        if (!payee || !inPaymentOf || !amount || !modeOfPaymentValue) {
+          setError("Payee, In payment of, Amount, and Mode of payment are required.");
           setLoading(false);
           return;
         }
@@ -486,11 +604,10 @@ function NewTicketPageInner() {
           return;
         }
         if (
-          modeOfPaymentValue === MODE_OF_PAYMENT_CHECK &&
-          deliveryOfCheckValue === DELIVERY_OF_CHECK_ONLINE_DEPOSIT &&
+          paymentModeRequiresBankDetails(modeOfPaymentValue, deliveryOfCheckValue) &&
           !bankNameAccountNumber
         ) {
-          setError("Bank name / account number is required for Online Deposit.");
+          setError("Bank name / account number is required for this mode of payment.");
           setLoading(false);
           return;
         }
@@ -540,6 +657,29 @@ function NewTicketPageInner() {
         setError("Please describe the request.");
         setLoading(false);
         return;
+      }
+
+      if (canSetIntakeAssignees) {
+        if (isPaymentRequest) {
+          const { notedByAgentId, approvedByAgentId, accountingAgentId, financeAgentId } =
+            paymentAssignees;
+          if (!notedByAgentId || !approvedByAgentId || !accountingAgentId || !financeAgentId) {
+            setError(
+              "Noted By, Approved By, Approved By (Accounting), and Approved By (Finance) are required.",
+            );
+            setLoading(false);
+            return;
+          }
+        } else if (isFundTransferRequest) {
+          if (
+            !fundTransferAssignees.recommendingApprovalAgentId ||
+            !fundTransferAssignees.approvedByAgentId
+          ) {
+            setError("Recommending Approval and Approved By are required.");
+            setLoading(false);
+            return;
+          }
+        }
       }
 
       const appendPaymentFields = (target: FormData | Record<string, unknown>) => {
@@ -619,6 +759,20 @@ function NewTicketPageInner() {
         }
       };
 
+      const appendApprovalAssignees = (target: FormData | Record<string, unknown>) => {
+        if (!canSetIntakeAssignees) return;
+        const assignees = isPaymentRequest ? paymentAssignees : fundTransferAssignees;
+        const cleaned = Object.fromEntries(
+          Object.entries(assignees).filter(([, v]) => typeof v === "string" && v.trim()),
+        );
+        if (Object.keys(cleaned).length === 0) return;
+        if (target instanceof FormData) {
+          target.append("approvalAssignees", JSON.stringify(cleaned));
+        } else {
+          target.approvalAssignees = cleaned;
+        }
+      };
+
       let res: Response;
       if (screenshots.length > 0) {
         const fd = new FormData();
@@ -630,6 +784,7 @@ function NewTicketPageInner() {
         appendRequisitionFields(fd);
         appendFundTransferFields(fd);
         appendJobOrderFields(fd);
+        appendApprovalAssignees(fd);
         if (isCustomer) {
           fd.append("requestToCompanySbu", String(form.get("requestToCompanySbu") || "").trim());
           fd.append("branch", String(form.get("branch") || "").trim());
@@ -675,6 +830,7 @@ function NewTicketPageInner() {
         appendRequisitionFields(payload);
         appendFundTransferFields(payload);
         appendJobOrderFields(payload);
+        appendApprovalAssignees(payload);
         if (isCustomer) {
           payload.requestToCompanySbu = String(form.get("requestToCompanySbu") || "").trim();
           payload.branch = String(form.get("branch") || "").trim();
@@ -889,6 +1045,8 @@ function NewTicketPageInner() {
                       id="intake-send-request-to"
                       name="companyTeamId"
                       required
+                      value={selectedCompanyTeamId}
+                      onChange={(e) => setSelectedCompanyTeamId(e.target.value)}
                       disabled={companiesLoading}
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
@@ -898,7 +1056,6 @@ function NewTicketPageInner() {
                       {sendRequestToOptions.map((team) => (
                         <option key={team.id} value={team.id}>
                           {team.name}
-                          {staffDesignatedCompany?.id === team.id ? " · designated" : ""}
                         </option>
                       ))}
                     </select>
@@ -1084,10 +1241,10 @@ function NewTicketPageInner() {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    Account title
+                    Account title{" "}
+                    <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
                     <Input
                       name="accountTitle"
-                      required
                       maxLength={200}
                       placeholder="Account / expense title"
                       className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
@@ -1149,8 +1306,7 @@ function NewTicketPageInner() {
                   </label>
                 ) : null}
 
-                {modeOfPayment === MODE_OF_PAYMENT_CHECK &&
-                deliveryOfCheck === DELIVERY_OF_CHECK_ONLINE_DEPOSIT ? (
+                {paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) ? (
                   <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                     Bank name / account number
                     <Input
@@ -1547,6 +1703,123 @@ function NewTicketPageInner() {
                 {renderOptionalFieldAttachments("ticket-screenshots-issue")}
               </div>
             )}
+
+            {canSetIntakeAssignees ? (
+              <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-700 dark:bg-zinc-950/30 sm:p-4">
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    Set approval assignees
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Required for Request for Payment and Fund Transfer. Assign procedural roles
+                    before creating this request. Item Requisition uses the Assignment Board for
+                    Canvassed By instead.
+                  </p>
+                </div>
+                {isPaymentRequest ? (
+                  <>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Noted By uses your company roster
+                      {staffDesignatedCompany?.name
+                        ? ` (${staffDesignatedCompany.name})`
+                        : ""}. Approved By, Accounting, and Finance use the “Send request to”
+                      company.
+                    </p>
+                    {(
+                      [
+                        ["notedByAgentId", "Noted By", "requestor"],
+                        ["approvedByAgentId", "Approved By", "sendTo"],
+                        ["accountingAgentId", "Approved By (Accounting)", "sendTo"],
+                        ["financeAgentId", "Approved By (Finance)", "sendTo"],
+                      ] as const
+                    ).map(([key, label, scope]) => {
+                      const roster =
+                        scope === "requestor" ? requestorApprovalAgents : sendToApprovalAgents;
+                      const taken = new Set(
+                        (
+                          [
+                            paymentAssignees.notedByAgentId,
+                            paymentAssignees.approvedByAgentId,
+                            paymentAssignees.accountingAgentId,
+                            paymentAssignees.financeAgentId,
+                          ] as string[]
+                        ).filter((id) => id && id !== paymentAssignees[key]),
+                      );
+                      const scopeReady =
+                        scope === "requestor"
+                          ? Boolean(staffDesignatedCompany?.id)
+                          : Boolean(selectedCompanyTeamId);
+                      return (
+                        <CompanyUserSearchField
+                          key={key}
+                          label={label}
+                          required
+                          users={roster}
+                          value={paymentAssignees[key]}
+                          excludedIds={taken}
+                          disabled={!scopeReady}
+                          placeholder={
+                            !scopeReady
+                              ? scope === "requestor"
+                                ? "Requestor company not assigned"
+                                : "Select Send request to first"
+                              : "Search by name or email…"
+                          }
+                          onChange={(agentId) =>
+                            setPaymentAssignees((prev) => ({ ...prev, [key]: agentId }))
+                          }
+                        />
+                      );
+                    })}
+                  </>
+                ) : null}
+                {isFundTransferRequest
+                  ? (
+                      [
+                        ["recommendingApprovalAgentId", "Recommending Approval"],
+                        ["approvedByAgentId", "Approved By"],
+                      ] as const
+                    ).map(([key, label]) => {
+                      const taken = new Set(
+                        (
+                          [
+                            fundTransferAssignees.recommendingApprovalAgentId,
+                            fundTransferAssignees.approvedByAgentId,
+                          ] as string[]
+                        ).filter((id) => id && id !== fundTransferAssignees[key]),
+                      );
+                      return (
+                        <CompanyUserSearchField
+                          key={key}
+                          label={label}
+                          required
+                          users={approvalAgents}
+                          value={fundTransferAssignees[key]}
+                          excludedIds={taken}
+                          disabled={!selectedCompanyTeamId}
+                          placeholder={
+                            !selectedCompanyTeamId
+                              ? "Select Send request to first"
+                              : "Search by name or email…"
+                          }
+                          onChange={(agentId) =>
+                            setFundTransferAssignees((prev) => ({ ...prev, [key]: agentId }))
+                          }
+                        />
+                      );
+                    })
+                  : null}
+                {!isPaymentRequest && !selectedCompanyTeamId ? (
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    Select “Send request to” first to load company assignees.
+                  </p>
+                ) : !isPaymentRequest && approvalAgents.length === 0 ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    No company assignees available for this roster yet.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             {error ? (
               <p className="text-sm text-red-300" role="alert">

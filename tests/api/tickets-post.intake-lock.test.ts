@@ -90,7 +90,7 @@ describe("POST /api/tickets intake lock", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.error).toBeTypeOf("string");
-    expect(String(body.error)).toContain("assigned active ticket");
+    expect(String(body.error)).toContain("Issue/Concern ticket");
     expect(body.pendingTicketId).toBe("ticket-blocking-1");
     expect(body.pendingTicketNumber).toBe("REQ-1001");
 
@@ -128,6 +128,6 @@ describe("POST /api/tickets intake lock", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.pendingTicketId).toBe("ticket-blocking-2");
-    expect(String(body.error)).toContain("assigned active ticket");
+    expect(String(body.error)).toContain("Issue/Concern ticket");
   });
 });

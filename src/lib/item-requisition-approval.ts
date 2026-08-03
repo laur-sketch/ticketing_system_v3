@@ -101,6 +101,14 @@ export function itemRequisitionAssigneeIdForStep(
   return meta[itemRequisitionAssigneeFieldForStep(step)];
 }
 
+/** Board assignee who should own the request for the current procedural step. */
+export function currentItemRequisitionStepBoardAssigneeId(
+  meta: ItemRequisitionApprovalMeta,
+): string | null {
+  if (meta.proceduralStep === "DONE") return null;
+  return itemRequisitionAssigneeIdForStep(meta, meta.proceduralStep);
+}
+
 export function nextItemRequisitionApprovalStep(
   step: ItemRequisitionProceduralStep,
 ): ItemRequisitionProceduralStep {

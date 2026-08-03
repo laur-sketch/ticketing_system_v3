@@ -3,7 +3,7 @@
 import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchField";
 import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client/primary";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
 import { parsePaymentRequestDescription, formatPaymentPeso, formatPaymentRequestTitle } from "@/lib/request-for-payment";
@@ -80,9 +80,13 @@ export function AgentWorkspace({
   fundTransferApprovalAgentNames = {},
   sessionAgentId = null,
   isSuperAdmin = false,
+  canSetApprovalAssignees = false,
+  requestorCompanyTeamId = null,
   isPersonnel = false,
   canCreateJobOrderProject = false,
   canRequestJobOrderProject = false,
+  viewerMode = "agent",
+  requestorAside = null,
 }: {
   ticket: TicketDetail;
   canUpdatePriority: boolean;
@@ -101,12 +105,23 @@ export function AgentWorkspace({
   fundTransferApprovalAgentNames?: Record<string, string>;
   sessionAgentId?: string | null;
   isSuperAdmin?: boolean;
+  /** Admin / SuperAdmin / Personnel: set RFP / IRS / FTR approval role assignees. */
+  canSetApprovalAssignees?: boolean;
+  /** Requestor's company team id (Noted By roster for RFP). */
+  requestorCompanyTeamId?: string | null;
   isPersonnel?: boolean;
   /** Admin / SuperAdmin / company coordinator: create Task Board project from this Job Order. */
   canCreateJobOrderProject?: boolean;
   /** Assigned Personnel: request a company Admin to create the Task Project. */
   canRequestJobOrderProject?: boolean;
+  /**
+   * `requestor` = My Requests / customer ticket detail: same request body layout,
+   * without agent controls. Pass `requestorAside` for cancel / reply / verify.
+   */
+  viewerMode?: "agent" | "requestor";
+  requestorAside?: ReactNode;
 }) {
+  const isAgentViewer = viewerMode === "agent";
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +131,12 @@ export function AgentWorkspace({
   const [transferRecipients, setTransferRecipients] = useState<TransferRecipient[]>([]);
   const [transferRecipientId, setTransferRecipientId] = useState("");
   const [approvalAgents, setApprovalAgents] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [requestorApprovalAgents, setRequestorApprovalAgents] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  const [sendToApprovalAgents, setSendToApprovalAgents] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
   const [approvalDraft, setApprovalDraft] = useState<PaymentApprovalAssignees>({
     preparedByAgentId: paymentApprovalMeta?.preparedByAgentId ?? null,
     notedByAgentId: paymentApprovalMeta?.notedByAgentId ?? null,
@@ -171,30 +192,64 @@ export function AgentWorkspace({
   }, [fundTransferApprovalMeta]);
 
   const needsApprovalAgentList =
+    isAgentViewer &&
     (isPaymentRequest || isRequisitionRequest || isFundTransferRequest) &&
-    (isSuperAdmin ||
+    (canSetApprovalAssignees ||
       isPersonnel ||
       Boolean(sessionAgentId && ticket.assignedAgentId === sessionAgentId));
 
   useEffect(() => {
     if (!needsApprovalAgentList) return;
     let cancelled = false;
-    // SuperAdmin: ticket company roster. Personnel: auto-scoped to their company by /api/agents.
-    const company =
-      isSuperAdmin && ticket.teamId ? `?company=${encodeURIComponent(ticket.teamId)}` : "";
-    void fetch(`/api/agents${company}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: Array<{ id: string; name: string; email: string }>) => {
-        if (!cancelled && Array.isArray(rows)) setApprovalAgents(rows);
-      })
-      .catch(() => {});
+
+    async function loadCompanyAgents(companyId: string | null | undefined) {
+      const id = (companyId ?? "").trim();
+      const url = id
+        ? `/api/agents?company=${encodeURIComponent(id)}`
+        : `/api/agents`;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return [] as Array<{ id: string; name: string; email: string }>;
+      const rows = (await res.json()) as Array<{ id: string; name: string; email: string }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    void (async () => {
+      if (isPaymentRequest && canSetApprovalAssignees) {
+        const [requestorRows, sendToRows] = await Promise.all([
+          requestorCompanyTeamId
+            ? loadCompanyAgents(requestorCompanyTeamId)
+            : Promise.resolve([]),
+          ticket.teamId ? loadCompanyAgents(ticket.teamId) : Promise.resolve([]),
+        ]);
+        if (cancelled) return;
+        setRequestorApprovalAgents(requestorRows);
+        setSendToApprovalAgents(sendToRows);
+        // Request-next / search still uses send-to roster as the default pool.
+        setApprovalAgents(sendToRows.length > 0 ? sendToRows : requestorRows);
+        return;
+      }
+      const rows = await loadCompanyAgents(
+        canSetApprovalAssignees ? ticket.teamId : null,
+      );
+      if (cancelled) return;
+      setApprovalAgents(rows);
+      setRequestorApprovalAgents([]);
+      setSendToApprovalAgents([]);
+    })().catch(() => {});
+
     return () => {
       cancelled = true;
     };
-  }, [needsApprovalAgentList, isSuperAdmin, ticket.teamId]);
+  }, [
+    needsApprovalAgentList,
+    canSetApprovalAssignees,
+    isPaymentRequest,
+    ticket.teamId,
+    requestorCompanyTeamId,
+  ]);
 
   useEffect(() => {
-    if (!canRequestTransfer || transferPending) return;
+    if (!isAgentViewer || !canRequestTransfer || transferPending) return;
     let cancelled = false;
     void fetch(`/api/tickets/${ticket.id}/transfer-recipients`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -208,7 +263,7 @@ export function AgentWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [canRequestTransfer, transferPending, ticket.id]);
+  }, [isAgentViewer, canRequestTransfer, transferPending, ticket.id]);
 
   const cleanedDescription = useMemo(() => {
     return ticket.description
@@ -239,7 +294,8 @@ export function AgentWorkspace({
   const isJobOrderRequest = ticket.requestType === "JOB_ORDER" || Boolean(jobOrderDetails);
 
   const canEditRequisitionPricing = Boolean(
-    isRequisitionRequest &&
+    isAgentViewer &&
+      isRequisitionRequest &&
       sessionAgentId &&
       ticket.assignedAgentId === sessionAgentId &&
       itemRequisitionApprovalMeta &&
@@ -336,7 +392,7 @@ export function AgentWorkspace({
   );
   /** Assignee (or Personnel) can submit the current step to the next approver without returning to Unassigned. */
   const canRequestPaymentApproval = Boolean(
-    currentPaymentStep && (isPersonnel || isTicketAssignee || isSuperAdmin),
+    currentPaymentStep && (isPersonnel || isTicketAssignee || canSetApprovalAssignees),
   );
 
   useEffect(() => {
@@ -360,7 +416,8 @@ export function AgentWorkspace({
       ticket.assignedAgentId === sessionAgentId,
   );
   const canRequestRequisitionApproval = Boolean(
-    currentRequisitionStep && (isPersonnel || isTicketAssignee || isSuperAdmin),
+    currentRequisitionStep === "APPROVED_BY" &&
+      (isPersonnel || isTicketAssignee || canSetApprovalAssignees),
   );
   const canUndoRequisitionCanvass = Boolean(
     isSuperAdmin &&
@@ -385,7 +442,7 @@ export function AgentWorkspace({
     currentFundTransferStep && sessionAgentId && ticket.assignedAgentId === sessionAgentId,
   );
   const canRequestFundTransferApproval = Boolean(
-    currentFundTransferStep && (isPersonnel || isTicketAssignee || isSuperAdmin),
+    currentFundTransferStep && (isPersonnel || isTicketAssignee || canSetApprovalAssignees),
   );
   const currentFundTransferStepAssigneeId = currentFundTransferStep
     ? fundTransferAssigneeIdForStep(fundTransferApprovalMeta!, currentFundTransferStep)
@@ -915,10 +972,9 @@ export function AgentWorkspace({
               {PAYMENT_APPROVAL_STEPS.map((step) => {
                 const completedAt = paymentApprovalMeta.completed[step];
                 const agentId = assigneeIdForStep(paymentApprovalMeta, step);
-                const name =
-                  completedAt && agentId
-                    ? paymentApprovalAgentNames[agentId]?.trim() || "Unknown"
-                    : null;
+                const name = agentId
+                  ? paymentApprovalAgentNames[agentId]?.trim() || "Unknown"
+                  : null;
                 return (
                   <div key={step} className="min-w-0 self-start">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
@@ -926,9 +982,11 @@ export function AgentWorkspace({
                     </p>
                     <p
                       className={`mt-1 break-words text-sm font-medium leading-snug ${
-                        name
+                        completedAt && name
                           ? "text-emerald-800 dark:text-emerald-300"
-                          : "text-zinc-400 dark:text-zinc-600"
+                          : name
+                            ? "text-zinc-800 dark:text-zinc-200"
+                            : "text-zinc-400 dark:text-zinc-600"
                       }`}
                     >
                       {name ?? "—"}
@@ -943,10 +1001,9 @@ export function AgentWorkspace({
               {ITEM_REQUISITION_APPROVAL_STEPS.map((step) => {
                 const completedAt = itemRequisitionApprovalMeta.completed[step];
                 const agentId = itemRequisitionAssigneeIdForStep(itemRequisitionApprovalMeta, step);
-                const name =
-                  completedAt && agentId
-                    ? itemRequisitionApprovalAgentNames[agentId]?.trim() || "Unknown"
-                    : null;
+                const name = agentId
+                  ? itemRequisitionApprovalAgentNames[agentId]?.trim() || "Unknown"
+                  : null;
                 return (
                   <div key={step} className="min-w-0 self-start">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
@@ -954,9 +1011,11 @@ export function AgentWorkspace({
                     </p>
                     <p
                       className={`mt-1 break-words text-sm font-medium leading-snug ${
-                        name
+                        completedAt && name
                           ? "text-emerald-800 dark:text-emerald-300"
-                          : "text-zinc-400 dark:text-zinc-600"
+                          : name
+                            ? "text-zinc-800 dark:text-zinc-200"
+                            : "text-zinc-400 dark:text-zinc-600"
                       }`}
                     >
                       {name ?? "—"}
@@ -978,9 +1037,7 @@ export function AgentWorkspace({
                 const name =
                   step === "PREPARED_BY"
                     ? assigneeName || ticket.contactName?.trim() || null
-                    : completedAt
-                      ? assigneeName || "Unknown"
-                      : null;
+                    : assigneeName;
                 return (
                   <div key={step} className="min-w-0 self-start">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
@@ -988,9 +1045,11 @@ export function AgentWorkspace({
                     </p>
                     <p
                       className={`mt-1 break-words text-sm font-medium leading-snug ${
-                        name
+                        completedAt && name
                           ? "text-emerald-800 dark:text-emerald-300"
-                          : "text-zinc-400 dark:text-zinc-600"
+                          : name
+                            ? "text-zinc-800 dark:text-zinc-200"
+                            : "text-zinc-400 dark:text-zinc-600"
                       }`}
                     >
                       {name ?? "—"}
@@ -1093,7 +1152,9 @@ export function AgentWorkspace({
 
         <div className="border-t border-zinc-200 bg-zinc-50 px-3 py-3 sm:px-5 sm:py-4 dark:border-zinc-800/90 dark:bg-zinc-950/35">
           <div className="text-sm text-zinc-600 dark:text-zinc-400">
-            Use the right-side controls to request more information, update priority, or transfer this request to a colleague.
+            {isAgentViewer
+              ? "Use the right-side controls to request more information, update priority, or transfer this request to a colleague."
+              : "Use the right-side panel to add information, cancel an unassigned request, or verify the resolution when asked."}
           </div>
         </div>
         </div>
@@ -1122,6 +1183,10 @@ export function AgentWorkspace({
       </div>
 
       <aside className="min-w-0 space-y-4">
+        {!isAgentViewer ? (
+          requestorAside
+        ) : (
+          <>
         <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
           <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
             Request more information
@@ -1285,10 +1350,12 @@ export function AgentWorkspace({
             ) : null}
 
 
-            {isPaymentRequest && isSuperAdmin ? (
+            {isPaymentRequest && canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
-                  <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Payment approval roles</p>
+                  <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                    Payment approval
+                  </p>
                   {paymentProceduralLabel ? (
                     <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
                       {paymentProceduralLabel}
@@ -1296,75 +1363,13 @@ export function AgentWorkspace({
                   ) : paymentApprovalMeta?.proceduralStep === "DONE" ? (
                     <p className="mt-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
                       All approval roles complete
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                    Assignees are set when the request is created. Complete the current step or submit
+                    for the next approval below.
                   </p>
-                ) : null}
                 </div>
-                {(
-                  [
-                    ["preparedByAgentId", "Prepared By"],
-                    ["notedByAgentId", "Noted By"],
-                    ["approvedByAgentId", "Approved By"],
-                    ["accountingAgentId", "Received By (Accounting)"],
-                    ["financeAgentId", "Received By (Finance)"],
-                  ] as const
-                ).map(([key, label]) => {
-                  const takenElsewhere = new Set(
-                    (
-                      [
-                        approvalDraft.preparedByAgentId,
-                        approvalDraft.notedByAgentId,
-                        approvalDraft.approvedByAgentId,
-                        approvalDraft.accountingAgentId,
-                        approvalDraft.financeAgentId,
-                      ] as Array<string | null>
-                    ).filter((id): id is string => Boolean(id) && id !== approvalDraft[key]),
-                  );
-                  return (
-                    <label key={key} className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                      {label}
-                      <select
-                        value={approvalDraft[key] ?? ""}
-                        onChange={(e) =>
-                          setApprovalDraft((prev) => ({
-                            ...prev,
-                            [key]: e.target.value || null,
-                          }))
-                        }
-                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                      >
-                        <option value="">Select assignee</option>
-                        {approvalAgents
-                          .filter((a) => !takenElsewhere.has(a.id))
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                              {a.email ? ` (${a.email})` : ""}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                  );
-                })}
-                <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                  Each person may only hold one approval role on this request.
-                </p>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      patch({
-                      action: "set_payment_approval_assignees",
-                      preparedByAgentId: approvalDraft.preparedByAgentId,
-                      notedByAgentId: approvalDraft.notedByAgentId,
-                      approvedByAgentId: approvalDraft.approvedByAgentId,
-                      accountingAgentId: approvalDraft.accountingAgentId,
-                      financeAgentId: approvalDraft.financeAgentId,
-                    })
-                  }
-                  className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                >
-                  Save approval assignees
-                  </button>
                 {currentPaymentStep && canCompleteCurrentPaymentStep ? (
                   <button
                     type="button"
@@ -1421,7 +1426,7 @@ export function AgentWorkspace({
               </div>
             ) : null}
 
-            {isPaymentRequest && canRequestPaymentApproval && !isSuperAdmin ? (
+            {isPaymentRequest && canRequestPaymentApproval && !canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
@@ -1496,7 +1501,10 @@ export function AgentWorkspace({
               </div>
             ) : null}
 
-            {isPaymentRequest && canCompleteCurrentPaymentStep && !isSuperAdmin && !canRequestPaymentApproval ? (
+            {isPaymentRequest &&
+            canCompleteCurrentPaymentStep &&
+            !canSetApprovalAssignees &&
+            !canRequestPaymentApproval ? (
               <button
                 type="button"
                 disabled={busy}
@@ -1507,18 +1515,21 @@ export function AgentWorkspace({
               </button>
             ) : null}
 
-            {isPaymentRequest && !isSuperAdmin && !canRequestPaymentApproval && paymentProceduralLabel ? (
+            {isPaymentRequest &&
+            !canSetApprovalAssignees &&
+            !canRequestPaymentApproval &&
+            paymentProceduralLabel ? (
               <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
                 {paymentProceduralLabel} — assign on the Assignment Board. After each approval, the
                 assignee can submit for the next role from Ticket Controls (request stays assigned).
               </p>
             ) : null}
 
-            {isRequisitionRequest && isSuperAdmin ? (
+            {isRequisitionRequest && canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    Item requisition approval roles
+                    Item requisition approval
                   </p>
                   {requisitionProceduralLabel ? (
                     <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
@@ -1529,49 +1540,11 @@ export function AgentWorkspace({
                       All approval roles complete
                     </p>
                   ) : null}
+                  <p className="mt-1 text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                    Assign Canvassed By on the Assignment Board. That assignee fills pricing, then
+                    selects who will Approve.
+                  </p>
                 </div>
-                {(
-                  [
-                    ["canvassedByAgentId", "Canvassed By"],
-                    ["approvedByAgentId", "Approved By"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <label key={key} className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                    {label}
-                  <select
-                      value={requisitionApprovalDraft[key] ?? ""}
-                      onChange={(e) =>
-                        setRequisitionApprovalDraft((prev) => ({
-                          ...prev,
-                          [key]: e.target.value || null,
-                        }))
-                      }
-                    className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  >
-                      <option value="">Select assignee</option>
-                      {approvalAgents.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                          {a.email ? ` (${a.email})` : ""}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                ))}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    patch({
-                      action: "set_item_requisition_approval_assignees",
-                      canvassedByAgentId: requisitionApprovalDraft.canvassedByAgentId,
-                      approvedByAgentId: requisitionApprovalDraft.approvedByAgentId,
-                    })
-                  }
-                  className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                >
-                  Save approval assignees
-                </button>
                 {canUndoRequisitionCanvass ? (
                   <button
                     type="button"
@@ -1584,7 +1557,9 @@ export function AgentWorkspace({
                 ) : null}
                 {currentRequisitionStep === "CANVASSED_BY" ? (
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Canvassed By completes automatically when the assignee saves pricing.
+                    {ticket.assignedAgentId
+                      ? "Canvassed By completes automatically when the assignee saves pricing. After that, they can select Approved By."
+                      : "Assign this request on the Assignment Board so the assignee becomes Canvassed By and can fill pricing."}
                   </p>
                 ) : currentRequisitionStep && canCompleteCurrentRequisitionStep ? (
                   <button
@@ -1606,27 +1581,19 @@ export function AgentWorkspace({
                     Submit for Next Approval to advance (request stays assigned).
                   </p>
                 ) : null}
-                {canRequestRequisitionApproval && currentRequisitionStep ? (
+                {canRequestRequisitionApproval && currentRequisitionStep === "APPROVED_BY" ? (
                   <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
                     <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      Submit for Next Approval
+                      Select Approved By
                     </p>
-                  <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                      {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]} — company user
-                    <select
-                        value={requestApproverId || currentRequisitionStepAssigneeId || ""}
-                        onChange={(e) => setRequestApproverId(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    >
-                        <option value="">Select user from company</option>
-                        {approvalAgents.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                            {a.email ? ` (${a.email})` : ""}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                    <CompanyUserSearchField
+                      label="Approved By — company user"
+                      users={approvalAgents}
+                      value={requestApproverId || currentRequisitionStepAssigneeId || ""}
+                      onChange={setRequestApproverId}
+                      disabled={busy}
+                      placeholder="Search company users…"
+                    />
                     <button
                       type="button"
                       disabled={busy || !(requestApproverId || currentRequisitionStepAssigneeId)}
@@ -1638,18 +1605,18 @@ export function AgentWorkspace({
                       }
                       className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                     >
-                      Submit for Next Approval
+                      Assign Approved By
                     </button>
                   </div>
                 ) : null}
               </div>
             ) : null}
 
-            {isRequisitionRequest && canRequestRequisitionApproval && !isSuperAdmin ? (
+            {isRequisitionRequest && canRequestRequisitionApproval && !canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    Submit for Next Approval
+                    Select Approved By
                   </p>
                   {requisitionProceduralLabel ? (
                     <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
@@ -1660,11 +1627,14 @@ export function AgentWorkspace({
                       All approval roles complete — awaiting customer confirmation
                     </p>
                   ) : null}
+                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Choose who will Approve this request, then assign them.
+                  </p>
                 </div>
-                {currentRequisitionStep ? (
+                {currentRequisitionStep === "APPROVED_BY" ? (
                   <>
                     <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                      {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]} — company user
+                      Approved By — company user
                       <select
                         value={requestApproverId || currentRequisitionStepAssigneeId || ""}
                         onChange={(e) => setRequestApproverId(e.target.value)}
@@ -1690,15 +1660,9 @@ export function AgentWorkspace({
                       }
                       className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                     >
-                      Submit for Next Approval
+                      Assign Approved By
                     </button>
-                    {currentRequisitionStep === "CANVASSED_BY" ? (
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {ticket.assignedAgentId
-                          ? "Fill pricing on the left, then use Save Pricing. After that, submit for the next approval."
-                          : "Assign this request on the Assignment Board so the assignee can save pricing and complete Canvassed By."}
-                      </p>
-                    ) : canCompleteCurrentRequisitionStep ? (
+                    {canCompleteCurrentRequisitionStep ? (
                       <button
                         type="button"
                         disabled={busy}
@@ -1710,27 +1674,21 @@ export function AgentWorkspace({
                         }
                         className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
                       >
-                        Complete {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]}
+                        Complete {ITEM_REQUISITION_APPROVAL_STEP_LABELS.APPROVED_BY}
                       </button>
                     ) : ticket.assignedAgentId ? (
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        Waiting on the assigned personnel to complete{" "}
-                        {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]}.
+                        Waiting on the assigned personnel to complete Approved By.
                       </p>
-                    ) : (
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        Choose a company user and submit for approval, or wait for Admin to assign
-                        this request on the Assignment Board.
-                      </p>
-                    )}
+                    ) : null}
                   </>
-                  ) : null}
+                ) : null}
                 </div>
             ) : null}
 
             {isRequisitionRequest &&
             canCompleteCurrentRequisitionStep &&
-            !isSuperAdmin &&
+            !canSetApprovalAssignees &&
             !canRequestRequisitionApproval ? (
                 <button
                   type="button"
@@ -1751,21 +1709,21 @@ export function AgentWorkspace({
             ) : null}
 
             {isRequisitionRequest &&
-            !isSuperAdmin &&
+            !canSetApprovalAssignees &&
             !canRequestRequisitionApproval &&
             requisitionProceduralLabel ? (
               <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
                 {currentRequisitionStep === "CANVASSED_BY"
-                  ? `${requisitionProceduralLabel} — assign on the Assignment Board; Canvassed By completes when the assignee saves pricing.`
-                  : `${requisitionProceduralLabel} — assign on the Assignment Board; after Approved By, submit for the next role from Ticket Controls.`}
+                  ? `${requisitionProceduralLabel} — assign on the Assignment Board; that person becomes Canvassed By and completes the role by saving pricing.`
+                  : `${requisitionProceduralLabel} — the Canvassed By assignee selects who will Approve from Ticket Controls.`}
               </p>
             ) : null}
 
-            {isFundTransferRequest && isSuperAdmin ? (
+            {isFundTransferRequest && canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 pb-4 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    Fund transfer approval roles
+                    Fund transfer approval
                   </p>
                   {fundTransferProceduralLabel ? (
                     <p className="inline-flex max-w-full rounded-md border border-amber-400/40 bg-amber-500/10 px-2 py-1 text-[11px] font-medium leading-snug text-amber-800 dark:text-amber-200">
@@ -1776,55 +1734,10 @@ export function AgentWorkspace({
                       All approval roles complete
                     </p>
                   ) : null}
+                  <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                    Assignees are set when the request is created.
+                  </p>
                 </div>
-                {(
-                  [
-                    ["preparedByAgentId", "Prepared By"],
-                    ["recommendingApprovalAgentId", "Recommending Approval"],
-                    ["approvedByAgentId", "Approved By"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <label
-                    key={key}
-                    className="flex flex-col gap-1.5 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400"
-                  >
-                    {label}
-                    <select
-                      value={fundTransferApprovalDraft[key] ?? ""}
-                      onChange={(e) =>
-                        setFundTransferApprovalDraft((prev) => ({
-                          ...prev,
-                          [key]: e.target.value || null,
-                        }))
-                      }
-                      className="min-h-10 w-full min-w-0 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    >
-                      <option value="">Select assignee</option>
-                      {approvalAgents.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                          {a.email ? ` (${a.email})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() =>
-                    patch({
-                      action: "set_fund_transfer_approval_assignees",
-                      preparedByAgentId: fundTransferApprovalDraft.preparedByAgentId,
-                      recommendingApprovalAgentId:
-                        fundTransferApprovalDraft.recommendingApprovalAgentId,
-                      approvedByAgentId: fundTransferApprovalDraft.approvedByAgentId,
-                    })
-                  }
-                  className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                >
-                  Save approval assignees
-                </button>
                 {currentFundTransferStep && canCompleteCurrentFundTransferStep ? (
                   <button
                     type="button"
@@ -1845,22 +1758,14 @@ export function AgentWorkspace({
                     <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                       Submit for Next Approval
                     </p>
-                    <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                      {FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]} — company user
-                      <select
-                        value={requestApproverId || currentFundTransferStepAssigneeId || ""}
-                        onChange={(e) => setRequestApproverId(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                      >
-                        <option value="">Select user from company</option>
-                        {approvalAgents.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                            {a.email ? ` (${a.email})` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <CompanyUserSearchField
+                      label={`${FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]} — company user`}
+                      users={approvalAgents}
+                      value={requestApproverId || currentFundTransferStepAssigneeId || ""}
+                      onChange={setRequestApproverId}
+                      disabled={busy}
+                      placeholder="Search company users…"
+                    />
                     <button
                       type="button"
                       disabled={busy || !(requestApproverId || currentFundTransferStepAssigneeId)}
@@ -1873,13 +1778,13 @@ export function AgentWorkspace({
                       className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                     >
                       Submit for Next Approval
-                </button>
+                    </button>
                   </div>
                 ) : null}
               </div>
             ) : null}
 
-            {isFundTransferRequest && canRequestFundTransferApproval && !isSuperAdmin ? (
+            {isFundTransferRequest && canRequestFundTransferApproval && !canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
@@ -1955,7 +1860,7 @@ export function AgentWorkspace({
 
             {isFundTransferRequest &&
             canCompleteCurrentFundTransferStep &&
-            !isSuperAdmin &&
+            !canSetApprovalAssignees &&
             !canRequestFundTransferApproval ? (
             <button
               type="button"
@@ -1971,7 +1876,7 @@ export function AgentWorkspace({
             ) : null}
 
             {isFundTransferRequest &&
-            !isSuperAdmin &&
+            !canSetApprovalAssignees &&
             !canRequestFundTransferApproval &&
             fundTransferProceduralLabel ? (
               <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
@@ -1985,6 +1890,8 @@ export function AgentWorkspace({
         </article>
 
         {error ? <p className="text-sm text-red-600 dark:text-red-300">{error}</p> : null}
+          </>
+        )}
       </aside>
 
       {logModalOpen ? (

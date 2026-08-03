@@ -88,7 +88,8 @@ async function metricsFromCounts(counts: RoleCounts): Promise<RfpRolePersonnelMe
 
 /**
  * Build Accounting and Finance personnel KPIs from RFP `payment_approval_meta`.
- * Closed = step completed on a Mon–Sat day in range; pending = currently awaiting that step.
+ * Closed = role completed AND request confirmed (`closedAt`) on a Mon–Sat day in range.
+ * Pending = currently awaiting that role step (before confirmation).
  */
 export async function loadRfpRolePersonnelMetrics(
   scoped: Record<string, unknown>,
@@ -112,6 +113,7 @@ export async function loadRfpRolePersonnelMetrics(
     select: {
       id: true,
       assignedAgentId: true,
+      closedAt: true,
       paymentApprovalMeta: true,
     },
   });
@@ -123,14 +125,16 @@ export async function loadRfpRolePersonnelMetrics(
     const meta = parsePaymentApprovalMeta(row.paymentApprovalMeta) as PaymentApprovalMeta | null;
     if (!meta) continue;
 
-    const accountingClosedAt = meta.completed.APPROVED_BY_ACCOUNTING;
-    if (timestampInWorkingDays(accountingClosedAt, workingDayIntervals)) {
+    const confirmedIso = row.closedAt?.toISOString();
+    const confirmedInRange = timestampInWorkingDays(confirmedIso, workingDayIntervals);
+
+    // Closed credit only after requestor confirmation (closedAt), still attributed to the role.
+    if (confirmedInRange && meta.completed.APPROVED_BY_ACCOUNTING) {
       const creditId = meta.accountingAgentId ?? row.assignedAgentId;
       if (agentInScope(creditId, scopedAgentIds)) bump(accountingCounts, creditId, "closed");
     }
 
-    const financeClosedAt = meta.completed.APPROVED_BY_FINANCE;
-    if (timestampInWorkingDays(financeClosedAt, workingDayIntervals)) {
+    if (confirmedInRange && meta.completed.APPROVED_BY_FINANCE) {
       const creditId = meta.financeAgentId ?? row.assignedAgentId;
       if (agentInScope(creditId, scopedAgentIds)) bump(financeCounts, creditId, "closed");
     }

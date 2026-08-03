@@ -2,10 +2,19 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { customerCanAccessTicket, requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
-import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
-import { formatPaymentPeso } from "@/lib/request-for-payment";
-import { requestTypeLabel as formatRequestTypeLabel } from "@/lib/request-types";
-import { TicketIntakeScreenshotsBlock } from "@/components/ticket-intake-screenshots-block";
+import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
+import { requestTypeLabel } from "@/lib/request-types";
+import { paymentProceduralStatusLabel } from "@/lib/request-for-payment-approval";
+import { initPaymentApprovalMetaIfNeeded, loadPaymentApprovalMeta } from "@/lib/payment-approval-db";
+import { itemRequisitionProceduralStatusLabel } from "@/lib/item-requisition-approval";
+import {
+  initItemRequisitionApprovalMetaIfNeeded,
+  loadItemRequisitionApprovalMeta,
+} from "@/lib/item-requisition-approval-db";
+import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
+import { stampFundTransferCreatorOnCreate } from "@/lib/fund-transfer-approval-db";
+import { AgentWorkspace } from "@/app/agent/tickets/[id]/workspace";
+import { AgentTicketModalShell } from "@/components/ticket/AgentTicketModalShell";
 import { CustomerTicketPanel } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +51,8 @@ export default async function TicketPage({
     redirect("/");
   }
 
+  const backHref = session.user.role === "Customer" ? "/my-tickets" : "/my-requests";
+
   const requestorEmail = (ticket.requestorEmail ?? ticket.contactEmail ?? "").trim();
   const requestorAccount = requestorEmail
     ? await prisma.portalAccount.findFirst({
@@ -58,24 +69,105 @@ export default async function TicketPage({
     null;
   const branchActivity = ticket.activities.find((a) => a.summary === "Branch");
   const branch = branchActivity?.detail?.trim() ?? null;
-  const departmentActivity = ticket.activities.find((a) => a.summary === "Department");
+  const departmentActivity = ticket.activities.find(
+    (a) =>
+      a.summary === "Department" || a.summary === "Requesting department/business unit",
+  );
   const department = departmentActivity?.detail?.trim() ?? null;
-  const payee = ticket.activities.find((a) => a.summary === "Payee")?.detail?.trim() ?? null;
-  const inPaymentOf = ticket.activities.find((a) => a.summary === "In payment of")?.detail?.trim() ?? null;
-  const accountTitle = ticket.activities.find((a) => a.summary === "Account title")?.detail?.trim() ?? null;
-  const amount = ticket.activities.find((a) => a.summary === "Amount")?.detail?.trim() ?? null;
-  const modeOfPayment =
-    ticket.activities.find((a) => a.summary === "Mode of payment")?.detail?.trim() ?? null;
-  const deliveryOfCheck =
-    ticket.activities.find((a) => a.summary === "Delivery of check")?.detail?.trim() ?? null;
-  const bankNameAccountNumber =
-    ticket.activities.find((a) => a.summary === "Bank name / account number")?.detail?.trim() ?? null;
   const requestTypeActivity = ticket.activities.find((a) => a.summary === "Request type");
-  const requestTypeDisplay =
-    requestTypeActivity?.detail?.trim() ||
-    formatRequestTypeLabel(
-      "requestType" in ticket ? String((ticket as { requestType?: string }).requestType ?? "") : "",
-    );
+  const requestTypeId =
+    "requestType" in ticket && typeof (ticket as { requestType?: string }).requestType === "string"
+      ? (ticket as { requestType: string }).requestType
+      : null;
+  const isPaymentRequest =
+    requestTypeId === "REQUEST_FOR_PAYMENT" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("REQUEST FOR PAYMENT");
+  const isRequisitionRequest =
+    requestTypeId === "ITEM_REQUISITION_SLIP" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("ITEM REQUISITION");
+  const isFundTransferRequest =
+    requestTypeId === "FUND_TRANSFER_REQUEST" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("FUND TRANSFER");
+
+  const paymentApprovalMeta = isPaymentRequest
+    ? ((await loadPaymentApprovalMeta(ticket.id)) ??
+      (await initPaymentApprovalMetaIfNeeded(ticket.id)))
+    : null;
+  const itemRequisitionApprovalMeta = isRequisitionRequest
+    ? ((await loadItemRequisitionApprovalMeta(ticket.id)) ??
+      (await initItemRequisitionApprovalMetaIfNeeded(ticket.id)))
+    : null;
+  const fundTransferApprovalMeta = isFundTransferRequest
+    ? await stampFundTransferCreatorOnCreate({
+        ticketId: ticket.id,
+        email: ticket.requestorEmail ?? ticket.contactEmail ?? null,
+        name: ticket.contactName,
+        teamId: ticket.teamId,
+      })
+    : null;
+
+  const paymentProceduralLabel = paymentApprovalMeta
+    ? paymentProceduralStatusLabel(paymentApprovalMeta.proceduralStep)
+    : null;
+  const requisitionProceduralLabel = itemRequisitionApprovalMeta
+    ? itemRequisitionProceduralStatusLabel(itemRequisitionApprovalMeta.proceduralStep)
+    : null;
+  const fundTransferProceduralLabel = fundTransferApprovalMeta
+    ? fundTransferProceduralStatusLabel(fundTransferApprovalMeta.proceduralStep)
+    : null;
+  const proceduralStatusLabel =
+    paymentProceduralLabel ?? requisitionProceduralLabel ?? fundTransferProceduralLabel;
+
+  const paymentApprovalAgentNames: Record<string, string> = {};
+  if (paymentApprovalMeta) {
+    const ids = [
+      paymentApprovalMeta.preparedByAgentId,
+      paymentApprovalMeta.notedByAgentId,
+      paymentApprovalMeta.approvedByAgentId,
+      paymentApprovalMeta.accountingAgentId,
+      paymentApprovalMeta.financeAgentId,
+    ].filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const agents = await prisma.agent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      });
+      for (const a of agents) paymentApprovalAgentNames[a.id] = a.name;
+    }
+  }
+  const itemRequisitionApprovalAgentNames: Record<string, string> = {};
+  if (itemRequisitionApprovalMeta) {
+    const ids = [
+      itemRequisitionApprovalMeta.canvassedByAgentId,
+      itemRequisitionApprovalMeta.approvedByAgentId,
+    ].filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const agents = await prisma.agent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      });
+      for (const a of agents) itemRequisitionApprovalAgentNames[a.id] = a.name;
+    }
+  }
+  const fundTransferApprovalAgentNames: Record<string, string> = {};
+  if (fundTransferApprovalMeta) {
+    const ids = [
+      fundTransferApprovalMeta.preparedByAgentId,
+      fundTransferApprovalMeta.recommendingApprovalAgentId,
+      fundTransferApprovalMeta.approvedByAgentId,
+    ].filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const agents = await prisma.agent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      });
+      for (const a of agents) fundTransferApprovalAgentNames[a.id] = a.name;
+    }
+  }
+
+  const requestTypeLabelText =
+    requestTypeActivity?.detail?.trim() || requestTypeLabel(requestTypeId ?? "");
+
   const isRequestorSession = customerCanAccessTicket(
     { contactEmail: ticket.contactEmail, requestorEmail: ticket.requestorEmail },
     session.user.email,
@@ -83,192 +175,120 @@ export default async function TicketPage({
   const canCancelRequest =
     isRequestorSession && !ticket.assignedAgentId && ticket.status !== "CLOSED";
 
+  const ticketForWorkspace = {
+    ...ticket,
+    feedback: ticket.feedback
+      ? { csat: ticket.feedback.csat, comment: ticket.feedback.comment }
+      : null,
+  };
+
   return (
-    <main className="mx-auto max-w-[1440px] space-y-4 bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100 sm:px-4">
-      <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-orange-300">
-            Request ID
-          </p>
-          <h1 className="mt-1 break-all text-2xl font-semibold text-zinc-950 dark:text-white">
-            {ticket.ticketNumber}
-          </h1>
-          <p className="mt-2 max-w-2xl break-words text-sm text-zinc-600 dark:text-zinc-300">{ticket.title}</p>
+    <AgentTicketModalShell>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-zinc-950 sm:p-6 dark:text-zinc-100">
+        <div className="mb-4 flex shrink-0 flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-950 p-3 text-white shadow-sm sm:mb-5 sm:rounded-2xl sm:p-5 dark:border-zinc-800/90 dark:bg-[#181716]/80">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <Link
+                href={backHref}
+                className="text-xs font-semibold text-orange-300 hover:text-orange-200 hover:underline"
+              >
+                {backHref === "/my-tickets" ? "← Back to my tickets" : "← Back to my requests"}
+              </Link>
+              <h1 className="mt-2 break-words text-lg font-semibold leading-tight text-zinc-100 sm:text-2xl">
+                {ticket.ticketNumber}{" "}
+                <span className="text-sm font-normal text-zinc-400 sm:text-base">
+                  · {ticket.title}
+                </span>
+              </h1>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+              <span className="w-fit rounded-full bg-white/12 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-100 dark:bg-zinc-700 dark:text-zinc-200">
+                {formatTicketStatusLabel(ticket.status)}
+              </span>
+              <Link
+                href={backHref}
+                className="inline-flex h-8 items-center justify-center rounded-full border border-white/15 bg-black/30 px-3 text-xs font-semibold text-zinc-100 hover:bg-black/45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Close
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 border-t border-white/10 pt-3 sm:grid-cols-2 sm:gap-6">
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                {isFundTransferRequest ? "Prepared By: " : "Requestor: "}
+                <span className="text-zinc-300 normal-case tracking-normal">{ticket.contactName}</span>
+              </p>
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Email:{" "}
+                <span className="break-all text-zinc-300 normal-case tracking-normal">
+                  {ticket.requestorEmail ?? ticket.contactEmail}
+                </span>
+              </p>
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Company:{" "}
+                <span className="text-zinc-300 normal-case tracking-normal">
+                  {requestorCompanyName ?? "Not assigned"}
+                </span>
+              </p>
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Branch:{" "}
+                <span className="text-zinc-300 normal-case tracking-normal">{branch ?? "—"}</span>
+              </p>
+            </div>
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Send request to:{" "}
+                <span className="text-zinc-300 normal-case tracking-normal">
+                  {ticket.team?.name ?? "—"}
+                </span>
+              </p>
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                {isFundTransferRequest
+                  ? "Requesting department/business unit: "
+                  : "Department: "}
+                <span className="text-zinc-300 normal-case tracking-normal">{department ?? "—"}</span>
+              </p>
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
+                Request type:{" "}
+                <span className="text-zinc-300 normal-case tracking-normal">{requestTypeLabelText}</span>
+              </p>
+              {proceduralStatusLabel ? (
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-amber-400/90">
+                  Procedural status:{" "}
+                  <span className="normal-case tracking-normal text-amber-200">
+                    {proceduralStatusLabel}
+                  </span>
+                </p>
+              ) : null}
+            </div>
+          </div>
         </div>
-        <div className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
-          {ticket.status.replaceAll("_", " ")}
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <AgentWorkspace
+            ticket={ticketForWorkspace}
+            canUpdatePriority={false}
+            canRequestTransfer={false}
+            canApproveTransfer={false}
+            transferPending={false}
+            isPaymentRequest={isPaymentRequest}
+            paymentApprovalMeta={paymentApprovalMeta}
+            paymentApprovalAgentNames={paymentApprovalAgentNames}
+            isRequisitionRequest={isRequisitionRequest}
+            itemRequisitionApprovalMeta={itemRequisitionApprovalMeta}
+            itemRequisitionApprovalAgentNames={itemRequisitionApprovalAgentNames}
+            isFundTransferRequest={isFundTransferRequest}
+            fundTransferApprovalMeta={fundTransferApprovalMeta}
+            fundTransferApprovalAgentNames={fundTransferApprovalAgentNames}
+            viewerMode="requestor"
+            requestorAside={
+              <CustomerTicketPanel ticket={ticket} canCancelRequest={canCancelRequest} />
+            }
+          />
         </div>
       </div>
-
-      <section className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-3 lg:col-span-2">
-          <article className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
-            <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Description</h2>
-            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 dark:text-zinc-200">
-              {ticket.description}
-            </p>
-          </article>
-
-          <TicketIntakeScreenshotsBlock ticketId={ticket.id} meta={ticket.intakeScreenshotMeta} />
-
-          <article className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
-            <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Conversation</h2>
-            <div className="mt-4 space-y-3">
-              {ticket.messages.length === 0 ? (
-                <p className="text-sm text-zinc-500">No messages yet.</p>
-              ) : (
-                ticket.messages.map((m) => (
-                  <div
-                    key={m.id}
-                    className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm dark:border-zinc-800 dark:bg-[#181716]"
-                  >
-                    <div className="flex flex-col gap-1 text-xs text-zinc-500 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
-                      <span className="break-words font-semibold text-zinc-900 dark:text-zinc-100">
-                        {m.author}{" "}
-                        <span className="font-normal text-zinc-500">({m.actor})</span>
-                      </span>
-                      <time dateTime={m.createdAt.toISOString()}>
-                        {m.createdAt.toLocaleString()}
-                      </time>
-                    </div>
-                    <p className="mt-2 whitespace-pre-wrap break-words text-zinc-700 dark:text-zinc-200">{m.body}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-        </div>
-
-        <aside className="min-w-0 space-y-3">
-          <article className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
-            <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Acknowledgment</h2>
-            <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
-              Your ticket is logged with SLA targets for first response and resolution. Share this link with your team
-              for status checks.
-            </p>
-            <dl className="mt-4 space-y-3 text-sm text-zinc-700 dark:text-zinc-200">
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Requestor</dt>
-                <dd className="font-medium min-[420px]:max-w-[60%] min-[420px]:text-right break-words">{ticket.contactName}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Requestor email</dt>
-                <dd className="break-all font-medium min-[420px]:max-w-[60%] min-[420px]:text-right">{ticket.requestorEmail ?? ticket.contactEmail}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Account email</dt>
-                <dd className="break-all font-medium min-[420px]:max-w-[60%] min-[420px]:text-right">{ticket.contactEmail}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Request type</dt>
-                <dd className="font-medium min-[420px]:text-right break-words">{requestTypeDisplay}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Priority</dt>
-                <dd className="font-medium min-[420px]:text-right">{formatTicketPriorityLabel(ticket.priority)}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Agent</dt>
-                <dd className="font-medium min-[420px]:text-right">{ticket.assignedAgent?.name ?? "Queued"}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Company</dt>
-                <dd className="font-medium min-[420px]:text-right break-words">{requestorCompanyName ?? "Not assigned"}</dd>
-              </div>
-              {branch ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Branch</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{branch}</dd>
-                </div>
-              ) : null}
-              {department ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Department</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{department}</dd>
-                </div>
-              ) : null}
-              {payee ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Payee</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{payee}</dd>
-                </div>
-              ) : null}
-              {inPaymentOf ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">In payment of</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{inPaymentOf}</dd>
-                </div>
-              ) : null}
-              {accountTitle ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Account title</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{accountTitle}</dd>
-                </div>
-              ) : null}
-              {amount ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Amount</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">
-                    {formatPaymentPeso(amount) || amount}
-                  </dd>
-                </div>
-              ) : null}
-              {modeOfPayment ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Mode of payment</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{modeOfPayment}</dd>
-                </div>
-              ) : null}
-              {deliveryOfCheck ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Delivery of check</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{deliveryOfCheck}</dd>
-                </div>
-              ) : null}
-              {bankNameAccountNumber ? (
-                <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                  <dt className="text-zinc-500 shrink-0">Bank name / account number</dt>
-                  <dd className="font-medium min-[420px]:text-right break-words">{bankNameAccountNumber}</dd>
-                </div>
-              ) : null}
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">First response due</dt>
-                <dd className="font-medium min-[420px]:text-right">{ticket.firstResponseDueAt.toLocaleString()}</dd>
-              </div>
-              <div className="flex flex-col gap-1 min-[420px]:flex-row min-[420px]:justify-between min-[420px]:gap-3">
-                <dt className="text-zinc-500 shrink-0">Resolution due</dt>
-                <dd className="font-medium min-[420px]:text-right">{ticket.resolutionDueAt.toLocaleString()}</dd>
-              </div>
-            </dl>
-          </article>
-
-          <CustomerTicketPanel ticket={ticket} canCancelRequest={canCancelRequest} />
-
-          {session.user.role !== "Customer" ? (
-            <Link
-              href="/agent"
-              className="block text-center text-sm font-medium text-orange-300 underline-offset-4 hover:underline"
-            >
-              Agent view for this ticket
-            </Link>
-          ) : null}
-        </aside>
-      </section>
-
-      <section className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
-        <h2 className="text-sm font-semibold text-zinc-950 dark:text-white">Activity timeline</h2>
-        <ol className="mt-4 space-y-3">
-          {ticket.activities.map((a) => (
-            <li key={a.id} className="border-l-2 border-orange-800 pl-3">
-              <p className="text-xs text-zinc-500">{a.createdAt.toLocaleString()}</p>
-              <p className="text-sm font-medium text-zinc-950 dark:text-white">{a.summary}</p>
-              {a.detail ? (
-                <p className="break-words text-sm text-zinc-700 dark:text-zinc-300">{a.detail}</p>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      </section>
-    </main>
+    </AgentTicketModalShell>
   );
 }

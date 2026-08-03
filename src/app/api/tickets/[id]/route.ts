@@ -25,7 +25,7 @@ import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-co
 import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticket-feedback-policy";
 import { isAdminPortalRole } from "@/lib/staff-role";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
-import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
+import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import {
   adminOutsideCompanyScope,
   isTicketAssignee,
@@ -52,6 +52,7 @@ import {
   applyItemRequisitionApprovalAssignees,
   canCompleteItemRequisitionApprovalStep,
   completeItemRequisitionApprovalStep,
+  currentItemRequisitionStepBoardAssigneeId,
   itemRequisitionAssigneeFieldForStep,
   ITEM_REQUISITION_APPROVAL_FIELD_LABELS,
   ITEM_REQUISITION_APPROVAL_STEP_LABELS,
@@ -67,6 +68,7 @@ import {
   applyFundTransferApprovalAssignees,
   canCompleteFundTransferApprovalStep,
   completeFundTransferApprovalStep,
+  currentFundTransferStepBoardAssigneeId,
   fundTransferAssigneeFieldForStep,
   FUND_TRANSFER_APPROVAL_FIELD_LABELS,
   FUND_TRANSFER_APPROVAL_STEP_LABELS,
@@ -211,6 +213,7 @@ export async function GET(
       role: session.user.role,
       email: session.user.email,
       ticketTeamId: ticket.teamId,
+      ticket,
     })
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -260,6 +263,7 @@ export async function PATCH(
       role: session.user.role,
       email: session.user.email,
       ticketTeamId: ticket.teamId,
+      ticket,
     })
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -576,8 +580,7 @@ export async function PATCH(
 
       if (effectiveStatus === "RESOLVED" || effectiveStatus === "FOR_CONFIRMATION") {
         const smtpRecipient =
-          (updated as unknown as { requestorEmail?: string | null }).requestorEmail?.trim() ||
-          updated.contactEmail;
+          updated.requestorEmail?.trim() || updated.contactEmail;
         await sendResolutionEmail({
           ticketId: updated.id,
           ticketNumber: updated.ticketNumber,
@@ -1047,9 +1050,13 @@ export async function PATCH(
     }
 
     if (action === "set_payment_approval_assignees") {
-      if (session.user.role !== "SuperAdmin") {
+      if (
+        session.user.role !== "SuperAdmin" &&
+        session.user.role !== "Admin" &&
+        session.user.role !== "Personnel"
+      ) {
         return NextResponse.json(
-          { error: "Only SuperAdmin can set payment approval roles from Ticket controls." },
+          { error: "Only Admin, SuperAdmin, or Personnel can set payment approval roles from Ticket controls." },
           { status: 403 },
         );
       }
@@ -1065,20 +1072,12 @@ export async function PATCH(
         if (v === null || v === "") return null;
         return typeof v === "string" && v.trim() ? v.trim() : null;
       };
-      const assignees: Partial<PaymentApprovalAssignees> = {
-        preparedByAgentId: pickId(body.preparedByAgentId),
-        notedByAgentId: pickId(body.notedByAgentId),
-        approvedByAgentId: pickId(body.approvedByAgentId),
-        accountingAgentId: pickId(body.accountingAgentId),
-        financeAgentId: pickId(body.financeAgentId),
-      };
-      // Only overwrite keys that were explicitly provided.
+      // Prepared By is intake-only and not editable from Ticket Controls.
       const nextAssignees: Partial<PaymentApprovalAssignees> = {};
-      if ("preparedByAgentId" in body) nextAssignees.preparedByAgentId = assignees.preparedByAgentId ?? null;
-      if ("notedByAgentId" in body) nextAssignees.notedByAgentId = assignees.notedByAgentId ?? null;
-      if ("approvedByAgentId" in body) nextAssignees.approvedByAgentId = assignees.approvedByAgentId ?? null;
-      if ("accountingAgentId" in body) nextAssignees.accountingAgentId = assignees.accountingAgentId ?? null;
-      if ("financeAgentId" in body) nextAssignees.financeAgentId = assignees.financeAgentId ?? null;
+      if ("notedByAgentId" in body) nextAssignees.notedByAgentId = pickId(body.notedByAgentId);
+      if ("approvedByAgentId" in body) nextAssignees.approvedByAgentId = pickId(body.approvedByAgentId);
+      if ("accountingAgentId" in body) nextAssignees.accountingAgentId = pickId(body.accountingAgentId);
+      if ("financeAgentId" in body) nextAssignees.financeAgentId = pickId(body.financeAgentId);
 
       const agentIds = Object.values(nextAssignees).filter((v): v is string => Boolean(v));
       if (agentIds.length > 0) {
@@ -1091,14 +1090,55 @@ export async function PATCH(
         }
       }
 
-      // Preview uniqueness across all five roles after applying the patch.
+      const requestorCompanyId = await resolveStaffCompanyTeamId(
+        ticket.requestorEmail ?? ticket.contactEmail,
+      );
+      const sendToCompanyId = ticket.teamId;
+      async function assertAgentCompany(
+        agentId: string | null | undefined,
+        expectedCompanyId: string | null | undefined,
+        roleLabel: string,
+      ): Promise<NextResponse | null> {
+        if (!agentId) return null;
+        if (!expectedCompanyId) {
+          return NextResponse.json(
+            { error: `${roleLabel} cannot be set because the company scope is missing.` },
+            { status: 400 },
+          );
+        }
+        const agentCompanyId = await resolveAgentDesignatedCompanyId(agentId);
+        if (agentCompanyId !== expectedCompanyId) {
+          return NextResponse.json(
+            { error: `${roleLabel} must be someone from the correct company roster.` },
+            { status: 400 },
+          );
+        }
+        return null;
+      }
+      for (const check of [
+        await assertAgentCompany(nextAssignees.notedByAgentId, requestorCompanyId, "Noted By"),
+        await assertAgentCompany(nextAssignees.approvedByAgentId, sendToCompanyId, "Approved By"),
+        await assertAgentCompany(
+          nextAssignees.accountingAgentId,
+          sendToCompanyId,
+          "Approved By (Accounting)",
+        ),
+        await assertAgentCompany(
+          nextAssignees.financeAgentId,
+          sendToCompanyId,
+          "Approved By (Finance)",
+        ),
+      ]) {
+        if (check) return check;
+      }
+
+      // Preview uniqueness across procedural roles (Prepared By is intake-only).
       const previewMeta = applyPaymentApprovalAssignees(meta, nextAssignees);
       const roleEntries: Array<[PaymentApprovalStep, string | null]> = [
-        ["PREPARED_BY", previewMeta.preparedByAgentId],
         ["NOTED_BY", previewMeta.notedByAgentId],
         ["APPROVED_BY", previewMeta.approvedByAgentId],
-        ["RECEIVED_BY_ACCOUNTING", previewMeta.accountingAgentId],
-        ["RECEIVED_BY_FINANCE", previewMeta.financeAgentId],
+        ["APPROVED_BY_ACCOUNTING", previewMeta.accountingAgentId],
+        ["APPROVED_BY_FINANCE", previewMeta.financeAgentId],
       ];
       const seen = new Map<string, PaymentApprovalStep>();
       for (const [step, agentId] of roleEntries) {
@@ -1356,8 +1396,7 @@ export async function PATCH(
         );
         await logActivity(id, "AGENT", "Status → FOR_CONFIRMATION", "All payment approvals complete.");
         const smtpRecipient =
-          (updated as unknown as { requestorEmail?: string | null }).requestorEmail?.trim() ||
-          updated.contactEmail;
+          updated.requestorEmail?.trim() || updated.contactEmail;
         await sendResolutionEmail({
           ticketId: updated.id,
           ticketNumber: updated.ticketNumber,
@@ -1399,9 +1438,16 @@ export async function PATCH(
     }
 
     if (action === "set_item_requisition_approval_assignees") {
-      if (session.user.role !== "SuperAdmin") {
+      if (
+        session.user.role !== "SuperAdmin" &&
+        session.user.role !== "Admin" &&
+        session.user.role !== "Personnel"
+      ) {
         return NextResponse.json(
-          { error: "Only SuperAdmin can set item requisition approval roles from Ticket controls." },
+          {
+            error:
+              "Only Admin, SuperAdmin, or Personnel can set item requisition approval roles from Ticket controls.",
+          },
           { status: 403 },
         );
       }
@@ -1445,6 +1491,25 @@ export async function PATCH(
 
       const updatedMeta = applyItemRequisitionApprovalAssignees(meta, nextAssignees);
       await saveItemRequisitionApprovalMeta(id, updatedMeta);
+      const boardAssigneeId = currentItemRequisitionStepBoardAssigneeId(updatedMeta);
+      if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
+        await prisma.ticket.update({
+          where: { id },
+          data: {
+            assignedAgent: { connect: { id: boardAssigneeId } },
+            ...(ticket.status === "OPEN" || ticket.status === "PENDING_INFO"
+              ? { status: "IN_PROGRESS" as const }
+              : {}),
+            resolvedAt: null,
+          },
+        });
+        await logActivity(
+          id,
+          "SYSTEM",
+          "Assigned to current approval role",
+          "Request placed on the current procedural assignee’s Request Board.",
+        );
+      }
       const nameById = new Map(
         (
           await prisma.agent.findMany({
@@ -1510,13 +1575,22 @@ export async function PATCH(
         );
       }
       const step = meta.proceduralStep;
+      if (step !== "APPROVED_BY") {
+        return NextResponse.json(
+          {
+            error:
+              "Assign Canvassed By on the Assignment Board first. After pricing is saved, select who will Approve.",
+          },
+          { status: 400 },
+        );
+      }
       const approverId =
         typeof body.approverAgentId === "string" && body.approverAgentId.trim()
           ? body.approverAgentId.trim()
           : null;
       if (!approverId) {
         return NextResponse.json(
-          { error: "Select a company user to request approval from." },
+          { error: "Select a company user to Approve this request." },
           { status: 400 },
         );
       }
@@ -1551,8 +1625,8 @@ export async function PATCH(
       await logActivity(
         id,
         "AGENT",
-        `Approval requested · ${ITEM_REQUISITION_APPROVAL_STEP_LABELS[step]}`,
-        `Requested ${ITEM_REQUISITION_APPROVAL_STEP_LABELS[step]} from ${approver.name}. Assigned for next step.`,
+        "Approved By assigned",
+        `${approver.name} assigned as Approved By by the Canvassed By assignee.`,
       );
       const pending = itemRequisitionProceduralStatusLabel(updatedMeta.proceduralStep);
       if (pending) {
@@ -1661,7 +1735,7 @@ export async function PATCH(
           id,
           "SYSTEM",
           "Next approval available",
-          "Use Ticket Controls → Request approval to send this request to the next role.",
+          "Use Ticket Controls → Select Approved By to choose who will approve this request.",
         );
         return NextResponse.json({
           ...(await ticketJsonWithAssigneeColor(updated)),
@@ -1816,6 +1890,7 @@ export async function PATCH(
       );
 
       const allDone = advanced.proceduralStep === "DONE";
+      const nextAssigneeId = allDone ? null : currentItemRequisitionStepBoardAssigneeId(advanced);
       const updated = await prisma.ticket.update({
         where: { id },
         data: allDone
@@ -1823,6 +1898,9 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
+              ...(nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId
+                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
+                : {}),
             },
         include: { team: true, assignedAgent: true },
       });
@@ -1841,8 +1919,7 @@ export async function PATCH(
           "All item requisition approvals complete.",
         );
         const smtpRecipient =
-          (updated as unknown as { requestorEmail?: string | null }).requestorEmail?.trim() ||
-          updated.contactEmail;
+          updated.requestorEmail?.trim() || updated.contactEmail;
         await sendResolutionEmail({
           ticketId: updated.id,
           ticketNumber: updated.ticketNumber,
@@ -1880,9 +1957,16 @@ export async function PATCH(
     }
 
     if (action === "set_fund_transfer_approval_assignees") {
-      if (session.user.role !== "SuperAdmin") {
+      if (
+        session.user.role !== "SuperAdmin" &&
+        session.user.role !== "Admin" &&
+        session.user.role !== "Personnel"
+      ) {
         return NextResponse.json(
-          { error: "Only SuperAdmin can set fund transfer approval roles from Ticket controls." },
+          {
+            error:
+              "Only Admin, SuperAdmin, or Personnel can set fund transfer approval roles from Ticket controls.",
+          },
           { status: 403 },
         );
       }
@@ -1923,6 +2007,25 @@ export async function PATCH(
 
       const updatedMeta = applyFundTransferApprovalAssignees(meta, nextAssignees);
       await saveFundTransferApprovalMeta(id, updatedMeta);
+      const boardAssigneeId = currentFundTransferStepBoardAssigneeId(updatedMeta);
+      if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
+        await prisma.ticket.update({
+          where: { id },
+          data: {
+            assignedAgent: { connect: { id: boardAssigneeId } },
+            ...(ticket.status === "OPEN" || ticket.status === "PENDING_INFO"
+              ? { status: "IN_PROGRESS" as const }
+              : {}),
+            resolvedAt: null,
+          },
+        });
+        await logActivity(
+          id,
+          "SYSTEM",
+          "Assigned to current approval role",
+          "Request placed on the current procedural assignee’s Request Board.",
+        );
+      }
       const nameById = new Map(
         (
           await prisma.agent.findMany({
@@ -2084,6 +2187,7 @@ export async function PATCH(
       );
 
       const allDone = advanced.proceduralStep === "DONE";
+      const nextAssigneeId = allDone ? null : currentFundTransferStepBoardAssigneeId(advanced);
       const updated = await prisma.ticket.update({
         where: { id },
         data: allDone
@@ -2091,6 +2195,9 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
+              ...(nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId
+                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
+                : {}),
             },
         include: { team: true, assignedAgent: true },
       });
@@ -2109,8 +2216,7 @@ export async function PATCH(
           "All fund transfer approvals complete.",
         );
         const smtpRecipient =
-          (updated as unknown as { requestorEmail?: string | null }).requestorEmail?.trim() ||
-          updated.contactEmail;
+          updated.requestorEmail?.trim() || updated.contactEmail;
         await sendResolutionEmail({
           ticketId: updated.id,
           ticketNumber: updated.ticketNumber,

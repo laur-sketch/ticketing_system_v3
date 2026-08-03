@@ -19,7 +19,10 @@ import {
   serializeTravelOrder,
   updateTravelOrderLocationAttachments,
 } from "@/lib/travel-order-db";
-import { persistTravelOrderImage } from "@/lib/travel-order-uploads";
+import {
+  persistTravelOrderImage,
+  removeTravelOrderUploadDir,
+} from "@/lib/travel-order-uploads";
 
 async function assertAgentsInCompany(
   agentIds: string[],
@@ -306,23 +309,33 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  const locs = [...travelOrder.locations].sort((a, b) => a.sortOrder - b.sortOrder);
-  for (let i = 0; i < locs.length; i++) {
-    const files = pendingFilesByIndex.get(i) ?? [];
-    if (files.length === 0) continue;
-    const loc = locs[i]!;
-    const uploaded = [];
-    for (const file of files.slice(0, 5)) {
-      const saved = await persistTravelOrderImage(kpi.id, travelOrder.id, file);
-      if ("error" in saved) {
-        return NextResponse.json({ error: saved.error }, { status: 400 });
+  try {
+    const locs = [...travelOrder.locations].sort((a, b) => a.sortOrder - b.sortOrder);
+    for (let i = 0; i < locs.length; i++) {
+      const files = pendingFilesByIndex.get(i) ?? [];
+      if (files.length === 0) continue;
+      const loc = locs[i]!;
+      const uploaded = [];
+      for (const file of files.slice(0, 5)) {
+        const saved = await persistTravelOrderImage(kpi.id, travelOrder.id, file);
+        if ("error" in saved) {
+          throw new Error(saved.error);
+        }
+        uploaded.push(saved);
       }
-      uploaded.push(saved);
+      await updateTravelOrderLocationAttachments(loc.id, [
+        ...loc.attachments,
+        ...uploaded,
+      ]);
     }
-    await updateTravelOrderLocationAttachments(loc.id, [
-      ...loc.attachments,
-      ...uploaded,
-    ]);
+  } catch (err) {
+    // Uploads happen after KPI + travel order commits — roll both back on failure.
+    await prisma.travelOrder.delete({ where: { id: travelOrder.id } }).catch(() => undefined);
+    await prisma.kpiMaintenance.delete({ where: { id: kpi.id } }).catch(() => undefined);
+    await removeTravelOrderUploadDir(kpi.id, travelOrder.id).catch(() => undefined);
+    const message = err instanceof Error ? err.message : "Could not save travel-order images.";
+    console.error("[field-assignment] upload/attach failed; rolled back:", err);
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const fresh =

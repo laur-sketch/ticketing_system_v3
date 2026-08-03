@@ -193,6 +193,10 @@ describe("combinedPersonnelEfficiency", () => {
         name: "Alex",
         role: "Assignee",
         tickets: { closed: 5, pending: 2, efficiency: 71 },
+        rfpAccounting: null,
+        rfpFinance: null,
+        irsCanvass: null,
+        ftrPrepared: null,
         tasks: { closed: 3, pending: 1, efficiency: 100, pillarsContributed: 1 },
       }),
     ).toBe(86);
@@ -205,6 +209,10 @@ describe("combinedPersonnelEfficiency", () => {
         name: "Alex",
         role: "Assignee",
         tickets: { closed: 1, pending: 9, efficiency: 10 },
+        rfpAccounting: null,
+        rfpFinance: null,
+        irsCanvass: null,
+        ftrPrepared: null,
         tasks: { closed: 0, pending: 5, efficiency: 0, pillarsContributed: 1 },
       }),
     ).toBe(50);

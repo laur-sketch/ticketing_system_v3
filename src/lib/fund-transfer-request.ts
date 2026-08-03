@@ -53,10 +53,13 @@ export function formatFundTransferPeso(raw: string | null | undefined): string {
   return `₱${n.toFixed(2)}`;
 }
 
-/** Pull amount (or from→to) for board card previews. */
+/** Pull purpose/reason (preferred) or amount for board card previews. */
 export function extractFundTransferPreview(description: string | null | undefined): string | null {
   const raw = (description ?? "").trim();
   if (!raw) return null;
+  const parsed = parseFundTransferRequestDescription(raw);
+  const purpose = parsed?.reason?.trim();
+  if (purpose) return purpose.slice(0, 120);
   const amount = /^Fund transfer amount:\s*(.+)$/im.exec(raw)?.[1]?.trim();
   if (amount) return amount;
   const from = /^From account name:\s*(.+)$/im.exec(raw)?.[1]?.trim();

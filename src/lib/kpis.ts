@@ -3,6 +3,10 @@ import { DateTime } from "luxon";
 import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
 import { loadRfpRolePersonnelMetrics } from "@/lib/rfp-role-kpis";
 import {
+  loadFtrPreparedPersonnelMetrics,
+  loadIrsCanvassPersonnelMetrics,
+} from "@/lib/irs-ftr-role-kpis";
+import {
   computeTaskChecklistPillarMetrics,
   enumerateYmdDaysInRange,
   kpiMaintenanceWhereForTaskMetrics,
@@ -456,6 +460,10 @@ export type TaskMetricsPayload = {
   personnelRfpAccountingMetrics: PersonnelTicketMetric[];
   /** RFP Received By (Finance) — closed/pending/efficiency per agent. */
   personnelRfpFinanceMetrics: PersonnelTicketMetric[];
+  /** IRS Canvassed By — closed/pending/efficiency per agent. */
+  personnelIrsCanvassMetrics: PersonnelTicketMetric[];
+  /** FTR Prepared By — closed/pending/efficiency per agent. */
+  personnelFtrPreparedMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
 };
 
@@ -560,6 +568,14 @@ export async function computeTaskMetrics(
       ? await loadRfpRolePersonnelMetrics(scoped, workingDays)
       : { accounting: [], finance: [] };
 
+  const [personnelIrsCanvassMetrics, personnelFtrPreparedMetrics] =
+    workingDays.length > 0
+      ? await Promise.all([
+          loadIrsCanvassPersonnelMetrics(scoped, workingDays),
+          loadFtrPreparedPersonnelMetrics(scoped, workingDays),
+        ])
+      : [[], []];
+
   const personnelDelayPenalties = await loadPersonnelDelayPenalties(
     kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
     helpdeskTz,
@@ -573,6 +589,8 @@ export async function computeTaskMetrics(
     personnelTicketMetrics,
     personnelRfpAccountingMetrics: rfpRoleMetrics.accounting,
     personnelRfpFinanceMetrics: rfpRoleMetrics.finance,
+    personnelIrsCanvassMetrics,
+    personnelFtrPreparedMetrics,
     personnelDelayPenalties,
   };
 }
@@ -621,9 +639,14 @@ async function loadPersonnelTicketMetrics(
 ): Promise<PersonnelTicketMetric[]> {
   // Keep the agent scope (company / personnel) — a plain `assignedAgentId: { not: null }`
   // key would silently replace the scoped filter spread before it.
-  // Counts Issue/Concern, IRS, FTR, Job Order, etc. RFP Accounting / Finance
-  // use dedicated role KPIs ({@link loadRfpRolePersonnelMetrics}) so those steps
-  // are not double-counted here.
+  // Counts Issue/Concern, Job Order, etc. Closed uses ticket.closedAt (set when the
+  // requestor confirms / ticket closes). RFP / IRS / FTR use dedicated role KPIs
+  // gated the same way so procedural credits are not double-counted here.
+  const proceduralRequestTypes = [
+    "REQUEST_FOR_PAYMENT",
+    "ITEM_REQUISITION_SLIP",
+    "FUND_TRANSFER_REQUEST",
+  ] as const;
   const assignedAgentFilter =
     (scoped as { assignedAgentId?: unknown }).assignedAgentId ?? ({ not: null } as const);
   const [closedByAgent, pendingByAgent] = await Promise.all([
@@ -632,7 +655,7 @@ async function loadPersonnelTicketMetrics(
       where: {
         ...scoped,
         assignedAgentId: assignedAgentFilter,
-        NOT: { requestType: "REQUEST_FOR_PAYMENT" },
+        NOT: { requestType: { in: [...proceduralRequestTypes] } },
         AND: [{ closedAt: { not: null } }, timestampOnWorkingDaysWhere("closedAt", workingDayIntervals)],
       },
       _count: true,
@@ -642,7 +665,7 @@ async function loadPersonnelTicketMetrics(
       where: {
         ...scoped,
         assignedAgentId: assignedAgentFilter,
-        NOT: { requestType: "REQUEST_FOR_PAYMENT" },
+        NOT: { requestType: { in: [...proceduralRequestTypes] } },
         status: { in: OPEN_PIPELINE_STATUSES },
       },
       _count: true,

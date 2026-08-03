@@ -144,7 +144,8 @@ export default async function AgentHome({
   const requestTypeParam = firstQuery(params.requestType) ?? "ALL";
   const selectedRequestType =
     requestTypeParam === "ALL" || isRequestTypeId(requestTypeParam) ? requestTypeParam : "ALL";
-  const query = firstQuery(params.q)?.trim() ?? "";
+  const queryRaw = firstQuery(params.q)?.trim() ?? "";
+  const query = queryRaw.replace(/^#/, "").trim();
   const sort = firstQuery(params.sort) ?? "updatedAt";
   const dir = firstQuery(params.dir) === "asc" ? "asc" : "desc";
   const page = Math.max(1, Number.parseInt(firstQuery(params.page) ?? "1", 10) || 1);
@@ -990,9 +991,11 @@ export default async function AgentHome({
                       <span className="mr-2">Q</span>
                       <input
                         name="q"
+                        type="search"
                         defaultValue={searchFieldQuery}
-                        placeholder="Search events…"
+                        placeholder="Search request number, subject, customer…"
                         className="w-full bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+                        aria-label="Search by request number, subject, or customer"
                       />
                     </label>
                   </div>

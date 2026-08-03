@@ -66,12 +66,47 @@ function replaceAssignedAgentIdInJson(
   return next;
 }
 
+function replaceAgentIdInStringArray(value: unknown, staleId: string, canonicalId: string): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((entry) => (entry === staleId ? canonicalId : entry));
+}
+
+function replaceAgentIdsInTravelOrderJson(
+  value: unknown,
+  staleId: string,
+  canonical: { id: string; name: string },
+): unknown {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    // Flat agent-id arrays (approved_by_agent_ids / traveler_agent_ids)
+    if (value.every((entry) => typeof entry === "string" || entry == null)) {
+      return replaceAgentIdInStringArray(value, staleId, canonical.id);
+    }
+    return value.map((entry) => replaceAgentIdsInTravelOrderJson(entry, staleId, canonical));
+  }
+  if (typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(obj)) {
+    if (
+      (key === "agentId" || key === "approvedByAgentId" || key === "id") &&
+      raw === staleId
+    ) {
+      next[key] = canonical.id;
+      continue;
+    }
+    next[key] = replaceAgentIdsInTravelOrderJson(raw, staleId, canonical);
+  }
+  return next;
+}
+
 export type MergeAgentOwnershipResult = {
   ticketsUpdated: number;
   kpisUpdated: number;
   tasksUpdated: number;
   kpiSubAssigneeRowsUpdated: number;
   snapshotRowsUpdated: number;
+  travelOrdersUpdated: number;
 };
 
 /** Move tickets, KPIs, tasks, sub-KPI JSON, and contributor snapshots from one agent to another. */
@@ -86,6 +121,7 @@ export async function mergeAgentOwnership(
   let tasksUpdated = 0;
   let kpiSubAssigneeRowsUpdated = 0;
   let snapshotRowsUpdated = 0;
+  let travelOrdersUpdated = 0;
 
   if (!dryRun) {
     ticketsUpdated += (
@@ -106,10 +142,44 @@ export async function mergeAgentOwnership(
         data: { assignedAgentId: canonical.id },
       })
     ).count;
+    travelOrdersUpdated += (
+      await prisma.travelOrder.updateMany({
+        where: { approvedByAgentId: staleId },
+        data: { approvedByAgentId: canonical.id },
+      })
+    ).count;
+    travelOrdersUpdated += (
+      await prisma.travelOrder.updateMany({
+        where: { confirmationByAgentId: staleId },
+        data: { confirmationByAgentId: canonical.id },
+      })
+    ).count;
+    travelOrdersUpdated += (
+      await prisma.travelOrder.updateMany({
+        where: { createdByAgentId: staleId },
+        data: { createdByAgentId: canonical.id },
+      })
+    ).count;
+    travelOrdersUpdated += (
+      await prisma.travelOrder.updateMany({
+        where: { rejectedByAgentId: staleId },
+        data: { rejectedByAgentId: canonical.id },
+      })
+    ).count;
   } else {
     ticketsUpdated += await prisma.ticket.count({ where: { assignedAgentId: staleId } });
     kpisUpdated += await prisma.kpiMaintenance.count({ where: { assignedAgentId: staleId } });
     tasksUpdated += await prisma.taskItem.count({ where: { assignedAgentId: staleId } });
+    travelOrdersUpdated += await prisma.travelOrder.count({
+      where: {
+        OR: [
+          { approvedByAgentId: staleId },
+          { confirmationByAgentId: staleId },
+          { createdByAgentId: staleId },
+          { rejectedByAgentId: staleId },
+        ],
+      },
+    });
   }
 
   const kpiRows = await prisma.kpiMaintenance.findMany({
@@ -152,12 +222,53 @@ export async function mergeAgentOwnership(
     }
   }
 
+  const travelRows = await prisma.travelOrder.findMany({
+    select: {
+      id: true,
+      approvedByAgentIds: true,
+      travelerAgentIds: true,
+      approvalLevels: true,
+    },
+  });
+  for (const row of travelRows) {
+    const blob = JSON.stringify({
+      approvedByAgentIds: row.approvedByAgentIds,
+      travelerAgentIds: row.travelerAgentIds,
+      approvalLevels: row.approvalLevels,
+    });
+    if (!blob.includes(staleId)) continue;
+    travelOrdersUpdated += 1;
+    if (!dryRun) {
+      await prisma.travelOrder.update({
+        where: { id: row.id },
+        data: {
+          approvedByAgentIds: replaceAgentIdsInTravelOrderJson(
+            row.approvedByAgentIds,
+            staleId,
+            canonical,
+          ) as Prisma.InputJsonValue,
+          travelerAgentIds: replaceAgentIdsInTravelOrderJson(
+            row.travelerAgentIds,
+            staleId,
+            canonical,
+          ) as Prisma.InputJsonValue,
+          approvalLevels: replaceAgentIdsInTravelOrderJson(
+            row.approvalLevels,
+            staleId,
+            canonical,
+          ) as Prisma.InputJsonValue,
+        },
+      });
+    }
+  }
+
   return {
     ticketsUpdated,
     kpisUpdated,
     tasksUpdated,
     kpiSubAssigneeRowsUpdated,
     snapshotRowsUpdated,
+    travelOrdersUpdated,
   };
 }
 
@@ -209,13 +320,33 @@ export async function reconcileDuplicateAgentRows(options?: { dryRun?: boolean }
     const stillReferenced =
       (await prisma.ticket.count({ where: { assignedAgentId: staleId } })) +
       (await prisma.kpiMaintenance.count({ where: { assignedAgentId: staleId } })) +
-      (await prisma.taskItem.count({ where: { assignedAgentId: staleId } }));
+      (await prisma.taskItem.count({ where: { assignedAgentId: staleId } })) +
+      (await prisma.travelOrder.count({
+        where: {
+          OR: [
+            { approvedByAgentId: staleId },
+            { confirmationByAgentId: staleId },
+            { createdByAgentId: staleId },
+            { rejectedByAgentId: staleId },
+          ],
+        },
+      }));
     const subKpiRows = await prisma.kpiMaintenance.findMany({
       where: { subKpis: { not: Prisma.DbNull } },
       select: { subKpis: true },
     });
     const stillInSubKpis = subKpiRows.some((row) => JSON.stringify(row.subKpis).includes(staleId));
-    if (stillReferenced > 0 || stillInSubKpis) continue;
+    const travelJsonRows = await prisma.travelOrder.findMany({
+      select: {
+        approvedByAgentIds: true,
+        travelerAgentIds: true,
+        approvalLevels: true,
+      },
+    });
+    const stillInTravelJson = travelJsonRows.some((row) =>
+      JSON.stringify(row).includes(staleId),
+    );
+    if (stillReferenced > 0 || stillInSubKpis || stillInTravelJson) continue;
     staleAgentsDeleted += 1;
     if (!dryRun) {
       await prisma.agent.delete({ where: { id: staleId } });

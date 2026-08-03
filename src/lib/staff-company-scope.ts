@@ -221,3 +221,25 @@ export async function resolveStaffCompanyTeamId(email: string | null | undefined
   });
   return agent?.teamId ?? null;
 }
+
+/**
+ * Roster company display name for an Admin's assigned company.
+ * Returns null when the user is not company-scoped (e.g. SuperAdmin) or has no assignment.
+ * Pass `forceNone: true` to get `"__none__"` when Admin has no company (empty filter match).
+ */
+export async function resolveAdminOnDutyCompanyFilter(
+  role: string | null | undefined,
+  email: string | null | undefined,
+  options?: { forceNone?: boolean },
+): Promise<string | null> {
+  if (role !== "Admin") return null;
+  const teamId = await resolveStaffCompanyTeamId(email);
+  if (!teamId) return options?.forceNone === false ? null : "__none__";
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: { name: true },
+  });
+  const name = team?.name?.trim();
+  if (name) return name;
+  return options?.forceNone === false ? null : "__none__";
+}

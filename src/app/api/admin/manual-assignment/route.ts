@@ -195,14 +195,18 @@ export async function POST(req: Request) {
       } else if (requestType === "ITEM_REQUISITION_SLIP") {
         const meta = await initItemRequisitionApprovalMetaIfNeeded(ticketId);
         if (meta.proceduralStep !== "DONE") {
+          // Board drag assigns Canvassed By first; later drags assign Approved By.
           const field = itemRequisitionAssigneeFieldForStep(meta.proceduralStep);
           const nextMeta = applyItemRequisitionApprovalAssignees(meta, { [field]: agent.id });
           await saveItemRequisitionApprovalMeta(ticketId, nextMeta);
           const pending = itemRequisitionProceduralStatusLabel(nextMeta.proceduralStep);
+          const roleLabel = ITEM_REQUISITION_APPROVAL_STEP_LABELS[meta.proceduralStep];
           await logActivity(
             ticketId,
             "SYSTEM",
-            `Assigned for ${ITEM_REQUISITION_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+            meta.proceduralStep === "CANVASSED_BY"
+              ? "Assigned as Canvassed By"
+              : `Assigned for ${roleLabel}`,
             pending
               ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
               : (updated.assignedAgent?.name ?? agent.name),

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { parsePaymentApprovalMeta } from "../../src/lib/request-for-payment-approval";
 
 describe("RFP role KPI attribution inputs", () => {

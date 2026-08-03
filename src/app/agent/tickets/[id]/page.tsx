@@ -18,6 +18,7 @@ import {
 } from "@/lib/item-requisition-approval-db";
 import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
 import { stampFundTransferCreatorOnCreate } from "@/lib/fund-transfer-approval-db";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -54,14 +55,19 @@ export default async function AgentTicketPage({
     ? await prisma.portalAccount.findFirst({
         where: { email: { equals: requestorEmail, mode: "insensitive" } },
         select: {
-          company: { select: { name: true } },
-          staffDesignatedCompany: { select: { name: true } },
+          company: { select: { id: true, name: true } },
+          staffDesignatedCompany: { select: { id: true, name: true } },
         },
       })
     : null;
   const requestorCompanyName =
     requestorAccount?.company?.name?.trim() ||
     requestorAccount?.staffDesignatedCompany?.name?.trim() ||
+    null;
+  const requestorCompanyTeamId =
+    (await resolveStaffCompanyTeamId(requestorEmail)) ||
+    requestorAccount?.staffDesignatedCompany?.id ||
+    requestorAccount?.company?.id ||
     null;
   const branchActivity = ticketForWorkspace.activities.find((a) => a.summary === "Branch");
   const branch = branchActivity?.detail?.trim() ?? null;
@@ -310,6 +316,8 @@ export default async function AgentTicketPage({
             fundTransferApprovalAgentNames={fundTransferApprovalAgentNames}
             sessionAgentId={operator?.id ?? null}
             isSuperAdmin={isSuperAdmin}
+            canSetApprovalAssignees={isAdmin || isPersonnel}
+            requestorCompanyTeamId={requestorCompanyTeamId}
             isPersonnel={isPersonnel}
             canCreateJobOrderProject={isAdmin || companyCoordinator}
             canRequestJobOrderProject={isPersonnel && isAssignedOperator && !isAdmin && !companyCoordinator}

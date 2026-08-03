@@ -46,7 +46,12 @@ export async function GET(req: Request) {
           },
         })
       : 0,
-    operatorId ? listPendingTravelApprovalsForAgent(operatorId) : Promise.resolve([]),
+    operatorId
+      ? listPendingTravelApprovalsForAgent(operatorId).catch((error) => {
+          console.warn("[unread-count] travel approval lookup failed", error);
+          return [];
+        })
+      : Promise.resolve([]),
   ]);
 
   const travelOrderApprovalIds = pendingTravelApprovals.map((row) => row.id);

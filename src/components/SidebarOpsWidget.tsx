@@ -5,10 +5,10 @@ import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  AlertTriangle,
   BarChart3,
   BookOpen,
   Check,
+  CheckCircle2,
   CheckSquare,
   CircleDot,
   ClipboardList,
@@ -28,7 +28,7 @@ import { cn } from "@/lib/cn";
 type SidebarSummary = {
   open: number;
   inProgress: number;
-  escalated: number;
+  forConfirmation: number;
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
   selfOnDuty: boolean | null;
@@ -71,7 +71,7 @@ const DEFAULT_PERSONNEL_IDS = ["create", "requests", "tasks", "process", "docs",
 const EMPTY: SidebarSummary = {
   open: 0,
   inProgress: 0,
-  escalated: 0,
+  forConfirmation: 0,
   onDutyCount: 0,
   onDutyPreview: [],
   selfOnDuty: null,
@@ -147,7 +147,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
         setData({
           open: Math.max(0, Number(payload.open) || 0),
           inProgress: Math.max(0, Number(payload.inProgress) || 0),
-          escalated: Math.max(0, Number(payload.escalated) || 0),
+          forConfirmation: Math.max(0, Number(payload.forConfirmation) || 0),
           onDutyCount: Math.max(0, Number(payload.onDutyCount) || 0),
           onDutyPreview: Array.isArray(payload.onDutyPreview) ? payload.onDutyPreview.slice(0, 2) : [],
           selfOnDuty:
@@ -160,7 +160,10 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
     }
 
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void refresh();
+    }, 60_000);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -227,10 +230,10 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
             tone="orange"
           />
           <QueueStat
-            href="/agent?status=ESCALATED"
-            label="Esc"
-            value={summary.escalated}
-            tone="rose"
+            href="/agent?status=FOR_CONFIRMATION"
+            label="Confirm"
+            value={summary.forConfirmation}
+            tone="emerald"
           />
         </div>
 
@@ -420,21 +423,25 @@ function QueueStat({
   href: string;
   label: string;
   value: number;
-  tone: "sky" | "orange" | "rose";
+  tone: "sky" | "orange" | "emerald";
 }) {
   const toneClass =
     tone === "sky"
       ? "text-sky-700 dark:text-sky-300"
       : tone === "orange"
         ? "text-orange-700 dark:text-orange-300"
-        : "text-rose-700 dark:text-rose-300";
-  const Icon = tone === "rose" ? AlertTriangle : CircleDot;
+        : "text-emerald-700 dark:text-emerald-300";
+  const Icon = tone === "emerald" ? CheckCircle2 : CircleDot;
 
   return (
     <Link
       href={href}
       className="min-w-0 rounded-lg bg-zinc-50 px-1 py-2 text-center transition hover:bg-zinc-100 dark:bg-zinc-950/70 dark:hover:bg-zinc-950"
-      title={`${label}: ${value}`}
+      title={
+        tone === "emerald"
+          ? `For confirmation: ${value}`
+          : `${label}: ${value}`
+      }
     >
       <Icon size={11} className={cn("mx-auto", toneClass)} aria-hidden />
       <p className={cn("mt-1 truncate text-[9px] font-bold uppercase tracking-wide", toneClass)}>

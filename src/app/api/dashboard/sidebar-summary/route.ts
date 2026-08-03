@@ -5,7 +5,10 @@ import { findSessionAgentId } from "@/lib/session-agent";
 import { isAgentOnDutyFromMergedDb, loadOnDutySnapshot } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
 import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import {
+  resolveAdminOnDutyCompanyFilter,
+  resolveStaffCompanyTeamId,
+} from "@/lib/staff-company-scope";
 import { withTtlCache } from "@/lib/ttl-cache";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +16,8 @@ export const dynamic = "force-dynamic";
 type SidebarSummary = {
   open: number;
   inProgress: number;
-  escalated: number;
+  /** FOR_CONFIRMATION + RESOLVED (awaiting requestor sign-off). */
+  forConfirmation: number;
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
   /** Personnel only: whether this user is clocked in today. */
@@ -42,11 +46,16 @@ async function buildSidebarSummary(input: {
   const countStatus = (status: TicketStatus) =>
     prisma.ticket.count({ where: { status, ...ticketScope } });
 
+  const countForConfirmation = () =>
+    prisma.ticket.count({
+      where: { status: { in: ["FOR_CONFIRMATION", "RESOLVED"] }, ...ticketScope },
+    });
+
   if (isPersonnel) {
-    const [open, inProgress, escalated, selfOnDuty] = await Promise.all([
+    const [open, inProgress, forConfirmation, selfOnDuty] = await Promise.all([
       countStatus("OPEN"),
       countStatus("IN_PROGRESS"),
-      countStatus("ESCALATED"),
+      countForConfirmation(),
       personnelAgent?.id
         ? isAgentOnDutyFromMergedDb(personnelAgent.id)
         : Promise.resolve(false),
@@ -54,24 +63,31 @@ async function buildSidebarSummary(input: {
     return {
       open,
       inProgress,
-      escalated,
+      forConfirmation,
       onDutyCount: selfOnDuty ? 1 : 0,
       onDutyPreview: [],
       selfOnDuty,
     };
   }
 
-  const [open, inProgress, escalated, onDuty] = await Promise.all([
+  const onDutyCompanyFilter = await resolveAdminOnDutyCompanyFilter(input.role, input.email);
+
+  const [open, inProgress, forConfirmation, onDuty] = await Promise.all([
     countStatus("OPEN"),
     countStatus("IN_PROGRESS"),
-    countStatus("ESCALATED"),
-    loadOnDutySnapshot({ page: 1, pageSize: 4, onDutyOnly: true }),
+    countForConfirmation(),
+    loadOnDutySnapshot({
+      page: 1,
+      pageSize: 4,
+      onDutyOnly: true,
+      ...(onDutyCompanyFilter ? { companyFilter: onDutyCompanyFilter } : {}),
+    }),
   ]);
 
   return {
     open,
     inProgress,
-    escalated,
+    forConfirmation,
     onDutyCount: onDuty.onDutyCount,
     onDutyPreview: onDuty.agents.slice(0, 4).map((a) => ({
       id: a.id,
@@ -90,7 +106,7 @@ export async function GET() {
   const email = session.user.email ?? "";
   const cacheKey = `sidebar-summary:${role}:${email.toLowerCase()}`;
 
-  const result = await withTtlCache(cacheKey, 15_000, () =>
+  const result = await withTtlCache(cacheKey, 30_000, () =>
     buildSidebarSummary({
       role,
       email: session.user.email,

@@ -5,6 +5,7 @@ export const MODE_OF_PAYMENT_OPTIONS = [
   "For Manager's Check Issuance",
   "Online direct to Payee's Bank Account #",
   "Payroll",
+  "Auto Debit",
 ] as const;
 
 export const DELIVERY_OF_CHECK_OPTIONS = [
@@ -103,6 +104,16 @@ export function extractPaymentAccountTitle(description: string | null | undefine
   const match = /^Account title:\s*(.+)$/im.exec(raw);
   const value = match?.[1]?.trim();
   return value || null;
+}
+
+/** Ticket-board preview for RFP: In payment of + Amount only. */
+export function extractPaymentBoardPreview(description: string | null | undefined): string | null {
+  const parsed = parsePaymentRequestDescription(description);
+  if (!parsed) return null;
+  const of = parsed.inPaymentOf.trim();
+  const amount = formatPaymentPeso(parsed.amount) || parsed.amount.trim();
+  if (of && amount) return `${of} · ${amount}`;
+  return of || amount || null;
 }
 
 function fieldFromDescription(description: string, label: string): string | null {

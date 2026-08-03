@@ -184,16 +184,29 @@ export const authOptions: NextAuthOptions = {
               });
             } catch (e) {
               console.error("ensurePortalFromMergedUser failed", e);
-              // Password already verified — allow login via an existing portal row
-              // so auth unique-constraint races never lock users out.
-              const fallback =
-                (await findPortalByLogin(loginId)) ??
-                (merged.email ? await findPortalByEmailOnly(merged.email) : null) ??
-                (merged.username ? await findPortalByLogin(merged.username) : null);
-              if (fallback && fallback.accountStatus !== "LEGACY_CONFLICT") {
-                return sessionFromPortal(fallback);
+              // Retry once (create races), then fall back to an existing portal so
+              // verified HRIS passwords never lock users out.
+              try {
+                const portal = await ensurePortalFromMergedUser(merged);
+                return sessionFromPortal({
+                  id: portal.id,
+                  email: portal.email,
+                  name: portal.name,
+                  role: portal.role,
+                  companyId: portal.companyId,
+                  companyName: portal.company?.name ?? null,
+                  customerOrgRole: portal.customerOrgRole,
+                });
+              } catch {
+                const fallback =
+                  (await findPortalByLogin(loginId)) ??
+                  (merged.email ? await findPortalByEmailOnly(merged.email) : null) ??
+                  (merged.username ? await findPortalByLogin(merged.username) : null);
+                if (fallback && fallback.accountStatus !== "LEGACY_CONFLICT") {
+                  return sessionFromPortal(fallback);
+                }
+                return null;
               }
-              return null;
             }
           }
 
@@ -240,16 +253,27 @@ export const authOptions: NextAuthOptions = {
               });
             } catch (e) {
               console.error("ensurePortalFromMergedUser failed", e);
-              // Password already verified — allow login via an existing portal row
-              // so auth unique-constraint races never lock users out.
-              const fallback =
-                (await findPortalByLogin(loginId)) ??
-                (merged.email ? await findPortalByEmailOnly(merged.email) : null) ??
-                (merged.username ? await findPortalByLogin(merged.username) : null);
-              if (fallback && fallback.accountStatus !== "LEGACY_CONFLICT") {
-                return sessionFromPortal(fallback);
+              try {
+                const portal = await ensurePortalFromMergedUser(merged);
+                return sessionFromPortal({
+                  id: portal.id,
+                  email: portal.email,
+                  name: portal.name,
+                  role: portal.role,
+                  companyId: portal.companyId,
+                  companyName: portal.company?.name ?? null,
+                  customerOrgRole: portal.customerOrgRole,
+                });
+              } catch {
+                const fallback =
+                  (await findPortalByLogin(loginId)) ??
+                  (merged.email ? await findPortalByEmailOnly(merged.email) : null) ??
+                  (merged.username ? await findPortalByLogin(merged.username) : null);
+                if (fallback && fallback.accountStatus !== "LEGACY_CONFLICT") {
+                  return sessionFromPortal(fallback);
+                }
+                return null;
               }
-              return null;
             }
           }
         }

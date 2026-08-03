@@ -109,6 +109,14 @@ export function fundTransferAssigneeIdForStep(
   return meta[fundTransferAssigneeFieldForStep(step)];
 }
 
+/** Board assignee who should own the request for the current procedural step. */
+export function currentFundTransferStepBoardAssigneeId(
+  meta: FundTransferApprovalMeta,
+): string | null {
+  if (meta.proceduralStep === "DONE") return null;
+  return fundTransferAssigneeIdForStep(meta, meta.proceduralStep);
+}
+
 export function nextFundTransferApprovalStep(
   step: FundTransferProceduralStep,
 ): FundTransferProceduralStep {

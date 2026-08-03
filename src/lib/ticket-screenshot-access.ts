@@ -1,12 +1,19 @@
 import type { Session } from "next-auth";
 import { customerCanAccessTicket } from "@/lib/access";
-import { findSessionAgentId } from "@/lib/session-agent";
-import { adminOutsideCompanyScope } from "@/lib/ticket-staff-access";
+import { findSessionAgentWithTeam } from "@/lib/session-agent";
+import { prisma } from "@/lib/prisma";
+import {
+  adminOutsideCompanyScope,
+  isCurrentProceduralStepAssignee,
+  isSessionAssigneeOfTicket,
+  personnelForbiddenForTicket,
+} from "@/lib/ticket-staff-access";
 
-/** Aligns with GET /api/tickets/[id]: customer owns; Personnel assignee; Admin company-scoped; SuperAdmin all. */
+/** Aligns with GET /api/tickets/[id]: requestor, assignee/step, Admin company scope, SuperAdmin. */
 export async function canAccessTicketScreenshot(
   session: Session | null,
-  ticket: {
+  ticketRef: {
+    id: string;
     contactEmail: string;
     requestorEmail: string | null;
     assignedAgentId: string | null;
@@ -15,23 +22,69 @@ export async function canAccessTicketScreenshot(
 ): Promise<boolean> {
   if (!session?.user) return false;
   const role = session.user.role;
-  if (role === "Customer") {
-    return customerCanAccessTicket(
+
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketRef.id },
+    select: {
+      teamId: true,
+      assignedAgentId: true,
+      contactEmail: true,
+      requestorEmail: true,
+      paymentApprovalMeta: true,
+      itemRequisitionApprovalMeta: true,
+      fundTransferApprovalMeta: true,
+      assignedAgent: { select: { email: true, teamId: true } },
+    },
+  });
+  if (!ticket) return false;
+
+  if (
+    customerCanAccessTicket(
       { contactEmail: ticket.contactEmail, requestorEmail: ticket.requestorEmail },
       session.user.email,
-    );
+    )
+  ) {
+    return true;
   }
-  if (role === "Personnel") {
-    const operator = await findSessionAgentId({ email: session.user.email, name: session.user.name });
-    return !!operator && operator.id === ticket.assignedAgentId;
-  }
+
+  if (role === "Customer") return false;
   if (role === "SuperAdmin") return true;
+
+  const operator = await findSessionAgentWithTeam({
+    email: session.user.email,
+    name: session.user.name,
+  });
+
+  if (
+    await isSessionAssigneeOfTicket({
+      operatorId: operator?.id,
+      sessionEmail: session.user.email,
+      ticket,
+    })
+  ) {
+    return true;
+  }
+
+  if (isCurrentProceduralStepAssignee(ticket, operator?.id)) {
+    return true;
+  }
+
+  if (role === "Personnel") {
+    return !(await personnelForbiddenForTicket({
+      email: session.user.email,
+      operatorId: operator?.id,
+      ticket,
+    }));
+  }
+
   if (role === "Admin") {
     return !(await adminOutsideCompanyScope({
       role,
       email: session.user.email,
       ticketTeamId: ticket.teamId,
+      ticket,
     }));
   }
+
   return false;
 }

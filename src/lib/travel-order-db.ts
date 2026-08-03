@@ -17,6 +17,32 @@ import {
   type TravelOrderAgentRef,
 } from "@/lib/travel-order";
 
+/** Missing/partial travel-order schema must not take down Task Board or nav badges. */
+function isMissingTravelOrderSchemaError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /travel_order/i.test(message) &&
+    (/does not exist|undefined_table|undefined_column|42P01|42703/i.test(message) ||
+      /Raw query failed/i.test(message))
+  );
+}
+
+async function withTravelOrderFallback<T>(
+  label: string,
+  fallback: T,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (isMissingTravelOrderSchemaError(error)) {
+      console.warn(`[travel-order-db] ${label}: travel order schema unavailable; returning empty.`, error);
+      return fallback;
+    }
+    throw error;
+  }
+}
+
 export type TravelOrderLocationRow = {
   id: string;
   travelOrderId: string;
@@ -656,6 +682,7 @@ export async function listPendingTravelApprovalsForAgent(
   const id = typeof agentId === "string" ? agentId.trim() : "";
   if (!id) return [];
 
+  return withTravelOrderFallback("listPendingTravelApprovalsForAgent", [], async () => {
   const orders = await prisma.$queryRaw<RawTravelOrder[]>`
     SELECT
       t.id,
@@ -722,6 +749,7 @@ export async function listPendingTravelApprovalsForAgent(
   return hydrated.filter((order) =>
     canApproveTravelOrderNow(id, order, { canAssignWork: false }),
   );
+  });
 }
 
 export async function countPendingTravelApprovalsForAgent(agentId: string): Promise<number> {
@@ -1021,12 +1049,14 @@ export async function updateTravelOrderLocationRemarks(input: {
 /** KPI ids that have at least one travel order (Field Assignment cards). */
 export async function kpiIdsWithTravelOrders(kpiIds: string[]): Promise<Set<string>> {
   if (kpiIds.length === 0) return new Set();
-  const rows = await prisma.$queryRaw<Array<{ kpi_maintenance_id: string }>>`
-    SELECT DISTINCT kpi_maintenance_id
-    FROM travel_orders
-    WHERE kpi_maintenance_id IN (${Prisma.join(kpiIds)})
-  `;
-  return new Set(rows.map((r) => r.kpi_maintenance_id));
+  return withTravelOrderFallback("kpiIdsWithTravelOrders", new Set<string>(), async () => {
+    const rows = await prisma.$queryRaw<Array<{ kpi_maintenance_id: string }>>`
+      SELECT DISTINCT kpi_maintenance_id
+      FROM travel_orders
+      WHERE kpi_maintenance_id IN (${Prisma.join(kpiIds)})
+    `;
+    return new Set(rows.map((r) => r.kpi_maintenance_id));
+  });
 }
 
 /**
@@ -1038,13 +1068,19 @@ export async function kpiIdsWhereAgentIsTravelOrderTraveler(
 ): Promise<Set<string>> {
   const id = typeof agentId === "string" ? agentId.trim() : "";
   if (!id) return new Set();
-  const rows = await prisma.$queryRaw<Array<{ kpi_maintenance_id: string }>>`
-    SELECT DISTINCT kpi_maintenance_id
-    FROM travel_orders
-    WHERE created_by_agent_id = ${id}
-       OR traveler_agent_ids @> ${JSON.stringify([id])}::jsonb
-  `;
-  return new Set(rows.map((r) => r.kpi_maintenance_id));
+  return withTravelOrderFallback(
+    "kpiIdsWhereAgentIsTravelOrderTraveler",
+    new Set<string>(),
+    async () => {
+      const rows = await prisma.$queryRaw<Array<{ kpi_maintenance_id: string }>>`
+        SELECT DISTINCT kpi_maintenance_id
+        FROM travel_orders
+        WHERE created_by_agent_id = ${id}
+           OR traveler_agent_ids @> ${JSON.stringify([id])}::jsonb
+      `;
+      return new Set(rows.map((r) => r.kpi_maintenance_id));
+    },
+  );
 }
 
 export type TravelOrderBoardSummary = {
@@ -1061,6 +1097,7 @@ export async function travelOrderBoardSummariesByKpiIds(
   const out = new Map<string, TravelOrderBoardSummary>();
   if (kpiIds.length === 0) return out;
 
+  return withTravelOrderFallback("travelOrderBoardSummariesByKpiIds", out, async () => {
   const rows = await prisma.$queryRaw<
     Array<{
       kpi_maintenance_id: string;
@@ -1111,6 +1148,7 @@ export async function travelOrderBoardSummariesByKpiIds(
     });
   }
   return out;
+  });
 }
 
 export function serializeTravelOrder(row: TravelOrderRow) {

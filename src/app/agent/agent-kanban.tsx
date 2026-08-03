@@ -11,7 +11,7 @@ import type { TicketStatus } from "@prisma/client/primary";
 import { cn } from "@/lib/cn";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { requestTypeAcronym, requestTypeLabel } from "@/lib/request-types";
-import { extractPaymentAccountTitle } from "@/lib/request-for-payment";
+import { extractPaymentBoardPreview } from "@/lib/request-for-payment";
 import { parseItemRequisitionDescription } from "@/lib/item-requisition";
 import { extractFundTransferPreview } from "@/lib/fund-transfer-request";
 import { extractJobOrderPreview } from "@/lib/job-order";
@@ -98,8 +98,8 @@ function statusBadgeLabel(status: TicketStatus) {
 
 function kanbanCardPreview(ticket: KanbanTicket): string {
   if (ticket.requestType === "REQUEST_FOR_PAYMENT") {
-    const accountTitle = extractPaymentAccountTitle(ticket.description);
-    if (accountTitle) return accountTitle;
+    const preview = extractPaymentBoardPreview(ticket.description);
+    if (preview) return preview;
   }
   if (ticket.requestType === "ITEM_REQUISITION_SLIP") {
     const purpose = parseItemRequisitionDescription(ticket.description)?.purposeOfRequest?.trim();

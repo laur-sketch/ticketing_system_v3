@@ -147,6 +147,8 @@ export default function InsightsPage() {
   const [personnelTicketMetrics, setPersonnelTicketMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelRfpAccountingMetrics, setPersonnelRfpAccountingMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelRfpFinanceMetrics, setPersonnelRfpFinanceMetrics] = useState<PersonnelTicketMetric[]>([]);
+  const [personnelIrsCanvassMetrics, setPersonnelIrsCanvassMetrics] = useState<PersonnelTicketMetric[]>([]);
+  const [personnelFtrPreparedMetrics, setPersonnelFtrPreparedMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelDelayPenalties, setPersonnelDelayPenalties] = useState<PersonnelDelayPenaltyRow[]>([]);
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
@@ -204,6 +206,8 @@ export default function InsightsPage() {
         setPersonnelTicketMetrics([]);
         setPersonnelRfpAccountingMetrics([]);
         setPersonnelRfpFinanceMetrics([]);
+        setPersonnelIrsCanvassMetrics([]);
+        setPersonnelFtrPreparedMetrics([]);
         setPersonnelDelayPenalties([]);
         return;
       }
@@ -214,6 +218,8 @@ export default function InsightsPage() {
         personnelTicketMetrics: PersonnelTicketMetric[];
         personnelRfpAccountingMetrics?: PersonnelTicketMetric[];
         personnelRfpFinanceMetrics?: PersonnelTicketMetric[];
+        personnelIrsCanvassMetrics?: PersonnelTicketMetric[];
+        personnelFtrPreparedMetrics?: PersonnelTicketMetric[];
         personnelDelayPenalties?: PersonnelDelayPenaltyRow[];
       };
       setTaskMetricsHelpdesk(json.taskMetricsHelpdesk);
@@ -222,6 +228,8 @@ export default function InsightsPage() {
       setPersonnelTicketMetrics(json.personnelTicketMetrics ?? []);
       setPersonnelRfpAccountingMetrics(json.personnelRfpAccountingMetrics ?? []);
       setPersonnelRfpFinanceMetrics(json.personnelRfpFinanceMetrics ?? []);
+      setPersonnelIrsCanvassMetrics(json.personnelIrsCanvassMetrics ?? []);
+      setPersonnelFtrPreparedMetrics(json.personnelFtrPreparedMetrics ?? []);
       setPersonnelDelayPenalties(json.personnelDelayPenalties ?? []);
     } finally {
       setTaskMetricsLoading(false);
@@ -418,6 +426,8 @@ export default function InsightsPage() {
             personnelTicketMetrics={personnelTicketMetrics}
             personnelRfpAccountingMetrics={personnelRfpAccountingMetrics}
             personnelRfpFinanceMetrics={personnelRfpFinanceMetrics}
+            personnelIrsCanvassMetrics={personnelIrsCanvassMetrics}
+            personnelFtrPreparedMetrics={personnelFtrPreparedMetrics}
             personnelDelayPenalties={personnelDelayPenalties}
             helpdeskTickets={taskMetricsHelpdesk}
             userSupportTickets={taskMetricsUserSupport}
@@ -711,6 +721,8 @@ function TaskMetricsPanel({
   personnelTicketMetrics,
   personnelRfpAccountingMetrics,
   personnelRfpFinanceMetrics,
+  personnelIrsCanvassMetrics,
+  personnelFtrPreparedMetrics,
   personnelDelayPenalties,
   helpdeskTickets,
   userSupportTickets,
@@ -737,6 +749,8 @@ function TaskMetricsPanel({
   personnelTicketMetrics: PersonnelTicketMetric[];
   personnelRfpAccountingMetrics: PersonnelTicketMetric[];
   personnelRfpFinanceMetrics: PersonnelTicketMetric[];
+  personnelIrsCanvassMetrics: PersonnelTicketMetric[];
+  personnelFtrPreparedMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
@@ -775,8 +789,19 @@ function TaskMetricsPanel({
     selectedCompany === ""
       ? null
       : companies.find((company) => company.id === selectedCompany)?.name ?? null;
+  const lockedCompanyName =
+    companies.find((company) => company.id === selectedCompany)?.name ??
+    companies[0]?.name ??
+    "No assigned company";
   const showPersonnelCompanyFilter = metricsViewMode === "personnel";
   const showCompanyScopeFilter = metricsViewMode === "company";
+
+  // Company-scoped Admin: never leave company selection empty (Personnel tab used to clear it).
+  useEffect(() => {
+    if (!lockCompanySelection) return;
+    if (selectedCompany && companies.some((c) => c.id === selectedCompany)) return;
+    if (companies[0]?.id) onSelectedCompanyChange(companies[0].id);
+  }, [lockCompanySelection, selectedCompany, companies, onSelectedCompanyChange]);
 
   // Personnel view reads the stored KPI from mergedatabase-demo (merged_users +
   // merged_user_efficiency_breakdowns) so stored values can be verified.
@@ -917,6 +942,46 @@ function TaskMetricsPanel({
       });
     }
 
+    const liveIrsCanvassByName = new Map<string, PersonnelTicketMetric>();
+    for (const metric of personnelIrsCanvassMetrics) {
+      const key = normalizePersonName(metric.name);
+      if (!key) continue;
+      const existing = liveIrsCanvassByName.get(key);
+      if (!existing) {
+        liveIrsCanvassByName.set(key, { ...metric });
+        continue;
+      }
+      const closed = existing.closed + metric.closed;
+      const pending = existing.pending + metric.pending;
+      const total = closed + pending;
+      liveIrsCanvassByName.set(key, {
+        ...existing,
+        closed,
+        pending,
+        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+      });
+    }
+
+    const liveFtrPreparedByName = new Map<string, PersonnelTicketMetric>();
+    for (const metric of personnelFtrPreparedMetrics) {
+      const key = normalizePersonName(metric.name);
+      if (!key) continue;
+      const existing = liveFtrPreparedByName.get(key);
+      if (!existing) {
+        liveFtrPreparedByName.set(key, { ...metric });
+        continue;
+      }
+      const closed = existing.closed + metric.closed;
+      const pending = existing.pending + metric.pending;
+      const total = closed + pending;
+      liveFtrPreparedByName.set(key, {
+        ...existing,
+        closed,
+        pending,
+        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+      });
+    }
+
     const cards: PersonnelCombinedMetricCard[] = rows.map((row) => {
       const livePenalty =
         penaltyById.get(row.sourceUserId) ??
@@ -947,6 +1012,8 @@ function TaskMetricsPanel({
 
       const rfpAccounting = liveRfpAccountingByName.get(normalizePersonName(row.name)) ?? null;
       const rfpFinance = liveRfpFinanceByName.get(normalizePersonName(row.name)) ?? null;
+      const irsCanvass = liveIrsCanvassByName.get(normalizePersonName(row.name)) ?? null;
+      const ftrPrepared = liveFtrPreparedByName.get(normalizePersonName(row.name)) ?? null;
 
       return {
         id: row.sourceUserId,
@@ -972,6 +1039,20 @@ function TaskMetricsPanel({
               closed: rfpFinance.closed,
               pending: rfpFinance.pending,
               efficiency: Math.round(rfpFinance.efficiency),
+            }
+          : null,
+        irsCanvass: irsCanvass
+          ? {
+              closed: irsCanvass.closed,
+              pending: irsCanvass.pending,
+              efficiency: Math.round(irsCanvass.efficiency),
+            }
+          : null,
+        ftrPrepared: ftrPrepared
+          ? {
+              closed: ftrPrepared.closed,
+              pending: ftrPrepared.pending,
+              efficiency: Math.round(ftrPrepared.efficiency),
             }
           : null,
         tasks:
@@ -1001,6 +1082,8 @@ function TaskMetricsPanel({
         tickets: null,
         rfpAccounting: null,
         rfpFinance: null,
+        irsCanvass: null,
+        ftrPrepared: null,
         tasks: null,
       };
       cards.push(card);
@@ -1036,6 +1119,24 @@ function TaskMetricsPanel({
         efficiency: Math.round(live.efficiency),
       };
     }
+    for (const live of liveIrsCanvassByName.values()) {
+      const card = ensureCard(live.name, live.id);
+      if (!card) continue;
+      card.irsCanvass = {
+        closed: live.closed,
+        pending: live.pending,
+        efficiency: Math.round(live.efficiency),
+      };
+    }
+    for (const live of liveFtrPreparedByName.values()) {
+      const card = ensureCard(live.name, live.id);
+      if (!card) continue;
+      card.ftrPrepared = {
+        closed: live.closed,
+        pending: live.pending,
+        efficiency: Math.round(live.efficiency),
+      };
+    }
 
     return cards;
   }, [
@@ -1045,6 +1146,8 @@ function TaskMetricsPanel({
     personnelTicketMetrics,
     personnelRfpAccountingMetrics,
     personnelRfpFinanceMetrics,
+    personnelIrsCanvassMetrics,
+    personnelFtrPreparedMetrics,
   ]);
 
   return (
@@ -1066,8 +1169,17 @@ function TaskMetricsPanel({
                 type="button"
                 onClick={() => {
                   onMetricsViewModeChange(option.id);
-                  if (option.id === "personnel" && allowAllCompaniesInPersonnel) {
+                  if (option.id === "personnel" && allowAllCompaniesInPersonnel && !lockCompanySelection) {
+                    // SuperAdmin personnel: default to all companies.
                     onSelectedCompanyChange("");
+                  } else if (
+                    option.id === "personnel" &&
+                    lockCompanySelection &&
+                    !selectedCompany &&
+                    companies[0]
+                  ) {
+                    // Company-scoped Admin: keep/restore their assigned company.
+                    onSelectedCompanyChange(companies[0].id);
                   } else if (option.id === "company" && !selectedCompany && companies[0]) {
                     onSelectedCompanyChange(companies[0].id);
                   }
@@ -1095,10 +1207,7 @@ function TaskMetricsPanel({
           >
             {showCompanyScopeFilter ? (
               lockCompanySelection ? (
-                <CompanyValueLabel
-                  label="Company"
-                  value={companies.find((company) => company.id === selectedCompany)?.name ?? "No assigned company"}
-                />
+                <CompanyValueLabel label="Company" value={lockedCompanyName} />
               ) : (
                 <label className="flex min-w-0 flex-col gap-1.5">
                   <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
@@ -1120,10 +1229,7 @@ function TaskMetricsPanel({
             ) : null}
             {showPersonnelCompanyFilter ? (
               lockCompanySelection ? (
-                <CompanyValueLabel
-                  label="Company"
-                  value={companies.find((company) => company.id === selectedCompany)?.name ?? "No assigned company"}
-                />
+                <CompanyValueLabel label="Company" value={lockedCompanyName} />
               ) : (
                 <label className="flex min-w-0 flex-col gap-1.5">
                   <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">

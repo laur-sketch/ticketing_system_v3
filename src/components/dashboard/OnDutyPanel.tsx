@@ -16,6 +16,8 @@ type Props = {
   pageSize?: number;
   variant?: "list" | "cards";
   showCompanyFilter?: boolean;
+  /** When set, always filter to this company (Admin company scope). */
+  lockedCompanyFilter?: string | null;
   className?: string;
 };
 
@@ -39,8 +41,10 @@ export function OnDutyPanel({
   pageSize = 6,
   variant = "list",
   showCompanyFilter = false,
+  lockedCompanyFilter = null,
   className,
 }: Props) {
+  const lockedCompany = lockedCompanyFilter?.trim() || "";
   const [agents, setAgents] = useState<OnDutyAgentSnapshot[]>(initialAgents);
   const [page, setPage] = useState(initialPage);
   const [pages, setPages] = useState(totalPages);
@@ -49,11 +53,13 @@ export function OnDutyPanel({
     initialOnDutyCount ?? initialAgents.filter((a) => isAgentOnDuty(a)).length,
   );
   const [companies, setCompanies] = useState<string[]>(initialCompanies);
-  const [companyFilter, setCompanyFilter] = useState("");
+  const [companyFilter, setCompanyFilter] = useState(lockedCompany);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const canPrev = page > 1;
   const canNext = page < pages;
+  const effectiveCompanyFilter = lockedCompany || companyFilter;
+  const showFilters = showCompanyFilter || Boolean(lockedCompany);
 
   useEffect(() => {
     const next = searchInput.trim();
@@ -75,10 +81,10 @@ export function OnDutyPanel({
       page: String(page),
       pageSize: String(pageSize),
     });
-    if (companyFilter) params.set("company", companyFilter);
+    if (effectiveCompanyFilter) params.set("company", effectiveCompanyFilter);
     if (searchQuery) params.set("q", searchQuery);
     return `/api/dashboard/on-duty?${params.toString()}`;
-  }, [page, pageSize, companyFilter, searchQuery]);
+  }, [page, pageSize, effectiveCompanyFilter, searchQuery]);
 
   useEffect(() => {
     let stopped = false;
@@ -127,7 +133,7 @@ export function OnDutyPanel({
     setPage(1);
   }
 
-  const filtersActive = Boolean(companyFilter || searchQuery);
+  const filtersActive = Boolean(effectiveCompanyFilter || searchQuery);
   const emptyMessage = filtersActive
     ? "No personnel match the current filters."
     : "No personnel linked from the merge database.";
@@ -162,24 +168,26 @@ export function OnDutyPanel({
         </div>
       </div>
 
-      {showCompanyFilter ? (
+      {showFilters ? (
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-            <label className="flex min-w-[12rem] flex-col gap-1">
-              <span className={authLabelClass}>Filter by company</span>
-              <select
-                value={companyFilter}
-                onChange={(e) => handleCompanyFilterChange(e.target.value)}
-                className={cn(authInputClass, "py-2 text-xs")}
-              >
-                <option value="">All companies</option>
-                {companies.map((company) => (
-                  <option key={company} value={company}>
-                    {company}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {showCompanyFilter && !lockedCompany ? (
+              <label className="flex min-w-[12rem] flex-col gap-1">
+                <span className={authLabelClass}>Filter by company</span>
+                <select
+                  value={companyFilter}
+                  onChange={(e) => handleCompanyFilterChange(e.target.value)}
+                  className={cn(authInputClass, "py-2 text-xs")}
+                >
+                  <option value="">All companies</option>
+                  {companies.map((company) => (
+                    <option key={company} value={company}>
+                      {company}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="flex min-w-[12rem] flex-1 flex-col gap-1 sm:max-w-xs">
               <span className={authLabelClass}>Search by name or email</span>
               <input
@@ -194,7 +202,11 @@ export function OnDutyPanel({
           </div>
           <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
             {filtersActive
-              ? `Showing ${agents.length} of ${total}${companyFilter ? ` in ${companyFilter}` : ""}`
+              ? `Showing ${agents.length} of ${total}${
+                  effectiveCompanyFilter && effectiveCompanyFilter !== "__none__"
+                    ? ` in ${effectiveCompanyFilter}`
+                    : ""
+                }`
               : `Showing ${agents.length} of ${total}`}
           </p>
         </div>

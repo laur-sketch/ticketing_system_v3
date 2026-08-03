@@ -10,7 +10,7 @@ import {
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
 import { logActivity } from "@/lib/ticket-actions";
 import { prisma } from "@/lib/prisma";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { addHours, getSlaPolicy } from "@/lib/sla";
@@ -32,8 +32,8 @@ import {
   formatPaymentRequestTitle,
   formatPaymentPeso,
   normalizePaymentAmountInput,
-  DELIVERY_OF_CHECK_ONLINE_DEPOSIT,
   MODE_OF_PAYMENT_CHECK,
+  paymentModeRequiresBankDetails,
 } from "@/lib/request-for-payment";
 import {
   formatItemRequisitionDescription,
@@ -41,10 +41,28 @@ import {
   parseRequisitionItemsPayload,
   validateItemRequisitionFields,
 } from "@/lib/item-requisition";
-import { paymentProceduralStatusLabel } from "@/lib/request-for-payment-approval";
-import { initPaymentApprovalMetaIfNeeded } from "@/lib/payment-approval-db";
-import { itemRequisitionProceduralStatusLabel } from "@/lib/item-requisition-approval";
-import { initItemRequisitionApprovalMetaIfNeeded } from "@/lib/item-requisition-approval-db";
+import {
+  applyPaymentApprovalAssignees,
+  currentPaymentStepBoardAssigneeId,
+  PAYMENT_APPROVAL_STEP_LABELS,
+  paymentProceduralStatusLabel,
+  type PaymentApprovalAssignees,
+  type PaymentApprovalStep,
+} from "@/lib/request-for-payment-approval";
+import {
+  initPaymentApprovalMetaIfNeeded,
+  savePaymentApprovalMeta,
+} from "@/lib/payment-approval-db";
+import {
+  applyItemRequisitionApprovalAssignees,
+  currentItemRequisitionStepBoardAssigneeId,
+  itemRequisitionProceduralStatusLabel,
+  type ItemRequisitionApprovalAssignees,
+} from "@/lib/item-requisition-approval";
+import {
+  initItemRequisitionApprovalMetaIfNeeded,
+  saveItemRequisitionApprovalMeta,
+} from "@/lib/item-requisition-approval-db";
 import {
   formatFundTransferRequestDescription,
   formatFundTransferRequestTitle,
@@ -56,10 +74,42 @@ import {
   parseJobOrderNatureList,
   validateJobOrderFields,
 } from "@/lib/job-order";
-import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
 import {
+  applyFundTransferApprovalAssignees,
+  currentFundTransferStepBoardAssigneeId,
+  fundTransferProceduralStatusLabel,
+  type FundTransferApprovalAssignees,
+} from "@/lib/fund-transfer-approval";
+import {
+  saveFundTransferApprovalMeta,
   stampFundTransferCreatorOnCreate,
 } from "@/lib/fund-transfer-approval-db";
+
+function pickAgentId(v: unknown): string | null {
+  if (v === null || v === "") return null;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function parseApprovalAssigneesPayload(raw: unknown): Record<string, string> | null {
+  if (raw == null) return null;
+  let obj: unknown = raw;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    const id = pickAgentId(value);
+    if (id) out[key] = id;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 const categories = new Set(Object.values(TicketCategory));
 const priorities = new Set(Object.values(TicketPriority));
@@ -200,6 +250,7 @@ export async function POST(req: Request) {
     let startDateRaw: string | undefined;
     let targetDateRaw: string | undefined;
     let expectedDurationRaw: string | undefined;
+    let approvalAssigneesRaw: unknown;
     let screenshotFiles: File[] | undefined;
 
     if (contentType.includes("multipart/form-data")) {
@@ -283,6 +334,8 @@ export async function POST(req: Request) {
       targetDateRaw = td != null ? String(td) : undefined;
       const ed = fd.get("expectedDuration");
       expectedDurationRaw = ed != null ? String(ed) : undefined;
+      const aa = fd.get("approvalAssignees");
+      approvalAssigneesRaw = aa != null ? String(aa) : undefined;
       const raw = fd.getAll("screenshots");
       screenshotFiles = raw.filter((x): x is File => x instanceof File && x.size > 0);
       const v = validateScreenshotFiles(screenshotFiles);
@@ -348,6 +401,19 @@ export async function POST(req: Request) {
       targetDateRaw = typeof body.targetDate === "string" ? body.targetDate : undefined;
       expectedDurationRaw =
         typeof body.expectedDuration === "string" ? body.expectedDuration : undefined;
+      approvalAssigneesRaw = body.approvalAssignees;
+    }
+
+    const intakeApprovalAssignees = parseApprovalAssigneesPayload(approvalAssigneesRaw);
+    const canSetIntakeApprovalAssignees =
+      session.user.role === "SuperAdmin" ||
+      session.user.role === "Admin" ||
+      session.user.role === "Personnel";
+    if (intakeApprovalAssignees && !canSetIntakeApprovalAssignees) {
+      return NextResponse.json(
+        { error: "Only Admin, SuperAdmin, or Personnel can set approval assignees on create." },
+        { status: 403 },
+      );
     }
 
     const accountEmail = (session.user.email || "").trim().toLowerCase();
@@ -407,6 +473,38 @@ export async function POST(req: Request) {
     }
     const requestType = parseRequestTypeId(requestTypeRaw);
 
+    if (
+      canSetIntakeApprovalAssignees &&
+      (requestType === "REQUEST_FOR_PAYMENT" || requestType === "FUND_TRANSFER_REQUEST")
+    ) {
+      const requiredByType: Record<string, Array<{ key: string; label: string }>> = {
+        REQUEST_FOR_PAYMENT: [
+          { key: "notedByAgentId", label: "Noted By" },
+          { key: "approvedByAgentId", label: "Approved By" },
+          { key: "accountingAgentId", label: "Approved By (Accounting)" },
+          { key: "financeAgentId", label: "Approved By (Finance)" },
+        ],
+        FUND_TRANSFER_REQUEST: [
+          { key: "recommendingApprovalAgentId", label: "Recommending Approval" },
+          { key: "approvedByAgentId", label: "Approved By" },
+        ],
+      };
+      const requiredRoles = requiredByType[requestType] ?? [];
+      const missing = requiredRoles.filter(
+        (role) => !pickAgentId(intakeApprovalAssignees?.[role.key]),
+      );
+      if (missing.length > 0) {
+        return NextResponse.json(
+          {
+            error: `${missing.map((m) => m.label).join(", ")} ${
+              missing.length === 1 ? "is" : "are"
+            } required.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Intake lock applies only to Issue/Concern tickets.
     if (requestType === "ISSUE_CONCERN_TICKET") {
       const blocking = await requestorHasIntakeBlockingTicket(identityEmails);
@@ -438,11 +536,11 @@ export async function POST(req: Request) {
     const deliveryOfCheck = (deliveryOfCheckRaw ?? "").trim();
     const bankNameAccountNumber = (bankNameAccountNumberRaw ?? "").trim();
     if (requestType === "REQUEST_FOR_PAYMENT") {
-      if (!payee || !inPaymentOf || !accountTitle || !amount || !modeOfPayment) {
+      if (!payee || !inPaymentOf || !amount || !modeOfPayment) {
         return NextResponse.json(
           {
             error:
-              "Payee, In payment of, Account title, Amount, and Mode of payment are required for a payment request.",
+              "Payee, In payment of, Amount, and Mode of payment are required for a payment request.",
           },
           { status: 400 },
         );
@@ -453,13 +551,12 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
-      if (
-        modeOfPayment === MODE_OF_PAYMENT_CHECK &&
-        deliveryOfCheck === DELIVERY_OF_CHECK_ONLINE_DEPOSIT &&
-        !bankNameAccountNumber
-      ) {
+      if (paymentModeRequiresBankDetails(modeOfPayment, deliveryOfCheck) && !bankNameAccountNumber) {
         return NextResponse.json(
-          { error: "Bank name / account number is required for Online Deposit." },
+          {
+            error:
+              "Bank name / account number is required for Online Deposit or Online direct to Payee's Bank Account #.",
+          },
           { status: 400 },
         );
       }
@@ -699,6 +796,105 @@ export async function POST(req: Request) {
       }
     }
 
+    if (intakeApprovalAssignees) {
+      const candidateIds = Object.values(intakeApprovalAssignees).filter(
+        (id, idx, arr) => arr.indexOf(id) === idx,
+      );
+      // Prepared By is not set from intake assignees UI.
+      const paymentScopedIds =
+        requestType === "REQUEST_FOR_PAYMENT"
+          ? [
+              pickAgentId(intakeApprovalAssignees.notedByAgentId),
+              pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+              pickAgentId(intakeApprovalAssignees.accountingAgentId),
+              pickAgentId(intakeApprovalAssignees.financeAgentId),
+            ].filter((v): v is string => Boolean(v))
+          : candidateIds;
+      const idsToValidate =
+        requestType === "REQUEST_FOR_PAYMENT" ? paymentScopedIds : candidateIds;
+      if (idsToValidate.length > 0) {
+        const found = await prisma.agent.findMany({
+          where: { id: { in: idsToValidate } },
+          select: { id: true },
+        });
+        if (found.length !== new Set(idsToValidate).size) {
+          return NextResponse.json(
+            { error: "One or more selected approval assignees were not found." },
+            { status: 400 },
+          );
+        }
+      }
+      if (requestType === "REQUEST_FOR_PAYMENT") {
+        const requestorCompanyId = await resolveStaffCompanyTeamId(session.user.email);
+        const sendToCompanyId = team?.id ?? null;
+        async function assertCompany(
+          agentId: string | null,
+          expectedCompanyId: string | null,
+          roleLabel: string,
+        ): Promise<NextResponse | null> {
+          if (!agentId) return null;
+          if (!expectedCompanyId) {
+            return NextResponse.json(
+              { error: `${roleLabel} cannot be set because the company scope is missing.` },
+              { status: 400 },
+            );
+          }
+          const agentCompanyId = await resolveAgentDesignatedCompanyId(agentId);
+          if (agentCompanyId !== expectedCompanyId) {
+            return NextResponse.json(
+              { error: `${roleLabel} must be someone from the correct company roster.` },
+              { status: 400 },
+            );
+          }
+          return null;
+        }
+        for (const check of [
+          await assertCompany(
+            pickAgentId(intakeApprovalAssignees.notedByAgentId),
+            requestorCompanyId,
+            "Noted By",
+          ),
+          await assertCompany(
+            pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+            sendToCompanyId,
+            "Approved By",
+          ),
+          await assertCompany(
+            pickAgentId(intakeApprovalAssignees.accountingAgentId),
+            sendToCompanyId,
+            "Approved By (Accounting)",
+          ),
+          await assertCompany(
+            pickAgentId(intakeApprovalAssignees.financeAgentId),
+            sendToCompanyId,
+            "Approved By (Finance)",
+          ),
+        ]) {
+          if (check) return check;
+        }
+        const roleEntries: Array<[PaymentApprovalStep, string | null]> = [
+          ["NOTED_BY", pickAgentId(intakeApprovalAssignees.notedByAgentId)],
+          ["APPROVED_BY", pickAgentId(intakeApprovalAssignees.approvedByAgentId)],
+          ["APPROVED_BY_ACCOUNTING", pickAgentId(intakeApprovalAssignees.accountingAgentId)],
+          ["APPROVED_BY_FINANCE", pickAgentId(intakeApprovalAssignees.financeAgentId)],
+        ];
+        const seen = new Map<string, PaymentApprovalStep>();
+        for (const [step, agentId] of roleEntries) {
+          if (!agentId) continue;
+          const prior = seen.get(agentId);
+          if (prior) {
+            return NextResponse.json(
+              {
+                error: `Each person may only approve once. The same user is set for both ${PAYMENT_APPROVAL_STEP_LABELS[prior]} and ${PAYMENT_APPROVAL_STEP_LABELS[step]}.`,
+              },
+              { status: 400 },
+            );
+          }
+          seen.set(agentId, step);
+        }
+      }
+    }
+
     const ticketNumber = await nextTicketNumber();
 
     const createData: Prisma.TicketCreateInput = {
@@ -742,7 +938,34 @@ export async function POST(req: Request) {
     );
     await logActivity(ticket.id, "USER", "Request type", requestTypeLabel(requestType));
     if (requestType === "REQUEST_FOR_PAYMENT") {
-      const meta = await initPaymentApprovalMetaIfNeeded(ticket.id);
+      let meta = await initPaymentApprovalMetaIfNeeded(ticket.id);
+      if (intakeApprovalAssignees) {
+        const nextAssignees: Partial<PaymentApprovalAssignees> = {
+          notedByAgentId: pickAgentId(intakeApprovalAssignees.notedByAgentId),
+          approvedByAgentId: pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+          accountingAgentId: pickAgentId(intakeApprovalAssignees.accountingAgentId),
+          financeAgentId: pickAgentId(intakeApprovalAssignees.financeAgentId),
+        };
+        meta = applyPaymentApprovalAssignees(meta, nextAssignees);
+        await savePaymentApprovalMeta(ticket.id, meta);
+        const boardAssigneeId = currentPaymentStepBoardAssigneeId(meta);
+        if (boardAssigneeId) {
+          await prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              assignedAgent: { connect: { id: boardAssigneeId } },
+              status: "IN_PROGRESS",
+              resolvedAt: null,
+            },
+          });
+        }
+        await logActivity(
+          ticket.id,
+          "AGENT",
+          "Payment approval assignees set at intake",
+          "Procedural roles assigned when the request was created.",
+        );
+      }
       await logActivity(
         ticket.id,
         "SYSTEM",
@@ -751,7 +974,45 @@ export async function POST(req: Request) {
       );
     }
     if (requestType === "ITEM_REQUISITION_SLIP") {
-      const meta = await initItemRequisitionApprovalMetaIfNeeded(ticket.id);
+      let meta = await initItemRequisitionApprovalMetaIfNeeded(ticket.id);
+      if (intakeApprovalAssignees) {
+        const nextAssignees: Partial<ItemRequisitionApprovalAssignees> = {
+          canvassedByAgentId: pickAgentId(intakeApprovalAssignees.canvassedByAgentId),
+          approvedByAgentId: pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+        };
+        const agentIds = Object.values(nextAssignees).filter((v): v is string => Boolean(v));
+        if (agentIds.length > 0) {
+          const found = await prisma.agent.findMany({
+            where: { id: { in: agentIds } },
+            select: { id: true },
+          });
+          if (found.length !== new Set(agentIds).size) {
+            return NextResponse.json(
+              { error: "One or more selected item requisition assignees were not found." },
+              { status: 400 },
+            );
+          }
+        }
+        meta = applyItemRequisitionApprovalAssignees(meta, nextAssignees);
+        await saveItemRequisitionApprovalMeta(ticket.id, meta);
+        const boardAssigneeId = currentItemRequisitionStepBoardAssigneeId(meta);
+        if (boardAssigneeId) {
+          await prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              assignedAgent: { connect: { id: boardAssigneeId } },
+              status: "IN_PROGRESS",
+              resolvedAt: null,
+            },
+          });
+        }
+        await logActivity(
+          ticket.id,
+          "AGENT",
+          "Item requisition approval assignees set at intake",
+          "Procedural roles assigned when the request was created.",
+        );
+      }
       await logActivity(
         ticket.id,
         "SYSTEM",
@@ -761,12 +1022,52 @@ export async function POST(req: Request) {
       );
     }
     if (requestType === "FUND_TRANSFER_REQUEST") {
-      const meta = await stampFundTransferCreatorOnCreate({
+      let meta = await stampFundTransferCreatorOnCreate({
         ticketId: ticket.id,
         email: session.user.email ?? effectiveRequestorEmail ?? effectiveContactEmail,
         name: session.user.name ?? effectiveName,
         teamId: team?.id ?? null,
       });
+      if (intakeApprovalAssignees) {
+        const nextAssignees: Partial<FundTransferApprovalAssignees> = {
+          recommendingApprovalAgentId: pickAgentId(
+            intakeApprovalAssignees.recommendingApprovalAgentId,
+          ),
+          approvedByAgentId: pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+        };
+        const agentIds = Object.values(nextAssignees).filter((v): v is string => Boolean(v));
+        if (agentIds.length > 0) {
+          const found = await prisma.agent.findMany({
+            where: { id: { in: agentIds } },
+            select: { id: true },
+          });
+          if (found.length !== new Set(agentIds).size) {
+            return NextResponse.json(
+              { error: "One or more selected fund transfer assignees were not found." },
+              { status: 400 },
+            );
+          }
+        }
+        meta = applyFundTransferApprovalAssignees(meta, nextAssignees);
+        await saveFundTransferApprovalMeta(ticket.id, meta);
+        const boardAssigneeId = currentFundTransferStepBoardAssigneeId(meta);
+        if (boardAssigneeId) {
+          await prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              assignedAgent: { connect: { id: boardAssigneeId } },
+              status: "IN_PROGRESS",
+              resolvedAt: null,
+            },
+          });
+        }
+        await logActivity(
+          ticket.id,
+          "AGENT",
+          "Fund transfer approval assignees set at intake",
+          "Procedural roles assigned when the request was created.",
+        );
+      }
       await logActivity(
         ticket.id,
         "SYSTEM",
@@ -828,7 +1129,9 @@ export async function POST(req: Request) {
     if (requestType === "REQUEST_FOR_PAYMENT") {
       await logActivity(ticket.id, "USER", "Payee", payee);
       await logActivity(ticket.id, "USER", "In payment of", inPaymentOf);
-      await logActivity(ticket.id, "USER", "Account title", accountTitle);
+      if (accountTitle) {
+        await logActivity(ticket.id, "USER", "Account title", accountTitle);
+      }
       await logActivity(
         ticket.id,
         "USER",
