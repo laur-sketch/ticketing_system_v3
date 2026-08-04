@@ -28,8 +28,10 @@ import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import {
   adminOutsideCompanyScope,
+  isAcaBoardVisibleAssignee,
   isCurrentAcaStepAssignee,
   isCurrentPaymentStepAssignee,
+  isSessionAssigneeOfTicket,
   isTicketAssignee,
   personnelForbiddenForTicket,
 } from "@/lib/ticket-staff-access";
@@ -110,6 +112,7 @@ import {
   saveJobOrderApprovalMeta,
 } from "@/lib/job-order-approval-db";
 import {
+  acaLevelRequiresFeedback,
   acaProceduralStatusLabel,
   canCompleteAcaApprovalStep,
   completeAcaApprovalStep,
@@ -225,6 +228,10 @@ export async function GET(
     },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const operator = await findSessionAgentWithTeam({
+    email: session.user.email,
+    name: session.user.name,
+  });
   if (
     session.user.role === "Customer" &&
     !customerCanAccessTicket(
@@ -234,10 +241,6 @@ export async function GET(
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const operator = await findSessionAgentWithTeam({
-    email: session.user.email,
-    name: session.user.name,
-  });
   if (session.user.role === "Personnel") {
     if (
       await personnelForbiddenForTicket({
@@ -256,7 +259,7 @@ export async function GET(
       ticket,
     }) ||
     isCurrentPaymentStepAssignee(ticket, operator?.id) ||
-    isCurrentAcaStepAssignee(ticket, operator?.id);
+    isAcaBoardVisibleAssignee(ticket, operator?.id);
   // Cross-company Admins may still read tickets they own as board/RFP/ACA-step assignee
   // (e.g. NOTED BY from the preparer company on a ticket routed to another company).
   if (
@@ -266,6 +269,7 @@ export async function GET(
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
+      operatorId: operator?.id,
     }))
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -287,7 +291,7 @@ export async function PATCH(
   const ticket = await prisma.ticket.findUnique({
     where: { id },
     include: {
-      assignedAgent: { select: { email: true, teamId: true } },
+      assignedAgent: { select: { email: true, teamId: true, name: true } },
     },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -308,6 +312,7 @@ export async function PATCH(
   });
   const isPaymentStepOperator = isCurrentPaymentStepAssignee(ticket, operator?.id);
   const isAcaStepOperator = isCurrentAcaStepAssignee(ticket, operator?.id);
+  const isAcaBoardOperator = isAcaBoardVisibleAssignee(ticket, operator?.id);
   const canPrioritize = roleIsAdmin || isAssignedOperator;
   if (session.user.role === "Customer" && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -318,11 +323,13 @@ export async function PATCH(
     !isAssignedOperator &&
     !isPaymentStepOperator &&
     !isAcaStepOperator &&
+    !isAcaBoardOperator &&
     (await adminOutsideCompanyScope({
       role: session.user.role,
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
+      operatorId: operator?.id,
     }))
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -1311,7 +1318,6 @@ export async function PATCH(
       }
       for (const check of [
         await assertAgentCompany(nextAssignees.notedByAgentId, requestorCompanyId, "Noted By"),
-        await assertAgentCompany(nextAssignees.approvedByAgentId, sendToCompanyId, "Approved By"),
         await assertAgentCompany(
           nextAssignees.accountingAgentId,
           sendToCompanyId,
@@ -1689,9 +1695,16 @@ export async function PATCH(
         );
       }
       const meta = await initPaymentApprovalMetaIfNeeded(id);
+      const actingAsAssignee = await isSessionAssigneeOfTicket({
+        operatorId: operator?.id,
+        sessionEmail: session.user.email,
+        ticket,
+      });
       const gate = canCompletePaymentApprovalStep({
         meta,
-        actorAgentId: operator?.id ?? null,
+        actorAgentId: actingAsAssignee
+          ? ticket.assignedAgentId
+          : (operator?.id ?? null),
         ticketAssignedAgentId: ticket.assignedAgentId,
       });
       if (!gate.ok) {
@@ -2963,6 +2976,16 @@ export async function PATCH(
       }
       const comment =
         typeof body.comment === "string" && body.comment.trim() ? body.comment.trim() : null;
+      const completingLevel = meta.levels.find((l) => l.key === previousStep);
+      if (acaLevelRequiresFeedback(completingLevel?.roleCode) && !comment) {
+        return NextResponse.json(
+          {
+            error:
+              "Feedback is required before approving this ACA seat (AP 4 / 4 ExeComs / All ExeCom).",
+          },
+          { status: 400 },
+        );
+      }
       const advanced = completeAcaApprovalStep(meta, { comment });
       const saved = await saveAcaApprovalMeta(id, advanced, previousStep);
       if (!saved.ok) {

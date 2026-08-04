@@ -4,8 +4,8 @@ import { prisma } from "@/lib/prisma";
 const LEGACY_ACI_APMC_NAME = "ACI/APMC";
 /** Legacy queue labels; canonical roster name is MCHISI. */
 const LEGACY_MCONPINCO_NAMES = ["MCONPINCO", "M.CONPINCO", "M Conpinco"] as const;
-/** Legacy roster label; canonical roster name is now EAZYGAZ. */
-const LEGACY_EAZZYGAS_NAME = "EAZZYGAS";
+/** Legacy roster label; canonical roster name is now EAZZYGAS. */
+const LEGACY_EAZYGAZ_NAME = "EAZYGAZ";
 
 /** One-time split: combined ACI/APMC queue → APMC + roster ACI. */
 async function migrateLegacyAciApmcTeam(): Promise<void> {
@@ -80,22 +80,22 @@ async function migrateLegacyMconpincoTeam(): Promise<void> {
   }
 }
 
-/** One-time: legacy EAZZYGAS queue label → roster EAZYGAZ. */
-async function migrateLegacyEazzygasTeam(): Promise<void> {
+/** One-time: legacy EAZYGAZ queue label → roster EAZZYGAS. */
+async function migrateLegacyEazygazTeam(): Promise<void> {
   const legacy = await prisma.team.findFirst({
-    where: { name: LEGACY_EAZZYGAS_NAME },
+    where: { name: LEGACY_EAZYGAZ_NAME },
     select: { id: true },
   });
   if (!legacy) return;
 
   const canonical = await prisma.team.findFirst({
-    where: { name: "EAZYGAZ" },
+    where: { name: "EAZZYGAS" },
     select: { id: true },
   });
   if (!canonical) {
     await prisma.team.update({
       where: { id: legacy.id },
-      data: { name: "EAZYGAZ" },
+      data: { name: "EAZZYGAS" },
     });
     return;
   }
@@ -142,7 +142,7 @@ async function dedupeRosterTeamsByName(): Promise<void> {
 export async function ensureRosterTeamsInDb(): Promise<void> {
   await migrateLegacyAciApmcTeam();
   await migrateLegacyMconpincoTeam();
-  await migrateLegacyEazzygasTeam();
+  await migrateLegacyEazygazTeam();
 
   for (const name of COMPANY_ROSTER) {
     const existing = await prisma.team.findFirst({

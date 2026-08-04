@@ -1160,7 +1160,13 @@ export async function PATCH(req: Request) {
   const auditAuthor =
     session.user.name?.trim() || session.user.email?.trim() || "User";
   const respondUpdated = async (payload: unknown) => {
-    const audit = inferKpiPatchAudit(body);
+    const labelItems = isItProjectImplementationPillar(kpiRow.title)
+      ? itProjectAllItems(parseItProjectSubKpis(kpiRow.subKpis, kpiRow.itProjectPhase))
+      : collectChecklistProgressItems(kpiRow.subKpis, kpiMainTaskLabel(kpiRow));
+    const audit = inferKpiPatchAudit(body, {
+      subKpiTitle: (subKpiId) =>
+        labelItems.find((it) => it.id === subKpiId)?.title?.trim() || undefined,
+    });
     if (audit) {
       try {
         await logKpiActivity({

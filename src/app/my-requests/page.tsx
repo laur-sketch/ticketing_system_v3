@@ -260,7 +260,7 @@ export default async function MyRequestsPage({
                   className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#f97316] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(249,115,22,0.32)] transition hover:bg-[#fb923c] active:translate-y-px"
                 >
                   <Plus className="size-4" />
-                  Create ticket
+                  Create Request
                 </Link>
               )}
             </div>

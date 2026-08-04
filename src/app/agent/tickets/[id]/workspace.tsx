@@ -9,7 +9,6 @@ import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { requestTypeLabel } from "@/lib/request-types";
 import type { TicketPrintField, TicketPrintModel } from "@/lib/ticket-details-print";
-import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
 import { parsePaymentRequestDescription, formatPaymentPeso, formatPaymentRequestTitle, MODE_OF_PAYMENT_CHECK, MODE_OF_PAYMENT_OPTIONS, DELIVERY_OF_CHECK_OPTIONS, paymentModeRequiresBankDetails } from "@/lib/request-for-payment";
 import {
   parseItemRequisitionDescription,
@@ -66,11 +65,19 @@ import {
 import { parseJobOrderDescription } from "@/lib/job-order";
 import { parseAcaRequestDescription, formatAcaPeso } from "@/lib/authority-to-conduct-activity";
 import {
+  acaHorizontalApprovalLabel,
+  acaLevelRequiresFeedback,
+  acaLevelShowsInExeComTable,
+  acaLevelShowsInHorizontalApproval,
   acaProceduralStatusLabel,
   currentAcaLevel,
   isAcaProcedureGreenLit,
   type AcaApprovalMeta,
 } from "@/lib/aca-approval";
+import {
+  isIntakeAttachmentImage,
+  parseIntakeScreenshotMeta,
+} from "@/lib/ticket-intake-screenshots-meta";
 import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
 import { JobOrderProjectLinkPanel } from "@/components/tickets/JobOrderProjectLinkPanel";
 
@@ -548,12 +555,7 @@ export function AgentWorkspace({
       ticket.assignedAgentId === sessionAgentId &&
       acaApprovalMeta.proceduralStep !== "DONE",
   );
-  const acaIsExeComSeat = Boolean(
-    currentAcaStep?.roleCode === "FOUR_EXECOMS" ||
-      currentAcaStep?.roleCode === "ALL_EXECOM" ||
-      currentAcaStep?.roleCode === "EXECOM" ||
-      currentAcaStep?.roleCode?.startsWith("AP_"),
-  );
+  const acaRequiresFeedback = acaLevelRequiresFeedback(currentAcaStep?.roleCode);
   /** Hide transfer while NOTED BY / APPROVED BY own the running procedural step. */
   const paymentTransferBlocked = Boolean(
     isPaymentRequest &&
@@ -690,6 +692,9 @@ export function AgentWorkspace({
       const data = await res.json().catch(() => ({}));
       setError(data.error ?? "Request failed");
       return;
+    }
+    if (body.action === "complete_aca_approval_step") {
+      setAcaDoneComment("");
     }
     router.refresh();
   }
@@ -917,14 +922,9 @@ export function AgentWorkspace({
     } else if (showAcaLayout) {
       fields.push(
         {
-          label: "Form",
-          value: `${acaApprovalMeta?.formCode || ticket.team?.name || "ACA"} · ${ticket.ticketNumber}`,
-        },
-        {
           label: "Department / Store",
           value: acaDetails?.departmentStore || acaApprovalMeta?.departmentStore || "—",
         },
-        { label: "Category", value: acaDetails?.category || acaApprovalMeta?.category || "—" },
         {
           label: "Nature of request",
           value: acaDetails?.natureOfRequest || acaApprovalMeta?.natureOfRequest || "—",
@@ -948,10 +948,6 @@ export function AgentWorkspace({
           label: "Implementation date",
           value: acaDetails?.implementationDate || acaApprovalMeta?.implementationDate || "—",
         },
-        {
-          label: "Submitted by",
-          value: acaDetails?.submittedByName || acaApprovalMeta?.submittedByName || "—",
-        },
       );
       const desc = acaDetails?.description || acaApprovalMeta?.description || "";
       const objective = acaDetails?.objective || acaApprovalMeta?.objective || "";
@@ -960,6 +956,8 @@ export function AgentWorkspace({
         .join("\n\n");
       if (acaApprovalMeta) {
         for (const level of acaApprovalMeta.levels) {
+          if (level.key === "SUBMITTED_BY") continue;
+          if (!acaLevelShowsInExeComTable(level.roleCode)) continue;
           approvals.push({
             label: level.label,
             name: level.agentId
@@ -986,7 +984,7 @@ export function AgentWorkspace({
       notes,
       approvals,
       meta: [
-        { label: "Requestor", value: ticket.contactName?.trim() || "—" },
+        { label: isAcaRequest ? "Submitted By" : "Requestor", value: ticket.contactName?.trim() || "—" },
         { label: "Company", value: ticket.team?.name?.trim() || "—" },
         {
           label: "Assignee",
@@ -1002,6 +1000,7 @@ export function AgentWorkspace({
     acaDetails,
     jobOrderDetails,
     isJobOrderRequest,
+    isAcaRequest,
     cleanedDescription,
     paymentProceduralLabel,
     requisitionProceduralLabel,
@@ -1602,26 +1601,10 @@ export function AgentWorkspace({
               <dl className="space-y-2">
                 <div>
                   <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
-                    Form
-                  </dt>
-                  <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaApprovalMeta?.formCode || ticket.team?.name || "ACA"} · {ticket.ticketNumber}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
                     Department / Store
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
                     {acaDetails?.departmentStore || acaApprovalMeta?.departmentStore || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
-                    Category
-                  </dt>
-                  <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails?.category || acaApprovalMeta?.category || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1668,14 +1651,6 @@ export function AgentWorkspace({
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
                     {acaDetails?.implementationDate || acaApprovalMeta?.implementationDate || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
-                    Submitted By
-                  </dt>
-                  <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails?.submittedByName || acaApprovalMeta?.submittedByName || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1837,67 +1812,127 @@ export function AgentWorkspace({
           ) : null}
           {acaApprovalMeta ? (
             <div className="mt-4 space-y-3 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">
-              <div className="overflow-x-auto rounded-lg border border-zinc-300 dark:border-zinc-700">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-zinc-100 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
-                    <tr>
-                      <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">Role</th>
-                      <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">Name</th>
-                      <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
-                        Comment
-                      </th>
-                      <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
-                        Action / Date
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                    {acaApprovalMeta.levels.map((level) => {
-                      const name = level.agentId
-                        ? acaApprovalAgentNames[level.agentId]?.trim() || "Unknown"
-                        : level.key === "SUBMITTED_BY"
-                          ? acaApprovalMeta.submittedByName || ticket.contactName || "—"
-                          : "—";
-                      const done = Boolean(level.approvedAt);
-                      const current = acaApprovalMeta.proceduralStep === level.key;
-                      return (
-                        <tr
-                          key={level.key}
-                          className={
-                            current ? "bg-amber-50/80 dark:bg-amber-950/20" : undefined
-                          }
-                        >
-                          <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
-                            {level.label}
-                          </td>
-                          <td
-                            className={`px-3 py-2 ${
-                              done
-                                ? "text-emerald-800 dark:text-emerald-300"
-                                : "text-zinc-800 dark:text-zinc-200"
-                            }`}
-                          >
-                            {name}
-                          </td>
-                          <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                            {level.comment?.trim() || "—"}
-                          </td>
-                          <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                            {level.approvedAt
-                              ? new Date(level.approvedAt).toLocaleString(undefined, {
-                                  dateStyle: "medium",
-                                  timeStyle: "short",
-                                })
-                              : current
-                                ? "Current"
-                                : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              {(() => {
+                const proceduralLevels = acaApprovalMeta.levels.filter((level) =>
+                  acaLevelShowsInHorizontalApproval(level.roleCode, level.key),
+                );
+                const tableLevels = acaApprovalMeta.levels.filter((level) =>
+                  acaLevelShowsInExeComTable(level.roleCode),
+                );
+                return (
+                  <>
+                    {proceduralLevels.length > 0 ? (
+                      <div className="grid grid-cols-1 items-start gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {proceduralLevels.map((level) => {
+                          const name = level.agentId
+                            ? acaApprovalAgentNames[level.agentId]?.trim() || "Unknown"
+                            : "—";
+                          const done = Boolean(level.approvedAt);
+                          const current = acaApprovalMeta.proceduralStep === level.key;
+                          return (
+                            <div key={level.key} className="min-w-0 self-start">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                                {acaHorizontalApprovalLabel(level)}
+                              </p>
+                              <p
+                                className={`mt-1 break-words text-sm font-medium leading-snug ${
+                                  done
+                                    ? "text-emerald-800 dark:text-emerald-300"
+                                    : current
+                                      ? "text-amber-800 dark:text-amber-300"
+                                      : name !== "—"
+                                        ? "text-zinc-800 dark:text-zinc-200"
+                                        : "text-zinc-400 dark:text-zinc-600"
+                                }`}
+                              >
+                                {name}
+                              </p>
+                              {done && level.approvedAt ? (
+                                <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">
+                                  {new Date(level.approvedAt).toLocaleString(undefined, {
+                                    dateStyle: "medium",
+                                    timeStyle: "short",
+                                  })}
+                                </p>
+                              ) : current ? (
+                                <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-400">
+                                  Current
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+
+                    {tableLevels.length > 0 ? (
+                      <div className="overflow-x-auto rounded-lg border border-zinc-300 dark:border-zinc-700">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-zinc-100 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+                            <tr>
+                              <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
+                                Role
+                              </th>
+                              <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
+                                Name
+                              </th>
+                              <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
+                                Comment
+                              </th>
+                              <th className="border-b border-zinc-300 px-3 py-2 dark:border-zinc-700">
+                                Action / Date
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                            {tableLevels.map((level) => {
+                              const name = level.agentId
+                                ? acaApprovalAgentNames[level.agentId]?.trim() || "Unknown"
+                                : "—";
+                              const done = Boolean(level.approvedAt);
+                              const current = acaApprovalMeta.proceduralStep === level.key;
+                              return (
+                                <tr
+                                  key={level.key}
+                                  className={
+                                    current ? "bg-amber-50/80 dark:bg-amber-950/20" : undefined
+                                  }
+                                >
+                                  <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                                    {level.label}
+                                  </td>
+                                  <td
+                                    className={`px-3 py-2 ${
+                                      done
+                                        ? "text-emerald-800 dark:text-emerald-300"
+                                        : "text-zinc-800 dark:text-zinc-200"
+                                    }`}
+                                  >
+                                    {name}
+                                  </td>
+                                  <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                                    {level.comment?.trim() || "—"}
+                                  </td>
+                                  <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                                    {level.approvedAt
+                                      ? new Date(level.approvedAt).toLocaleString(undefined, {
+                                          dateStyle: "medium",
+                                          timeStyle: "short",
+                                        })
+                                      : current
+                                        ? "Current"
+                                        : "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
               {isAcaProcedureGreenLit(acaApprovalMeta) ? (
                 <div className="space-y-1">
                   <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
@@ -1913,10 +1948,15 @@ export function AgentWorkspace({
                       : ""}
                     .
                   </p>
-                  {(acaApprovalMeta.relatedTicketIds?.length ?? 0) > 0 ? (
-                    <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
-                      Related documents: {acaApprovalMeta.relatedTicketIds!.join(", ")}
-                    </p>
+                  {(acaApprovalMeta.relatedTicketIds?.length ?? 0) > 0 ||
+                  intakeScreenshots.length > 0 ? (
+                    <div className="space-y-1">
+                      {(acaApprovalMeta.relatedTicketIds?.length ?? 0) > 0 ? (
+                        <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                          Related ticket refs: {acaApprovalMeta.relatedTicketIds!.join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               ) : (
@@ -1928,37 +1968,83 @@ export function AgentWorkspace({
                     : ""}
                 </p>
               )}
+              {canCompleteCurrentAcaStep && acaRequiresFeedback ? (
+                <div className="mt-4 space-y-2 rounded-lg border border-orange-300/50 bg-orange-50/80 p-3 dark:border-orange-800/60 dark:bg-orange-950/20">
+                  <p className="text-xs font-semibold text-orange-900 dark:text-orange-200">
+                    Feedback required before approval
+                  </p>
+                  <p className="text-[11px] text-orange-800/90 dark:text-orange-300/90">
+                    AP 4 / 4 ExeComs / All ExeCom seats must leave feedback before marking Done.
+                    Current seat: {currentAcaStep?.label}
+                  </p>
+                  <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
+                    Feedback
+                    <textarea
+                      value={acaDoneComment}
+                      onChange={(e) => setAcaDoneComment(e.target.value)}
+                      rows={3}
+                      required
+                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      placeholder="Enter your feedback / comments for this approval"
+                    />
+                  </label>
+                </div>
+              ) : null}
             </div>
           ) : null}
           {intakeScreenshots.length > 0 ? (
             <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                Screenshots from request
+                {isAcaRequest ? "Related documents" : "Screenshots from request"}
               </p>
+              {(acaApprovalMeta?.relatedTicketIds?.length ?? 0) > 0 && isAcaRequest ? (
+                <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                  Ticket refs: {acaApprovalMeta!.relatedTicketIds!.join(", ")}
+                </p>
+              ) : null}
               <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {intakeScreenshots.map((m) => {
                   const href = `/api/tickets/${ticket.id}/screenshots/${encodeURIComponent(m.storedFileName)}`;
+                  const isImage = isIntakeAttachmentImage(m);
                   return (
                     <li
                       key={m.storedFileName}
                       className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700/80 dark:bg-zinc-950/50"
                     >
                       <a href={href} target="_blank" rel="noreferrer" className="block">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={href}
-                          alt={m.originalName}
-                          className="h-28 w-full object-cover object-top"
-                          loading="lazy"
-                        />
+                        {isImage ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={href}
+                            alt={m.originalName}
+                            className="h-28 w-full object-cover object-top"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="flex h-28 items-center justify-center bg-zinc-100 px-3 text-center text-xs font-semibold text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
+                            Document
+                          </div>
+                        )}
                       </a>
-                      <p className="truncate px-1.5 py-1 text-[10px] text-zinc-600 dark:text-zinc-500" title={m.originalName}>
+                      <p
+                        className="truncate px-1.5 py-1 text-[10px] text-zinc-600 dark:text-zinc-500"
+                        title={m.originalName}
+                      >
                         {m.originalName}
                       </p>
                     </li>
                   );
                 })}
               </ul>
+            </div>
+          ) : isAcaRequest && (acaApprovalMeta?.relatedTicketIds?.length ?? 0) > 0 ? (
+            <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                Related documents
+              </p>
+              <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                Ticket refs: {acaApprovalMeta!.relatedTicketIds!.join(", ")}
+              </p>
             </div>
           ) : null}
         </div>
@@ -2456,28 +2542,33 @@ export function AgentWorkspace({
                     {acaProceduralLabelText}
                   </p>
                 ) : null}
-                {acaIsExeComSeat ? (
+                {acaRequiresFeedback ? (
                   <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                    Comment{" "}
-                    <span className="font-normal text-zinc-400">(optional)</span>
+                    Feedback <span className="font-normal text-rose-600 dark:text-rose-400">(required)</span>
                     <textarea
                       value={acaDoneComment}
                       onChange={(e) => setAcaDoneComment(e.target.value)}
-                      rows={2}
+                      rows={3}
                       className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                      placeholder="Optional comment for this approval seat"
+                      placeholder="Enter your feedback before approving"
                     />
                   </label>
                 ) : null}
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() =>
+                  disabled={busy || (acaRequiresFeedback && !acaDoneComment.trim())}
+                  onClick={() => {
+                    if (acaRequiresFeedback && !acaDoneComment.trim()) {
+                      setError(
+                        "Feedback is required before approving this ACA seat (AP 4 / 4 ExeComs / All ExeCom).",
+                      );
+                      return;
+                    }
                     patch({
                       action: "complete_aca_approval_step",
                       comment: acaDoneComment.trim() || undefined,
-                    })
-                  }
+                    });
+                  }}
                   className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
                 >
                   Done

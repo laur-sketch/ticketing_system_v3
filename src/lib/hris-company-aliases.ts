@@ -7,12 +7,12 @@ const HRIS_COMPANY_ALIASES: Record<string, CompanyRosterName> = {
   mconpinco: "MCHISI",
   "m.conpinco": "MCHISI",
   "m conpinco": "MCHISI",
-  eazzygas: "EAZYGAZ",
-  easygas: "EAZYGAZ",
-  eazygas: "EAZYGAZ",
-  eazygaz: "EAZYGAZ",
-  "eazy gaz": "EAZYGAZ",
-  "eazzy gas": "EAZYGAZ",
+  eazygaz: "EAZZYGAS",
+  easygas: "EAZZYGAS",
+  eazygas: "EAZZYGAS",
+  eazzygas: "EAZZYGAS",
+  "eazy gaz": "EAZZYGAS",
+  "eazzy gas": "EAZZYGAS",
   "aci/apmc": "ACI",
 };
 

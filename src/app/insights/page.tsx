@@ -1087,6 +1087,8 @@ function TaskMetricsPanel({
                 efficiency: requestEfficiency ?? 0,
               }
             : null,
+        // RFP requestors are not credited for KPI.
+        rfpRequestor: null,
         rfpAccounting: rfpAccounting
           ? {
               closed: rfpAccounting.closed,
@@ -1140,6 +1142,7 @@ function TaskMetricsPanel({
         name,
         role: "Assignee",
         tickets: null,
+        rfpRequestor: null,
         rfpAccounting: null,
         rfpFinance: null,
         irsCanvass: null,

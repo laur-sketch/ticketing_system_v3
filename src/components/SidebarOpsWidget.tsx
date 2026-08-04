@@ -481,14 +481,16 @@ function QueueStat({
   href: string;
   label: string;
   value: number;
-  tone: "sky" | "orange" | "emerald";
+  tone: "sky" | "orange" | "emerald" | "rose";
 }) {
   const toneClass =
     tone === "sky"
       ? "text-sky-700 dark:text-sky-300"
       : tone === "orange"
         ? "text-orange-700 dark:text-orange-300"
-        : "text-emerald-700 dark:text-emerald-300";
+        : tone === "rose"
+          ? "text-rose-700 dark:text-rose-300"
+          : "text-emerald-700 dark:text-emerald-300";
   const Icon = tone === "emerald" ? CheckCircle2 : CircleDot;
 
   return (

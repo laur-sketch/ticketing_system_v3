@@ -17,7 +17,7 @@ export type JobOrderApprovalStep = (typeof JOB_ORDER_APPROVAL_STEPS)[number];
 export type JobOrderProceduralStep = JobOrderApprovalStep | "DONE";
 
 export type JobOrderApprovalAssignees = {
-  /** Intake “PREPARED BY” person — not part of the procedural chain. */
+  /** Intake “Submitted By” person — not part of the procedural chain. */
   preparedByAgentId: string | null;
   notedByAgentId: string | null;
   approvedByAgentId: string | null;
@@ -39,7 +39,7 @@ export const JOB_ORDER_APPROVAL_STEP_LABELS: Record<JobOrderApprovalStep, string
 
 /** Form / ticket-control labels. */
 export const JOB_ORDER_APPROVAL_FIELD_LABELS: Record<keyof JobOrderApprovalAssignees, string> = {
-  preparedByAgentId: "Prepared By",
+  preparedByAgentId: "Submitted By",
   notedByAgentId: "Noted By",
   approvedByAgentId: "Approved By",
   approvedBy2AgentId: "Approved By",

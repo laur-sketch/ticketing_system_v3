@@ -15,6 +15,12 @@ import {
 } from "@/lib/kpi-cycle-state";
 import { DEFAULT_TIME_ZONE, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
+  donutKeyForTaskMetricsRow,
+  FIELD_ASSIGNMENT_DONUT_KEY,
+  PROJECTS_DONUT_KEY,
+  TASK_FREQUENCY_DONUT_KEYS,
+} from "@/lib/task-metrics-task-type";
+import {
   IT_PROJECT_PRIORITY_OPTIONS,
   IT_PROJECT_STATUS_OPTIONS,
   isItProjectSubTaskDelayed,
@@ -28,7 +34,7 @@ import {
   type ItProjectPhase,
 } from "@/lib/it-project-subkpis";
 import { ProjectTimelineKanban } from "@/components/task-board/ProjectTimelineKanban";
-import { kpiHasDistinctMainTask, kpiMainTaskLabel } from "@/lib/kpi-main-task";
+import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   kpiChecklistMetricView,
@@ -174,6 +180,67 @@ function taskBoardCategoryOf(r: KpiRecord): Exclude<TaskBoardCategory, "all"> {
   if (isFieldAssignmentRecord(r)) return "field";
   if (isProjectRecord(r)) return "project";
   return "task";
+}
+
+/** Same buckets as Task Metrics company-view donuts (frequency / Projects / Field). */
+function boardLayoutSectionKey(r: KpiRecord): string {
+  const cat = taskBoardCategoryOf(r);
+  if (cat === "field") return donutKeyForTaskMetricsRow(r, "field") ?? FIELD_ASSIGNMENT_DONUT_KEY;
+  if (cat === "project") return donutKeyForTaskMetricsRow(r, "project") ?? PROJECTS_DONUT_KEY;
+  return donutKeyForTaskMetricsRow(r, "task") ?? "ONE-OFF";
+}
+
+const BOARD_LAYOUT_SECTION_ORDER: string[] = [
+  ...TASK_FREQUENCY_DONUT_KEYS,
+  PROJECTS_DONUT_KEY,
+  FIELD_ASSIGNMENT_DONUT_KEY,
+];
+
+function boardLayoutSectionLabel(key: string): string {
+  switch (key) {
+    case "ONE-OFF":
+      return "One-off";
+    case "DAILY":
+      return "Daily";
+    case "WEEKLY":
+      return "Weekly";
+    case "MONTHLY":
+      return "Monthly";
+    case "QUARTERLY":
+      return "Quarterly";
+    case PROJECTS_DONUT_KEY:
+      return "Projects";
+    case FIELD_ASSIGNMENT_DONUT_KEY:
+      return "Field Assignment";
+    default:
+      return key;
+  }
+}
+
+function groupRowsByBoardLayoutSection(
+  rows: KpiRecord[],
+): Array<{ key: string; label: string; rows: KpiRecord[] }> {
+  const byKey = new Map<string, KpiRecord[]>();
+  for (const row of rows) {
+    const key = boardLayoutSectionKey(row);
+    const list = byKey.get(key);
+    if (list) list.push(row);
+    else byKey.set(key, [row]);
+  }
+  const sections: Array<{ key: string; label: string; rows: KpiRecord[] }> = [];
+  for (const key of BOARD_LAYOUT_SECTION_ORDER) {
+    const sectionRows = byKey.get(key);
+    if (sectionRows?.length) {
+      sections.push({ key, label: boardLayoutSectionLabel(key), rows: sectionRows });
+      byKey.delete(key);
+    }
+  }
+  for (const [key, sectionRows] of byKey) {
+    if (sectionRows.length) {
+      sections.push({ key, label: boardLayoutSectionLabel(key), rows: sectionRows });
+    }
+  }
+  return sections;
 }
 
 function nonRecurringTaskKindLabel(r: KpiRecord): string {
@@ -3393,6 +3460,13 @@ export function AgentKpiKanbanFlow({
     const checklistItems = pillarOnly
       ? collectChecklistProgressItems(activeTask.subKpis, taskLabel(activeTask))
       : collectAllSubKpiItems(normalized);
+    const auditLookupItems = itProject
+      ? itProjectChecklistItems(activeTask.subKpis)
+      : collectChecklistProgressItems(activeTask.subKpis, taskLabel(activeTask));
+    const auditDetailLabel = (detail: string) => {
+      const hit = auditLookupItems.find((it) => it.id === detail.trim());
+      return hit?.title?.trim() || detail;
+    };
     const usesTaskPriority = !itProject && checklistItems.length > 1;
     const itProjectProgress = itProject
       ? itProjectAggregatedProgressFromRaw(activeTask.subKpis, activeTask.itProjectPhase)
@@ -3575,7 +3649,7 @@ export function AgentKpiKanbanFlow({
                         </p>
                         {entry.detail ? (
                           <p className="mt-0.5 break-words text-[10px] text-zinc-600 dark:text-zinc-400">
-                            {entry.detail}
+                            {auditDetailLabel(entry.detail)}
                           </p>
                         ) : null}
                         <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">
@@ -3756,7 +3830,9 @@ export function AgentKpiKanbanFlow({
           Task Kanban (drag to update)
         </h3>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Hold and slide a task to <strong>Done</strong> or <strong>Current</strong> (touch or mouse).{" "}
+          Cards are grouped by schedule type (One-off / Daily / Weekly / Monthly / Quarterly), then
+          Projects and Field Assignment — same layout as Task Metrics. Hold and slide a task to{" "}
+          <strong>Done</strong> or <strong>Current</strong> (touch or mouse).{" "}
           <span className="text-zinc-500 dark:text-zinc-500">
             The <strong>Delayed</strong> column applies to <strong>IT Project Implementation</strong> tasks
             (sub-task past due or actual after due), and to <strong>one-off</strong> tasks the day after each
@@ -3894,11 +3970,21 @@ export function AgentKpiKanbanFlow({
                     {list.length}
                   </span>
                 </div>
-                <div className="space-y-2.5">
+                <div className="space-y-3">
                   {list.length === 0 ? (
                     <p className="px-2 py-8 text-center text-sm text-zinc-600 dark:text-zinc-400">No tasks here.</p>
                   ) : (
-                    list.map((r) => {
+                    groupRowsByBoardLayoutSection(list).map((section) => (
+                      <div key={`${col}-sec-${section.key}`} className="space-y-2.5">
+                        <div className="flex items-center justify-between gap-2 border-b border-zinc-300/70 px-1 pb-1.5 dark:border-zinc-700/70">
+                          <h5 className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-zinc-400">
+                            {section.label}
+                          </h5>
+                          <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:bg-zinc-900/50 dark:text-zinc-300">
+                            {section.rows.length}
+                          </span>
+                        </div>
+                        {section.rows.map((r) => {
                       const editable = canEditChecklist(r);
                       const p = progress(r);
                       const incLate = incompleteOverdueMs(r);
@@ -3963,7 +4049,7 @@ export function AgentKpiKanbanFlow({
                             <div className="min-w-0">
                               {fieldAssignment ? (
                                 <>
-                                  <p className="inline-flex max-w-full items-center rounded-md border border-orange-400/45 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
+                                  <p className="mt-0.5 inline-flex max-w-full items-center rounded-md border border-orange-400/45 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
                                     <span className="truncate">
                                       {r.travelOrderSummary?.orderRequest?.trim() ||
                                         taskLabel(r)}
@@ -3974,6 +4060,26 @@ export function AgentKpiKanbanFlow({
                                     {r.travelOrderSummary?.travelers?.length
                                       ? r.travelOrderSummary.travelers.join(", ")
                                       : r.assignedAgent?.name ?? "—"}
+                                  </p>
+                                </>
+                              ) : pillarOnly ? (
+                                <>
+                                  <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                    {taskLabel(r)}
+                                  </p>
+                                  <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                    {kpiPillarLabel(r)} · Assigned:{" "}
+                                    {r.assignedAgent?.name ?? "Unassigned"}
+                                  </p>
+                                </>
+                              ) : kpiHasDistinctMainTask(r) ? (
+                                <>
+                                  <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                    {taskLabel(r)}
+                                  </p>
+                                  <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                    {kpiPillarLabel(r)} · Assigned:{" "}
+                                    {r.assignedAgent?.name ?? "Unassigned"}
                                   </p>
                                 </>
                               ) : (
@@ -4223,7 +4329,9 @@ export function AgentKpiKanbanFlow({
                           </div>
                         </div>
                       );
-                    })
+                        })}
+                      </div>
+                    ))
                   )}
                 </div>
               </article>

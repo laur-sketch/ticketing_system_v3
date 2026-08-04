@@ -1,15 +1,20 @@
-import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
+import {
+  isIntakeAttachmentImage,
+  parseIntakeScreenshotMeta,
+} from "@/lib/ticket-intake-screenshots-meta";
 
 export function TicketIntakeScreenshotsBlock({
   ticketId,
   meta,
   headingClassName,
   cardClassName,
+  title = "Screenshots from request",
 }: {
   ticketId: string;
   meta: unknown;
   headingClassName?: string;
   cardClassName?: string;
+  title?: string;
 }) {
   const items = parseIntakeScreenshotMeta(meta);
   if (items.length === 0) return null;
@@ -21,23 +26,30 @@ export function TicketIntakeScreenshotsBlock({
 
   return (
     <article className={card}>
-      <h2 className={h2}>Screenshots from request</h2>
+      <h2 className={h2}>{title}</h2>
       <p className="mt-1 text-xs text-zinc-500">
-        Submitted with the intake form. Click an image to open the full size.
+        Submitted with the intake form. Click a file to open or download.
       </p>
       <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((m) => {
           const href = `/api/tickets/${ticketId}/screenshots/${encodeURIComponent(m.storedFileName)}`;
+          const isImage = isIntakeAttachmentImage(m);
           return (
             <li key={m.storedFileName} className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/40">
               <a href={href} target="_blank" rel="noreferrer" className="block">
-                {/* eslint-disable-next-line @next/next/no-img-element -- auth cookies; external API route */}
-                <img
-                  src={href}
-                  alt={m.originalName}
-                  className="h-36 w-full object-cover object-top"
-                  loading="lazy"
-                />
+                {isImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- auth cookies; external API route
+                  <img
+                    src={href}
+                    alt={m.originalName}
+                    className="h-36 w-full object-cover object-top"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="flex h-36 items-center justify-center bg-zinc-900 px-3 text-center text-xs font-semibold text-zinc-300">
+                    Document
+                  </div>
+                )}
               </a>
               <p className="truncate px-2 py-1.5 text-[11px] text-zinc-500" title={m.originalName}>
                 {m.originalName}

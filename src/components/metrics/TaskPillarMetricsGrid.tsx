@@ -27,6 +27,7 @@ import type {
 } from "@/lib/kpis";
 import {
   combinedPersonnelEfficiency,
+  mergePersonnelRequestMetrics,
   personnelEfficiencyBracket,
   type PersonnelCombinedMetricCard,
 } from "@/lib/task-personnel-metrics";
@@ -510,6 +511,7 @@ export function ContributorPersonalKpiCard({
   const averageEfficiency = combinedPersonnelEfficiency(row);
   const efficiencyBracket =
     averageEfficiency != null ? personnelEfficiencyBracket(averageEfficiency) : null;
+  const requests = mergePersonnelRequestMetrics(row);
 
   return (
     <article className="rounded-xl border border-zinc-200 bg-gradient-to-br from-white to-zinc-50/90 p-3.5 dark:border-zinc-800 dark:from-zinc-900/80 dark:to-zinc-950/60">
@@ -549,147 +551,30 @@ export function ContributorPersonalKpiCard({
       ) : null}
 
       <div className="mt-3 space-y-3">
-        {row.tickets ? (
+        {requests ? (
           <PersonnelMetricSection title="Requests">
             <PersonnelMetricStatBox
               label="Closed"
-              value={row.tickets.closed}
+              value={requests.closed}
               subLabel="requests closed"
               tone="green"
             />
             <PersonnelMetricStatBox
               label="Pending"
-              value={row.tickets.pending}
+              value={requests.pending}
               subLabel="open & in progress"
               tone="neutral"
             />
             <PersonnelMetricStatBox
               label="Efficiency"
-              value={`${row.tickets.efficiency}%`}
+              value={`${requests.efficiency}%`}
               subLabel="completion rate"
               tone="teal"
             />
           </PersonnelMetricSection>
         ) : null}
 
-        {row.rfpAccounting ? (
-          <>
-            {row.tickets ? (
-              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
-            ) : null}
-            <PersonnelMetricSection title="RFP · Approved By Accounting">
-              <PersonnelMetricStatBox
-                label="Closed"
-                value={row.rfpAccounting.closed}
-                subLabel="confirmed requests"
-                tone="green"
-              />
-              <PersonnelMetricStatBox
-                label="Pending"
-                value={row.rfpAccounting.pending}
-                subLabel="awaiting accounting"
-                tone="neutral"
-              />
-              <PersonnelMetricStatBox
-                label="Efficiency"
-                value={`${row.rfpAccounting.efficiency}%`}
-                subLabel="completion rate"
-                tone="teal"
-              />
-            </PersonnelMetricSection>
-          </>
-        ) : null}
-
-        {row.rfpFinance ? (
-          <>
-            {row.tickets || row.rfpAccounting ? (
-              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
-            ) : null}
-            <PersonnelMetricSection title="RFP · Approved By Finance">
-              <PersonnelMetricStatBox
-                label="Closed"
-                value={row.rfpFinance.closed}
-                subLabel="confirmed requests"
-                tone="green"
-              />
-              <PersonnelMetricStatBox
-                label="Pending"
-                value={row.rfpFinance.pending}
-                subLabel="awaiting finance"
-                tone="neutral"
-              />
-              <PersonnelMetricStatBox
-                label="Efficiency"
-                value={`${row.rfpFinance.efficiency}%`}
-                subLabel="completion rate"
-                tone="teal"
-              />
-            </PersonnelMetricSection>
-          </>
-        ) : null}
-
-        {row.irsCanvass ? (
-          <>
-            {row.tickets || row.rfpAccounting || row.rfpFinance ? (
-              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
-            ) : null}
-            <PersonnelMetricSection title="IRS · Canvassed By">
-              <PersonnelMetricStatBox
-                label="Closed"
-                value={row.irsCanvass.closed}
-                subLabel="confirmed requests"
-                tone="green"
-              />
-              <PersonnelMetricStatBox
-                label="Pending"
-                value={row.irsCanvass.pending}
-                subLabel="awaiting canvass"
-                tone="neutral"
-              />
-              <PersonnelMetricStatBox
-                label="Efficiency"
-                value={`${row.irsCanvass.efficiency}%`}
-                subLabel="completion rate"
-                tone="teal"
-              />
-            </PersonnelMetricSection>
-          </>
-        ) : null}
-
-        {row.ftrPrepared ? (
-          <>
-            {row.tickets || row.rfpAccounting || row.rfpFinance || row.irsCanvass ? (
-              <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
-            ) : null}
-            <PersonnelMetricSection title="FTR · Prepared By">
-              <PersonnelMetricStatBox
-                label="Closed"
-                value={row.ftrPrepared.closed}
-                subLabel="confirmed requests"
-                tone="green"
-              />
-              <PersonnelMetricStatBox
-                label="Pending"
-                value={row.ftrPrepared.pending}
-                subLabel="awaiting prepare"
-                tone="neutral"
-              />
-              <PersonnelMetricStatBox
-                label="Efficiency"
-                value={`${row.ftrPrepared.efficiency}%`}
-                subLabel="completion rate"
-                tone="teal"
-              />
-            </PersonnelMetricSection>
-          </>
-        ) : null}
-
-        {(row.tickets ||
-          row.rfpAccounting ||
-          row.rfpFinance ||
-          row.irsCanvass ||
-          row.ftrPrepared) &&
-        row.tasks ? (
+        {requests && row.tasks ? (
           <div className="border-t border-zinc-200/80 dark:border-zinc-700/80" />
         ) : null}
 
@@ -1019,10 +904,8 @@ export function TaskPillarMetricsGrid({
     .sort((a, b) => a.localeCompare(b));
   const orderedMain =
     preferPillarOrder && preferPillarOrder.length > 0
-      ? [
-          ...preferPillarOrder,
-          ...mainTaskPillars.filter((p) => !preferPillarOrder.includes(p)),
-        ]
+      ? // Task Type view: only the new buckets — never append legacy IT pillars.
+        [...preferPillarOrder]
       : mainTaskPillars;
   const pillars: string[] = includeTicketPillars
     ? ["HELPDESK SUPPORT", "USER SUPPORT", ...orderedMain]
