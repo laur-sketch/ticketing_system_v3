@@ -29,7 +29,11 @@ import { loadItSalfDisplayCsvRowsForTaskMetrics } from "@/lib/kpi-sheet-import-s
 import { loadAgentIdsForCompanyTeam } from "@/lib/staff-company-scope";
 import { prisma } from "./prisma";
 
-export type { TaskChecklistPillarMetrics, TaskChecklistPillarMetric } from "@/lib/kpi-period-snapshots";
+export type {
+  TaskChecklistIncludedTask,
+  TaskChecklistPillarMetrics,
+  TaskChecklistPillarMetric,
+} from "@/lib/kpi-period-snapshots";
 
 export type KpiRange = { from: Date; to: Date };
 
@@ -456,9 +460,11 @@ export type TaskMetricsPayload = {
   taskMetricsUserSupport: TaskMetricsUserSupportTickets;
   taskChecklistPillars: TaskChecklistPillarMetrics;
   personnelTicketMetrics: PersonnelTicketMetric[];
-  /** RFP Received By (Accounting) — closed/pending/efficiency per agent. */
+  /** RFP Requestor — not credited; always empty. */
+  personnelRfpRequestorMetrics: PersonnelTicketMetric[];
+  /** RFP Approved By (Accounting) — closed/pending/efficiency per agent. */
   personnelRfpAccountingMetrics: PersonnelTicketMetric[];
-  /** RFP Received By (Finance) — closed/pending/efficiency per agent. */
+  /** RFP Approved By (Finance) — closed/pending/efficiency per agent. */
   personnelRfpFinanceMetrics: PersonnelTicketMetric[];
   /** IRS Canvassed By — closed/pending/efficiency per agent. */
   personnelIrsCanvassMetrics: PersonnelTicketMetric[];
@@ -472,7 +478,7 @@ export async function computeTaskMetrics(
   range: KpiRange,
   scope: KpiScope = {},
   helpdeskCadence: HelpdeskTaskCadence = "DAILY",
-  opts: { timeZone?: string } = {},
+  opts: { timeZone?: string; taskType?: string } = {},
 ): Promise<TaskMetricsPayload> {
   const scoped = scope.assignedAgentIds
     ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
@@ -481,6 +487,10 @@ export async function computeTaskMetrics(
       : {};
   /** Helpdesk / User Support use Manila working days even when the browser sends UTC before hydration. */
   const helpdeskTz = snapshotTimeZoneForTaskMetrics(opts.timeZone);
+  const taskType =
+    opts.taskType === "project" || opts.taskType === "field" || opts.taskType === "task"
+      ? opts.taskType
+      : undefined;
   const workingDays = workingDayIntervalsInRange(range, helpdeskTz);
   const { fromYmd, toYmd } = kpiRangeToYmd(range);
 
@@ -541,8 +551,9 @@ export async function computeTaskMetrics(
       toYmd,
       timeZone: helpdeskTz,
       kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
+      taskType,
     }),
-    scope.assignedAgentId || scope.assignedAgentIds
+    scope.assignedAgentId || scope.assignedAgentIds || taskType
       ? Promise.resolve({})
       : loadItSalfDisplayCsvRowsForTaskMetrics({
           fromYmd,
@@ -566,7 +577,7 @@ export async function computeTaskMetrics(
   const rfpRoleMetrics =
     workingDays.length > 0
       ? await loadRfpRolePersonnelMetrics(scoped, workingDays)
-      : { accounting: [], finance: [] };
+      : { requestor: [], accounting: [], finance: [] };
 
   const [personnelIrsCanvassMetrics, personnelFtrPreparedMetrics] =
     workingDays.length > 0
@@ -587,6 +598,7 @@ export async function computeTaskMetrics(
     taskMetricsUserSupport,
     taskChecklistPillars,
     personnelTicketMetrics,
+    personnelRfpRequestorMetrics: rfpRoleMetrics.requestor,
     personnelRfpAccountingMetrics: rfpRoleMetrics.accounting,
     personnelRfpFinanceMetrics: rfpRoleMetrics.finance,
     personnelIrsCanvassMetrics,

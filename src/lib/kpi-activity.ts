@@ -173,10 +173,26 @@ type PatchBodyLike = {
   done?: boolean;
 };
 
+export type InferKpiPatchAuditOptions = {
+  /** Resolve a sub-task id to its display title when logging. */
+  subKpiTitle?: (subKpiId: string) => string | undefined;
+};
+
 /** Infer a human-readable audit entry from a KPI PATCH body. */
 export function inferKpiPatchAudit(
   body: PatchBodyLike,
+  opts?: InferKpiPatchAuditOptions,
 ): { summary: string; detail?: string } | null {
+  const labelSubKpi = (id: string | undefined | null): string | undefined => {
+    const trimmed = id?.trim();
+    if (!trimmed) return undefined;
+    return opts?.subKpiTitle?.(trimmed)?.trim() || trimmed;
+  };
+  const labelSubKpis = (ids: string[] | undefined): string | undefined => {
+    if (!ids?.length) return undefined;
+    return ids.map((id) => labelSubKpi(id) || id).join(", ");
+  };
+
   if (body.deleteTask === true) {
     return { summary: "Task deleted" };
   }
@@ -231,13 +247,13 @@ export function inferKpiPatchAudit(
   if (body.subKpiLifecycle?.action === "start") {
     return {
       summary: "Sub-task started",
-      detail: body.subKpiLifecycle.subKpiId,
+      detail: labelSubKpi(body.subKpiLifecycle.subKpiId),
     };
   }
   if (body.subKpiLifecycle?.action === "end") {
     return {
       summary: "Sub-task ended",
-      detail: body.subKpiLifecycle.subKpiId,
+      detail: labelSubKpi(body.subKpiLifecycle.subKpiId),
     };
   }
   if (body.subKpiAssignee) {
@@ -245,13 +261,15 @@ export function inferKpiPatchAudit(
       summary: body.subKpiAssignee.assignedAgentId
         ? "Sub-task assignee updated"
         : "Sub-task assignee cleared",
-      detail: body.subKpiAssignee.subKpiId,
+      detail: labelSubKpi(body.subKpiAssignee.subKpiId),
     };
   }
   if (body.seekAssistance) {
     return {
       summary: "Seek assistance requested",
-      detail: body.seekAssistance.subKpiId || body.seekAssistance.subKpiIds?.join(", "),
+      detail:
+        labelSubKpi(body.seekAssistance.subKpiId) ||
+        labelSubKpis(body.seekAssistance.subKpiIds),
     };
   }
   if (body.addSubKpi) {
@@ -263,13 +281,13 @@ export function inferKpiPatchAudit(
   if (body.updateSubKpi) {
     return {
       summary: "Sub-task updated",
-      detail: body.updateSubKpi.title?.trim() || body.updateSubKpi.subKpiId,
+      detail: body.updateSubKpi.title?.trim() || labelSubKpi(body.updateSubKpi.subKpiId),
     };
   }
   if (body.removeSubKpi) {
     return {
       summary: "Sub-task removed",
-      detail: body.removeSubKpi.subKpiId,
+      detail: labelSubKpi(body.removeSubKpi.subKpiId),
     };
   }
   if (body.subKpiProjectMeta) {
@@ -286,19 +304,19 @@ export function inferKpiPatchAudit(
   if (body.subKpiWorkMeta) {
     return {
       summary: "Sub-task work details updated",
-      detail: body.subKpiWorkMeta.subKpiId,
+      detail: labelSubKpi(body.subKpiWorkMeta.subKpiId),
     };
   }
   if (body.subKpiSchedule) {
     return {
       summary: "Sub-task schedule updated",
-      detail: body.subKpiSchedule.subKpiId,
+      detail: labelSubKpi(body.subKpiSchedule.subKpiId),
     };
   }
   if (body.moveSubKpiPhase) {
     return {
       summary: "Sub-task moved to another phase",
-      detail: body.moveSubKpiPhase.subKpiId,
+      detail: labelSubKpi(body.moveSubKpiPhase.subKpiId),
     };
   }
   if (body.phaseDueDate) {
@@ -310,13 +328,13 @@ export function inferKpiPatchAudit(
   if (body.subKpiScreenshot) {
     return {
       summary: "Screenshot uploaded",
-      detail: body.subKpiScreenshot.subKpiId,
+      detail: labelSubKpi(body.subKpiScreenshot.subKpiId),
     };
   }
   if (body.subKpiScreenshotDelete) {
     return {
       summary: "Screenshot removed",
-      detail: body.subKpiScreenshotDelete.subKpiId,
+      detail: labelSubKpi(body.subKpiScreenshotDelete.subKpiId),
     };
   }
   if (body.pillarScreenshot) {
@@ -336,7 +354,7 @@ export function inferKpiPatchAudit(
   if (body.subKpiId && typeof body.done === "boolean") {
     return {
       summary: body.done ? "Sub-task marked done" : "Sub-task reopened",
-      detail: body.subKpiId,
+      detail: labelSubKpi(body.subKpiId),
     };
   }
   return { summary: "Task updated" };

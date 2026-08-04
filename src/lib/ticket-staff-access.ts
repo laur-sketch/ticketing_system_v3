@@ -161,16 +161,32 @@ export function isAcaBoardVisibleAssignee(
 /**
  * Company-scoped Admin (JWT Admin) may only touch tickets routed to their
  * designated company. SuperAdmin is never blocked here.
- * Requestors may always access tickets they filed (even when sent to another company).
+ * Requestors, board assignees, and current RFP/IRS/FTR step assignees may always
+ * access (Noted By is often on the requestor company while the ticket is routed
+ * to “Send request to”).
  */
 export async function adminOutsideCompanyScope(args: {
   role: string | undefined;
   email?: string | null;
   ticketTeamId: string | null;
-  ticket?: Pick<TicketAccessShape, "contactEmail" | "requestorEmail"> | null;
+  ticket?: TicketAccessShape | null;
+  operatorId?: string | null;
 }): Promise<boolean> {
   if (args.role !== "Admin") return false;
   if (args.ticket && isTicketRequestor(args.ticket, args.email)) return false;
+  if (
+    args.ticket &&
+    isTicketAssignee({
+      operatorId: args.operatorId,
+      sessionEmail: args.email,
+      ticket: args.ticket,
+    })
+  ) {
+    return false;
+  }
+  if (args.ticket && isCurrentProceduralStepAssignee(args.ticket, args.operatorId)) {
+    return false;
+  }
   const scoped = await resolveStaffCompanyTeamId(args.email);
   if (!scoped) return true;
   return args.ticketTeamId !== scoped;

@@ -31,6 +31,7 @@ import {
   isAcaBoardVisibleAssignee,
   isCurrentAcaStepAssignee,
   isCurrentPaymentStepAssignee,
+  isSessionAssigneeOfTicket,
   isTicketAssignee,
   personnelForbiddenForTicket,
 } from "@/lib/ticket-staff-access";
@@ -227,6 +228,10 @@ export async function GET(
     },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const operator = await findSessionAgentWithTeam({
+    email: session.user.email,
+    name: session.user.name,
+  });
   if (
     session.user.role === "Customer" &&
     !customerCanAccessTicket(
@@ -236,10 +241,6 @@ export async function GET(
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const operator = await findSessionAgentWithTeam({
-    email: session.user.email,
-    name: session.user.name,
-  });
   if (session.user.role === "Personnel") {
     if (
       await personnelForbiddenForTicket({
@@ -268,6 +269,7 @@ export async function GET(
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
+      operatorId: operator?.id,
     }))
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -289,7 +291,7 @@ export async function PATCH(
   const ticket = await prisma.ticket.findUnique({
     where: { id },
     include: {
-      assignedAgent: { select: { email: true, teamId: true } },
+      assignedAgent: { select: { email: true, teamId: true, name: true } },
     },
   });
   if (!ticket) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -327,6 +329,7 @@ export async function PATCH(
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
+      operatorId: operator?.id,
     }))
   ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -1315,7 +1318,6 @@ export async function PATCH(
       }
       for (const check of [
         await assertAgentCompany(nextAssignees.notedByAgentId, requestorCompanyId, "Noted By"),
-        await assertAgentCompany(nextAssignees.approvedByAgentId, sendToCompanyId, "Approved By"),
         await assertAgentCompany(
           nextAssignees.accountingAgentId,
           sendToCompanyId,
@@ -1693,9 +1695,16 @@ export async function PATCH(
         );
       }
       const meta = await initPaymentApprovalMetaIfNeeded(id);
+      const actingAsAssignee = await isSessionAssigneeOfTicket({
+        operatorId: operator?.id,
+        sessionEmail: session.user.email,
+        ticket,
+      });
       const gate = canCompletePaymentApprovalStep({
         meta,
-        actorAgentId: operator?.id ?? null,
+        actorAgentId: actingAsAssignee
+          ? ticket.assignedAgentId
+          : (operator?.id ?? null),
         ticketAssignedAgentId: ticket.assignedAgentId,
       });
       if (!gate.ok) {

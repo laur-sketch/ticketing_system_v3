@@ -74,7 +74,10 @@ function StaffAppShell({ children }: { children: React.ReactNode }) {
         <Suspense fallback={null}>
           <Nav />
         </Suspense>
-        <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div
+          data-staff-main-scroll=""
+          className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+        >
           {children}
         </div>
       </div>

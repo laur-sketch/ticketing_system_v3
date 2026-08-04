@@ -74,6 +74,7 @@ export async function countTaskBoardLanes(input: {
       id: true,
       title: true,
       mainTask: true,
+      frequency: true,
       subKpis: true,
       isRecurring: true,
       assignedAgentId: true,

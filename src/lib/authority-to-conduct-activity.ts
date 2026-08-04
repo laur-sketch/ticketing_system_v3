@@ -158,6 +158,14 @@ export function parseAcaRequestDescription(description: string | null | undefine
 } | null {
   const raw = (description ?? "").trim();
   if (!raw) return null;
+  // Require ACA-shaped markers so plain Issue/Concern descriptions are not treated as ACA.
+  const looksLikeAca =
+    /^Department\/Store:/im.test(raw) ||
+    /^Nature of Request:/im.test(raw) ||
+    /^Estimated Cost:/im.test(raw) ||
+    /^Implementation Date:/im.test(raw) ||
+    /^Submitted By:/im.test(raw);
+  if (!looksLikeAca) return null;
   const get = (label: string) => {
     const re = new RegExp(`^${label}:\\s*(.*)$`, "im");
     const m = raw.match(re);

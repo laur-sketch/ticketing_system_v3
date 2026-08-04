@@ -193,6 +193,7 @@ describe("combinedPersonnelEfficiency", () => {
         name: "Alex",
         role: "Assignee",
         tickets: { closed: 5, pending: 2, efficiency: 71 },
+        rfpRequestor: null,
         rfpAccounting: null,
         rfpFinance: null,
         irsCanvass: null,
@@ -209,6 +210,7 @@ describe("combinedPersonnelEfficiency", () => {
         name: "Alex",
         role: "Assignee",
         tickets: { closed: 1, pending: 9, efficiency: 10 },
+        rfpRequestor: null,
         rfpAccounting: null,
         rfpFinance: null,
         irsCanvass: null,
@@ -216,6 +218,24 @@ describe("combinedPersonnelEfficiency", () => {
         tasks: { closed: 0, pending: 5, efficiency: 0, pillarsContributed: 1 },
       }),
     ).toBe(50);
+  });
+
+  it("folds request-type buckets into one Requests efficiency (RFP requestor excluded)", () => {
+    // Requests: tickets 1/2 + accounting 3/4 = 4/6 → 67%; requestor 99 is ignored; with tasks 100% → avg 84
+    expect(
+      combinedPersonnelEfficiency({
+        id: "a1",
+        name: "Alex",
+        role: "Assignee",
+        tickets: { closed: 1, pending: 1, efficiency: 50 },
+        rfpRequestor: { closed: 99, pending: 0, efficiency: 100 },
+        rfpAccounting: { closed: 3, pending: 1, efficiency: 75 },
+        rfpFinance: null,
+        irsCanvass: null,
+        ftrPrepared: null,
+        tasks: { closed: 2, pending: 0, efficiency: 100, pillarsContributed: 1 },
+      }),
+    ).toBe(84);
   });
 });
 

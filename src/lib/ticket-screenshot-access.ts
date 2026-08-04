@@ -83,6 +83,7 @@ export async function canAccessTicketScreenshot(
       email: session.user.email,
       ticketTeamId: ticket.teamId,
       ticket,
+      operatorId: operator?.id,
     }));
   }
 

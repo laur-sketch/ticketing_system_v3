@@ -3,7 +3,11 @@
 import { Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { PersonnelCombinedMetricCard } from "@/lib/task-personnel-metrics";
-import { combinedPersonnelEfficiency, personnelEfficiencyBracket, applyPersonnelAverageEfficiencyFloor } from "@/lib/task-personnel-metrics";
+import {
+  mergePersonnelRequestMetrics,
+  personnelEfficiencyBracket,
+  applyPersonnelAverageEfficiencyFloor,
+} from "@/lib/task-personnel-metrics";
 import { ContributorPersonalKpiCard } from "@/components/metrics/TaskPillarMetricsGrid";
 
 type PersonnelTaskMetricsGridProps = {
@@ -21,23 +25,14 @@ export function PersonnelTaskMetricsGrid({
 }: PersonnelTaskMetricsGridProps) {
   const totals = rows.reduce(
     (acc, row) => {
-      const ticketClosed = row.tickets?.closed ?? 0;
-      const roleClosed =
-        (row.rfpAccounting?.closed ?? 0) +
-        (row.rfpFinance?.closed ?? 0) +
-        (row.irsCanvass?.closed ?? 0) +
-        (row.ftrPrepared?.closed ?? 0);
+      const requests = mergePersonnelRequestMetrics(row);
+      const ticketClosed = requests?.closed ?? 0;
       const taskClosed = row.tasks?.closed ?? 0;
-      const efficiencies = [
-        row.tickets?.efficiency,
-        row.rfpAccounting?.efficiency,
-        row.rfpFinance?.efficiency,
-        row.irsCanvass?.efficiency,
-        row.ftrPrepared?.efficiency,
-        row.tasks?.efficiency,
-      ].filter((value): value is number => value != null);
+      const efficiencies = [requests?.efficiency, row.tasks?.efficiency].filter(
+        (value): value is number => value != null,
+      );
       return {
-        closed: acc.closed + ticketClosed + roleClosed + taskClosed,
+        closed: acc.closed + ticketClosed + taskClosed,
         efficiencySum: acc.efficiencySum + efficiencies.reduce((sum, value) => sum + value, 0),
         efficiencyCount: acc.efficiencyCount + efficiencies.length,
       };
@@ -65,7 +60,7 @@ export function PersonnelTaskMetricsGrid({
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
           ) : null}
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
-            Each card shows Requests, RFP / IRS / FTR role KPIs (when applicable), and Tasks.
+            Each card shows Requests (all request types combined) and Tasks.
             Task efficiency shows the net rate after delay penalties when applicable, with a note for penalty points.
             The center badge averages available efficiency rates.
             Mon–Sat task periods; Sundays excluded.

@@ -1,6 +1,7 @@
 /**
- * Request for Payment personnel KPIs — separate helpdesk-style metrics for
+ * Request for Payment personnel KPIs — helpdesk-style metrics for
  * Approved By (Accounting) and Approved By (Finance).
+ * Requestors are not credited (submitting an RFP is not a KPI).
  */
 
 import { Prisma } from "@prisma/client/primary";
@@ -87,24 +88,28 @@ async function metricsFromCounts(counts: RoleCounts): Promise<RfpRolePersonnelMe
 }
 
 /**
- * Build Accounting and Finance personnel KPIs from RFP `payment_approval_meta`.
- * Closed = role completed AND request confirmed (`closedAt`) on a Mon–Sat day in range.
- * Pending = currently awaiting that role step (before confirmation).
+ * Build Accounting / Finance personnel KPIs from RFP tickets.
+ * Requestor is intentionally omitted from KPI credit.
+ * Closed = request confirmed (`closedAt`) on a Mon–Sat day in range
+ *   and the role step completed.
+ * Pending = awaiting that role step.
  */
 export async function loadRfpRolePersonnelMetrics(
   scoped: Record<string, unknown>,
   workingDayIntervals: WorkingDayInterval[],
 ): Promise<{
+  /** Always empty — requestors are not credited for RFP KPIs. */
+  requestor: RfpRolePersonnelMetric[];
   accounting: RfpRolePersonnelMetric[];
   finance: RfpRolePersonnelMetric[];
 }> {
   const scopedAgentIds = resolveScopedAgentIds(scoped);
   if (scopedAgentIds && scopedAgentIds.size === 0) {
-    return { accounting: [], finance: [] };
+    return { requestor: [], accounting: [], finance: [] };
   }
 
   // Load all RFPs with approval meta; apply company/personnel scope in memory so
-  // accounting/finance role assignees are credited even when they are not the board assignee.
+  // role assignees are credited even when they are not the board assignee.
   const tickets = await prisma.ticket.findMany({
     where: {
       requestType: "REQUEST_FOR_PAYMENT",
@@ -154,5 +159,5 @@ export async function loadRfpRolePersonnelMetrics(
     metricsFromCounts(accountingCounts),
     metricsFromCounts(financeCounts),
   ]);
-  return { accounting, finance };
+  return { requestor: [], accounting, finance };
 }

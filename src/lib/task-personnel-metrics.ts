@@ -21,13 +21,19 @@ export type PersonnelCombinedMetricCard = {
     pending: number;
     efficiency: number;
   } | null;
-  /** RFP Received By (Accounting) role KPI. */
+  /** RFP Requestor role KPI — not credited; kept null for payload compatibility. */
+  rfpRequestor: {
+    closed: number;
+    pending: number;
+    efficiency: number;
+  } | null;
+  /** RFP Approved By (Accounting) role KPI. */
   rfpAccounting: {
     closed: number;
     pending: number;
     efficiency: number;
   } | null;
-  /** RFP Received By (Finance) role KPI. */
+  /** RFP Approved By (Finance) role KPI. */
   rfpFinance: {
     closed: number;
     pending: number;
@@ -68,15 +74,40 @@ export function applyPersonnelAverageEfficiencyFloor(efficiency: number): number
   return Math.max(PERSONNEL_AVERAGE_EFFICIENCY_FLOOR, Math.round(efficiency));
 }
 
+/** All request-role buckets on a personnel card (any request type). RFP requestor is excluded. */
+export function personnelRequestBuckets(
+  row: PersonnelCombinedMetricCard,
+): Array<{ closed: number; pending: number; efficiency: number }> {
+  return [
+    row.tickets,
+    row.rfpAccounting,
+    row.rfpFinance,
+    row.irsCanvass,
+    row.ftrPrepared,
+  ].filter((bucket): bucket is NonNullable<typeof bucket> => bucket != null);
+}
+
+/** Single Requests rollup: any request type lands here (not separate RFP/IRS/FTR sections). */
+export function mergePersonnelRequestMetrics(
+  row: PersonnelCombinedMetricCard,
+): { closed: number; pending: number; efficiency: number } | null {
+  const buckets = personnelRequestBuckets(row);
+  if (buckets.length === 0) return null;
+  const closed = buckets.reduce((sum, bucket) => sum + bucket.closed, 0);
+  const pending = buckets.reduce((sum, bucket) => sum + bucket.pending, 0);
+  const total = closed + pending;
+  return {
+    closed,
+    pending,
+    efficiency: total > 0 ? Math.round((closed / total) * 100) : 0,
+  };
+}
+
 export function combinedPersonnelEfficiency(row: PersonnelCombinedMetricCard): number | null {
-  const values = [
-    row.tickets?.efficiency,
-    row.rfpAccounting?.efficiency,
-    row.rfpFinance?.efficiency,
-    row.irsCanvass?.efficiency,
-    row.ftrPrepared?.efficiency,
-    row.tasks?.efficiency,
-  ].filter((value): value is number => value != null);
+  const requests = mergePersonnelRequestMetrics(row);
+  const values = [requests?.efficiency, row.tasks?.efficiency].filter(
+    (value): value is number => value != null,
+  );
   if (values.length === 0) return null;
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
   return applyPersonnelAverageEfficiencyFloor(average);
@@ -279,6 +310,7 @@ export function mergePersonnelMetricCards(
       name: ticket.name.trim(),
       role: "Assignee",
       tickets: null,
+      rfpRequestor: null,
       rfpAccounting: null,
       rfpFinance: null,
       irsCanvass: null,
@@ -307,6 +339,7 @@ export function mergePersonnelMetricCards(
       name: task.name.trim(),
       role: task.role,
       tickets: null,
+      rfpRequestor: null,
       rfpAccounting: null,
       rfpFinance: null,
       irsCanvass: null,

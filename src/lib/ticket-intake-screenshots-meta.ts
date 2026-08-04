@@ -32,7 +32,7 @@ export function parseIntakeScreenshotMeta(raw: unknown): IntakeScreenshotMetaIte
     out.push({
       storedFileName,
       originalName: typeof o.originalName === "string" ? o.originalName : storedFileName,
-      mimeType: typeof o.mimeType === "string" ? o.mimeType : "image/jpeg",
+      mimeType: typeof o.mimeType === "string" ? o.mimeType : "application/octet-stream",
       size: typeof o.size === "number" ? o.size : 0,
     });
   }

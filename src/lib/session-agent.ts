@@ -11,7 +11,9 @@ function whereFromIdentity(identity: SessionIdentity): Prisma.AgentWhereInput | 
   const normalizedEmail = (identity.email ?? "").trim().toLowerCase();
   const normalizedName = (identity.name ?? "").trim();
   // Prefer exact email only — never OR-widen with name (avoids binding to another Agent).
-  if (normalizedEmail) return { email: normalizedEmail };
+  if (normalizedEmail) {
+    return { email: { equals: normalizedEmail, mode: "insensitive" } };
+  }
   if (normalizedName) return { name: normalizedName };
   return undefined;
 }
