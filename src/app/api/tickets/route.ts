@@ -84,6 +84,16 @@ import {
   saveFundTransferApprovalMeta,
   stampFundTransferCreatorOnCreate,
 } from "@/lib/fund-transfer-approval-db";
+import {
+  applyJobOrderApprovalAssignees,
+  currentJobOrderStepBoardAssigneeId,
+  jobOrderProceduralStatusLabel,
+  type JobOrderApprovalAssignees,
+} from "@/lib/job-order-approval";
+import {
+  saveJobOrderApprovalMeta,
+  stampJobOrderCreatorOnCreate,
+} from "@/lib/job-order-approval-db";
 import { resolveAcaAuthority } from "@/lib/aca-authority-matrix";
 import {
   formatAcaRequestDescription,
@@ -566,7 +576,9 @@ export async function POST(req: Request) {
 
     if (
       canSetIntakeApprovalAssignees &&
-      (requestType === "REQUEST_FOR_PAYMENT" || requestType === "FUND_TRANSFER_REQUEST")
+      (requestType === "REQUEST_FOR_PAYMENT" ||
+        requestType === "FUND_TRANSFER_REQUEST" ||
+        requestType === "JOB_ORDER")
     ) {
       const requiredByType: Record<string, Array<{ key: string; label: string }>> = {
         REQUEST_FOR_PAYMENT: [
@@ -578,6 +590,11 @@ export async function POST(req: Request) {
         FUND_TRANSFER_REQUEST: [
           { key: "recommendingApprovalAgentId", label: "Recommending Approval" },
           { key: "approvedByAgentId", label: "Approved By" },
+        ],
+        JOB_ORDER: [
+          { key: "notedByAgentId", label: "Noted By" },
+          { key: "approvedByAgentId", label: "Approved By" },
+          { key: "approvedBy2AgentId", label: "Approved By" },
         ],
       };
       const requiredRoles = requiredByType[requestType] ?? [];
@@ -1362,6 +1379,59 @@ export async function POST(req: Request) {
         "Fund transfer approval started",
         fundTransferProceduralStatusLabel(meta.proceduralStep) ??
           "RECOMMENDING APPROVAL IS MISSING",
+      );
+    }
+    if (requestType === "JOB_ORDER") {
+      let meta = await stampJobOrderCreatorOnCreate({
+        ticketId: ticket.id,
+        email: session.user.email ?? effectiveRequestorEmail ?? effectiveContactEmail,
+        name: session.user.name ?? effectiveName,
+        teamId: team?.id ?? null,
+      });
+      if (intakeApprovalAssignees) {
+        const nextAssignees: Partial<JobOrderApprovalAssignees> = {
+          notedByAgentId: pickAgentId(intakeApprovalAssignees.notedByAgentId),
+          approvedByAgentId: pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+          approvedBy2AgentId: pickAgentId(intakeApprovalAssignees.approvedBy2AgentId),
+        };
+        const agentIds = Object.values(nextAssignees).filter((v): v is string => Boolean(v));
+        if (agentIds.length > 0) {
+          const found = await prisma.agent.findMany({
+            where: { id: { in: agentIds } },
+            select: { id: true },
+          });
+          if (found.length !== new Set(agentIds).size) {
+            return NextResponse.json(
+              { error: "One or more selected job order assignees were not found." },
+              { status: 400 },
+            );
+          }
+        }
+        meta = applyJobOrderApprovalAssignees(meta, nextAssignees);
+        await saveJobOrderApprovalMeta(ticket.id, meta);
+        const boardAssigneeId = currentJobOrderStepBoardAssigneeId(meta);
+        if (boardAssigneeId) {
+          await prisma.ticket.update({
+            where: { id: ticket.id },
+            data: {
+              assignedAgent: { connect: { id: boardAssigneeId } },
+              status: "IN_PROGRESS",
+              resolvedAt: null,
+            },
+          });
+        }
+        await logActivity(
+          ticket.id,
+          "AGENT",
+          "Job order approval assignees set at intake",
+          "Procedural roles assigned when the request was created.",
+        );
+      }
+      await logActivity(
+        ticket.id,
+        "SYSTEM",
+        "Job order approval started",
+        jobOrderProceduralStatusLabel(meta.proceduralStep) ?? "NOTED BY IS MISSING",
       );
     }
     if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY" && acaCreateSeed) {

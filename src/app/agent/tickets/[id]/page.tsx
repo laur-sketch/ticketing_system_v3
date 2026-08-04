@@ -19,6 +19,8 @@ import {
 } from "@/lib/item-requisition-approval-db";
 import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
 import { stampFundTransferCreatorOnCreate } from "@/lib/fund-transfer-approval-db";
+import { jobOrderProceduralStatusLabel } from "@/lib/job-order-approval";
+import { stampJobOrderCreatorOnCreate } from "@/lib/job-order-approval-db";
 import { acaProceduralStatusLabel } from "@/lib/aca-approval";
 import { loadAcaApprovalMeta } from "@/lib/aca-approval-db";
 
@@ -93,6 +95,9 @@ export default async function AgentTicketPage({
   const isFundTransferRequest =
     requestTypeId === "FUND_TRANSFER_REQUEST" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("FUND TRANSFER");
+  const isJobOrderRequest =
+    requestTypeId === "JOB_ORDER" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("JOB ORDER");
   const isAcaRequest =
     requestTypeId === "AUTHORITY_TO_CONDUCT_ACTIVITY" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes(
@@ -117,6 +122,17 @@ export default async function AgentTicketPage({
         teamId: ticketForWorkspace.teamId,
       })
     : null;
+  const jobOrderApprovalMeta = isJobOrderRequest
+    ? await stampJobOrderCreatorOnCreate({
+        ticketId: ticketForWorkspace.id,
+        email:
+          ticketForWorkspace.requestorEmail ??
+          ticketForWorkspace.contactEmail ??
+          null,
+        name: ticketForWorkspace.contactName,
+        teamId: ticketForWorkspace.teamId,
+      })
+    : null;
   const acaApprovalMeta = isAcaRequest
     ? await loadAcaApprovalMeta(ticketForWorkspace.id)
     : null;
@@ -129,11 +145,15 @@ export default async function AgentTicketPage({
   const fundTransferProceduralLabel = fundTransferApprovalMeta
     ? fundTransferProceduralStatusLabel(fundTransferApprovalMeta.proceduralStep)
     : null;
+  const jobOrderProceduralLabel = jobOrderApprovalMeta
+    ? jobOrderProceduralStatusLabel(jobOrderApprovalMeta.proceduralStep)
+    : null;
   const acaProceduralLabel = acaApprovalMeta ? acaProceduralStatusLabel(acaApprovalMeta) : null;
   const proceduralStatusLabel =
     paymentProceduralLabel ??
     requisitionProceduralLabel ??
     fundTransferProceduralLabel ??
+    jobOrderProceduralLabel ??
     acaProceduralLabel;
   const paymentApprovalAgentNames: Record<string, string> = {};
   if (paymentApprovalMeta) {
@@ -179,6 +199,22 @@ export default async function AgentTicketPage({
         select: { id: true, name: true },
       });
       for (const a of agents) fundTransferApprovalAgentNames[a.id] = a.name;
+    }
+  }
+  const jobOrderApprovalAgentNames: Record<string, string> = {};
+  if (jobOrderApprovalMeta) {
+    const ids = [
+      jobOrderApprovalMeta.preparedByAgentId,
+      jobOrderApprovalMeta.notedByAgentId,
+      jobOrderApprovalMeta.approvedByAgentId,
+      jobOrderApprovalMeta.approvedBy2AgentId,
+    ].filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const agents = await prisma.agent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      });
+      for (const a of agents) jobOrderApprovalAgentNames[a.id] = a.name;
     }
   }
   const acaApprovalAgentNames: Record<string, string> = {};
@@ -348,6 +384,9 @@ export default async function AgentTicketPage({
             isFundTransferRequest={isFundTransferRequest}
             fundTransferApprovalMeta={fundTransferApprovalMeta}
             fundTransferApprovalAgentNames={fundTransferApprovalAgentNames}
+            isJobOrderApprovalRequest={isJobOrderRequest}
+            jobOrderApprovalMeta={jobOrderApprovalMeta}
+            jobOrderApprovalAgentNames={jobOrderApprovalAgentNames}
             isAcaRequest={isAcaRequest}
             acaApprovalMeta={acaApprovalMeta}
             acaApprovalAgentNames={acaApprovalAgentNames}

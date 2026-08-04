@@ -133,6 +133,11 @@ function NewTicketPageInner() {
     recommendingApprovalAgentId: "",
     approvedByAgentId: "",
   });
+  const [jobOrderAssignees, setJobOrderAssignees] = useState({
+    notedByAgentId: "",
+    approvedByAgentId: "",
+    approvedBy2AgentId: "",
+  });
   const detailsField = useMemo(
     () => ({
       label: "Issue",
@@ -352,7 +357,8 @@ function NewTicketPageInner() {
   /** Admin/SuperAdmin use the same intake field layout as Personnel. */
   const isStaffRequestorIntake = isPersonnelIntake || isAdminStaffIntake;
   const canSetIntakeAssignees =
-    isStaffRequestorIntake && (isPaymentRequest || isFundTransferRequest);
+    isStaffRequestorIntake &&
+    (isPaymentRequest || isFundTransferRequest || isJobOrderRequest);
   const isRequestorIntakeLockRole = isTicketRequestorRole(session?.user?.role);
 
   useEffect(() => {
@@ -380,6 +386,13 @@ function NewTicketPageInner() {
       return Array.isArray(rows) ? rows : [];
     }
 
+    async function loadAnyCompanyAgents() {
+      const res = await fetch("/api/agents?anyCompany=1", { cache: "no-store" });
+      if (!res.ok) return [] as Array<{ id: string; name: string; email: string }>;
+      const rows = (await res.json()) as Array<{ id: string; name: string; email: string }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
     void (async () => {
       if (isPaymentRequest) {
         const [requestorRows, sendToRows] = await Promise.all([
@@ -390,6 +403,14 @@ function NewTicketPageInner() {
         setRequestorApprovalAgents(requestorRows);
         setSendToApprovalAgents(sendToRows);
         setApprovalAgents([]);
+        return;
+      }
+      if (isJobOrderRequest) {
+        const rows = await loadAnyCompanyAgents();
+        if (cancelled) return;
+        setApprovalAgents(rows);
+        setRequestorApprovalAgents([]);
+        setSendToApprovalAgents([]);
         return;
       }
       const rows = await loadCompanyAgents(selectedCompanyTeamId);
@@ -410,6 +431,7 @@ function NewTicketPageInner() {
   }, [
     canSetIntakeAssignees,
     isPaymentRequest,
+    isJobOrderRequest,
     selectedCompanyTeamId,
     staffDesignatedCompany?.id,
   ]);
@@ -841,6 +863,18 @@ function NewTicketPageInner() {
             setLoading(false);
             return;
           }
+        } else if (isJobOrderRequest) {
+          if (
+            !jobOrderAssignees.notedByAgentId ||
+            !jobOrderAssignees.approvedByAgentId ||
+            !jobOrderAssignees.approvedBy2AgentId
+          ) {
+            setError(
+              "Noted By and both Approved By roles are required.",
+            );
+            setLoading(false);
+            return;
+          }
         }
       }
 
@@ -932,7 +966,11 @@ function NewTicketPageInner() {
 
       const appendApprovalAssignees = (target: FormData | Record<string, unknown>) => {
         if (!canSetIntakeAssignees) return;
-        const assignees = isPaymentRequest ? paymentAssignees : fundTransferAssignees;
+        const assignees = isPaymentRequest
+          ? paymentAssignees
+          : isJobOrderRequest
+            ? jobOrderAssignees
+            : fundTransferAssignees;
         const cleaned = Object.fromEntries(
           Object.entries(assignees).filter(([, v]) => typeof v === "string" && v.trim()),
         );
@@ -1202,7 +1240,12 @@ function NewTicketPageInner() {
             {isStaffRequestorIntake ? (
               <>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  {isFundTransferRequest || isPaymentRequest || isAcaRequest ? "PREPARED BY:" : "Requestor"}
+                  {isFundTransferRequest ||
+                  isPaymentRequest ||
+                  isAcaRequest ||
+                  isJobOrderRequest
+                    ? "PREPARED BY:"
+                    : "Requestor"}
                   <Input
                     name="contactName"
                     required
@@ -1328,7 +1371,7 @@ function NewTicketPageInner() {
               <>
                 <div>
                   <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {isFundTransferRequest ? "Prepared By" : "Requestor"}
+                    {isFundTransferRequest || isJobOrderRequest ? "Prepared By" : "Requestor"}
                   </span>
                   <div className="mt-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100">
                     {session?.user?.name?.trim() ||
@@ -2023,8 +2066,9 @@ function NewTicketPageInner() {
                     Set approval assignees
                   </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Required for Request for Payment and Fund Transfer. Assign procedural roles
-                    before creating this request. Item Requisition uses the Assignment Board for
+                    Required for Request for Payment, Fund Transfer, and Job Order. Assign
+                    procedural roles before creating this request. Job Order Noted By and Approvers
+                    can be chosen from any company. Item Requisition uses the Assignment Board for
                     Canvassed By instead.
                   </p>
                 </div>
@@ -2121,11 +2165,49 @@ function NewTicketPageInner() {
                       );
                     })
                   : null}
-                {!isPaymentRequest && !selectedCompanyTeamId ? (
+                {isJobOrderRequest
+                  ? (
+                      [
+                        ["notedByAgentId", "Noted By"],
+                        ["approvedByAgentId", "Approved By"],
+                        ["approvedBy2AgentId", "Approved By"],
+                      ] as const
+                    ).map(([key, label]) => {
+                      const taken = new Set(
+                        (
+                          [
+                            jobOrderAssignees.notedByAgentId,
+                            jobOrderAssignees.approvedByAgentId,
+                            jobOrderAssignees.approvedBy2AgentId,
+                          ] as string[]
+                        ).filter((id) => id && id !== jobOrderAssignees[key]),
+                      );
+                      return (
+                        <CompanyUserSearchField
+                          key={key}
+                          label={label}
+                          required
+                          users={approvalAgents}
+                          value={jobOrderAssignees[key]}
+                          excludedIds={taken}
+                          placeholder="Search by name or email…"
+                          onChange={(agentId) =>
+                            setJobOrderAssignees((prev) => ({ ...prev, [key]: agentId }))
+                          }
+                        />
+                      );
+                    })
+                  : null}
+                {isJobOrderRequest && approvalAgents.length === 0 ? (
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    No assignees available yet.
+                  </p>
+                ) : null}
+                {!isPaymentRequest && !isJobOrderRequest && !selectedCompanyTeamId ? (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
                     Select “Send request to” first to load company assignees.
                   </p>
-                ) : !isPaymentRequest && approvalAgents.length === 0 ? (
+                ) : !isPaymentRequest && !isJobOrderRequest && approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     No company assignees available for this roster yet.
                   </p>

@@ -34,6 +34,16 @@ import {
   initFundTransferApprovalMetaIfNeeded,
   saveFundTransferApprovalMeta,
 } from "@/lib/fund-transfer-approval-db";
+import {
+  applyJobOrderApprovalAssignees,
+  jobOrderAssigneeFieldForStep,
+  JOB_ORDER_APPROVAL_STEP_LABELS,
+  jobOrderProceduralStatusLabel,
+} from "@/lib/job-order-approval";
+import {
+  initJobOrderApprovalMetaIfNeeded,
+  saveJobOrderApprovalMeta,
+} from "@/lib/job-order-approval-db";
 import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 type AssignBody = {
@@ -223,6 +233,22 @@ export async function POST(req: Request) {
             ticketId,
             "SYSTEM",
             `Assigned for ${FUND_TRANSFER_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
+            pending
+              ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
+              : (updated.assignedAgent?.name ?? agent.name),
+          );
+        }
+      } else if (requestType === "JOB_ORDER") {
+        const meta = await initJobOrderApprovalMetaIfNeeded(ticketId);
+        if (meta.proceduralStep !== "DONE") {
+          const field = jobOrderAssigneeFieldForStep(meta.proceduralStep);
+          const nextMeta = applyJobOrderApprovalAssignees(meta, { [field]: agent.id });
+          await saveJobOrderApprovalMeta(ticketId, nextMeta);
+          const pending = jobOrderProceduralStatusLabel(nextMeta.proceduralStep);
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            `Assigned for ${JOB_ORDER_APPROVAL_STEP_LABELS[meta.proceduralStep]}`,
             pending
               ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
               : (updated.assignedAgent?.name ?? agent.name),

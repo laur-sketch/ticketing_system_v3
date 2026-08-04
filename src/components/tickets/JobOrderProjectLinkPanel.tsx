@@ -256,7 +256,10 @@ export function JobOrderProjectLinkPanel({
             <p className="mt-0.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {linkedProject.displayName}
             </p>
-            <p className="mt-0.5 text-xs text-zinc-500">{linkedProject.title}</p>
+            {linkedProject.title &&
+            linkedProject.title.trim().toLowerCase() !== linkedProject.displayName.trim().toLowerCase() ? (
+              <p className="mt-0.5 text-xs text-zinc-500">{linkedProject.title}</p>
+            ) : null}
             <Link
               href={`/agent/tasks?task=${encodeURIComponent(linkedProject.id)}${
                 prefill?.teamId ? `&company=${encodeURIComponent(prefill.teamId)}` : ""
@@ -373,7 +376,10 @@ export function JobOrderProjectLinkPanel({
                 {filteredProjects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.displayName}
-                    {p.title && p.title !== p.displayName ? ` · ${p.title}` : ""}
+                    {p.title &&
+                    p.title.trim().toLowerCase() !== p.displayName.trim().toLowerCase()
+                      ? ` · ${p.title}`
+                      : ""}
                   </option>
                 ))}
               </select>

@@ -43,6 +43,11 @@ import {
   type FundTransferApprovalMeta,
 } from "@/lib/fund-transfer-approval";
 import { loadFundTransferApprovalMetaMap } from "@/lib/fund-transfer-approval-db";
+import {
+  jobOrderProceduralStatusLabel,
+  type JobOrderApprovalMeta,
+} from "@/lib/job-order-approval";
+import { loadJobOrderApprovalMetaMap } from "@/lib/job-order-approval-db";
 import { CompanyKanban } from "./company-kanban";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
@@ -515,6 +520,7 @@ export default async function AgentHome({
   let boardPaymentMetaById = new Map<string, PaymentApprovalMeta>();
   let boardRequisitionMetaById = new Map<string, ItemRequisitionApprovalMeta>();
   let boardFundTransferMetaById = new Map<string, FundTransferApprovalMeta>();
+  let boardJobOrderMetaById = new Map<string, JobOrderApprovalMeta>();
   let boardAcaMetaById = new Map<string, AcaApprovalMeta>();
   if (isBoard && ticketsBoardEnriched.length > 0) {
     const ids = ticketsBoardEnriched.map((t) => t.id);
@@ -527,6 +533,7 @@ export default async function AgentHome({
     boardPaymentMetaById = await loadPaymentApprovalMetaMap(ids);
     boardRequisitionMetaById = await loadItemRequisitionApprovalMetaMap(ids);
     boardFundTransferMetaById = await loadFundTransferApprovalMetaMap(ids);
+    boardJobOrderMetaById = await loadJobOrderApprovalMetaMap(ids);
     boardAcaMetaById = await loadAcaApprovalMetaMap(ids);
   }
 
@@ -646,6 +653,11 @@ export default async function AgentHome({
           if (rt === "FUND_TRANSFER_REQUEST") {
             return fundTransferProceduralStatusLabel(
               boardFundTransferMetaById.get(t.id)?.proceduralStep ?? "PREPARED_BY",
+            );
+          }
+          if (rt === "JOB_ORDER") {
+            return jobOrderProceduralStatusLabel(
+              boardJobOrderMetaById.get(t.id)?.proceduralStep ?? "NOTED_BY",
             );
           }
           if (rt === "AUTHORITY_TO_CONDUCT_ACTIVITY") {

@@ -152,7 +152,7 @@ export function parseAcaRequestDescription(description: string | null | undefine
     return lines.join("\n").trim();
   };
 
-  return {
+  const parsed = {
     departmentStore: get("Department/Store"),
     category: get("Category"),
     natureOfRequest: get("Nature of Request"),
@@ -166,6 +166,22 @@ export function parseAcaRequestDescription(description: string | null | undefine
     statusNote: get("Status"),
     relatedTicketIds: get("Related documents"),
   };
+  // Require at least one ACA marker so other request types are not misclassified.
+  if (
+    !parsed.departmentStore &&
+    !parsed.category &&
+    !parsed.natureOfRequest &&
+    !parsed.estimatedCost &&
+    !parsed.budgetAmount &&
+    !parsed.dateSubmitted &&
+    !parsed.implementationDate &&
+    !parsed.submittedByName &&
+    !parsed.description &&
+    !parsed.objective
+  ) {
+    return null;
+  }
+  return parsed;
 }
 
 export type AcaCreateAssigneeDraft = {
