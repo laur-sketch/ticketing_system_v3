@@ -54,6 +54,15 @@ import {
   type FundTransferApprovalStep,
 } from "@/lib/fund-transfer-approval";
 import { parseFundTransferRequestDescription, formatFundTransferPeso } from "@/lib/fund-transfer-request";
+import {
+  JOB_ORDER_APPROVAL_STEPS,
+  JOB_ORDER_APPROVAL_STEP_LABELS,
+  jobOrderAssigneeIdForStep,
+  jobOrderProceduralStatusLabel,
+  type JobOrderApprovalAssignees,
+  type JobOrderApprovalMeta,
+  type JobOrderApprovalStep,
+} from "@/lib/job-order-approval";
 import { parseJobOrderDescription } from "@/lib/job-order";
 import { parseAcaRequestDescription, formatAcaPeso } from "@/lib/authority-to-conduct-activity";
 import {
@@ -93,6 +102,9 @@ export function AgentWorkspace({
   isFundTransferRequest = false,
   fundTransferApprovalMeta = null,
   fundTransferApprovalAgentNames = {},
+  isJobOrderApprovalRequest = false,
+  jobOrderApprovalMeta = null,
+  jobOrderApprovalAgentNames = {},
   isAcaRequest = false,
   acaApprovalMeta = null,
   acaApprovalAgentNames = {},
@@ -122,12 +134,16 @@ export function AgentWorkspace({
   isFundTransferRequest?: boolean;
   fundTransferApprovalMeta?: FundTransferApprovalMeta | null;
   fundTransferApprovalAgentNames?: Record<string, string>;
+  /** Procedural approval workflow for Job Order (distinct from display-only `isJobOrderRequest`). */
+  isJobOrderApprovalRequest?: boolean;
+  jobOrderApprovalMeta?: JobOrderApprovalMeta | null;
+  jobOrderApprovalAgentNames?: Record<string, string>;
   isAcaRequest?: boolean;
   acaApprovalMeta?: AcaApprovalMeta | null;
   acaApprovalAgentNames?: Record<string, string>;
   sessionAgentId?: string | null;
   isSuperAdmin?: boolean;
-  /** Admin / SuperAdmin / Personnel: set RFP / IRS / FTR approval role assignees. */
+  /** Admin / SuperAdmin / Personnel: set RFP / IRS / FTR / JO approval role assignees. */
   canSetApprovalAssignees?: boolean;
   /** Requestor's company team id (Noted By roster for RFP). */
   requestorCompanyTeamId?: string | null;
@@ -180,6 +196,12 @@ export function AgentWorkspace({
       recommendingApprovalAgentId: fundTransferApprovalMeta?.recommendingApprovalAgentId ?? null,
       approvedByAgentId: fundTransferApprovalMeta?.approvedByAgentId ?? null,
     });
+  const [jobOrderApprovalDraft, setJobOrderApprovalDraft] = useState<JobOrderApprovalAssignees>({
+    preparedByAgentId: jobOrderApprovalMeta?.preparedByAgentId ?? null,
+    notedByAgentId: jobOrderApprovalMeta?.notedByAgentId ?? null,
+    approvedByAgentId: jobOrderApprovalMeta?.approvedByAgentId ?? null,
+    approvedBy2AgentId: jobOrderApprovalMeta?.approvedBy2AgentId ?? null,
+  });
   const [requestApproverId, setRequestApproverId] = useState("");
   const [pricingDraft, setPricingDraft] = useState<
     Array<{
@@ -221,9 +243,21 @@ export function AgentWorkspace({
     });
   }, [fundTransferApprovalMeta]);
 
+  useEffect(() => {
+    setJobOrderApprovalDraft({
+      preparedByAgentId: jobOrderApprovalMeta?.preparedByAgentId ?? null,
+      notedByAgentId: jobOrderApprovalMeta?.notedByAgentId ?? null,
+      approvedByAgentId: jobOrderApprovalMeta?.approvedByAgentId ?? null,
+      approvedBy2AgentId: jobOrderApprovalMeta?.approvedBy2AgentId ?? null,
+    });
+  }, [jobOrderApprovalMeta]);
+
   const needsApprovalAgentList =
     isAgentViewer &&
-    (isPaymentRequest || isRequisitionRequest || isFundTransferRequest) &&
+    (isPaymentRequest ||
+      isRequisitionRequest ||
+      isFundTransferRequest ||
+      isJobOrderApprovalRequest) &&
     (canSetApprovalAssignees ||
       isPersonnel ||
       Boolean(sessionAgentId && ticket.assignedAgentId === sessionAgentId));
@@ -258,6 +292,17 @@ export function AgentWorkspace({
         setApprovalAgents(sendToRows.length > 0 ? sendToRows : requestorRows);
         return;
       }
+      if (isJobOrderApprovalRequest) {
+        const anyRes = await fetch("/api/agents?anyCompany=1", { cache: "no-store" });
+        const anyRows = anyRes.ok
+          ? ((await anyRes.json()) as Array<{ id: string; name: string; email: string }>)
+          : [];
+        if (cancelled) return;
+        setApprovalAgents(Array.isArray(anyRows) ? anyRows : []);
+        setRequestorApprovalAgents([]);
+        setSendToApprovalAgents([]);
+        return;
+      }
       const rows = await loadCompanyAgents(
         canSetApprovalAssignees ? ticket.teamId : null,
       );
@@ -274,6 +319,7 @@ export function AgentWorkspace({
     needsApprovalAgentList,
     canSetApprovalAssignees,
     isPaymentRequest,
+    isJobOrderApprovalRequest,
     ticket.teamId,
     requestorCompanyTeamId,
   ]);
@@ -333,16 +379,20 @@ export function AgentWorkspace({
     [ticket.description],
   );
 
-  const acaDetails = useMemo(
-    () => parseAcaRequestDescription(ticket.description),
-    [ticket.description],
-  );
+  const acaDetails = useMemo(() => {
+    // Never treat Job Order descriptions as ACA (layout collision).
+    if (ticket.requestType === "JOB_ORDER") return null;
+    return parseAcaRequestDescription(ticket.description);
+  }, [ticket.description, ticket.requestType]);
 
   const jobOrderDetails = useMemo(
     () => parseJobOrderDescription(ticket.description),
     [ticket.description],
   );
-  const isJobOrderRequest = ticket.requestType === "JOB_ORDER" || Boolean(jobOrderDetails);
+  const isJobOrderRequest =
+    ticket.requestType === "JOB_ORDER" || Boolean(jobOrderDetails);
+  const showAcaLayout =
+    Boolean(isAcaRequest) || (Boolean(acaDetails) && !isJobOrderRequest);
 
   const canEditRequisitionPricing = Boolean(
     isAgentViewer &&
@@ -579,6 +629,23 @@ export function AgentWorkspace({
     ? fundTransferAssigneeIdForStep(fundTransferApprovalMeta!, currentFundTransferStep)
     : null;
 
+  const jobOrderProceduralLabel = jobOrderApprovalMeta
+    ? jobOrderProceduralStatusLabel(jobOrderApprovalMeta.proceduralStep)
+    : null;
+  const currentJobOrderStep =
+    jobOrderApprovalMeta && jobOrderApprovalMeta.proceduralStep !== "DONE"
+      ? (jobOrderApprovalMeta.proceduralStep as JobOrderApprovalStep)
+      : null;
+  const canCompleteCurrentJobOrderStep = Boolean(
+    currentJobOrderStep && sessionAgentId && ticket.assignedAgentId === sessionAgentId,
+  );
+  const canRequestJobOrderApproval = Boolean(
+    currentJobOrderStep && (isPersonnel || isTicketAssignee || canSetApprovalAssignees),
+  );
+  const currentJobOrderStepAssigneeId = currentJobOrderStep
+    ? jobOrderAssigneeIdForStep(jobOrderApprovalMeta!, currentJobOrderStep)
+    : null;
+
   function updatePricingRow(
     index: number,
     patch: Partial<{
@@ -660,10 +727,10 @@ export function AgentWorkspace({
             ? requestTypeLabel("ITEM_REQUISITION_SLIP")
             : fundTransferDetails
               ? requestTypeLabel("FUND_TRANSFER_REQUEST")
-              : acaDetails
-                ? requestTypeLabel("AUTHORITY_TO_CONDUCT_ACTIVITY")
-                : isJobOrderRequest
-                  ? requestTypeLabel("JOB_ORDER")
+              : isJobOrderRequest
+                ? requestTypeLabel("JOB_ORDER")
+                : showAcaLayout
+                  ? requestTypeLabel("AUTHORITY_TO_CONDUCT_ACTIVITY")
                   : requestTypeLabel("ISSUE_CONCERN_TICKET");
 
     const title = paymentDetails
@@ -678,6 +745,7 @@ export function AgentWorkspace({
       paymentProceduralLabel ??
       requisitionProceduralLabel ??
       fundTransferProceduralLabel ??
+      jobOrderProceduralLabel ??
       acaProceduralLabelText ??
       null;
 
@@ -818,61 +886,6 @@ export function AgentWorkspace({
           });
         }
       }
-    } else if (acaDetails) {
-      fields.push(
-        {
-          label: "Form",
-          value: `${acaApprovalMeta?.formCode || ticket.team?.name || "ACA"} · ${ticket.ticketNumber}`,
-        },
-        {
-          label: "Department / Store",
-          value: acaDetails.departmentStore || acaApprovalMeta?.departmentStore || "—",
-        },
-        { label: "Category", value: acaDetails.category || acaApprovalMeta?.category || "—" },
-        {
-          label: "Nature of request",
-          value: acaDetails.natureOfRequest || acaApprovalMeta?.natureOfRequest || "—",
-        },
-        {
-          label: "Estimated cost",
-          value:
-            formatAcaPeso(acaDetails.estimatedCost) ||
-            formatAcaPeso(acaApprovalMeta?.estimatedCost) ||
-            "—",
-        },
-        {
-          label: "Budget amount",
-          value:
-            formatAcaPeso(acaDetails.budgetAmount) ||
-            formatAcaPeso(acaApprovalMeta?.budgetAmount) ||
-            "—",
-        },
-        { label: "Date submitted", value: acaDetails.dateSubmitted || "—" },
-        {
-          label: "Implementation date",
-          value: acaDetails.implementationDate || acaApprovalMeta?.implementationDate || "—",
-        },
-        {
-          label: "Submitted by",
-          value: acaDetails.submittedByName || acaApprovalMeta?.submittedByName || "—",
-        },
-      );
-      const desc = acaDetails.description || acaApprovalMeta?.description || "";
-      const objective = acaDetails.objective || acaApprovalMeta?.objective || "";
-      notes = [desc && `Description:\n${desc}`, objective && `Objective:\n${objective}`]
-        .filter(Boolean)
-        .join("\n\n");
-      if (acaApprovalMeta) {
-        for (const level of acaApprovalMeta.levels) {
-          approvals.push({
-            label: level.label,
-            name: level.agentId
-              ? acaApprovalAgentNames[level.agentId]?.trim() || "Unknown"
-              : "—",
-            done: Boolean(level.approvedAt),
-          });
-        }
-      }
     } else if (isJobOrderRequest && jobOrderDetails) {
       fields.push(
         {
@@ -888,6 +901,74 @@ export function AgentWorkspace({
         { label: "Target date", value: jobOrderDetails.targetDate || "—" },
       );
       if (jobOrderDetails.notes) notes = jobOrderDetails.notes;
+      if (jobOrderApprovalMeta) {
+        for (const step of JOB_ORDER_APPROVAL_STEPS) {
+          const agentId = jobOrderAssigneeIdForStep(jobOrderApprovalMeta, step);
+          const assigneeName = agentId
+            ? jobOrderApprovalAgentNames[agentId]?.trim() || null
+            : null;
+          approvals.push({
+            label: step === "NOTED_BY" ? "Noted By" : "Approved By",
+            name: assigneeName || "—",
+            done: Boolean(jobOrderApprovalMeta.completed[step]),
+          });
+        }
+      }
+    } else if (showAcaLayout) {
+      fields.push(
+        {
+          label: "Form",
+          value: `${acaApprovalMeta?.formCode || ticket.team?.name || "ACA"} · ${ticket.ticketNumber}`,
+        },
+        {
+          label: "Department / Store",
+          value: acaDetails?.departmentStore || acaApprovalMeta?.departmentStore || "—",
+        },
+        { label: "Category", value: acaDetails?.category || acaApprovalMeta?.category || "—" },
+        {
+          label: "Nature of request",
+          value: acaDetails?.natureOfRequest || acaApprovalMeta?.natureOfRequest || "—",
+        },
+        {
+          label: "Estimated cost",
+          value:
+            formatAcaPeso(acaDetails?.estimatedCost) ||
+            formatAcaPeso(acaApprovalMeta?.estimatedCost) ||
+            "—",
+        },
+        {
+          label: "Budget amount",
+          value:
+            formatAcaPeso(acaDetails?.budgetAmount) ||
+            formatAcaPeso(acaApprovalMeta?.budgetAmount) ||
+            "—",
+        },
+        { label: "Date submitted", value: acaDetails?.dateSubmitted || "—" },
+        {
+          label: "Implementation date",
+          value: acaDetails?.implementationDate || acaApprovalMeta?.implementationDate || "—",
+        },
+        {
+          label: "Submitted by",
+          value: acaDetails?.submittedByName || acaApprovalMeta?.submittedByName || "—",
+        },
+      );
+      const desc = acaDetails?.description || acaApprovalMeta?.description || "";
+      const objective = acaDetails?.objective || acaApprovalMeta?.objective || "";
+      notes = [desc && `Description:\n${desc}`, objective && `Objective:\n${objective}`]
+        .filter(Boolean)
+        .join("\n\n");
+      if (acaApprovalMeta) {
+        for (const level of acaApprovalMeta.levels) {
+          approvals.push({
+            label: level.label,
+            name: level.agentId
+              ? acaApprovalAgentNames[level.agentId]?.trim() || "Unknown"
+              : "—",
+            done: Boolean(level.approvedAt),
+          });
+        }
+      }
     } else {
       notes = cleanedDescription || ticket.description || null;
     }
@@ -925,6 +1006,7 @@ export function AgentWorkspace({
     paymentProceduralLabel,
     requisitionProceduralLabel,
     fundTransferProceduralLabel,
+    jobOrderProceduralLabel,
     acaProceduralLabelText,
     paymentApprovalMeta,
     paymentApprovalAgentNames,
@@ -932,9 +1014,13 @@ export function AgentWorkspace({
     itemRequisitionApprovalAgentNames,
     fundTransferApprovalMeta,
     fundTransferApprovalAgentNames,
+    jobOrderApprovalMeta,
+    jobOrderApprovalAgentNames,
     acaApprovalMeta,
     acaApprovalAgentNames,
     isRequisitionRequest,
+    isJobOrderRequest,
+    showAcaLayout,
     requisitionListedItemsTotal,
     createdAtLabel,
   ]);
@@ -985,6 +1071,10 @@ export function AgentWorkspace({
           ) : fundTransferProceduralLabel ? (
             <p className="mt-2 inline-flex rounded-full border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800 dark:text-amber-200">
               {fundTransferProceduralLabel}
+            </p>
+          ) : jobOrderProceduralLabel ? (
+            <p className="mt-2 inline-flex rounded-full border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800 dark:text-amber-200">
+              {jobOrderProceduralLabel}
             </p>
           ) : acaProceduralLabelText ? (
             <p className="mt-2 inline-flex rounded-full border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800 dark:text-amber-200">
@@ -1436,7 +1526,78 @@ export function AgentWorkspace({
                 ) : null}
               </dl>
             </div>
-          ) : acaDetails ? (
+          ) : isJobOrderRequest ? (
+            <div className="mt-3 space-y-3 text-sm">
+              {jobOrderDetails ? (
+                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                      Nature of concern
+                    </dt>
+                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                      {jobOrderDetails.natureOfConcern.length > 0
+                        ? jobOrderDetails.natureOfConcern.join(", ")
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                      Building
+                    </dt>
+                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                      {jobOrderDetails.building || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                      Expected duration
+                    </dt>
+                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                      {jobOrderDetails.expectedDuration || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                      Start date
+                    </dt>
+                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                      {jobOrderDetails.startDate || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                      Target date
+                    </dt>
+                    <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
+                      {jobOrderDetails.targetDate || "—"}
+                    </dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="whitespace-pre-wrap break-words text-zinc-800 dark:text-zinc-200">
+                  {cleanedDescription || ticket.description || "—"}
+                </p>
+              )}
+              {jobOrderDetails?.notes ? (
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                    Additional notes
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap break-words font-medium text-zinc-800 dark:text-zinc-200">
+                    {jobOrderDetails.notes}
+                  </p>
+                </div>
+              ) : null}
+              {jobOrderApprovalMeta?.proceduralStep === "DONE" ? (
+                <JobOrderProjectLinkPanel
+                  ticketId={ticket.id}
+                  canCreateProject={canCreateJobOrderProject}
+                  canRequestProject={canRequestJobOrderProject}
+                  sessionAgentId={sessionAgentId}
+                />
+              ) : null}
+            </div>
+          ) : showAcaLayout ? (
             <div className="mt-3 grid grid-cols-1 gap-4 border border-zinc-300 bg-white p-3 text-sm dark:border-zinc-700 dark:bg-zinc-950/40 sm:grid-cols-2 sm:gap-6 sm:p-4">
               <dl className="space-y-2">
                 <div>
@@ -1452,7 +1613,7 @@ export function AgentWorkspace({
                     Department / Store
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.departmentStore || acaApprovalMeta?.departmentStore || "—"}
+                    {acaDetails?.departmentStore || acaApprovalMeta?.departmentStore || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1460,7 +1621,7 @@ export function AgentWorkspace({
                     Category
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.category || acaApprovalMeta?.category || "—"}
+                    {acaDetails?.category || acaApprovalMeta?.category || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1468,7 +1629,7 @@ export function AgentWorkspace({
                     Nature of Request
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.natureOfRequest || acaApprovalMeta?.natureOfRequest || "—"}
+                    {acaDetails?.natureOfRequest || acaApprovalMeta?.natureOfRequest || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1476,7 +1637,7 @@ export function AgentWorkspace({
                     Estimated Cost
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {formatAcaPeso(acaDetails.estimatedCost) ||
+                    {formatAcaPeso(acaDetails?.estimatedCost) ||
                       formatAcaPeso(acaApprovalMeta?.estimatedCost) ||
                       "—"}
                   </dd>
@@ -1486,7 +1647,7 @@ export function AgentWorkspace({
                     Budget Amount
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {formatAcaPeso(acaDetails.budgetAmount) ||
+                    {formatAcaPeso(acaDetails?.budgetAmount) ||
                       formatAcaPeso(acaApprovalMeta?.budgetAmount) ||
                       "—"}
                   </dd>
@@ -1498,7 +1659,7 @@ export function AgentWorkspace({
                     Date Submitted
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.dateSubmitted || "—"}
+                    {acaDetails?.dateSubmitted || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1506,7 +1667,7 @@ export function AgentWorkspace({
                     Implementation Date
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.implementationDate || acaApprovalMeta?.implementationDate || "—"}
+                    {acaDetails?.implementationDate || acaApprovalMeta?.implementationDate || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1514,7 +1675,7 @@ export function AgentWorkspace({
                     Submitted By
                   </dt>
                   <dd className="mt-0.5 font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.submittedByName || acaApprovalMeta?.submittedByName || "—"}
+                    {acaDetails?.submittedByName || acaApprovalMeta?.submittedByName || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1522,7 +1683,7 @@ export function AgentWorkspace({
                     Description
                   </dt>
                   <dd className="mt-0.5 whitespace-pre-wrap font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.description || acaApprovalMeta?.description || "—"}
+                    {acaDetails?.description || acaApprovalMeta?.description || "—"}
                   </dd>
                 </div>
                 <div>
@@ -1530,83 +1691,10 @@ export function AgentWorkspace({
                     Objective
                   </dt>
                   <dd className="mt-0.5 whitespace-pre-wrap font-medium text-zinc-800 dark:text-zinc-200">
-                    {acaDetails.objective || acaApprovalMeta?.objective || "—"}
+                    {acaDetails?.objective || acaApprovalMeta?.objective || "—"}
                   </dd>
                 </div>
               </dl>
-            </div>
-          ) : isJobOrderRequest ? (
-            <div className="mt-3 space-y-4">
-              {jobOrderDetails ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
-              <dl className="space-y-2 text-sm">
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Nature of concern
-                  </dt>
-                  <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                    {jobOrderDetails.natureOfConcern.length > 0
-                      ? jobOrderDetails.natureOfConcern.join(", ")
-                      : "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Building
-                  </dt>
-                  <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                    {jobOrderDetails.building || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Expected duration
-                  </dt>
-                  <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                    {jobOrderDetails.expectedDuration || "—"}
-                  </dd>
-                </div>
-              </dl>
-              <dl className="space-y-2 text-sm">
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Start date
-                  </dt>
-                  <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                    {jobOrderDetails.startDate || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Target date
-                  </dt>
-                  <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
-                    {jobOrderDetails.targetDate || "—"}
-                  </dd>
-                </div>
-                {jobOrderDetails.notes ? (
-                  <div>
-                    <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                      Additional notes
-                    </dt>
-                    <dd className="mt-0.5 whitespace-pre-wrap break-words font-medium text-zinc-800 dark:text-zinc-200">
-                      {jobOrderDetails.notes}
-                    </dd>
-                  </div>
-                ) : null}
-              </dl>
-            </div>
-              ) : (
-                <p className="max-w-4xl whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 sm:text-base dark:text-zinc-300">
-                  {cleanedDescription}
-                </p>
-              )}
-            <JobOrderProjectLinkPanel
-              ticketId={ticket.id}
-              canCreateProject={canCreateJobOrderProject}
-              canRequestProject={canRequestJobOrderProject}
-              sessionAgentId={sessionAgentId}
-            />
             </div>
           ) : (
             <p className="mt-2 max-w-4xl whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-700 sm:text-base dark:text-zinc-300">
@@ -1696,6 +1784,40 @@ export function AgentWorkspace({
                   <div key={step} className="min-w-0 self-start">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                       {FUND_TRANSFER_APPROVAL_STEP_LABELS[step]}
+                    </p>
+                    <p
+                      className={`mt-1 break-words text-sm font-medium leading-snug ${
+                        completedAt && name
+                          ? "text-emerald-800 dark:text-emerald-300"
+                          : name
+                            ? "text-zinc-800 dark:text-zinc-200"
+                            : "text-zinc-400 dark:text-zinc-600"
+                      }`}
+                    >
+                      {name ?? "—"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+          {isJobOrderRequest && jobOrderApprovalMeta ? (
+            <div className="mt-4 grid grid-cols-1 items-start gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 sm:grid-cols-2 lg:grid-cols-3 dark:border-zinc-800/80">
+              {JOB_ORDER_APPROVAL_STEPS.map((step) => {
+                const completedAt = jobOrderApprovalMeta.completed[step];
+                const agentId = jobOrderAssigneeIdForStep(jobOrderApprovalMeta, step);
+                const assigneeName = agentId
+                  ? jobOrderApprovalAgentNames[agentId]?.trim() || null
+                  : null;
+                const name = assigneeName;
+                const fieldLabel =
+                  step === "NOTED_BY"
+                    ? "Noted By"
+                    : "Approved By";
+                return (
+                  <div key={step} className="min-w-0 self-start">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                      {fieldLabel}
                     </p>
                     <p
                       className={`mt-1 break-words text-sm font-medium leading-snug ${
@@ -2768,6 +2890,225 @@ export function AgentWorkspace({
                 {fundTransferProceduralLabel} — assign on the Assignment Board. After each approval,
                 the assignee can submit for the next role from Ticket Controls (request stays
                 assigned).
+              </p>
+            ) : null}
+
+            {isJobOrderApprovalRequest && canSetApprovalAssignees ? (
+              <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 pb-4 dark:border-zinc-700 dark:bg-zinc-900/50">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                    Job order approval
+                  </p>
+                  {jobOrderProceduralLabel ? (
+                    <p className="inline-flex max-w-full rounded-md border border-amber-400/40 bg-amber-500/10 px-2 py-1 text-[11px] font-medium leading-snug text-amber-800 dark:text-amber-200">
+                      {jobOrderProceduralLabel}
+                    </p>
+                  ) : jobOrderApprovalMeta?.proceduralStep === "DONE" ? (
+                    <p className="inline-flex max-w-full rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium leading-snug text-emerald-800 dark:text-emerald-300">
+                      All approval roles complete — request is green-lit
+                    </p>
+                  ) : null}
+                </div>
+                {jobOrderApprovalMeta && jobOrderApprovalMeta.proceduralStep !== "DONE" ? (
+                  <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+                    <CompanyUserSearchField
+                      label="Noted By"
+                      users={approvalAgents}
+                      value={jobOrderApprovalDraft.notedByAgentId || ""}
+                      onChange={(id) =>
+                        setJobOrderApprovalDraft((prev) => ({
+                          ...prev,
+                          notedByAgentId: id || null,
+                        }))
+                      }
+                      disabled={busy}
+                      placeholder="Search by name or email…"
+                    />
+                    <CompanyUserSearchField
+                      label="Approved By"
+                      users={approvalAgents}
+                      value={jobOrderApprovalDraft.approvedByAgentId || ""}
+                      onChange={(id) =>
+                        setJobOrderApprovalDraft((prev) => ({
+                          ...prev,
+                          approvedByAgentId: id || null,
+                        }))
+                      }
+                      disabled={busy}
+                      placeholder="Search by name or email…"
+                    />
+                    <CompanyUserSearchField
+                      label="Approved By"
+                      users={approvalAgents}
+                      value={jobOrderApprovalDraft.approvedBy2AgentId || ""}
+                      onChange={(id) =>
+                        setJobOrderApprovalDraft((prev) => ({
+                          ...prev,
+                          approvedBy2AgentId: id || null,
+                        }))
+                      }
+                      disabled={busy}
+                      placeholder="Search by name or email…"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() =>
+                        patch({
+                          action: "set_job_order_approval_assignees",
+                          notedByAgentId: jobOrderApprovalDraft.notedByAgentId,
+                          approvedByAgentId: jobOrderApprovalDraft.approvedByAgentId,
+                          approvedBy2AgentId: jobOrderApprovalDraft.approvedBy2AgentId,
+                          preparedByAgentId: jobOrderApprovalDraft.preparedByAgentId,
+                        })
+                      }
+                      className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                    >
+                      Save approval assignees
+                    </button>
+                  </div>
+                ) : null}
+                {currentJobOrderStep && canCompleteCurrentJobOrderStep ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => patch({ action: "complete_job_order_approval_step" })}
+                    className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    Done
+                  </button>
+                ) : currentJobOrderStep ? (
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Only the Assignment Board assignee can mark Done for{" "}
+                    {JOB_ORDER_APPROVAL_STEP_LABELS[currentJobOrderStep]}.
+                  </p>
+                ) : null}
+                {canRequestJobOrderApproval && currentJobOrderStep ? (
+                  <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
+                    <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                      Submit for Next Approval
+                    </p>
+                    <CompanyUserSearchField
+                      label={`${JOB_ORDER_APPROVAL_STEP_LABELS[currentJobOrderStep]} — company user`}
+                      users={approvalAgents}
+                      value={requestApproverId || currentJobOrderStepAssigneeId || ""}
+                      onChange={setRequestApproverId}
+                      disabled={busy}
+                      placeholder="Search company users…"
+                    />
+                    <button
+                      type="button"
+                      disabled={busy || !(requestApproverId || currentJobOrderStepAssigneeId)}
+                      onClick={() =>
+                        patch({
+                          action: "request_job_order_approval",
+                          approverAgentId: requestApproverId || currentJobOrderStepAssigneeId,
+                        })
+                      }
+                      className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                    >
+                      Submit for Next Approval
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {isJobOrderApprovalRequest &&
+            canRequestJobOrderApproval &&
+            !canSetApprovalAssignees ? (
+              <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
+                <div>
+                  <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                    Submit for Next Approval
+                  </p>
+                  {jobOrderProceduralLabel ? (
+                    <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                      {jobOrderProceduralLabel}
+                    </p>
+                  ) : jobOrderApprovalMeta?.proceduralStep === "DONE" ? (
+                    <p className="mt-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                      All approval roles complete — awaiting customer confirmation
+                    </p>
+                  ) : null}
+                </div>
+                {currentJobOrderStep ? (
+                  <>
+                    <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                      {JOB_ORDER_APPROVAL_STEP_LABELS[currentJobOrderStep]} — company user
+                      <select
+                        value={requestApproverId || currentJobOrderStepAssigneeId || ""}
+                        onChange={(e) => setRequestApproverId(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      >
+                        <option value="">Select user from your company</option>
+                        {approvalAgents.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                            {a.email ? ` (${a.email})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={busy || !(requestApproverId || currentJobOrderStepAssigneeId)}
+                      onClick={() =>
+                        patch({
+                          action: "request_job_order_approval",
+                          approverAgentId: requestApproverId || currentJobOrderStepAssigneeId,
+                        })
+                      }
+                      className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                    >
+                      Submit for Next Approval
+                    </button>
+                    {canCompleteCurrentJobOrderStep ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => patch({ action: "complete_job_order_approval_step" })}
+                        className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                      >
+                        Done
+                      </button>
+                    ) : ticket.assignedAgentId ? (
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Waiting on the assigned personnel to mark Done for{" "}
+                        {JOB_ORDER_APPROVAL_STEP_LABELS[currentJobOrderStep]}.
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Choose a company user and submit for approval, or wait for Admin to assign
+                        this request on the Assignment Board.
+                      </p>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {isJobOrderApprovalRequest &&
+            canCompleteCurrentJobOrderStep &&
+            !canSetApprovalAssignees &&
+            !canRequestJobOrderApproval ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => patch({ action: "complete_job_order_approval_step" })}
+                className="min-h-10 rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+              >
+                Done
+              </button>
+            ) : null}
+
+            {isJobOrderApprovalRequest &&
+            !canSetApprovalAssignees &&
+            !canRequestJobOrderApproval &&
+            jobOrderProceduralLabel ? (
+              <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+                {jobOrderProceduralLabel} — not green-lit yet. Assign on the Assignment Board. After
+                each approval, the assignee can submit for the next role from Ticket Controls.
               </p>
             ) : null}
 

@@ -6,6 +6,10 @@ import {
   parseFundTransferApprovalMeta,
 } from "@/lib/fund-transfer-approval";
 import {
+  currentJobOrderStepBoardAssigneeId,
+  parseJobOrderApprovalMeta,
+} from "@/lib/job-order-approval";
+import {
   currentItemRequisitionStepBoardAssigneeId,
   parseItemRequisitionApprovalMeta,
 } from "@/lib/item-requisition-approval";
@@ -151,6 +155,35 @@ export async function loadFtrTicketIdsForCurrentStepAssignee(
 }
 
 /**
+ * Job Order ticket ids whose current procedural-step assignee is `agentId`.
+ */
+export async function loadJobOrderTicketIdsForCurrentStepAssignee(
+  agentId: string,
+): Promise<string[]> {
+  if (!agentId) return [];
+  const rows = await prisma.$queryRaw<
+    Array<{ id: string; assigned_agent_id: string | null; job_order_approval_meta: unknown }>
+  >`
+    SELECT id, assigned_agent_id, job_order_approval_meta
+    FROM tickets
+    WHERE request_type = 'JOB_ORDER'
+      AND job_order_approval_meta IS NOT NULL
+      AND status::text IN (${Prisma.join([...ACTIVE_REQUEST_STATUSES])})
+  `;
+
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (row.assigned_agent_id === agentId) continue;
+    const meta = parseJobOrderApprovalMeta(row.job_order_approval_meta);
+    if (!meta) continue;
+    if (currentJobOrderStepBoardAssigneeId(meta) === agentId) {
+      ids.push(row.id);
+    }
+  }
+  return ids;
+}
+
+/**
  * ACA ticket ids whose current procedural-step assignee is `agentId`.
  */
 export async function loadAcaTicketIdsForCurrentStepAssignee(
@@ -189,14 +222,17 @@ export async function personnelRequestBoardWhere(
   if (!agentId) {
     return { assignedAgentId: "__none__" };
   }
-  const [rfpIds, irsIds, ftrIds, acaIds, transferIds] = await Promise.all([
+  const [rfpIds, irsIds, ftrIds, joIds, acaIds, transferIds] = await Promise.all([
     loadRfpTicketIdsForCurrentStepAssignee(agentId),
     loadIrsTicketIdsForCurrentStepAssignee(agentId),
     loadFtrTicketIdsForCurrentStepAssignee(agentId),
+    loadJobOrderTicketIdsForCurrentStepAssignee(agentId),
     loadAcaTicketIdsForCurrentStepAssignee(agentId),
     loadTicketIdsPendingTransferToAgent(agentId),
   ]);
-  const extraIds = [...new Set([...rfpIds, ...irsIds, ...ftrIds, ...acaIds, ...transferIds])];
+  const extraIds = [
+    ...new Set([...rfpIds, ...irsIds, ...ftrIds, ...joIds, ...acaIds, ...transferIds]),
+  ];
   if (extraIds.length === 0) {
     return { assignedAgentId: agentId };
   }

@@ -5,6 +5,10 @@ import {
   parseFundTransferApprovalMeta,
 } from "@/lib/fund-transfer-approval";
 import {
+  currentJobOrderStepBoardAssigneeId,
+  parseJobOrderApprovalMeta,
+} from "@/lib/job-order-approval";
+import {
   currentItemRequisitionStepBoardAssigneeId,
   parseItemRequisitionApprovalMeta,
 } from "@/lib/item-requisition-approval";
@@ -28,6 +32,7 @@ type TicketAccessShape = {
   paymentApprovalMeta?: unknown;
   itemRequisitionApprovalMeta?: unknown;
   fundTransferApprovalMeta?: unknown;
+  jobOrderApprovalMeta?: unknown;
   acaApprovalMeta?: unknown;
   contactEmail?: string | null;
   requestorEmail?: string | null;
@@ -110,6 +115,11 @@ export function isCurrentProceduralStepAssignee(
 
   const ftrMeta = parseFundTransferApprovalMeta(ticket.fundTransferApprovalMeta);
   if (ftrMeta && currentFundTransferStepBoardAssigneeId(ftrMeta) === operatorId) {
+    return true;
+  }
+
+  const joMeta = parseJobOrderApprovalMeta(ticket.jobOrderApprovalMeta);
+  if (joMeta && currentJobOrderStepBoardAssigneeId(joMeta) === operatorId) {
     return true;
   }
 

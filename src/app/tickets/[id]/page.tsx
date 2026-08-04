@@ -13,6 +13,8 @@ import {
 } from "@/lib/item-requisition-approval-db";
 import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
 import { stampFundTransferCreatorOnCreate } from "@/lib/fund-transfer-approval-db";
+import { jobOrderProceduralStatusLabel } from "@/lib/job-order-approval";
+import { stampJobOrderCreatorOnCreate } from "@/lib/job-order-approval-db";
 import { AgentWorkspace } from "@/app/agent/tickets/[id]/workspace";
 import { AgentTicketModalShell } from "@/components/ticket/AgentTicketModalShell";
 import { CustomerTicketPanel } from "./ui";
@@ -88,6 +90,9 @@ export default async function TicketPage({
   const isFundTransferRequest =
     requestTypeId === "FUND_TRANSFER_REQUEST" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("FUND TRANSFER");
+  const isJobOrderRequest =
+    requestTypeId === "JOB_ORDER" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("JOB ORDER");
 
   const paymentApprovalMeta = isPaymentRequest
     ? ((await loadPaymentApprovalMeta(ticket.id)) ??
@@ -105,6 +110,14 @@ export default async function TicketPage({
         teamId: ticket.teamId,
       })
     : null;
+  const jobOrderApprovalMeta = isJobOrderRequest
+    ? await stampJobOrderCreatorOnCreate({
+        ticketId: ticket.id,
+        email: ticket.requestorEmail ?? ticket.contactEmail ?? null,
+        name: ticket.contactName,
+        teamId: ticket.teamId,
+      })
+    : null;
 
   const paymentProceduralLabel = paymentApprovalMeta
     ? paymentProceduralStatusLabel(paymentApprovalMeta.proceduralStep)
@@ -115,8 +128,14 @@ export default async function TicketPage({
   const fundTransferProceduralLabel = fundTransferApprovalMeta
     ? fundTransferProceduralStatusLabel(fundTransferApprovalMeta.proceduralStep)
     : null;
+  const jobOrderProceduralLabel = jobOrderApprovalMeta
+    ? jobOrderProceduralStatusLabel(jobOrderApprovalMeta.proceduralStep)
+    : null;
   const proceduralStatusLabel =
-    paymentProceduralLabel ?? requisitionProceduralLabel ?? fundTransferProceduralLabel;
+    paymentProceduralLabel ??
+    requisitionProceduralLabel ??
+    fundTransferProceduralLabel ??
+    jobOrderProceduralLabel;
 
   const paymentApprovalAgentNames: Record<string, string> = {};
   if (paymentApprovalMeta) {
@@ -162,6 +181,22 @@ export default async function TicketPage({
         select: { id: true, name: true },
       });
       for (const a of agents) fundTransferApprovalAgentNames[a.id] = a.name;
+    }
+  }
+  const jobOrderApprovalAgentNames: Record<string, string> = {};
+  if (jobOrderApprovalMeta) {
+    const ids = [
+      jobOrderApprovalMeta.preparedByAgentId,
+      jobOrderApprovalMeta.notedByAgentId,
+      jobOrderApprovalMeta.approvedByAgentId,
+      jobOrderApprovalMeta.approvedBy2AgentId,
+    ].filter((v): v is string => Boolean(v));
+    if (ids.length > 0) {
+      const agents = await prisma.agent.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true },
+      });
+      for (const a of agents) jobOrderApprovalAgentNames[a.id] = a.name;
     }
   }
 
@@ -282,6 +317,9 @@ export default async function TicketPage({
             isFundTransferRequest={isFundTransferRequest}
             fundTransferApprovalMeta={fundTransferApprovalMeta}
             fundTransferApprovalAgentNames={fundTransferApprovalAgentNames}
+            isJobOrderApprovalRequest={isJobOrderRequest}
+            jobOrderApprovalMeta={jobOrderApprovalMeta}
+            jobOrderApprovalAgentNames={jobOrderApprovalAgentNames}
             viewerMode="requestor"
             requestorAside={
               <CustomerTicketPanel ticket={ticket} canCancelRequest={canCancelRequest} />
