@@ -320,6 +320,7 @@ model KpiMaintenance {
   createdAt            DateTime     @default(now()) @map("created_at")
   updatedAt            DateTime     @updatedAt @map("updated_at")
   periodSnapshots      KpiMaintenancePeriodSnapshot[]
+  activities           KpiMaintenanceActivity[]
   travelOrders         TravelOrder[]
   linkedJobOrderTickets Ticket[]    @relation("JobOrderProject")
 
@@ -328,6 +329,19 @@ model KpiMaintenance {
   @@index([createdAt])
   @@unique([title, mainTask])
   @@map("kpi_maintenance")
+}
+
+model KpiMaintenanceActivity {
+  id               String         @id @default(cuid())
+  kpiMaintenanceId String         @map("kpi_maintenance_id")
+  kpiMaintenance   KpiMaintenance @relation(fields: [kpiMaintenanceId], references: [id], onDelete: Cascade)
+  author           String         @map("author")
+  summary          String         @map("summary")
+  detail           String?        @map("detail")
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  @@index([kpiMaintenanceId, createdAt])
+  @@map("kpi_maintenance_activities")
 }
 
 /// Field Assignment — Request for Travel Order linked to a Task Management card.

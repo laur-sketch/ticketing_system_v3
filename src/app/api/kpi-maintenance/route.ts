@@ -85,6 +85,7 @@ import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { isValidLatLng } from "@/lib/travel-order";
 import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
 import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-efficiency-recompute";
+import { inferKpiPatchAudit, logKpiActivity } from "@/lib/kpi-activity";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { isAgentOnDutyFromMergedDb } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
@@ -526,9 +527,13 @@ export async function POST(req: Request) {
     /** When creating a Project from a Job Order, auto-link after save. */
     linkedJobOrderTicketId?: string | null;
   };
-  const title = body.title?.trim() ?? "";
   const mainTaskRaw = body.mainTask?.trim() ?? "";
-  const isItProject = isItProjectImplementationPillar(title);
+  const requestedTitle = body.title?.trim() ?? "";
+  const isItProject = isItProjectImplementationPillar(requestedTitle);
+  /** Task groups removed: persist title from the work-item name (keep reserved IT pillar titles). */
+  const title = isItProject
+    ? requestedTitle
+    : (mainTaskRaw.replace(/\s+/g, " ").toUpperCase() || requestedTitle);
   const frequency = (body.frequency?.toUpperCase() ?? "DAILY") as KpiFrequency;
   const enableSubtaskAssigneesFlag =
     typeof body.enableSubtaskAssignees === "boolean" ? body.enableSubtaskAssignees : true;
@@ -774,7 +779,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "Job Order projects use Project mode (not IT Project Implementation). Create under Job Order Request or another task group as a Project.",
+            "Job Order projects use Project mode (not IT Project Implementation). Create them with a project name only.",
         },
         { status: 400 },
       );
@@ -845,8 +850,8 @@ export async function POST(req: Request) {
       ? body.itProjectPhase.trim() || null
       : null;
 
-  // Same task group (title) can hold many independent tasks — each needs a distinct mainTask
-  // (@@unique([title, mainTask])). Always create a fresh row; never merge/clone prior subtasks or state.
+  // Names are unique per title+mainTask (title is derived from the work-item name).
+  // Always create a fresh row; never merge/clone prior subtasks or state.
   if (!isItProject && mainTaskRaw) {
     const duplicateMainTask = await prisma.kpiMaintenance.findFirst({
       where: {
@@ -858,7 +863,10 @@ export async function POST(req: Request) {
     if (duplicateMainTask) {
       return NextResponse.json(
         {
-          error: `A task named "${mainTaskRaw}" already exists under group '${title}'. Use a different main task name.`,
+          error:
+            body.isProject === true
+              ? `A project named "${mainTaskRaw}" already exists. Use a different project name.`
+              : `A task named "${mainTaskRaw}" already exists. Use a different name.`,
         },
         { status: 409 },
       );
@@ -881,13 +889,6 @@ export async function POST(req: Request) {
       );
     }
   }
-
-  const titleAlreadyUsed = Boolean(
-    await prisma.kpiMaintenance.findFirst({
-      where: { title },
-      select: { id: true },
-    }),
-  );
 
   let created;
   try {
@@ -932,7 +933,9 @@ export async function POST(req: Request) {
           {
             error: isItProject
               ? `Could not create project under '${title}' (duplicate name).`
-              : `A task named "${mainTaskRaw}" already exists under group '${title}'. Use a different main task name.`,
+              : body.isProject === true
+                ? `A project named "${mainTaskRaw}" already exists. Use a different project name.`
+                : `A task named "${mainTaskRaw}" already exists. Use a different name.`,
           },
           { status: 409 },
         );
@@ -944,9 +947,9 @@ export async function POST(req: Request) {
   const createdDate = new Date(created.createdAt).toISOString().slice(0, 10);
   const message = isItProject
     ? `New project '${itProjectName ?? created.title}' created on ${createdDate}.`
-    : titleAlreadyUsed
-      ? `New task '${mainTaskRaw}' added under group '${created.title}' on ${createdDate}.`
-      : `New task group '${created.title}' created on ${createdDate}.`;
+    : body.isProject === true
+      ? `New project '${mainTaskRaw}' created on ${createdDate}.`
+      : `New task '${mainTaskRaw}' created on ${createdDate}.`;
 
   if (linkedJobOrderTicketId) {
     const { attachCreatedProjectToJobOrder } = await import("@/lib/job-order-project");
@@ -965,6 +968,17 @@ export async function POST(req: Request) {
         { status: 201 },
       );
     }
+  }
+
+  try {
+    await logKpiActivity({
+      kpiMaintenanceId: created.id,
+      author: session.user.name?.trim() || session.user.email?.trim() || "User",
+      summary: isItProject ? "Project created" : "Task created",
+      detail: message,
+    });
+  } catch (e) {
+    console.error("[kpi-maintenance POST] audit log failed", e);
   }
 
   return NextResponse.json(
@@ -1143,6 +1157,25 @@ export async function PATCH(req: Request) {
   });
   if (!row) return NextResponse.json({ error: "KPI not found." }, { status: 404 });
   const kpiRow = row;
+  const auditAuthor =
+    session.user.name?.trim() || session.user.email?.trim() || "User";
+  const respondUpdated = async (payload: unknown) => {
+    const audit = inferKpiPatchAudit(body);
+    if (audit) {
+      try {
+        await logKpiActivity({
+          kpiMaintenanceId: id,
+          author: auditAuthor,
+          summary: audit.summary,
+          detail: audit.detail,
+        });
+      } catch (e) {
+        console.error("[kpi-maintenance PATCH] audit log failed", e);
+      }
+    }
+    return NextResponse.json(payload);
+  };
+
 
   if (body.deleteTask === true) {
     if (!perms.isAdminRole) {
@@ -1150,6 +1183,7 @@ export async function PATCH(req: Request) {
     }
     await prisma.kpiMaintenance.delete({ where: { id } });
     await deleteTaskScreenshotsDir(id);
+    triggerEfficiencyRecomputeBackground();
     return NextResponse.json({ ok: true, id });
   }
 
@@ -1206,7 +1240,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { title: nextTitle },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   const snapshotTz = timeZoneFromPeriodKey(kpiRow.periodKey) || patchTz;
@@ -1230,6 +1264,16 @@ export async function PATCH(req: Request) {
       },
       snapshotTz,
     );
+  }
+
+  /** Primary owns the update; dump overall KPI to merged for Personnel fetch. */
+  function dumpOverallKpiToMerged() {
+    triggerEfficiencyRecomputeBackground();
+  }
+
+  async function afterProgressAffectingUpdate(subKpis: unknown) {
+    await captureCurrentPeriodSnapshot(subKpis);
+    dumpOverallKpiToMerged();
   }
   const isAssignee = !!perms.operator && perms.operator.id === kpiRow.assignedAgentId;
   const subKpiItems = isItProjectImplementationPillar(kpiRow.title)
@@ -1285,7 +1329,7 @@ export async function PATCH(req: Request) {
         typeof body.itProjectPhase === "string" ? body.itProjectPhase.trim() || null : null;
     }
     const updated = await prisma.kpiMaintenance.update({ where: { id }, data });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.itProjectState != null && typeof body.itProjectState === "object") {
@@ -1321,7 +1365,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: wrapped, itProjectPhase: active.name },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.taskPriority !== undefined) {
@@ -1336,7 +1380,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: updatedJson },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.taskDailyPenaltyAmount !== undefined) {
@@ -1359,7 +1403,7 @@ export async function PATCH(req: Request) {
       data: { subKpis: updatedJson },
     });
     triggerEfficiencyRecomputeBackground();
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.taskDelayPenaltyFrequency !== undefined) {
@@ -1383,7 +1427,7 @@ export async function PATCH(req: Request) {
       data: { subKpis: updatedJson },
     });
     triggerEfficiencyRecomputeBackground();
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.subKpiWorkMeta != null && typeof body.subKpiWorkMeta === "object") {
@@ -1469,7 +1513,8 @@ export async function PATCH(req: Request) {
     let lastFullCompletionAt: Date | null | undefined;
     if (!prevComplete && nextComplete) lastFullCompletionAt = new Date();
     else if (prevComplete && !nextComplete) lastFullCompletionAt = null;
-    if (nextComplete) await captureCurrentPeriodSnapshot(updatedJson);
+    if (nextComplete) await afterProgressAffectingUpdate(updatedJson);
+    else dumpOverallKpiToMerged();
 
     const updated = await prisma.kpiMaintenance.update({
       where: { id },
@@ -1479,7 +1524,7 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.moveSubKpiPhase != null && typeof body.moveSubKpiPhase === "object") {
@@ -1506,7 +1551,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: result.json },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.phaseDueDate != null && typeof body.phaseDueDate === "object") {
@@ -1537,7 +1582,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: nextJson },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.subKpiSchedule != null && typeof body.subKpiSchedule === "object") {
@@ -1579,7 +1624,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    return NextResponse.json({
+    dumpOverallKpiToMerged();
+    return respondUpdated({
       ...updated,
       phaseDelayNotifications: delayPass.notifications,
     });
@@ -1633,7 +1679,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    return NextResponse.json(updated);
+    dumpOverallKpiToMerged();
+    return respondUpdated(updated);
   }
 
   if (body.subKpiProjectMeta != null && typeof body.subKpiProjectMeta === "object") {
@@ -1667,7 +1714,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    return NextResponse.json(updated);
+    dumpOverallKpiToMerged();
+    return respondUpdated(updated);
   }
 
   if (body.subKpiAssignee != null && typeof body.subKpiAssignee === "object") {
@@ -1755,7 +1803,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: updatedJson },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.seekAssistance != null && typeof body.seekAssistance === "object") {
@@ -1793,7 +1841,7 @@ export async function PATCH(req: Request) {
     });
     if (pendingIds.length === 0) {
       const updated = await prisma.kpiMaintenance.findUnique({ where: { id } });
-      return NextResponse.json(updated);
+      return respondUpdated(updated);
     }
     const byAgentId = perms.operator!.id;
     const updatedJson = isItProjectImplementationPillar(kpiRow.title)
@@ -1806,7 +1854,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: updatedJson },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.pillarScreenshot != null && typeof body.pillarScreenshot === "object") {
@@ -1872,7 +1920,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    return NextResponse.json(updated);
+    dumpOverallKpiToMerged();
+    return respondUpdated(updated);
   }
 
   if (body.pillarScreenshotDelete != null && typeof body.pillarScreenshotDelete === "object") {
@@ -1908,7 +1957,7 @@ export async function PATCH(req: Request) {
       where: { id },
       data: { subKpis: syncedJson },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.subKpiScreenshot != null && typeof body.subKpiScreenshot === "object") {
@@ -1981,8 +2030,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    await captureCurrentPeriodSnapshot(updatedJson);
-    return NextResponse.json(updated);
+    await afterProgressAffectingUpdate(updatedJson);
+    return respondUpdated(updated);
   }
 
   if (body.subKpiScreenshotDelete != null && typeof body.subKpiScreenshotDelete === "object") {
@@ -2036,8 +2085,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    await captureCurrentPeriodSnapshot(updatedJson);
-    return NextResponse.json(updated);
+    await afterProgressAffectingUpdate(updatedJson);
+    return respondUpdated(updated);
   }
 
   if (Object.prototype.hasOwnProperty.call(body, "assignedAgentId")) {
@@ -2056,7 +2105,7 @@ export async function PATCH(req: Request) {
           assignedRole: null,
         },
       });
-      return NextResponse.json(updated);
+      return respondUpdated(updated);
     }
     const assignee = await prisma.agent.findUnique({
       where: { id: reassignedAgentId },
@@ -2087,7 +2136,7 @@ export async function PATCH(req: Request) {
         assignedRole,
       },
     });
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.addSubKpi != null && typeof body.addSubKpi === "object") {
@@ -2130,8 +2179,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    await captureCurrentPeriodSnapshot(result.json);
-    return NextResponse.json(updated);
+    await afterProgressAffectingUpdate(result.json);
+    return respondUpdated(updated);
   }
 
   if (body.updateSubKpi != null && typeof body.updateSubKpi === "object") {
@@ -2192,7 +2241,7 @@ export async function PATCH(req: Request) {
         data: { subKpis: penaltyResult.json },
       });
       triggerEfficiencyRecomputeBackground();
-      return NextResponse.json(updated);
+      return respondUpdated(updated);
     }
     if (
       !hasTitle &&
@@ -2292,11 +2341,11 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    await captureCurrentPeriodSnapshot(result.json);
+    await afterProgressAffectingUpdate(result.json);
     if (hasDailyPenalty || hasDelayFrequency) {
       triggerEfficiencyRecomputeBackground();
     }
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.removeSubKpi != null && typeof body.removeSubKpi === "object") {
@@ -2331,8 +2380,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    await captureCurrentPeriodSnapshot(result.json);
-    return NextResponse.json(updated);
+    await afterProgressAffectingUpdate(result.json);
+    return respondUpdated(updated);
   }
 
   if (body.taskSchedule != null && typeof body.taskSchedule === "object") {
@@ -2377,7 +2426,7 @@ export async function PATCH(req: Request) {
     }
 
     if (kpiRow.isRecurring) {
-      await captureCurrentPeriodSnapshot(kpiRow.subKpis);
+      await afterProgressAffectingUpdate(kpiRow.subKpis);
     }
 
     const now = new Date();
@@ -2441,7 +2490,7 @@ export async function PATCH(req: Request) {
         patchTz,
       );
     }
-    return NextResponse.json(updated);
+    return respondUpdated(updated);
   }
 
   if (body.structuredSubKpis !== undefined) {
@@ -2473,8 +2522,8 @@ export async function PATCH(req: Request) {
         ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
       },
     });
-    await captureCurrentPeriodSnapshot(wrapped);
-    return NextResponse.json(updated);
+    await afterProgressAffectingUpdate(wrapped);
+    return respondUpdated(updated);
   }
 
   const markAllDone = body.markAllDone;
@@ -2547,6 +2596,6 @@ export async function PATCH(req: Request) {
       ...(lastFullCompletionAt !== undefined ? { lastFullCompletionAt } : {}),
     },
   });
-  await captureCurrentPeriodSnapshot(updatedJson);
-  return NextResponse.json(updated);
+  await afterProgressAffectingUpdate(updatedJson);
+  return respondUpdated(updated);
 }
