@@ -20,7 +20,6 @@ import {
   isItProjectSubTaskDelayed,
   itProjectStatusProgress,
   itProjectAggregatedProgressFromRaw,
-  itProjectChecklistProgressFromRaw,
   itProjectChecklistItems,
   parseItProjectSubKpis,
   resolvePhaseEffectiveTargetDate,
@@ -29,7 +28,7 @@ import {
   type ItProjectPhase,
 } from "@/lib/it-project-subkpis";
 import { ProjectTimelineKanban } from "@/components/task-board/ProjectTimelineKanban";
-import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
+import { kpiHasDistinctMainTask, kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   kpiChecklistMetricView,
@@ -343,7 +342,6 @@ export function AgentKpiKanbanFlow({
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [operatorAgentName, setOperatorAgentName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [moveToTaskGroupDraft, setMoveToTaskGroupDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
   const [nowMs, setNowMs] = useState(0);
@@ -353,6 +351,10 @@ export function AgentKpiKanbanFlow({
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [taskAuditLog, setTaskAuditLog] = useState<
+    Array<{ id: string; author: string; summary: string; detail: string | null; createdAt: string }>
+  >([]);
+  const [taskAuditLoading, setTaskAuditLoading] = useState(false);
   const [subTasksManagerTaskId, setSubTasksManagerTaskId] = useState<string | null>(null);
   const [seekAssistModal, setSeekAssistModal] = useState<{
     kpiId: string;
@@ -546,16 +548,63 @@ export function AgentKpiKanbanFlow({
   function closeActiveTask() {
     setActiveTaskId(null);
     setScheduleDraft(null);
+    setTaskAuditLog([]);
   }
+
+  useEffect(() => {
+    if (!activeTaskId) {
+      setTaskAuditLog([]);
+      setTaskAuditLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTaskAuditLoading(true);
+    void fetch(`/api/kpi-maintenance/${encodeURIComponent(activeTaskId)}/activity?take=40`, {
+      cache: "no-store",
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("audit");
+        const data = (await res.json()) as {
+          rows?: Array<{
+            id: string;
+            author: string;
+            summary: string;
+            detail: string | null;
+            createdAt: string;
+          }>;
+        };
+        if (!cancelled) setTaskAuditLog(Array.isArray(data.rows) ? data.rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setTaskAuditLog([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTaskAuditLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTaskId, busyId]);
 
   function taskLabel(r: KpiRecord) {
     return kpiMainTaskLabel(r);
   }
 
   function progress(r: KpiRecord) {
-    const p = isTimelineProjectRecord(r)
-      ? itProjectChecklistProgressFromRaw(r.subKpis)
-      : kpiChecklistProgress(r.subKpis, taskLabel(r));
+    if (isTimelineProjectRecord(r)) {
+      const agg = itProjectAggregatedProgressFromRaw(r.subKpis, r.itProjectPhase);
+      const missing = Math.max(0, agg.totalItems - agg.totalDone);
+      return {
+        total: agg.totalItems,
+        done: agg.totalDone,
+        missing,
+        pct: agg.averagePercent,
+        inverted: false,
+        positive: agg.totalDone,
+        negative: missing,
+      };
+    }
+    const p = kpiChecklistProgress(r.subKpis, taskLabel(r));
     const view = kpiChecklistMetricView(p, false);
     return {
       total: view.total,
@@ -1399,33 +1448,6 @@ export function AgentKpiKanbanFlow({
       }
       if (activeTaskId === r.id) closeActiveTask();
       setRows((prev) => prev.filter((row) => row.id !== r.id));
-      await load();
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function moveProjectToTaskGroup(r: KpiRecord, nextGroup: string) {
-    if (!canAssignWork) return;
-    const title = nextGroup.trim();
-    if (!title) {
-      setError("Select a task group.");
-      return;
-    }
-    setBusyId(r.id);
-    setError(null);
-    try {
-      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: r.id, moveToTaskGroup: title }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(body.error ?? "Could not move project to task group.");
-        return;
-      }
-      setMoveToTaskGroupDraft("");
       await load();
     } finally {
       setBusyId(null);
@@ -3097,26 +3119,15 @@ export function AgentKpiKanbanFlow({
                   <div className="flex items-start gap-1.5">
                     <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
                     <div className="min-w-0 flex-1">
-                      {kpiHasDistinctMainTask(r) ? (
-                        <>
-                          <p className="line-clamp-1 text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
-                            {kpiPillarLabel(r)}
-                          </p>
-                          {isFieldAssignmentRecord(r) || !isPillarOnlyTask(r.subKpis) ? (
-                            <p
-                              className={cn(
-                                "line-clamp-2 leading-snug",
-                                isFieldAssignmentRecord(r) &&
-                                  "mt-1 inline-flex max-w-full rounded-md border border-orange-400/45 bg-orange-500/10 px-1.5 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100",
-                              )}
-                            >
-                              {taskLabel(r)}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <p className="line-clamp-2 leading-snug">{taskLabel(r)}</p>
-                      )}
+                      <p
+                        className={cn(
+                          "line-clamp-2 leading-snug",
+                          isFieldAssignmentRecord(r) &&
+                            "inline-flex max-w-full rounded-md border border-orange-400/45 bg-orange-500/10 px-1.5 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100",
+                        )}
+                      >
+                        {taskLabel(r)}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -3408,30 +3419,12 @@ export function AgentKpiKanbanFlow({
               </p>
               <h3 className="mt-1 truncate text-xl font-bold text-zinc-950 dark:text-zinc-50">
                 {fieldAssignment ? (
-                  <>
-                    <span className="block truncate text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
-                      {kpiPillarLabel(activeTask)}
+                  <span className="inline-flex max-w-full items-center rounded-md border border-orange-400/50 bg-orange-500/10 px-2.5 py-1 text-sm font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
+                    <span className="truncate">
+                      {activeTask.travelOrderSummary?.orderRequest?.trim() ||
+                        taskLabel(activeTask)}
                     </span>
-                    <span className="mt-2 inline-flex max-w-full items-center rounded-md border border-orange-400/50 bg-orange-500/10 px-2.5 py-1 text-sm font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
-                      <span className="truncate">
-                        {activeTask.travelOrderSummary?.orderRequest?.trim() ||
-                          taskLabel(activeTask)}
-                      </span>
-                    </span>
-                  </>
-                ) : pillarOnly ? (
-                  <>
-                    <span className="block truncate text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
-                      {kpiPillarLabel(activeTask)}
-                    </span>
-                  </>
-                ) : kpiHasDistinctMainTask(activeTask) ? (
-                  <>
-                    <span className="block truncate text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
-                      {kpiPillarLabel(activeTask)}
-                    </span>
-                    <span className="mt-1 block truncate">{taskLabel(activeTask)}</span>
-                  </>
+                  </span>
                 ) : (
                   taskLabel(activeTask)
                 )}
@@ -3514,12 +3507,6 @@ export function AgentKpiKanbanFlow({
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">{statusOf(activeTask)}</dd>
                 </div>
                 <div>
-                  <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                    Task group
-                  </dt>
-                  <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">{activeTask.title}</dd>
-                </div>
-                <div>
                   <dt className="font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Cycle</dt>
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">
                     {fieldAssignment
@@ -3548,60 +3535,6 @@ export function AgentKpiKanbanFlow({
                   </div>
                 ) : null}
               </dl>
-              {canAssignWork &&
-              isProjectTask(activeTask.subKpis) &&
-              activeTask.assignedAgent?.id ? (
-                <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                    Move to task group
-                  </p>
-                  <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Optional — place this running project under another group without changing Project tagging.
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <select
-                      value={moveToTaskGroupDraft || activeTask.title}
-                      disabled={busyId === activeTask.id}
-                      onChange={(e) => setMoveToTaskGroupDraft(e.target.value)}
-                      className="min-w-[12rem] flex-1 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
-                    >
-                      {Array.from(
-                        new Set(
-                          rows
-                            .map((row) => row.title.trim())
-                            .filter(
-                              (t) => t && !isItProjectImplementationPillar(t),
-                            ),
-                        ),
-                      )
-                        .sort((a, b) => a.localeCompare(b))
-                        .map((title) => (
-                          <option key={title} value={title}>
-                            {title}
-                          </option>
-                        ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={
-                        busyId === activeTask.id ||
-                        !(moveToTaskGroupDraft || activeTask.title).trim() ||
-                        (moveToTaskGroupDraft || activeTask.title).trim().toLowerCase() ===
-                          activeTask.title.trim().toLowerCase()
-                      }
-                      onClick={() =>
-                        void moveProjectToTaskGroup(
-                          activeTask,
-                          moveToTaskGroupDraft || activeTask.title,
-                        )
-                      }
-                      className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Move
-                    </button>
-                  </div>
-                </div>
-              ) : null}
               {renderTaskScheduleEditor(activeTask)}
               {usesTaskPriority ? (
                 <label className="block rounded-lg border border-zinc-200 bg-white p-3 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/70 dark:text-zinc-500">
@@ -3620,6 +3553,39 @@ export function AgentKpiKanbanFlow({
                   </select>
                 </label>
               ) : null}
+              <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
+                <h4 className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                  Audit log
+                </h4>
+                {taskAuditLoading ? (
+                  <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">Loading history…</p>
+                ) : taskAuditLog.length === 0 ? (
+                  <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                    No history yet. Changes to this task will appear here.
+                  </p>
+                ) : (
+                  <ul className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-0.5">
+                    {taskAuditLog.map((entry) => (
+                      <li
+                        key={entry.id}
+                        className="rounded-md border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/50"
+                      >
+                        <p className="text-[11px] font-semibold text-zinc-900 dark:text-zinc-100">
+                          {entry.summary}
+                        </p>
+                        {entry.detail ? (
+                          <p className="mt-0.5 break-words text-[10px] text-zinc-600 dark:text-zinc-400">
+                            {entry.detail}
+                          </p>
+                        ) : null}
+                        <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">
+                          {entry.author} · {new Date(entry.createdAt).toLocaleString()}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               {showAdminTaskManagement &&
               !fieldAssignment &&
               (itProject || activeTask.isRecurring === false) ? (
@@ -3721,7 +3687,10 @@ export function AgentKpiKanbanFlow({
                       {pillarOnly ? "Main task completion" : "Sub Tasks"}
                     </h4>
                     <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                      {p.total} item{p.total === 1 ? "" : "s"}
+                      {(() => {
+                        const total = itProjectProgress?.totalItems ?? p.total;
+                        return `${total} item${total === 1 ? "" : "s"}`;
+                      })()}
                     </span>
                   </div>
                   <div className="space-y-2">{renderTaskSubtaskContent(activeTask)}</div>
@@ -3994,10 +3963,7 @@ export function AgentKpiKanbanFlow({
                             <div className="min-w-0">
                               {fieldAssignment ? (
                                 <>
-                                  <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
-                                    {kpiPillarLabel(r)}
-                                  </p>
-                                  <p className="mt-1.5 inline-flex max-w-full items-center rounded-md border border-orange-400/45 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
+                                  <p className="inline-flex max-w-full items-center rounded-md border border-orange-400/45 bg-orange-500/10 px-2 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
                                     <span className="truncate">
                                       {r.travelOrderSummary?.orderRequest?.trim() ||
                                         taskLabel(r)}
@@ -4008,27 +3974,6 @@ export function AgentKpiKanbanFlow({
                                     {r.travelOrderSummary?.travelers?.length
                                       ? r.travelOrderSummary.travelers.join(", ")
                                       : r.assignedAgent?.name ?? "—"}
-                                  </p>
-                                </>
-                              ) : pillarOnly ? (
-                                <>
-                                  <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
-                                    {kpiPillarLabel(r)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
-                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
-                                  </p>
-                                </>
-                              ) : kpiHasDistinctMainTask(r) ? (
-                                <>
-                                  <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
-                                    {kpiPillarLabel(r)}
-                                  </p>
-                                  <p className="mt-0.5 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                    {taskLabel(r)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
-                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
                                   </p>
                                 </>
                               ) : (
@@ -4062,9 +4007,9 @@ export function AgentKpiKanbanFlow({
                               Reassign the card through lanes above, or assign individual sub-tasks below.
                             </p>
                           ) : null}
-                          {itProject && (r.itProjectName || r.itProjectPhase) ? (
+                          {itProject && r.itProjectPhase?.trim() ? (
                             <p className="mt-2 truncate text-xs text-orange-800 dark:text-orange-200">
-                              {[r.itProjectName, r.itProjectPhase].filter(Boolean).join(" · ")}
+                              {r.itProjectPhase.trim()}
                             </p>
                           ) : null}
                           {fieldAssignment ? (
@@ -4385,7 +4330,6 @@ export function AgentKpiKanbanFlow({
       </TaskBoardPopup>
       <TravelOrderRequestModal
         open={createTravelOrderOpen}
-        taskGroupTitle="Travel Orders"
         mainTaskName=""
         allowEditDetails
         companyScopeAgentId={operatorAgentId}
