@@ -19,6 +19,7 @@ import {
 } from "@/lib/request-for-payment-approval";
 import {
   currentAcaBoardAssigneeId,
+  isAcaBoardVisibleToAgent,
   parseAcaApprovalMeta,
 } from "@/lib/aca-approval";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
@@ -146,6 +147,18 @@ export function isCurrentAcaStepAssignee(
 }
 
 /**
+ * True when the actor should see/open this ACA on their board:
+ * current procedural assignee, or listed AP 4 / 4 ExeComs / All ExeCom seat.
+ */
+export function isAcaBoardVisibleAssignee(
+  ticket: TicketAccessShape,
+  operatorId: string | null | undefined,
+): boolean {
+  if (!operatorId) return false;
+  return isAcaBoardVisibleToAgent(parseAcaApprovalMeta(ticket.acaApprovalMeta), operatorId);
+}
+
+/**
  * Company-scoped Admin (JWT Admin) may only touch tickets routed to their
  * designated company. SuperAdmin is never blocked here.
  * Requestors may always access tickets they filed (even when sent to another company).
@@ -190,8 +203,9 @@ export async function isPendingTransferRecipient(
 
 /**
  * Personnel may read/mutate when they are the requestor, board assignee,
- * current RFP/IRS/FTR/ACA step assignee, pending transfer recipient, or company
- * coordinator for the ticket's company. Peers on the same team are denied.
+ * current RFP/IRS/FTR/ACA step assignee, listed ACA ExeCom seat, pending transfer
+ * recipient, or company coordinator for the ticket's company. Peers on the same
+ * team are denied.
  */
 export async function personnelForbiddenForTicket(args: {
   email?: string | null;
@@ -202,7 +216,7 @@ export async function personnelForbiddenForTicket(args: {
   if (isTicketAssignee({ operatorId, sessionEmail: email, ticket })) return false;
   if (isTicketRequestor(ticket, email)) return false;
   if (isCurrentProceduralStepAssignee(ticket, operatorId)) return false;
-  if (isCurrentAcaStepAssignee(ticket, operatorId)) return false;
+  if (isAcaBoardVisibleAssignee(ticket, operatorId)) return false;
   if (await isPendingTransferRecipient(ticket.id, operatorId)) return false;
 
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(email);

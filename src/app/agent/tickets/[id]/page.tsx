@@ -321,7 +321,11 @@ export default async function AgentTicketPage({
           <div className="grid grid-cols-1 gap-4 border-t border-white/10 pt-3 sm:grid-cols-2 sm:gap-6">
             <div className="min-w-0 space-y-1">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                {isFundTransferRequest || isPaymentRequest ? "Prepared By: " : "Requestor: "}
+                {isFundTransferRequest || isPaymentRequest
+                  ? "Prepared By: "
+                  : isAcaRequest
+                    ? "Submitted By: "
+                    : "Requestor: "}
                 <span className="text-zinc-300 normal-case tracking-normal">{ticketForWorkspace.contactName}</span>
               </p>
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">

@@ -55,10 +55,16 @@ export async function GET(
 
   try {
     const buf = await readFile(diskPath);
+    const isImage = (item.mimeType || "").toLowerCase().startsWith("image/");
     return new NextResponse(buf, {
       headers: {
-        "Content-Type": item.mimeType || "image/jpeg",
+        "Content-Type": item.mimeType || "application/octet-stream",
         "Cache-Control": "private, max-age=3600",
+        ...(isImage
+          ? {}
+          : {
+              "Content-Disposition": `attachment; filename="${item.originalName.replace(/"/g, "")}"`,
+            }),
       },
     });
   } catch {

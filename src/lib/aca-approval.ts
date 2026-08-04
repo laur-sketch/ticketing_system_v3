@@ -57,12 +57,81 @@ export function currentAcaBoardAssigneeId(meta: AcaApprovalMeta): string | null 
   return currentAcaLevel(meta)?.agentId ?? null;
 }
 
+/** AP 4 / 4 ExeComs / All ExeCom must leave feedback before marking Done. */
+export function acaLevelRequiresFeedback(roleCode: string | null | undefined): boolean {
+  return roleCode === "AP_4" || roleCode === "FOUR_EXECOMS" || roleCode === "ALL_EXECOM";
+}
+
+/** ExeCom table seats: AP 4, 4 ExeComs, All ExeCom. */
+export function acaLevelShowsInExeComTable(roleCode: string | null | undefined): boolean {
+  return acaLevelRequiresFeedback(roleCode);
+}
+
+/**
+ * Horizontal procedural row: Recommended By, Validated By (Finance), and AP 1–3.
+ * AP 4 / 4 ExeComs / All ExeCom never appear here — they use the ExeCom table.
+ * (Submitted By is shown in the ticket header, not here.)
+ */
+export function acaLevelShowsInHorizontalApproval(
+  roleCode: string | null | undefined,
+  key?: string | null,
+): boolean {
+  if (key === "SUBMITTED_BY") return false;
+  if (acaLevelShowsInExeComTable(roleCode)) return false;
+  if (key === "RECOMMENDED_BY" || key === "FINANCE_MANAGER") return true;
+  if (!roleCode) return false;
+  if (roleCode === "AP_1" || roleCode === "AP_2" || roleCode === "AP_3") return true;
+  if (roleCode === "FINANCE" || roleCode === "EXECOM") return true;
+  if (roleCode.startsWith("RA_")) return true;
+  return false;
+}
+
+/** Short labels for the procedural horizontal row. */
+export function acaHorizontalApprovalLabel(level: Pick<AcaApprovalLevel, "key" | "label">): string {
+  if (level.key === "RECOMMENDED_BY") {
+    const detail = level.label.replace(/^RECOMMENDED BY\s*/i, "").trim();
+    return detail ? `Recommended By: ${detail}` : "Recommended By:";
+  }
+  if (level.key === "FINANCE_MANAGER") return "Validated By: Finance Manager";
+  return level.label;
+}
+
 export function acaApprovalParticipantIds(meta: AcaApprovalMeta): Set<string> {
   const ids = new Set<string>();
   for (const level of meta.levels) {
     if (level.agentId) ids.add(level.agentId);
   }
   return ids;
+}
+
+/** Agent ids listed on AP 4 / 4 ExeComs / All ExeCom approving seats. */
+export function acaExeComSeatAgentIds(meta: AcaApprovalMeta): Set<string> {
+  const ids = new Set<string>();
+  for (const level of meta.levels) {
+    if (acaLevelShowsInExeComTable(level.roleCode) && level.agentId) {
+      ids.add(level.agentId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Who should see this ACA on their request board: the current procedural assignee,
+ * plus every listed AP 4 / 4 ExeComs / All ExeCom seat holder.
+ */
+export function acaBoardVisibleAgentIds(meta: AcaApprovalMeta): Set<string> {
+  const ids = new Set<string>(acaExeComSeatAgentIds(meta));
+  const current = currentAcaBoardAssigneeId(meta);
+  if (current) ids.add(current);
+  return ids;
+}
+
+export function isAcaBoardVisibleToAgent(
+  meta: AcaApprovalMeta | null | undefined,
+  agentId: string | null | undefined,
+): boolean {
+  if (!meta || !agentId) return false;
+  return acaBoardVisibleAgentIds(meta).has(agentId);
 }
 
 export function buildAcaApprovalLevels(opts: {

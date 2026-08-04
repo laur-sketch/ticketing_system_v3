@@ -28,6 +28,7 @@ import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import {
   adminOutsideCompanyScope,
+  isAcaBoardVisibleAssignee,
   isCurrentAcaStepAssignee,
   isCurrentPaymentStepAssignee,
   isTicketAssignee,
@@ -110,6 +111,7 @@ import {
   saveJobOrderApprovalMeta,
 } from "@/lib/job-order-approval-db";
 import {
+  acaLevelRequiresFeedback,
   acaProceduralStatusLabel,
   canCompleteAcaApprovalStep,
   completeAcaApprovalStep,
@@ -256,7 +258,7 @@ export async function GET(
       ticket,
     }) ||
     isCurrentPaymentStepAssignee(ticket, operator?.id) ||
-    isCurrentAcaStepAssignee(ticket, operator?.id);
+    isAcaBoardVisibleAssignee(ticket, operator?.id);
   // Cross-company Admins may still read tickets they own as board/RFP/ACA-step assignee
   // (e.g. NOTED BY from the preparer company on a ticket routed to another company).
   if (
@@ -308,6 +310,7 @@ export async function PATCH(
   });
   const isPaymentStepOperator = isCurrentPaymentStepAssignee(ticket, operator?.id);
   const isAcaStepOperator = isCurrentAcaStepAssignee(ticket, operator?.id);
+  const isAcaBoardOperator = isAcaBoardVisibleAssignee(ticket, operator?.id);
   const canPrioritize = roleIsAdmin || isAssignedOperator;
   if (session.user.role === "Customer" && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -318,6 +321,7 @@ export async function PATCH(
     !isAssignedOperator &&
     !isPaymentStepOperator &&
     !isAcaStepOperator &&
+    !isAcaBoardOperator &&
     (await adminOutsideCompanyScope({
       role: session.user.role,
       email: session.user.email,
@@ -2963,6 +2967,16 @@ export async function PATCH(
       }
       const comment =
         typeof body.comment === "string" && body.comment.trim() ? body.comment.trim() : null;
+      const completingLevel = meta.levels.find((l) => l.key === previousStep);
+      if (acaLevelRequiresFeedback(completingLevel?.roleCode) && !comment) {
+        return NextResponse.json(
+          {
+            error:
+              "Feedback is required before approving this ACA seat (AP 4 / 4 ExeComs / All ExeCom).",
+          },
+          { status: 400 },
+        );
+      }
       const advanced = completeAcaApprovalStep(meta, { comment });
       const saved = await saveAcaApprovalMeta(id, advanced, previousStep);
       if (!saved.ok) {

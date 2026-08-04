@@ -43,7 +43,7 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchField";
 import { AcaIntakeFields } from "@/components/tickets/AcaIntakeFields";
 import { Paperclip, Plus, Trash2 } from "lucide-react";
-import { resolveAcaAuthority } from "@/lib/aca-authority-matrix";
+import { acaRecommendedByUsesRequestorCompanyLock, resolveAcaAuthority } from "@/lib/aca-authority-matrix";
 import { parseAcaAmountNumber } from "@/lib/authority-to-conduct-activity";
 
 function todayIsoDate() {
@@ -58,6 +58,28 @@ function pickImageFiles(list: File[]) {
     return /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(f.name);
   });
 }
+
+function pickAttachmentFiles(list: File[]) {
+  return list.filter((f) => {
+    const t = (f.type || "").toLowerCase();
+    if (t.startsWith("image/")) return true;
+    if (
+      t === "application/pdf" ||
+      t === "application/msword" ||
+      t === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      t === "application/vnd.ms-excel" ||
+      t === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      t === "text/plain" ||
+      t === "text/csv"
+    ) {
+      return true;
+    }
+    return /\.(png|jpe?g|gif|webp|bmp|heic|heif|pdf|docx?|xlsx?|csv|txt)$/i.test(f.name);
+  });
+}
+
+const ACA_ATTACHMENT_ACCEPT =
+  "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf";
 
 export default function NewTicketPage() {
   return (
@@ -167,12 +189,14 @@ function NewTicketPageInner() {
   const [acaObjective, setAcaObjective] = useState("");
   const [acaDateSubmitted, setAcaDateSubmitted] = useState(todayIsoDate);
   const [acaImplementationDate, setAcaImplementationDate] = useState("");
-  const [acaSubmittedByName, setAcaSubmittedByName] = useState("");
   const [acaRelatedTicketIds, setAcaRelatedTicketIds] = useState("");
   const [acaRecommendedByAgentId, setAcaRecommendedByAgentId] = useState("");
   const [acaFinanceManagerAgentId, setAcaFinanceManagerAgentId] = useState("");
   const [acaApprovingAgentIds, setAcaApprovingAgentIds] = useState<string[]>([]);
-  const [acaApproverAgents, setAcaApproverAgents] = useState<
+  const [acaAnyCompanyAgents, setAcaAnyCompanyAgents] = useState<
+    Array<{ id: string; name: string; email?: string | null }>
+  >([]);
+  const [acaRequestorCompanyAgents, setAcaRequestorCompanyAgents] = useState<
     Array<{ id: string; name: string; email?: string | null }>
   >([]);
   const [acaApproversLoading, setAcaApproversLoading] = useState(false);
@@ -288,46 +312,56 @@ function NewTicketPageInner() {
 
   useEffect(() => {
     if (!isAcaRequest) {
-      setAcaApproverAgents([]);
+      setAcaAnyCompanyAgents([]);
+      setAcaRequestorCompanyAgents([]);
       setAcaRecommendedByAgentId("");
       setAcaFinanceManagerAgentId("");
       setAcaApprovingAgentIds([]);
       return;
     }
-    const sendToCompanyId = paymentSendToCompanyId.trim();
-    if (!sendToCompanyId) {
-      setAcaApproverAgents([]);
-      return;
-    }
     let cancelled = false;
     setAcaApproversLoading(true);
-    void fetch(`/api/agents?company=${encodeURIComponent(sendToCompanyId)}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: Array<{ id: string; name: string; email?: string | null }>) => {
-        if (cancelled) return;
-        const list = Array.isArray(rows) ? rows : [];
-        setAcaApproverAgents(list);
-        const ids = new Set(list.map((a) => a.id));
-        setAcaRecommendedByAgentId((prev) => (prev && ids.has(prev) ? prev : ""));
-        setAcaFinanceManagerAgentId((prev) => (prev && ids.has(prev) ? prev : ""));
-        setAcaApprovingAgentIds((prev) => prev.map((id) => (id && ids.has(id) ? id : "")));
-      })
+
+    async function loadCompanyAgents(companyId: string | null | undefined) {
+      const id = (companyId ?? "").trim();
+      if (!id) return [] as Array<{ id: string; name: string; email?: string | null }>;
+      const res = await fetch(`/api/agents?company=${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: string; name: string; email?: string | null }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    void (async () => {
+      const [anyRows, requestorRows] = await Promise.all([
+        fetch("/api/agents?anyCompany=1", { cache: "no-store" })
+          .then((r) => (r.ok ? r.json() : []))
+          .then((rows: Array<{ id: string; name: string; email?: string | null }>) =>
+            Array.isArray(rows) ? rows : [],
+          )
+          .catch(() => [] as Array<{ id: string; name: string; email?: string | null }>),
+        loadCompanyAgents(staffDesignatedCompany?.id),
+      ]);
+      if (cancelled) return;
+      setAcaAnyCompanyAgents(anyRows);
+      setAcaRequestorCompanyAgents(requestorRows);
+      const anyIds = new Set(anyRows.map((a) => a.id));
+      setAcaFinanceManagerAgentId((prev) => (prev && anyIds.has(prev) ? prev : ""));
+      setAcaApprovingAgentIds((prev) => prev.map((id) => (id && anyIds.has(id) ? id : "")));
+    })()
       .catch(() => {
-        if (!cancelled) setAcaApproverAgents([]);
+        if (!cancelled) {
+          setAcaAnyCompanyAgents([]);
+          setAcaRequestorCompanyAgents([]);
+        }
       })
       .finally(() => {
         if (!cancelled) setAcaApproversLoading(false);
       });
+
     return () => {
       cancelled = true;
     };
-  }, [isAcaRequest, paymentSendToCompanyId]);
-
-  useEffect(() => {
-    if (!isAcaRequest) return;
-    const name = session?.user?.name?.trim();
-    if (name) setAcaSubmittedByName((prev) => prev || name);
-  }, [isAcaRequest, session?.user?.name]);
+  }, [isAcaRequest, staffDesignatedCompany?.id]);
 
   const acaResolution = useMemo(() => {
     if (!isAcaRequest || !acaCategory || !acaNatureOfRequest) return null;
@@ -339,6 +373,20 @@ function NewTicketPageInner() {
       estimatedCost: amount,
     });
   }, [isAcaRequest, acaCategory, acaNatureOfRequest, acaEstimatedCost]);
+
+  const acaRaLockedToRequestor = acaRecommendedByUsesRequestorCompanyLock(
+    acaResolution?.recommendingLevel,
+  );
+  const acaRecommendedByUsers = useMemo(
+    () => (acaRaLockedToRequestor ? acaRequestorCompanyAgents : acaAnyCompanyAgents),
+    [acaRaLockedToRequestor, acaRequestorCompanyAgents, acaAnyCompanyAgents],
+  );
+
+  useEffect(() => {
+    if (!isAcaRequest || acaApproversLoading) return;
+    const ids = new Set(acaRecommendedByUsers.map((a) => a.id));
+    setAcaRecommendedByAgentId((prev) => (prev && ids.has(prev) ? prev : ""));
+  }, [isAcaRequest, acaApproversLoading, acaRaLockedToRequestor, acaRecommendedByUsers]);
 
   useEffect(() => {
     if (!isAcaRequest) return;
@@ -553,11 +601,6 @@ function NewTicketPageInner() {
     return teams;
   }, [isStaffRequestorIntake, isAdminStaffIntake, companyTeams, staffDesignatedCompany]);
 
-  const acaSendToCompanyName = useMemo(() => {
-    if (!paymentSendToCompanyId) return "";
-    return sendRequestToOptions.find((t) => t.id === paymentSendToCompanyId)?.name ?? "";
-  }, [paymentSendToCompanyId, sendRequestToOptions]);
-
   const mergeScreenshotFiles = useCallback((picked: File[]) => {
     setScreenshots((prev) => {
       const next = [...prev];
@@ -592,20 +635,23 @@ function NewTicketPageInner() {
   }, [mergeScreenshotFiles]);
 
   function renderOptionalFieldAttachments(inputId: string) {
+    const allowDocuments = inputId.includes("-aca");
+    const accept = allowDocuments ? ACA_ATTACHMENT_ACCEPT : "image/*";
+    const pick = allowDocuments ? pickAttachmentFiles : pickImageFiles;
     return (
       <div className="mt-2 space-y-2">
         <input
           ref={fileInputRef}
           id={inputId}
           type="file"
-          accept="image/*"
+          accept={accept}
           multiple
           onChange={(e) => {
-            mergeScreenshotFiles(pickImageFiles(Array.from(e.target.files ?? [])));
+            mergeScreenshotFiles(pick(Array.from(e.target.files ?? [])));
             e.target.value = "";
           }}
           className="sr-only"
-          aria-label="Attach screenshots or images"
+          aria-label={allowDocuments ? "Attach documents or images" : "Attach screenshots or images"}
         />
         <div className="flex flex-wrap items-center gap-2">
           <label
@@ -613,7 +659,11 @@ function NewTicketPageInner() {
             className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-orange-500/60 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             <Paperclip className="size-3.5 shrink-0" aria-hidden />
-            {screenshots.length === 0 ? "Attach screenshots / files" : "Add more attachments"}
+            {screenshots.length === 0
+              ? allowDocuments
+                ? "Attach documents / images"
+                : "Attach screenshots / files"
+              : "Add more attachments"}
           </label>
           {screenshots.length > 0 ? (
             <button
@@ -625,7 +675,8 @@ function NewTicketPageInner() {
             </button>
           ) : null}
           <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
-            Optional · up to {MAX_SCREENSHOT_COUNT} images, 5MB each
+            Optional · up to {MAX_SCREENSHOT_COUNT} files, 5MB each
+            {allowDocuments ? " · PDF, Word, Excel, images" : " · images"}
             {screenshots.length > 0
               ? ` · ${screenshots.length} attached`
               : ""}
@@ -633,20 +684,29 @@ function NewTicketPageInner() {
         </div>
         {screenshotPreviews.length > 0 ? (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {screenshotPreviews.map((s, index) => (
+            {screenshotPreviews.map((s, index) => {
+              const file = screenshots[index];
+              const isImage = file ? pickImageFiles([file]).length > 0 : true;
+              return (
               <div
                 key={s.key}
                 className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900"
               >
-                <div className="relative h-16 w-full overflow-hidden rounded">
-                  <Image
-                    src={s.url}
-                    alt={s.name}
-                    fill
-                    className="object-cover"
-                    sizes="(max-width: 640px) 100vw, 33vw"
-                    unoptimized
-                  />
+                <div className="relative flex h-16 w-full items-center justify-center overflow-hidden rounded bg-zinc-100 dark:bg-zinc-950">
+                  {isImage ? (
+                    <Image
+                      src={s.url}
+                      alt={s.name}
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 640px) 100vw, 33vw"
+                      unoptimized
+                    />
+                  ) : (
+                    <span className="px-2 text-center text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
+                      Document
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1 flex items-start justify-between gap-2">
                   <p className="min-w-0 truncate text-[11px] text-zinc-400">{s.name}</p>
@@ -659,7 +719,8 @@ function NewTicketPageInner() {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </div>
@@ -681,12 +742,21 @@ function NewTicketPageInner() {
       return;
     }
     if (screenshots.length > MAX_SCREENSHOT_COUNT) {
-      setError(`You can attach at most ${MAX_SCREENSHOT_COUNT} screenshots.`);
+      setError(`You can attach at most ${MAX_SCREENSHOT_COUNT} files.`);
       return;
     }
     for (const f of screenshots) {
       if (f.size > MAX_SCREENSHOT_BYTES) {
-        setError("Each screenshot must be at most 5MB.");
+        setError("Each attachment must be at most 5MB.");
+        return;
+      }
+      if (isAcaRequest) {
+        if (pickAttachmentFiles([f]).length === 0) {
+          setError("Attachments must be images or documents (PDF, Word, Excel, CSV, TXT).");
+          return;
+        }
+      } else if (pickImageFiles([f]).length === 0) {
+        setError("Only image files are allowed for screenshots.");
         return;
       }
     }
@@ -800,7 +870,7 @@ function NewTicketPageInner() {
           return;
         }
         if (!acaResolution?.ok) {
-          setError(acaResolution?.error || "Select a valid Category, Nature, and Estimated Cost.");
+          setError(acaResolution?.error || "Select a valid Nature of Request and Estimated Cost.");
           setLoading(false);
           return;
         }
@@ -986,6 +1056,10 @@ function NewTicketPageInner() {
         if (!isAcaRequest) return;
         const departmentStore =
           acaDepartmentStore.trim() || String(form.get("department") || "").trim();
+        const submittedByName =
+          String(form.get("contactName") || "").trim() ||
+          session?.user?.name?.trim() ||
+          "";
         const approvingJson = JSON.stringify(acaApprovingAgentIds);
         if (target instanceof FormData) {
           target.append("department", departmentStore);
@@ -997,7 +1071,7 @@ function NewTicketPageInner() {
           target.append("acaObjective", acaObjective.trim());
           target.append("acaDateSubmitted", acaDateSubmitted.trim());
           target.append("acaImplementationDate", acaImplementationDate.trim());
-          target.append("acaSubmittedByName", acaSubmittedByName.trim());
+          target.append("acaSubmittedByName", submittedByName);
           if (acaRelatedTicketIds.trim()) {
             target.append("acaRelatedTicketIds", acaRelatedTicketIds.trim());
           }
@@ -1015,7 +1089,7 @@ function NewTicketPageInner() {
           target.acaObjective = acaObjective.trim();
           target.acaDateSubmitted = acaDateSubmitted.trim();
           target.acaImplementationDate = acaImplementationDate.trim();
-          target.acaSubmittedByName = acaSubmittedByName.trim();
+          target.acaSubmittedByName = submittedByName;
           if (acaRelatedTicketIds.trim()) {
             target.acaRelatedTicketIds = acaRelatedTicketIds.trim();
           }
@@ -1240,12 +1314,11 @@ function NewTicketPageInner() {
             {isStaffRequestorIntake ? (
               <>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  {isFundTransferRequest ||
-                  isPaymentRequest ||
-                  isAcaRequest ||
-                  isJobOrderRequest
-                    ? "PREPARED BY:"
-                    : "Requestor"}
+                  {isAcaRequest
+                    ? "Submitted by:"
+                    : isFundTransferRequest || isPaymentRequest || isJobOrderRequest
+                      ? "PREPARED BY:"
+                      : "Requestor"}
                   <Input
                     name="contactName"
                     required
@@ -1335,6 +1408,7 @@ function NewTicketPageInner() {
                     </select>
                   </div>
 
+                  {!isAcaRequest ? (
                   <div className="flex min-w-0 flex-col gap-1.5">
                     <label
                       htmlFor={isFundTransferRequest ? "intake-requesting-department" : "intake-department"}
@@ -1342,9 +1416,7 @@ function NewTicketPageInner() {
                     >
                       {isFundTransferRequest
                         ? "Requesting department/business unit"
-                        : isAcaRequest
-                          ? "Department / Store"
-                          : "Department"}
+                        : "Department"}
                     </label>
                     <input
                       id={isFundTransferRequest ? "intake-requesting-department" : "intake-department"}
@@ -1353,18 +1425,13 @@ function NewTicketPageInner() {
                           ? "requestingDepartmentBusinessUnit"
                           : "department"
                       }
-                      required={isFundTransferRequest || isAcaRequest}
-                      maxLength={isFundTransferRequest || isAcaRequest ? 200 : 120}
-                      value={isAcaRequest ? acaDepartmentStore : undefined}
-                      onChange={
-                        isAcaRequest
-                          ? (e) => setAcaDepartmentStore(e.target.value)
-                          : undefined
-                      }
+                      required={isFundTransferRequest}
+                      maxLength={isFundTransferRequest ? 200 : 120}
                       placeholder="e.g. IT, Finance, Operations"
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   </div>
+                  ) : null}
                 </div>
               </>
             ) : (
@@ -2004,11 +2071,13 @@ function NewTicketPageInner() {
               </div>
             ) : isAcaRequest ? (
               <AcaIntakeFields
-                companyName={acaSendToCompanyName}
+                companyName={staffDesignatedCompany?.name ?? ""}
                 category={acaCategory}
                 onCategoryChange={setAcaCategory}
                 natureOfRequest={acaNatureOfRequest}
                 onNatureOfRequestChange={setAcaNatureOfRequest}
+                departmentStore={acaDepartmentStore}
+                onDepartmentStoreChange={setAcaDepartmentStore}
                 estimatedCost={acaEstimatedCost}
                 onEstimatedCostChange={setAcaEstimatedCost}
                 budgetAmount={acaBudgetAmount}
@@ -2021,14 +2090,14 @@ function NewTicketPageInner() {
                 onDateSubmittedChange={setAcaDateSubmitted}
                 implementationDate={acaImplementationDate}
                 onImplementationDateChange={setAcaImplementationDate}
-                submittedByName={acaSubmittedByName}
-                onSubmittedByNameChange={setAcaSubmittedByName}
                 relatedTicketIds={acaRelatedTicketIds}
                 onRelatedTicketIdsChange={setAcaRelatedTicketIds}
                 resolution={acaResolution}
-                companyUsers={acaApproverAgents}
+                recommendedByUsers={acaRecommendedByUsers}
+                recommendedByLockedToRequestor={acaRaLockedToRequestor}
+                requestorCompanyName={staffDesignatedCompany?.name ?? ""}
+                companyUsers={acaAnyCompanyAgents}
                 companyUsersLoading={acaApproversLoading}
-                sendToCompanySelected={Boolean(paymentSendToCompanyId.trim())}
                 recommendedByAgentId={acaRecommendedByAgentId}
                 onRecommendedByAgentIdChange={setAcaRecommendedByAgentId}
                 financeManagerAgentId={acaFinanceManagerAgentId}

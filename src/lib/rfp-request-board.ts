@@ -18,7 +18,7 @@ import {
   parsePaymentApprovalMeta,
 } from "@/lib/request-for-payment-approval";
 import {
-  currentAcaBoardAssigneeId,
+  isAcaBoardVisibleToAgent,
   parseAcaApprovalMeta,
 } from "@/lib/aca-approval";
 import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
@@ -184,7 +184,8 @@ export async function loadJobOrderTicketIdsForCurrentStepAssignee(
 }
 
 /**
- * ACA ticket ids whose current procedural-step assignee is `agentId`.
+ * ACA ticket ids that should appear on `agentId`'s board:
+ * current procedural-step assignee, or any listed AP 4 / 4 ExeComs / All ExeCom seat.
  */
 export async function loadAcaTicketIdsForCurrentStepAssignee(
   agentId: string,
@@ -205,7 +206,7 @@ export async function loadAcaTicketIdsForCurrentStepAssignee(
     if (row.assigned_agent_id === agentId) continue;
     const meta = parseAcaApprovalMeta(row.aca_approval_meta);
     if (!meta) continue;
-    if (currentAcaBoardAssigneeId(meta) === agentId) {
+    if (isAcaBoardVisibleToAgent(meta, agentId)) {
       ids.push(row.id);
     }
   }

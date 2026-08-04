@@ -8,6 +8,12 @@ export type IntakeScreenshotMetaItem = {
   size: number;
 };
 
+export function isIntakeAttachmentImage(item: Pick<IntakeScreenshotMetaItem, "mimeType" | "originalName">): boolean {
+  const mime = (item.mimeType || "").toLowerCase();
+  if (mime.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(item.originalName || "");
+}
+
 function isSafeStoredFileName(name: string): boolean {
   if (!name || name.includes("..")) return false;
   return !name.includes("/") && !name.includes("\\");

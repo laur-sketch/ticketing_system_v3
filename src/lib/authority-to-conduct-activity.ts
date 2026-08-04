@@ -22,37 +22,63 @@ export type AcaRequestFields = {
   relatedTicketIds?: string;
 };
 
-/** Company team name → official ACA form code prefix. */
-export const ACA_COMPANY_FORM_CODES: Record<string, string> = {
-  ACI: "ACI-FO-ACA-01",
-  "AMALGATED CAP": "ACI-FO-ACA-01",
-  "AMALGATED CAP (ACI) INC.": "ACI-FO-ACA-01",
-  ALI: "ALI-FO-ACA-01",
-  "AMALGATED LENDING": "ALI-FO-ACA-01",
-  "AMALGATED LENDING INC.": "ALI-FO-ACA-01",
-  MCHSI: "MCHSI-FO-ACA-01",
-  "M.CONPINCO": "MCHSI-FO-ACA-01",
-  "M.CONPINCO HOME IMPROVEMENT SUPERCENTER, INC.": "MCHSI-FO-ACA-01",
-  APMC: "APMC-FO-ACA-01",
-  "AMALGATED PROPERTIES": "APMC-FO-ACA-01",
-  AWIC: "AWIC-FO-ACA-01",
-  "AMALGATED WORLD IMPORT": "AWIC-FO-ACA-01",
-  EAZZY: "EAZZY-FO-ACA-01",
-  "EAZZY GAS": "EAZZY-FO-ACA-01",
-  "EAZZY GAS OPC": "EAZZY-FO-ACA-01",
-  MCCI: "MCCI-FO-ACA-01",
-  "M. CONPINCO CYCLEHOUSE": "MCCI-FO-ACA-01",
-  "M. CONPINCO CYCLEHOUSE INC.": "MCCI-FO-ACA-01",
+/** Company / roster name → form-code company prefix (`{PREFIX}-FO-ACA-01`). */
+export const ACA_COMPANY_FORM_PREFIXES: Record<string, string> = {
+  AGC: "AGC",
+  ALI: "ALI",
+  "AMALGATED LENDING": "ALI",
+  "AMALGATED LENDING INC.": "ALI",
+  ACI: "ACI",
+  "AMALGATED CAP": "ACI",
+  "AMALGATED CAP (ACI) INC.": "ACI",
+  APMC: "APMC",
+  "AMALGATED PROPERTIES": "APMC",
+  AGOC: "AGOC",
+  AWIC: "AWIC",
+  "AMALGATED WORLD IMPORT": "AWIC",
+  MCHISI: "MCHISI",
+  MCHSI: "MCHSI",
+  "M.CONPINCO": "MCHSI",
+  "M.CONPINCO HOME IMPROVEMENT SUPERCENTER, INC.": "MCHSI",
+  EAZYGAZ: "EAZYGAZ",
+  EAZZY: "EAZZY",
+  "EAZZY GAS": "EAZZY",
+  "EAZZY GAS OPC": "EAZZY",
+  MCCI: "MCCI",
+  "M. CONPINCO CYCLEHOUSE": "MCCI",
+  "M. CONPINCO CYCLEHOUSE INC.": "MCCI",
+  INDUSTRIES: "INDUSTRIES",
 };
 
-export function resolveAcaFormCode(companyName: string | null | undefined): string {
+/** @deprecated Prefer {@link ACA_COMPANY_FORM_PREFIXES}; kept for callers expecting full codes. */
+export const ACA_COMPANY_FORM_CODES: Record<string, string> = Object.fromEntries(
+  Object.entries(ACA_COMPANY_FORM_PREFIXES).map(([key, prefix]) => [key, `${prefix}-FO-ACA-01`]),
+);
+
+function sanitizeAcaFormPrefix(raw: string): string {
+  const upper = raw.trim().toUpperCase();
+  const paren = upper.match(/\(([A-Z0-9]{2,12})\)/);
+  if (paren?.[1]) return paren[1];
+  const compact = upper.replace(/[^A-Z0-9]+/g, "");
+  if (compact.length >= 2 && compact.length <= 12) return compact;
+  const firstToken = upper.split(/[\s,/]+/).find((t) => /[A-Z0-9]/.test(t)) ?? "";
+  const token = firstToken.replace(/[^A-Z0-9]+/g, "");
+  return token || "ACA";
+}
+
+/** Resolves `{Requestor's company}-FO-ACA-01` from a company / roster name. */
+export function resolveAcaFormCompanyPrefix(companyName: string | null | undefined): string {
   const raw = (companyName ?? "").trim();
-  if (!raw) return "ACA-FO-ACA-01";
+  if (!raw) return "ACA";
   const upper = raw.toUpperCase();
-  for (const [key, code] of Object.entries(ACA_COMPANY_FORM_CODES)) {
-    if (upper === key.toUpperCase() || upper.includes(key.toUpperCase())) return code;
+  for (const [key, prefix] of Object.entries(ACA_COMPANY_FORM_PREFIXES)) {
+    if (upper === key.toUpperCase() || upper.includes(key.toUpperCase())) return prefix;
   }
-  return "ACA-FO-ACA-01";
+  return sanitizeAcaFormPrefix(raw);
+}
+
+export function resolveAcaFormCode(companyName: string | null | undefined): string {
+  return `${resolveAcaFormCompanyPrefix(companyName)}-FO-ACA-01`;
 }
 
 export function formatAcaPeso(raw: string | null | undefined): string {

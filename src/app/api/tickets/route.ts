@@ -94,7 +94,7 @@ import {
   saveJobOrderApprovalMeta,
   stampJobOrderCreatorOnCreate,
 } from "@/lib/job-order-approval-db";
-import { resolveAcaAuthority } from "@/lib/aca-authority-matrix";
+import { acaRecommendedByUsesRequestorCompanyLock, resolveAcaAuthority } from "@/lib/aca-authority-matrix";
 import {
   formatAcaRequestDescription,
   formatAcaRequestTitle,
@@ -869,6 +869,29 @@ export async function POST(req: Request) {
         );
       }
 
+      if (acaRecommendedByUsesRequestorCompanyLock(resolution.recommendingLevel)) {
+        const requestorCompanyId = await resolveStaffCompanyTeamId(session.user.email);
+        if (!requestorCompanyId) {
+          return NextResponse.json(
+            {
+              error:
+                "Your company must be assigned before selecting Recommended By for RA 1–2.",
+            },
+            { status: 400 },
+          );
+        }
+        const recommendedCompanyId = await resolveAgentDesignatedCompanyId(recommendedByAgentId);
+        if (!recommendedCompanyId || recommendedCompanyId !== requestorCompanyId) {
+          return NextResponse.json(
+            {
+              error:
+                "Recommended By for RA 1–2 must be someone from your company.",
+            },
+            { status: 400 },
+          );
+        }
+      }
+
       const acaFields = {
         departmentStore,
         category: acaCategory,
@@ -1435,9 +1458,16 @@ export async function POST(req: Request) {
       );
     }
     if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY" && acaCreateSeed) {
+      const requestorCompanyId = await resolveStaffCompanyTeamId(session.user.email);
+      const requestorCompany = requestorCompanyId
+        ? await prisma.team.findUnique({
+            where: { id: requestorCompanyId },
+            select: { name: true },
+          })
+        : null;
       const meta = {
         ...acaCreateSeed,
-        formCode: resolveAcaFormCode(team?.name),
+        formCode: resolveAcaFormCode(requestorCompany?.name ?? null),
       };
       await saveAcaApprovalMeta(ticket.id, meta);
       const boardAssigneeId =

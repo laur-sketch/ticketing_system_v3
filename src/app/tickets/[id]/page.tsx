@@ -81,6 +81,9 @@ export default async function TicketPage({
     "requestType" in ticket && typeof (ticket as { requestType?: string }).requestType === "string"
       ? (ticket as { requestType: string }).requestType
       : null;
+  const isAcaRequest =
+    requestTypeId === "AUTHORITY_TO_CONDUCT_ACTIVITY" ||
+    (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("AUTHORITY TO CONDUCT");
   const isPaymentRequest =
     requestTypeId === "REQUEST_FOR_PAYMENT" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("REQUEST FOR PAYMENT");
@@ -252,7 +255,11 @@ export default async function TicketPage({
           <div className="grid grid-cols-1 gap-4 border-t border-white/10 pt-3 sm:grid-cols-2 sm:gap-6">
             <div className="min-w-0 space-y-1">
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                {isFundTransferRequest ? "Prepared By: " : "Requestor: "}
+                {isFundTransferRequest
+                  ? "Prepared By: "
+                  : isAcaRequest
+                    ? "Submitted By: "
+                    : "Requestor: "}
                 <span className="text-zinc-300 normal-case tracking-normal">{ticket.contactName}</span>
               </p>
               <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
