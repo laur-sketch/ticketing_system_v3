@@ -692,6 +692,20 @@ export function TravelOrderSummaryPanel({
                     </p>
                   </div>
 
+                  {order.driverPresent ? (
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                        Driver
+                      </p>
+                      <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                        {order.driverAgent?.name ?? "—"}
+                        {order.driverLicenseNo
+                          ? ` · License No. ${order.driverLicenseNo}`
+                          : ""}
+                      </p>
+                    </div>
+                  ) : null}
+
                   <div className="space-y-1">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
                       Vehicle

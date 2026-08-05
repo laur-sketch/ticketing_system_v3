@@ -70,6 +70,7 @@ export function TravelOrderRequestModal({
   const [agentQuery, setAgentQuery] = useState("");
   const [confirmQuery, setConfirmQuery] = useState("");
   const [travelerQuery, setTravelerQuery] = useState("");
+  const [driverQuery, setDriverQuery] = useState("");
   const [levelPickerQuery, setLevelPickerQuery] = useState("");
   const [assigningLevel, setAssigningLevel] = useState<number | null>(null);
   const [levelsPromptOpen, setLevelsPromptOpen] = useState(false);
@@ -118,6 +119,7 @@ export function TravelOrderRequestModal({
     setAgentQuery("");
     setConfirmQuery("");
     setTravelerQuery("");
+    setDriverQuery("");
     setLevelPickerQuery("");
     setAssigningLevel(null);
     setLevelsPromptOpen(false);
@@ -208,6 +210,32 @@ export function TravelOrderRequestModal({
     .map((id) => findAgent(id))
     .filter((a): a is AgentOption => a != null);
   const creatorAgent = companyScopeAgentId ? findAgent(companyScopeAgentId) : null;
+  const travelerOptionsForDriver = (() => {
+    const byId = new Map<string, AgentOption>();
+    if (creatorAgent) {
+      byId.set(creatorAgent.id, creatorAgent);
+    } else if (companyScopeAgentId) {
+      byId.set(companyScopeAgentId, {
+        id: companyScopeAgentId,
+        name: "You (requester)",
+        email: null,
+      });
+    }
+    for (const agent of selectedTravelers) byId.set(agent.id, agent);
+    return [...byId.values()];
+  })();
+  const filteredDriverAgents = (() => {
+    const q = driverQuery.trim().toLowerCase();
+    const base = q
+      ? travelerOptionsForDriver.filter(
+          (a) =>
+            a.name.toLowerCase().includes(q) ||
+            (a.email ?? "").toLowerCase().includes(q),
+        )
+      : travelerOptionsForDriver;
+    return base.slice(0, 40);
+  })();
+  const selectedDriver = draft.driverAgentId ? findAgent(draft.driverAgentId) : null;
 
   function toggleApprover(agentId: string) {
     setDraft((prev) => {
@@ -225,11 +253,16 @@ export function TravelOrderRequestModal({
     if (companyScopeAgentId && agentId === companyScopeAgentId) return;
     setDraft((prev) => {
       const exists = prev.additionalTravelerAgentIds.includes(agentId);
+      const additionalTravelerAgentIds = exists
+        ? prev.additionalTravelerAgentIds.filter((id) => id !== agentId)
+        : [...prev.additionalTravelerAgentIds, agentId];
+      const stillTraveler =
+        agentId === companyScopeAgentId || additionalTravelerAgentIds.includes(agentId);
       return {
         ...prev,
-        additionalTravelerAgentIds: exists
-          ? prev.additionalTravelerAgentIds.filter((id) => id !== agentId)
-          : [...prev.additionalTravelerAgentIds, agentId],
+        additionalTravelerAgentIds,
+        driverAgentId:
+          !stillTraveler && prev.driverAgentId === agentId ? "" : prev.driverAgentId,
       };
     });
   }
@@ -400,6 +433,15 @@ export function TravelOrderRequestModal({
         JSON.stringify(draftForSubmit.additionalTravelerAgentIds),
       );
       form.set("vehicle", draftForSubmit.vehicle.trim());
+      form.set("driverPresent", draftForSubmit.driverPresent ? "1" : "0");
+      form.set(
+        "driverAgentId",
+        draftForSubmit.driverPresent ? draftForSubmit.driverAgentId.trim() : "",
+      );
+      form.set(
+        "driverLicenseNo",
+        draftForSubmit.driverPresent ? draftForSubmit.driverLicenseNo.trim() : "",
+      );
       if (scopedCompanyTeamId) form.set("scopedCompanyTeamId", scopedCompanyTeamId);
       form.set(
         "locationsJson",
@@ -609,6 +651,114 @@ export function TravelOrderRequestModal({
                   })
                 )}
               </div>
+
+              <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={draft.driverPresent}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setDraft((prev) => ({
+                      ...prev,
+                      driverPresent: checked,
+                      driverAgentId: checked ? prev.driverAgentId : "",
+                      driverLicenseNo: checked ? prev.driverLicenseNo : "",
+                    }));
+                    if (!checked) setDriverQuery("");
+                  }}
+                  className="size-4 accent-orange-600"
+                />
+                <span className="font-medium">Driver present</span>
+              </label>
+
+              {draft.driverPresent ? (
+                <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
+                      Driver
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      Choose from the travelers on this order (requester + co-travelers).
+                    </p>
+                    {selectedDriver ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-orange-400/50 bg-orange-500/10 px-2.5 py-1 text-[11px] font-semibold text-orange-900 dark:text-orange-100">
+                          {selectedDriver.name}
+                          {selectedDriver.email ? ` · ${selectedDriver.email}` : ""}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            setDraft((prev) => ({ ...prev, driverAgentId: "" }));
+                            setDriverQuery("");
+                          }}
+                          className="text-[11px] font-semibold text-orange-700 underline dark:text-orange-300"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    ) : null}
+                    <input
+                      type="search"
+                      value={driverQuery}
+                      disabled={busy}
+                      placeholder="Search travelers…"
+                      onChange={(e) => setDriverQuery(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                    <div className="max-h-28 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
+                      {travelerOptionsForDriver.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-zinc-500">
+                          No travelers yet. You are included as requester once saved; add
+                          co-travelers above to choose among them.
+                        </p>
+                      ) : filteredDriverAgents.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-zinc-500">No matching traveler.</p>
+                      ) : (
+                        filteredDriverAgents.map((agent) => (
+                          <button
+                            key={`driver-${agent.id}`}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => {
+                              setDraft((prev) => ({ ...prev, driverAgentId: agent.id }));
+                              setDriverQuery(agent.name);
+                            }}
+                            className={cn(
+                              "flex w-full flex-col items-start border-b border-zinc-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-orange-50 dark:border-zinc-800 dark:hover:bg-orange-950/30",
+                              draft.driverAgentId === agent.id &&
+                                "bg-orange-50 dark:bg-orange-950/40",
+                            )}
+                          >
+                            <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                              {agent.name}
+                            </span>
+                            {agent.email ? (
+                              <span className="text-[11px] text-zinc-500">{agent.email}</span>
+                            ) : null}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    License No.
+                    <input
+                      type="text"
+                      value={draft.driverLicenseNo}
+                      disabled={busy}
+                      placeholder="Driver license number"
+                      onChange={(e) =>
+                        setDraft((prev) => ({ ...prev, driverLicenseNo: e.target.value }))
+                      }
+                      className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </label>
+                </div>
+              ) : null}
             </div>
 
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">

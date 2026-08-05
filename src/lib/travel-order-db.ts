@@ -76,6 +76,9 @@ export type TravelOrderRow = {
   companyTeamId: string | null;
   travelerAgentIds: string[];
   vehicle: string | null;
+  driverPresent: boolean;
+  driverAgentId: string | null;
+  driverLicenseNo: string | null;
   gatePassIncluded: boolean;
   estDepartureAt: Date | null;
   estArrivalAt: Date | null;
@@ -100,6 +103,7 @@ export type TravelOrderRow = {
   confirmationByAgent: TravelOrderAgentRef | null;
   createdByAgent: TravelOrderAgentRef | null;
   travelers: TravelOrderAgentRef[];
+  driverAgent: TravelOrderAgentRef | null;
   locations: TravelOrderLocationRow[];
   /** Optional KPI labels when listed across tasks. */
   kpiTitle?: string | null;
@@ -131,6 +135,9 @@ type RawTravelOrder = {
   company_team_id: string | null;
   traveler_agent_ids: unknown;
   vehicle: string | null;
+  driver_present: boolean | null;
+  driver_agent_id: string | null;
+  driver_license_no: string | null;
   gate_pass_included: boolean | null;
   est_departure_at: Date | string | null;
   est_arrival_at: Date | string | null;
@@ -158,6 +165,9 @@ type RawTravelOrder = {
   creator_agent_id: string | null;
   creator_agent_name: string | null;
   creator_agent_email: string | null;
+  driver_join_agent_id: string | null;
+  driver_join_agent_name: string | null;
+  driver_join_agent_email: string | null;
   reject_agent_id: string | null;
   reject_agent_name: string | null;
   reject_agent_email: string | null;
@@ -241,6 +251,15 @@ function mapOrderBase(
     companyTeamId: order.company_team_id,
     travelerAgentIds,
     vehicle: typeof order.vehicle === "string" && order.vehicle.trim() ? order.vehicle.trim() : null,
+    driverPresent: order.driver_present === true,
+    driverAgentId:
+      typeof order.driver_agent_id === "string" && order.driver_agent_id.trim()
+        ? order.driver_agent_id.trim()
+        : null,
+    driverLicenseNo:
+      typeof order.driver_license_no === "string" && order.driver_license_no.trim()
+        ? order.driver_license_no.trim()
+        : null,
     gatePassIncluded: order.gate_pass_included === true,
     estDepartureAt: asDate(order.est_departure_at),
     estArrivalAt: asDate(order.est_arrival_at),
@@ -298,6 +317,11 @@ function mapOrderBase(
     ),
     createdByAgent: creator,
     travelers: [],
+    driverAgent: mapAgent(
+      order.driver_join_agent_id,
+      order.driver_join_agent_name,
+      order.driver_join_agent_email,
+    ),
     kpiTitle: order.kpi_title ?? null,
     kpiMainTask: order.kpi_main_task ?? null,
     locations: locations
@@ -404,6 +428,9 @@ export async function createTravelOrderWithLocations(input: {
   companyTeamId?: string | null;
   travelerAgentIds?: string[];
   vehicle?: string | null;
+  driverPresent?: boolean;
+  driverAgentId?: string | null;
+  driverLicenseNo?: string | null;
   gatePass?: {
     included?: boolean;
     estDepartureAt?: Date | null;
@@ -452,6 +479,28 @@ export async function createTravelOrderWithLocations(input: {
   );
   const vehicle =
     typeof input.vehicle === "string" && input.vehicle.trim() ? input.vehicle.trim() : null;
+  const driverPresent = input.driverPresent === true;
+  const driverAgentId = driverPresent
+    ? typeof input.driverAgentId === "string" && input.driverAgentId.trim()
+      ? input.driverAgentId.trim()
+      : null
+    : null;
+  const driverLicenseNo = driverPresent
+    ? typeof input.driverLicenseNo === "string" && input.driverLicenseNo.trim()
+      ? input.driverLicenseNo.trim()
+      : null
+    : null;
+  if (driverPresent) {
+    if (!driverAgentId) {
+      throw new Error("Select a driver from the travelers list.");
+    }
+    if (!travelerAgentIds.includes(driverAgentId)) {
+      throw new Error("Driver must be one of the selected travelers.");
+    }
+    if (!driverLicenseNo) {
+      throw new Error("Enter the driver license number.");
+    }
+  }
   const gp = input.gatePass ?? null;
   const gatePassIncluded = Boolean(gp?.included);
   const estDepartureAt = gatePassIncluded ? (gp?.estDepartureAt ?? null) : null;
@@ -478,6 +527,7 @@ export async function createTravelOrderWithLocations(input: {
       id, kpi_maintenance_id, order_request, status,
       approved_by_agent_id, approved_by_agent_ids, approval_levels, confirmation_by_agent_id,
       created_by_agent_id, company_team_id, traveler_agent_ids, vehicle,
+      driver_present, driver_agent_id, driver_license_no,
       gate_pass_included, est_departure_at, est_arrival_at,
       actual_departure_started_at, actual_departure_started_latitude, actual_departure_started_longitude,
       actual_departure_ended_at, actual_departure_ended_latitude, actual_departure_ended_longitude,
@@ -495,6 +545,9 @@ export async function createTravelOrderWithLocations(input: {
       ${companyTeamId},
       ${JSON.stringify(travelerAgentIds)}::jsonb,
       ${vehicle},
+      ${driverPresent},
+      ${driverAgentId},
+      ${driverLicenseNo},
       ${gatePassIncluded},
       ${estDepartureAt},
       ${estArrivalAt},
@@ -555,6 +608,9 @@ export async function findTravelOrdersByKpiId(
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.driver_present, false) AS driver_present,
+      t.driver_agent_id,
+      t.driver_license_no,
       COALESCE(t.gate_pass_included, false) AS gate_pass_included,
       t.est_departure_at,
       t.est_arrival_at,
@@ -582,6 +638,9 @@ export async function findTravelOrdersByKpiId(
       cr.id AS creator_agent_id,
       cr.name AS creator_agent_name,
       cr.email AS creator_agent_email,
+      dr.id AS driver_join_agent_id,
+      dr.name AS driver_join_agent_name,
+      dr.email AS driver_join_agent_email,
       rj.id AS reject_agent_id,
       rj.name AS reject_agent_name,
       rj.email AS reject_agent_email
@@ -589,6 +648,7 @@ export async function findTravelOrdersByKpiId(
     LEFT JOIN agents a ON a.id = t.approved_by_agent_id
     LEFT JOIN agents c ON c.id = t.confirmation_by_agent_id
     LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
+    LEFT JOIN agents dr ON dr.id = t.driver_agent_id
     LEFT JOIN agents rj ON rj.id = t.rejected_by_agent_id
     WHERE t.kpi_maintenance_id = ${kpiMaintenanceId}
     ORDER BY t.created_at DESC
@@ -626,6 +686,9 @@ export async function findTravelOrderById(
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.driver_present, false) AS driver_present,
+      t.driver_agent_id,
+      t.driver_license_no,
       COALESCE(t.gate_pass_included, false) AS gate_pass_included,
       t.est_departure_at,
       t.est_arrival_at,
@@ -653,6 +716,9 @@ export async function findTravelOrderById(
       cr.id AS creator_agent_id,
       cr.name AS creator_agent_name,
       cr.email AS creator_agent_email,
+      dr.id AS driver_join_agent_id,
+      dr.name AS driver_join_agent_name,
+      dr.email AS driver_join_agent_email,
       rj.id AS reject_agent_id,
       rj.name AS reject_agent_name,
       rj.email AS reject_agent_email
@@ -660,6 +726,7 @@ export async function findTravelOrderById(
     LEFT JOIN agents a ON a.id = t.approved_by_agent_id
     LEFT JOIN agents c ON c.id = t.confirmation_by_agent_id
     LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
+    LEFT JOIN agents dr ON dr.id = t.driver_agent_id
     LEFT JOIN agents rj ON rj.id = t.rejected_by_agent_id
     WHERE t.id = ${travelOrderId}
     LIMIT 1
@@ -710,6 +777,9 @@ export async function findTravelOrdersVisibleToAgent(input: {
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.driver_present, false) AS driver_present,
+      t.driver_agent_id,
+      t.driver_license_no,
       COALESCE(t.gate_pass_included, false) AS gate_pass_included,
       t.est_departure_at,
       t.est_arrival_at,
@@ -737,6 +807,9 @@ export async function findTravelOrdersVisibleToAgent(input: {
       cr.id AS creator_agent_id,
       cr.name AS creator_agent_name,
       cr.email AS creator_agent_email,
+      dr.id AS driver_join_agent_id,
+      dr.name AS driver_join_agent_name,
+      dr.email AS driver_join_agent_email,
       rj.id AS reject_agent_id,
       rj.name AS reject_agent_name,
       rj.email AS reject_agent_email,
@@ -746,6 +819,7 @@ export async function findTravelOrdersVisibleToAgent(input: {
     LEFT JOIN agents a ON a.id = t.approved_by_agent_id
     LEFT JOIN agents c ON c.id = t.confirmation_by_agent_id
     LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
+    LEFT JOIN agents dr ON dr.id = t.driver_agent_id
     LEFT JOIN agents rj ON rj.id = t.rejected_by_agent_id
     LEFT JOIN kpi_maintenance k ON k.id = t.kpi_maintenance_id
   `;
@@ -810,6 +884,9 @@ export async function listPendingTravelApprovalsForAgent(
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.driver_present, false) AS driver_present,
+      t.driver_agent_id,
+      t.driver_license_no,
       COALESCE(t.gate_pass_included, false) AS gate_pass_included,
       t.est_departure_at,
       t.est_arrival_at,
@@ -837,6 +914,9 @@ export async function listPendingTravelApprovalsForAgent(
       cr.id AS creator_agent_id,
       cr.name AS creator_agent_name,
       cr.email AS creator_agent_email,
+      dr.id AS driver_join_agent_id,
+      dr.name AS driver_join_agent_name,
+      dr.email AS driver_join_agent_email,
       rj.id AS reject_agent_id,
       rj.name AS reject_agent_name,
       rj.email AS reject_agent_email,
@@ -846,6 +926,7 @@ export async function listPendingTravelApprovalsForAgent(
     LEFT JOIN agents a ON a.id = t.approved_by_agent_id
     LEFT JOIN agents c ON c.id = t.confirmation_by_agent_id
     LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
+    LEFT JOIN agents dr ON dr.id = t.driver_agent_id
     LEFT JOIN agents rj ON rj.id = t.rejected_by_agent_id
     LEFT JOIN kpi_maintenance k ON k.id = t.kpi_maintenance_id
     WHERE t.status = ${TRAVEL_ORDER_STATUS.SUBMITTED}
@@ -1415,6 +1496,10 @@ export function serializeTravelOrder(row: TravelOrderRow) {
     travelerAgentIds: row.travelerAgentIds,
     travelers: row.travelers,
     vehicle: row.vehicle,
+    driverPresent: row.driverPresent,
+    driverAgentId: row.driverAgentId,
+    driverAgent: row.driverAgent,
+    driverLicenseNo: row.driverLicenseNo,
     gatePassIncluded: row.gatePassIncluded,
     estDepartureAt: row.estDepartureAt ? row.estDepartureAt.toISOString() : null,
     estArrivalAt: row.estArrivalAt ? row.estArrivalAt.toISOString() : null,
