@@ -9,6 +9,7 @@ import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { AgentWorkspace } from "./workspace";
 import { AgentTicketModalShell } from "@/components/ticket/AgentTicketModalShell";
+import { TicketRequestMetaDetails } from "@/components/ticket/TicketRequestMetaDetails";
 import { requestTypeLabel } from "@/lib/request-types";
 import { paymentProceduralStatusLabel } from "@/lib/request-for-payment-approval";
 import { initPaymentApprovalMetaIfNeeded, loadPaymentApprovalMeta } from "@/lib/payment-approval-db";
@@ -318,58 +319,28 @@ export default async function AgentTicketPage({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 border-t border-white/10 pt-3 sm:grid-cols-2 sm:gap-6">
-            <div className="min-w-0 space-y-1">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                {isFundTransferRequest || isPaymentRequest
-                  ? "Prepared By: "
-                  : isAcaRequest
-                    ? "Submitted By: "
-                    : "Requestor: "}
-                <span className="text-zinc-300 normal-case tracking-normal">{ticketForWorkspace.contactName}</span>
-              </p>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                Email:{" "}
-                <span className="break-all text-zinc-300 normal-case tracking-normal">
-                  {ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail}
-                </span>
-              </p>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                Company:{" "}
-                <span className="text-zinc-300 normal-case tracking-normal">
-                  {requestorCompanyName ?? "Not assigned"}
-                </span>
-              </p>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                Branch:{" "}
-                <span className="text-zinc-300 normal-case tracking-normal">{branch ?? "—"}</span>
-              </p>
-            </div>
-            <div className="min-w-0 space-y-1">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                Send request to:{" "}
-                <span className="text-zinc-300 normal-case tracking-normal">
-                  {ticketForWorkspace.team?.name ?? "—"}
-                </span>
-              </p>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                {isFundTransferRequest
-                  ? "Requesting department/business unit: "
-                  : "Department: "}
-                <span className="text-zinc-300 normal-case tracking-normal">{department ?? "—"}</span>
-              </p>
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-500">
-                Request type:{" "}
-                <span className="text-zinc-300 normal-case tracking-normal">{requestTypeLabelText}</span>
-              </p>
-              {proceduralStatusLabel ? (
-                <p className="text-xs font-medium uppercase tracking-[0.12em] text-amber-400/90">
-                  Procedural status:{" "}
-                  <span className="normal-case tracking-normal text-amber-200">{proceduralStatusLabel}</span>
-                </p>
-              ) : null}
-            </div>
-          </div>
+          <TicketRequestMetaDetails
+            preparedByLabel={
+              isFundTransferRequest || isPaymentRequest
+                ? "Prepared By"
+                : isAcaRequest
+                  ? "Submitted By"
+                  : "Requestor"
+            }
+            contactName={ticketForWorkspace.contactName}
+            email={
+              ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail ?? "—"
+            }
+            company={requestorCompanyName ?? "Not assigned"}
+            branch={branch ?? "—"}
+            sendRequestTo={ticketForWorkspace.team?.name ?? "—"}
+            departmentLabel={
+              isFundTransferRequest ? "Requesting department/business unit" : "Department"
+            }
+            department={department ?? "—"}
+            requestType={requestTypeLabelText}
+            proceduralStatus={proceduralStatusLabel}
+          />
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">

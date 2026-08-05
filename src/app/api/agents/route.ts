@@ -22,7 +22,7 @@ export async function GET(req: Request) {
   const anyCompany =
     searchParams.get("anyCompany") === "1" || searchParams.get("anyCompany") === "true";
   if (anyCompany) {
-    // Explicit cross-company listing (e.g. Travel Order Level 2+ approvers).
+    // Explicit cross-company listing (Travel Order approvers/confirmers/travelers, etc.).
     companyIdFilter = null;
   } else if (forMainAgentId) {
     const mainCompanyId = await resolveAgentDesignatedCompanyId(forMainAgentId);

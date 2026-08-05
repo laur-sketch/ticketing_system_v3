@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Search } from "lucide-react";
 import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { Prisma } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
@@ -16,6 +17,7 @@ import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import {
   getOperatorActionableApprovalLevel,
   hasHierarchicalApprovals,
+  travelOrderApprovedByLabel,
 } from "@/lib/travel-order";
 import { listPendingTravelApprovalsForAgent } from "@/lib/travel-order-db";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
@@ -737,12 +739,22 @@ export default async function AgentHome({
     safeCompanyLogPage * companyLogPageSize,
   );
 
+  const isTicketBoardView = isBoard && boardTab === "ticket" && !isCompanyBoard;
+
   return (
-    <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-background dark:text-zinc-100 sm:px-4">
+    <main
+      className={`flex flex-col bg-zinc-50 text-zinc-900 dark:bg-background dark:text-zinc-100 ${
+        isTicketBoardView
+          ? "min-h-[calc(100dvh-3.5rem)] px-2 py-2 sm:px-4 sm:py-4"
+          : "min-h-[calc(100vh-56px)] px-3 py-4 sm:px-4"
+      }`}
+    >
       <div
-        className={`mx-auto flex w-full flex-1 flex-col space-y-4 ${isCompanyBoard ? "max-w-none" : "max-w-[96rem]"}`}
+        className={`mx-auto flex w-full flex-1 flex-col ${
+          isTicketBoardView ? "space-y-2 sm:space-y-4" : "space-y-4"
+        } ${isCompanyBoard ? "max-w-none" : "max-w-[96rem]"}`}
       >
-        <section className="space-y-4">
+        <section className={isTicketBoardView ? "space-y-2 sm:space-y-4" : "space-y-4"}>
           {notificationsOpen ? (
             <section className="rounded-xl border border-zinc-200 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
               <div className="flex items-center justify-between gap-3">
@@ -773,8 +785,8 @@ export default async function AgentHome({
                         >
                           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                             Pending approval
-                            {pending?.level != null
-                              ? ` · Level ${pending.level}${pending.optional ? " (optional)" : ""}`
+                            {pending
+                              ? ` · ${travelOrderApprovedByLabel(pending.optional === true)}`
                               : ""}
                           </p>
                           <p className="text-xs text-zinc-700 dark:text-zinc-300">{label}</p>
@@ -824,32 +836,80 @@ export default async function AgentHome({
             </section>
           ) : null}
 
-          <div className="flex flex-col gap-3">
+          <div className={`flex flex-col ${isTicketBoardView ? "gap-2 sm:gap-3" : "gap-3"}`}>
             <OrchestrationQueueNav />
 
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
+            <div
+              className={`flex flex-col lg:flex-row lg:items-start lg:justify-between ${
+                isTicketBoardView ? "gap-2 sm:gap-4" : "gap-4"
+              }`}
+            >
+              <div className="min-w-0 flex-1">
+                <p
+                  className={`font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95 ${
+                    isTicketBoardView
+                      ? "hidden text-[10px] sm:block sm:text-[11px]"
+                      : "text-[11px]"
+                  }`}
+                >
                   {BRAND_TITLE} ·{" "}
                   {isCompanyBoard ? "Company" : boardTab === "kpi" ? "Tasks" : "Requests"}
                 </p>
-                <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                  {isCompanyBoard
-                    ? "Company overview"
-                    : boardTab === "kpi"
-                      ? "Task Board"
-                      : "Request Board"}
-                </h1>
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                  <span className="font-semibold text-orange-700 dark:text-orange-400">
-                    {activeEvents.toLocaleString()}
-                  </span>{" "}
-                  {!isCompanyBoard
-                    ? `active ${boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event${activeEvents !== 1 ? "s" : ""}`
-                    : `request${activeEvents !== 1 ? "s" : ""}`}
-                </p>
+                <div className="flex items-end justify-between gap-3">
+                  <div className="min-w-0">
+                    <h1
+                      className={`font-bold tracking-tight text-zinc-900 dark:text-zinc-100 ${
+                        isTicketBoardView
+                          ? "text-xl sm:mt-1.5 sm:text-2xl"
+                          : "mt-1.5 text-2xl"
+                      }`}
+                    >
+                      {isCompanyBoard
+                        ? "Company overview"
+                        : boardTab === "kpi"
+                          ? "Task Board"
+                          : "Request Board"}
+                    </h1>
+                    <p
+                      className={`text-zinc-600 dark:text-zinc-400 ${
+                        isTicketBoardView ? "mt-0.5 text-xs sm:mt-1 sm:text-sm" : "mt-1 text-sm"
+                      }`}
+                    >
+                      <span className="font-semibold text-orange-700 dark:text-orange-400">
+                        {activeEvents.toLocaleString()}
+                      </span>{" "}
+                      {!isCompanyBoard
+                        ? `active ${boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event${activeEvents !== 1 ? "s" : ""}`
+                        : `request${activeEvents !== 1 ? "s" : ""}`}
+                      {isTicketBoardView && session.user.role !== "Personnel" ? (
+                        <>
+                          <span className="mx-1.5 text-zinc-400 sm:hidden" aria-hidden>
+                            ·
+                          </span>
+                          <Link
+                            href={buildHref({ view: "table", page: "1" })}
+                            className="font-semibold text-zinc-500 underline-offset-2 hover:text-orange-700 hover:underline sm:hidden dark:text-zinc-400 dark:hover:text-orange-400"
+                          >
+                            Table
+                          </Link>
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                  {boardTab !== "kpi" && isTicketBoardView ? (
+                    <div className="flex max-w-[55%] shrink-0 gap-1.5 sm:hidden">
+                      <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" compact />
+                      <StatCard label="Open" value={statOpen} valueClass="text-orange-400" compact />
+                      <StatCard label="SLA" value={statSla} valueClass="text-amber-400" compact />
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
+              <div
+                className={`shrink-0 flex-col items-stretch gap-3 lg:items-end ${
+                  isTicketBoardView ? "hidden sm:flex" : "flex"
+                }`}
+              >
                 {boardTab !== "kpi" ? (
                   <div className="flex flex-wrap gap-3">
                     <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
@@ -869,17 +929,26 @@ export default async function AgentHome({
             className={
               boardTab === "kpi"
                 ? "min-w-0"
-                : "rounded-xl border border-zinc-200 bg-white p-2.5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+                : isTicketBoardView
+                  ? "min-w-0 rounded-xl border border-zinc-200/80 bg-white/90 p-2 shadow-none sm:border-zinc-200 sm:bg-white sm:p-5 sm:shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:sm:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+                  : "rounded-xl border border-zinc-200 bg-white p-2.5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
             }
           >
             {showTopTicketFilters ? (
-              <AutoSubmitForm className="mb-3 flex flex-col gap-2.5 sm:mb-4 sm:gap-3" method="get">
+              <AutoSubmitForm
+                className={`flex flex-col gap-2 sm:gap-3 ${
+                  isTicketBoardView
+                    ? "sticky top-0 z-20 -mx-2 mb-2 border-b border-zinc-200/80 bg-white/95 px-2 pb-2 backdrop-blur-md sm:static sm:mx-0 sm:mb-4 sm:border-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:backdrop-blur-none dark:border-zinc-800 dark:bg-surface/95"
+                    : "mb-3 sm:mb-4"
+                }`}
+                method="get"
+              >
                 {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
                 {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
-                <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
-                  <div className="grid w-full grid-cols-1 gap-2 min-[420px]:grid-cols-2 lg:flex lg:flex-wrap xl:w-auto">
+                <div className="flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between">
+                  <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 lg:flex lg:flex-wrap xl:w-auto">
                     {isCompanyBoard || showTicketCompanyFilter ? (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                    <label className="col-span-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
                       {showTicketCompanyFilter ? (
                         <TicketBoardCompanySelect
@@ -905,7 +974,7 @@ export default async function AgentHome({
                     </label>
                     ) : null}
                     {ticketAssignedFilterActive ? (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
                       <select
                         name="assigned"
@@ -940,7 +1009,7 @@ export default async function AgentHome({
                     </label>
                     )}
                     {!(isCompanyBoard && hideCompanyPriorityFilter) ? (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Priority:</span>
                       <select
                         name="priority"
@@ -955,7 +1024,7 @@ export default async function AgentHome({
                       </select>
                     </label>
                     ) : null}
-                    <label className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                    <label className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                       <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Type:</span>
                       <select
                         name="requestType"
@@ -972,49 +1041,54 @@ export default async function AgentHome({
                       </select>
                     </label>
                   </div>
-                  <div className="flex w-full flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:justify-end">
-                    <Tabs value={isCompanyBoard ? "company" : isBoard ? "board" : "table"} className="w-full sm:w-auto">
-                      <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
-                      {isCompanyBoard ? (
-                      <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
-                      ) : session.user.role === "Personnel" ? (
-                      <span className="rounded-md px-3 py-1.5 bg-orange-600 text-white">Board</span>
-                      ) : (
-                      <>
-                        <TabsTrigger
-                          value="board"
-                          asChild
-                          className="flex-1 rounded-md px-3 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none"
-                        >
-                          <Link
-                          href={buildHref({ view: null, page: "1" })}
-                        >
-                          Board
-                          </Link>
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="table"
-                          asChild
-                          className="flex-1 rounded-md px-3 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none"
-                        >
-                          <Link
-                          href={buildHref({ view: "table", page: "1" })}
-                        >
-                          Table
-                          </Link>
-                        </TabsTrigger>
-                      </>
-                      )}
-                      </TabsList>
-                    </Tabs>
-                    <label className="flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-                      <span className="mr-2">Q</span>
+                  <div className="flex w-full flex-col items-stretch gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 xl:w-auto xl:justify-end">
+                    {/* Already on Board — hide the solitary Board chip on mobile. Table link is in the subtitle. */}
+                    {session.user.role === "Personnel" || isCompanyBoard ? null : (
+                      <Tabs
+                        value={isBoard ? "board" : "table"}
+                        className={isTicketBoardView ? "hidden sm:block sm:w-auto" : "w-full sm:w-auto"}
+                      >
+                        <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
+                          <TabsTrigger
+                            value="board"
+                            asChild
+                            className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
+                          >
+                            <Link href={buildHref({ view: null, page: "1" })}>Board</Link>
+                          </TabsTrigger>
+                          <TabsTrigger
+                            value="table"
+                            asChild
+                            className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
+                          >
+                            <Link href={buildHref({ view: "table", page: "1" })}>Table</Link>
+                          </TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    )}
+                    {isCompanyBoard ? (
+                      <Tabs value="company" className="w-full sm:w-auto">
+                        <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
+                          <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
+                        </TabsList>
+                      </Tabs>
+                    ) : null}
+                    <label
+                      className={`flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 ${
+                        isTicketBoardView ? "px-2.5 py-1.5" : "px-3 py-2"
+                      }`}
+                    >
+                      <Search className="mr-2 size-3.5 shrink-0 opacity-60" aria-hidden />
                       <input
                         name="q"
                         type="search"
                         defaultValue={searchFieldQuery}
-                        placeholder="Search request number, subject, customer…"
-                        className="w-full bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+                        placeholder={
+                          isTicketBoardView
+                            ? "Search requests…"
+                            : "Search request number, subject, customer…"
+                        }
+                        className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
                         aria-label="Search by request number, subject, or customer"
                       />
                     </label>
@@ -1293,15 +1367,33 @@ function StatCard({
   label,
   value,
   valueClass,
+  compact = false,
 }: {
   label: string;
   value: number;
   valueClass: string;
+  compact?: boolean;
 }) {
   return (
-    <article className="min-w-[96px] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-[0_6px_20px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-600 dark:text-zinc-500">{label}</p>
-      <p className={`mt-0.5 text-2xl font-bold ${valueClass}`}>{String(value).padStart(2, "0")}</p>
+    <article
+      className={
+        compact
+          ? "min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 dark:border-zinc-800 dark:bg-surface"
+          : "min-w-[96px] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-[0_6px_20px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+      }
+    >
+      <p
+        className={
+          compact
+            ? "truncate text-[9px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-500"
+            : "text-[10px] font-semibold uppercase tracking-widest text-zinc-600 dark:text-zinc-500"
+        }
+      >
+        {label}
+      </p>
+      <p className={`${compact ? "mt-0 text-lg" : "mt-0.5 text-2xl"} font-bold tabular-nums ${valueClass}`}>
+        {String(value).padStart(2, "0")}
+      </p>
     </article>
   );
 }

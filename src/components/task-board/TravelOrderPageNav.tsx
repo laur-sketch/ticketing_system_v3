@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -14,6 +15,8 @@ type TravelOrderPageNavProps = {
   nextDisabled?: boolean;
   /** Disable Back. */
   backDisabled?: boolean;
+  /** Extra controls rendered beside Back/Next (e.g. Cancel T.O.). */
+  stepActions?: ReactNode;
   className?: string;
 };
 
@@ -24,8 +27,10 @@ export function TravelOrderPageNav({
   showStepButtons = true,
   nextDisabled = false,
   backDisabled = false,
+  stepActions,
   className,
 }: TravelOrderPageNavProps) {
+  const showActions = showStepButtons || stepActions;
   return (
     <div
       className={cn(
@@ -82,9 +87,9 @@ export function TravelOrderPageNav({
         </button>
       </div>
 
-      {showStepButtons ? (
-        <div className="flex flex-wrap gap-1.5">
-          {page > 1 ? (
+      {showActions ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {showStepButtons && page > 1 ? (
             <button
               type="button"
               disabled={backDisabled}
@@ -95,7 +100,8 @@ export function TravelOrderPageNav({
               Back
             </button>
           ) : null}
-          {page < 3 ? (
+          {stepActions}
+          {showStepButtons && page < 3 ? (
             <button
               type="button"
               disabled={nextDisabled}

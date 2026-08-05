@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { GripVertical } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, GripVertical } from "lucide-react";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
@@ -196,8 +196,56 @@ export function AgentKanban({
     return columns.filter((target) => target.id !== currentColumn && target.id !== "open");
   }
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [activeLane, setActiveLane] = useState(0);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    const syncActive = () => {
+      const children = Array.from(el.querySelectorAll<HTMLElement>("[data-lane-index]"));
+      if (children.length === 0) return;
+      const mid = el.scrollLeft + el.clientWidth / 2;
+      let best = 0;
+      let bestDist = Number.POSITIVE_INFINITY;
+      children.forEach((child, i) => {
+        const center = child.offsetLeft + child.offsetWidth / 2;
+        const dist = Math.abs(center - mid);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = i;
+        }
+      });
+      setActiveLane(best);
+    };
+
+    syncActive();
+    el.addEventListener("scroll", syncActive, { passive: true });
+    window.addEventListener("resize", syncActive);
+    return () => {
+      el.removeEventListener("scroll", syncActive);
+      window.removeEventListener("resize", syncActive);
+    };
+  }, []);
+
+  function scrollToLane(index: number) {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const clamped = Math.max(0, Math.min(columns.length - 1, index));
+    const lane = el.querySelector<HTMLElement>(`[data-lane-index="${clamped}"]`);
+    if (lane) {
+      lane.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      setActiveLane(clamped);
+      return;
+    }
+    const laneWidth = el.clientWidth * 0.86;
+    el.scrollTo({ left: clamped * (laneWidth + 10), behavior: "smooth" });
+    setActiveLane(clamped);
+  }
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-2 md:space-y-3">
       <PointerDragGhostLayer ghost={ghost} />
       {error ? (
         <p className="rounded-lg border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-sm text-amber-950 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
@@ -205,12 +253,48 @@ export function AgentKanban({
         </p>
       ) : null}
 
-      <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600 md:hidden dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-400">
-        Swipe lanes sideways. Use the large grip to drag, or tap a quick move button on each card.
-      </p>
+      <div className="flex items-center justify-between gap-2 md:hidden">
+        <button
+          type="button"
+          onClick={() => scrollToLane(activeLane - 1)}
+          disabled={activeLane <= 0}
+          className="inline-flex size-9 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 disabled:opacity-35 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+          aria-label="Previous lane"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+        <div className="flex items-center gap-1.5">
+          {columns.map((col, index) => (
+            <button
+              key={col.id}
+              type="button"
+              onClick={() => scrollToLane(index)}
+              className={cn(
+                "h-1.5 rounded-full transition-all",
+                index === activeLane ? "w-6 bg-orange-500" : "w-1.5 bg-zinc-300 dark:bg-zinc-700",
+              )}
+              aria-label={`Go to ${col.label}`}
+              aria-current={index === activeLane ? "true" : undefined}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => scrollToLane(activeLane + 1)}
+          disabled={activeLane >= columns.length - 1}
+          className="inline-flex size-9 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 disabled:opacity-35 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+          aria-label="Next lane"
+        >
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
 
-      <div className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 [touch-action:pan-x] md:mx-0 md:grid md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:snap-none md:grid-cols-3 md:[touch-action:auto]">
-        {columns.map((col) => {
+      <div
+        ref={scrollerRef}
+        className="-mx-2 flex snap-x snap-proximity gap-2.5 overflow-x-auto overscroll-x-contain px-2 pb-1 scroll-smooth [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:grid md:snap-none md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:scroll-auto md:grid-cols-3"
+        style={{ WebkitOverflowScrolling: "touch" }}
+      >
+        {columns.map((col, index) => {
           const colTickets = tickets.filter((t) => statusToColumn(t.status) === col.id);
           const dropEnabled = col.id !== "open";
           const highlightDrop = dropEnabled && hoverColumn === col.id;
@@ -218,13 +302,15 @@ export function AgentKanban({
           return (
             <div
               key={col.id}
+              data-lane-index={index}
               ref={registerColumn(col.id)}
               className={cn(
-                "flex min-h-[280px] w-[88vw] min-w-[280px] snap-start flex-col rounded-xl border border-zinc-200 bg-zinc-50 sm:w-[360px] md:w-auto md:min-w-0 dark:border-zinc-800 dark:bg-zinc-950/40",
+                // Mobile: peek next lane; no nested vertical scroll so horizontal swipe works on cards too.
+                "flex w-[min(86vw,22rem)] shrink-0 snap-center flex-col rounded-xl border border-zinc-200 bg-zinc-50 sm:w-[360px] md:w-auto md:min-h-[280px] md:min-w-0 md:snap-align-none dark:border-zinc-800 dark:bg-zinc-950/40",
                 highlightDrop && "ring-2 ring-orange-500/70 ring-offset-2 ring-offset-zinc-50 dark:ring-offset-zinc-950",
               )}
             >
-              <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+              <div className="shrink-0 border-b border-zinc-200 px-3 py-1.5 dark:border-zinc-800 md:py-2">
                 <div className="flex items-baseline justify-between gap-2">
                   <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-900 dark:text-zinc-200">
                     {col.label}
@@ -235,10 +321,10 @@ export function AgentKanban({
                       : colTickets.length}
                   </span>
                 </div>
-                <p className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">{col.sublabel}</p>
+                <p className="mt-0.5 hidden text-[11px] text-zinc-600 sm:block dark:text-zinc-500">{col.sublabel}</p>
               </div>
 
-              <div className="flex flex-1 flex-col gap-2 p-2">
+              <div className="flex flex-1 flex-col gap-2 p-2 md:max-h-[min(70dvh,42rem)] md:overflow-y-auto md:overscroll-contain">
                 {colTickets.map((t) => (
                   <AssigneeColorHighlight
                     key={t.id}
@@ -256,15 +342,15 @@ export function AgentKanban({
                           getLabel: () => `#${t.ticketNumber} · ${kanbanCardPreview(t).slice(0, 80)}`,
                         })}
                         className={cn(
-                          "mt-0.5 flex min-h-11 w-9 shrink-0 touch-none select-none flex-col items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-zinc-500 active:bg-orange-50 active:text-orange-600 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:cursor-grab md:active:cursor-grabbing dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-400 dark:active:bg-orange-950/30",
+                          "mt-0.5 flex min-h-10 w-7 shrink-0 touch-none select-none flex-col items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-500 active:bg-orange-50 active:text-orange-600 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:cursor-grab md:active:cursor-grabbing dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-400 dark:active:bg-orange-950/30",
                           busyId === t.id && "pointer-events-none",
                         )}
                         title="Hold and drag to another lane (touch or mouse)"
                         aria-label={`Drag ticket ${t.ticketNumber}`}
                         role="button"
                       >
-                        <GripVertical className="size-5 md:size-4" />
-                        <span className="mt-0.5 text-[9px] font-bold uppercase leading-none md:hidden">Drag</span>
+                        <GripVertical className="size-4" />
+                        <span className="sr-only">Drag</span>
                       </span>
                       <div className="min-w-0 flex-1">
                         <AgentTicketDeepLink

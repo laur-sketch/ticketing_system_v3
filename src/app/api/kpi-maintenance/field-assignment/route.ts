@@ -111,11 +111,9 @@ export async function POST(req: Request) {
   const driverAgentId = String(form.get("driverAgentId") ?? "").trim();
   const driverLicenseNo = String(form.get("driverLicenseNo") ?? "").trim();
   const scopedCompanyTeamIdRaw = String(form.get("scopedCompanyTeamId") ?? "").trim();
-  // Always scope to the creator's company (ignore cross-company overrides).
+  // Order ownership stays on the creator's company; approvers are never company-locked.
   const scopedCompanyTeamId = creatorCompanyId;
-  if (scopedCompanyTeamIdRaw && scopedCompanyTeamIdRaw !== creatorCompanyId && !perms.canAssignWork) {
-    // Non-assigners cannot pick another company.
-  }
+  void scopedCompanyTeamIdRaw;
 
   let additionalTravelerIds: string[] = [];
   const travelersRaw = String(form.get("additionalTravelerAgentIds") ?? form.get("travelerAgentIds") ?? "").trim();

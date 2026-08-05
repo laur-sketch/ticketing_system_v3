@@ -27,6 +27,7 @@ import {
   isTravelOrderApproved,
   isTravelOrderRunning,
   TRAVEL_ORDER_STATUS,
+  travelOrderApprovedByLabel,
   travelOrderLocationVisitStatus,
   travelOrderLocationVisitStatusLabel,
   travelOrderVehicleLabel,
@@ -584,9 +585,6 @@ export function TravelOrderSummaryPanel({
             : null;
           const unlockedLevels = hierarchical ? getUnlockedIncompleteLevels(levels) : [];
           const hierarchyDone = hierarchical && isApprovalHierarchySatisfied(levels);
-          const earlyOptionalDone = levels.find(
-            (l) => isApprovalLevelOptional(l) && Boolean(l.approvedAt),
-          );
           const canApproveThis = canApproveTravelOrderNow(
             operatorAgentId,
             { ...order, approvalLevels: levels },
@@ -641,7 +639,11 @@ export function TravelOrderSummaryPanel({
                     This travel order was declined
                     {order.rejectedByAgent?.name ? ` by ${order.rejectedByAgent.name}` : ""}
                     {order.rejectedAtLevel != null
-                      ? ` at Level ${order.rejectedAtLevel}`
+                      ? ` at ${travelOrderApprovedByLabel(
+                          isApprovalLevelOptional(
+                            levels.find((l) => l.level === order.rejectedAtLevel),
+                          ),
+                        )}`
                       : order.rejectedByAgent
                         ? " at confirmation"
                         : ""}
@@ -668,6 +670,22 @@ export function TravelOrderSummaryPanel({
               <TravelOrderPageNav
                 page={formPage}
                 onPageChange={(page) => setOrderPage(order.id, page)}
+                stepActions={
+                  canCancelThis && formPage === 1 ? (
+                    <button
+                      type="button"
+                      disabled={busyKey === `cancel-${order.id}`}
+                      onClick={() => void cancelOrder(order)}
+                      title="Cancel this travel order if it should not proceed"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-400/60 bg-zinc-500/10 px-2.5 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-200"
+                    >
+                      {busyKey === `cancel-${order.id}` ? (
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      ) : null}
+                      Cancel T.O.
+                    </button>
+                  ) : null
+                }
               />
 
               {formPage === 1 ? (
@@ -1002,6 +1020,7 @@ export function TravelOrderSummaryPanel({
                       </p>
                     ) : null}
                   </div>
+
                 </>
               ) : formPage === 2 ? (
                 <>
@@ -1011,19 +1030,21 @@ export function TravelOrderSummaryPanel({
                       {hierarchical &&
                       order.status === TRAVEL_ORDER_STATUS.SUBMITTED &&
                       unlockedLevels.length > 0
-                        ? ` · waiting on Level${unlockedLevels.length > 1 ? "s" : ""} ${unlockedLevels
-                            .map((l) => l.level)
+                        ? ` · waiting on ${unlockedLevels
+                            .map((l) => travelOrderApprovedByLabel(isApprovalLevelOptional(l)))
                             .join(", ")}`
                         : null}
                       {hierarchical &&
                       hierarchyDone &&
                       (approved || order.status === TRAVEL_ORDER_STATUS.SUBMITTED)
-                        ? earlyOptionalDone
-                          ? ` · completed via optional Level ${earlyOptionalDone.level}`
-                          : " · all required levels approved"
+                        ? " · all required approvals done"
                         : null}
                       {hierarchical && rejected && order.rejectedAtLevel != null
-                        ? ` · declined at Level ${order.rejectedAtLevel}`
+                        ? ` · declined at ${travelOrderApprovedByLabel(
+                            isApprovalLevelOptional(
+                              levels.find((l) => l.level === order.rejectedAtLevel),
+                            ),
+                          )}`
                         : null}
                       {hierarchical &&
                       rejected &&
@@ -1077,15 +1098,14 @@ export function TravelOrderSummaryPanel({
                               className="min-w-0 self-start"
                             >
                               <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                                Level {lvl.level}
                                 <span
                                   className={
                                     optional
-                                      ? "ml-1.5 text-sky-700 dark:text-sky-300"
-                                      : "ml-1.5 text-zinc-500"
+                                      ? "text-sky-700 dark:text-sky-300"
+                                      : "text-zinc-500 dark:text-zinc-500"
                                   }
                                 >
-                                  {optional ? "Optional" : "Required"}
+                                  {travelOrderApprovedByLabel(optional)}
                                 </span>
                               </p>
                               <p
@@ -1108,32 +1128,36 @@ export function TravelOrderSummaryPanel({
                               ) : done ? (
                                 <p className="mt-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
                                   Approved
-                                  {optional ? " (optional — completed chain)" : ""}
-                                  {lvl.approvedByAgent?.name
-                                    ? ` by ${lvl.approvedByAgent.name}`
-                                    : ""}
                                   {lvl.approvedAt
                                     ? ` · ${formatCheckedAt(lvl.approvedAt)}`
                                     : ""}
+                                  {optional ? " · optional" : ""}
                                 </p>
                               ) : unlocked ? (
                                 <p className="mt-0.5 text-[11px] text-orange-700 dark:text-orange-300">
                                   Pending — actionable now
-                                  {optional ? " · approving completes the order" : ""}
+                                  {optional
+                                    ? " · optional; not in the required chain"
+                                    : ""}
                                 </p>
                               ) : skipped ? (
                                 <p className="mt-0.5 text-[11px] text-sky-700 dark:text-sky-300">
-                                  {earlyOptionalDone
-                                    ? `Skipped — optional Level ${earlyOptionalDone.level} completed the chain`
+                                  {optional
+                                    ? "Skipped — optional; all required approvals are done"
                                     : "Skipped — not required after hierarchy completed"}
                                 </p>
                               ) : closedAfterDecline ? (
                                 <p className="mt-0.5 text-[11px] text-zinc-500">
-                                  Closed — declined at Level {order.rejectedAtLevel}
+                                  Closed — declined at{" "}
+                                  {travelOrderApprovedByLabel(
+                                    isApprovalLevelOptional(
+                                      levels.find((l) => l.level === order.rejectedAtLevel),
+                                    ),
+                                  )}
                                 </p>
                               ) : (
                                 <p className="mt-0.5 text-[11px] text-zinc-500">
-                                  Waiting for previous required level(s)
+                                  Waiting for previous required approval(s)
                                 </p>
                               )}
                             </div>
@@ -1205,9 +1229,7 @@ export function TravelOrderSummaryPanel({
                             <Loader2 className="size-3.5 animate-spin" aria-hidden />
                           ) : null}
                           {hierarchical && actionableLevel
-                            ? `Approve Level ${actionableLevel.level}${
-                                isApprovalLevelOptional(actionableLevel) ? " (optional)" : ""
-                              }`
+                            ? `Approve · ${travelOrderApprovedByLabel(isApprovalLevelOptional(actionableLevel))}`
                             : "Approve travel order"}
                         </button>
                         <button
@@ -1268,19 +1290,6 @@ export function TravelOrderSummaryPanel({
                         </div>
                       ) : null}
                     </div>
-                  ) : null}
-                  {canCancelThis ? (
-                    <button
-                      type="button"
-                      disabled={busyKey === `cancel-${order.id}`}
-                      onClick={() => void cancelOrder(order)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-400/60 bg-zinc-500/10 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-200"
-                    >
-                      {busyKey === `cancel-${order.id}` ? (
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                      ) : null}
-                      Cancel travel order
-                    </button>
                   ) : null}
 
                   <div className="space-y-1.5 border-t border-zinc-200 pt-3 dark:border-zinc-700">

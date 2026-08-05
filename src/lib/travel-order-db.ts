@@ -753,7 +753,7 @@ export async function findTravelOrdersByCompanyTeamId(
 
 /**
  * Travel orders visible to an agent: same-company orders, plus any where they
- * are an assigned traveler (including cross-company co-travelers).
+ * are creator, traveler, designated approver, or confirmer (cross-company OK).
  */
 export async function findTravelOrdersVisibleToAgent(input: {
   companyTeamId: string | null;
@@ -832,7 +832,15 @@ export async function findTravelOrdersVisibleToAgent(input: {
     whereParts.push(
       Prisma.sql`(
         t.created_by_agent_id = ${agentId}
+        OR t.approved_by_agent_id = ${agentId}
+        OR t.confirmation_by_agent_id = ${agentId}
         OR t.traveler_agent_ids @> ${JSON.stringify([agentId])}::jsonb
+        OR t.approved_by_agent_ids @> ${JSON.stringify([agentId])}::jsonb
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(t.approval_levels, '[]'::jsonb)) AS lvl
+          WHERE COALESCE(lvl->>'agentId', '') = ${agentId}
+        )
       )`,
     );
   }
@@ -1177,11 +1185,9 @@ export async function approveTravelOrderSequential(input: {
   }));
 
   if (!hasHierarchicalApprovals(stored)) {
-    if (!input.canAssignWork) {
-      const ids = parseApprovedByAgentIds(order.approvedByAgentIds, order.approvedByAgentId);
-      if (!input.operatorAgentId || !ids.includes(input.operatorAgentId)) {
-        throw new Error("Only a designated approver (or an admin) can approve this travel order.");
-      }
+    const ids = parseApprovedByAgentIds(order.approvedByAgentIds, order.approvedByAgentId);
+    if (!input.operatorAgentId || !ids.includes(input.operatorAgentId)) {
+      throw new Error("Only a designated approver can approve this travel order.");
     }
     const updated = await updateTravelOrderStatus({
       travelOrderId: input.travelOrderId,
@@ -1192,9 +1198,7 @@ export async function approveTravelOrderSequential(input: {
     return updated;
   }
 
-  const target = getOperatorActionableApprovalLevel(stored, input.operatorAgentId, {
-    canAssignWork: input.canAssignWork,
-  });
+  const target = getOperatorActionableApprovalLevel(stored, input.operatorAgentId);
   if (!target) {
     if (isApprovalHierarchySatisfied(stored)) {
       const updated = await updateTravelOrderStatus({
@@ -1206,8 +1210,12 @@ export async function approveTravelOrderSequential(input: {
       return updated;
     }
     throw new Error(
-      "Only an unlocked level approver (or an admin) can approve this step. Previous required levels must approve first.",
+      "Only the designated approver for an unlocked Approved By seat can approve this step.",
     );
+  }
+
+  if (!input.operatorAgentId || input.operatorAgentId !== target.agentId) {
+    throw new Error("Only the designated approver for this Approved By seat can approve.");
   }
 
   const nowIso = new Date().toISOString();
@@ -1216,7 +1224,8 @@ export async function approveTravelOrderSequential(input: {
       ? {
           ...lvl,
           approvedAt: nowIso,
-          approvedByAgentId: input.operatorAgentId ?? lvl.agentId,
+          // Always record the designated seat holder as the approving actor.
+          approvedByAgentId: target.agentId,
         }
       : lvl,
   );

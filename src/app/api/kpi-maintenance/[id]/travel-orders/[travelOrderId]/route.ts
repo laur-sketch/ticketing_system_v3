@@ -210,7 +210,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            "Only the current assigned approver or confirmer (or an admin) can decline this travel order.",
+            "Only the current assigned approver or confirmer can decline this travel order.",
         },
         { status: 403 },
       );
@@ -308,7 +308,7 @@ export async function PATCH(
           );
         }
         return NextResponse.json(
-          { error: "Only the designated confirmer (or an admin) can confirm this travel order." },
+          { error: "Only the designated confirmer can confirm this travel order." },
           { status: 403 },
         );
       }

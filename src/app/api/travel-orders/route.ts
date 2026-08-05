@@ -10,7 +10,7 @@ import {
 /**
  * GET /api/travel-orders
  * Lists travel orders for the caller's company, plus any where they are an
- * assigned traveler (including cross-company co-travelers).
+ * assigned traveler, designated approver, or confirmer (cross-company OK).
  */
 export async function GET() {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
