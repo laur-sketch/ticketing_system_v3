@@ -154,6 +154,7 @@ model Agent {
   approvedTravelOrders TravelOrder[] @relation("TravelOrderApprover")
   confirmedTravelOrders TravelOrder[] @relation("TravelOrderConfirmer")
   createdTravelOrders TravelOrder[] @relation("TravelOrderCreator")
+  driverTravelOrders TravelOrder[] @relation("TravelOrderDriver")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([teamId, name])
@@ -369,6 +370,11 @@ model TravelOrder {
   travelerAgentIds   Json                  @default("[]") @map("traveler_agent_ids")
   /// Vehicle used for the trip (preset option value, e.g. COMPANY_VAN).
   vehicle            String?               @map("vehicle")
+  /// When true, a driver from the traveler list is designated with a license number.
+  driverPresent      Boolean               @default(false) @map("driver_present")
+  driverAgentId      String?               @map("driver_agent_id")
+  driverAgent        Agent?                @relation("TravelOrderDriver", fields: [driverAgentId], references: [id], onDelete: SetNull)
+  driverLicenseNo    String?               @map("driver_license_no")
   /// Required when status is REJECTED — why the approver/confirmer declined.
   rejectionReason    String?               @map("rejection_reason") @db.Text
   /// Who declined the order (approver or confirmer).

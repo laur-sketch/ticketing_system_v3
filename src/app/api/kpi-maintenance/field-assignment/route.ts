@@ -106,6 +106,10 @@ export async function POST(req: Request) {
 
   const confirmationByAgentId = String(form.get("confirmationByAgentId") ?? "").trim();
   const vehicleRaw = String(form.get("vehicle") ?? "").trim();
+  const driverPresent = String(form.get("driverPresent") ?? "").trim() === "1" ||
+    String(form.get("driverPresent") ?? "").trim().toLowerCase() === "true";
+  const driverAgentId = String(form.get("driverAgentId") ?? "").trim();
+  const driverLicenseNo = String(form.get("driverLicenseNo") ?? "").trim();
   const scopedCompanyTeamIdRaw = String(form.get("scopedCompanyTeamId") ?? "").trim();
   // Always scope to the creator's company (ignore cross-company overrides).
   const scopedCompanyTeamId = creatorCompanyId;
@@ -151,6 +155,20 @@ export async function POST(req: Request) {
   }
   if (!vehicleRaw || !isValidTravelOrderVehicle(vehicleRaw)) {
     return NextResponse.json({ error: "Select a valid vehicle for this travel order." }, { status: 400 });
+  }
+  if (driverPresent) {
+    if (!driverAgentId) {
+      return NextResponse.json({ error: "Select a driver from the travelers list." }, { status: 400 });
+    }
+    if (!travelerAgentIds.includes(driverAgentId)) {
+      return NextResponse.json(
+        { error: "Driver must be one of the selected travelers." },
+        { status: 400 },
+      );
+    }
+    if (!driverLicenseNo) {
+      return NextResponse.json({ error: "Enter the driver license number." }, { status: 400 });
+    }
   }
 
   let gatePassDraft: TravelOrderGatePassDraft = emptyGatePassDraft();
@@ -324,6 +342,9 @@ export async function POST(req: Request) {
       companyTeamId: scopedCompanyTeamId,
       travelerAgentIds,
       vehicle: vehicleRaw,
+      driverPresent,
+      driverAgentId: driverPresent ? driverAgentId : null,
+      driverLicenseNo: driverPresent ? driverLicenseNo : null,
       gatePass: gatePassDraft.included
         ? {
             included: true,

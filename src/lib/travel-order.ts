@@ -40,6 +40,11 @@ export type TravelOrderDraft = {
   additionalTravelerAgentIds: string[];
   /** Selected vehicle option value. */
   vehicle: string;
+  /** When true, show Driver + License No. fields. */
+  driverPresent: boolean;
+  /** Must be one of the travelers (creator or co-travelers). */
+  driverAgentId: string;
+  driverLicenseNo: string;
   locations: TravelOrderLocationDraft[];
   /** Optional Gate Pass (page 3). */
   gatePass: TravelOrderGatePassDraft;
@@ -233,6 +238,10 @@ export type TravelOrderDto = {
   travelers?: TravelOrderAgentRef[];
   /** Selected vehicle option value (e.g. COMPANY_VAN). */
   vehicle?: string | null;
+  driverPresent?: boolean;
+  driverAgentId?: string | null;
+  driverAgent?: TravelOrderAgentRef | null;
+  driverLicenseNo?: string | null;
   /** Optional Gate Pass section. */
   gatePassIncluded?: boolean;
   estDepartureAt?: string | null;
@@ -298,6 +307,9 @@ export function emptyTravelOrderDraft(): TravelOrderDraft {
     confirmationByAgentId: "",
     additionalTravelerAgentIds: [],
     vehicle: "",
+    driverPresent: false,
+    driverAgentId: "",
+    driverLicenseNo: "",
     locations: [emptyTravelLocation()],
     gatePass: emptyGatePassDraft(),
   };
@@ -366,6 +378,14 @@ export function validateTravelOrderDraft(draft: TravelOrderDraft): string | null
   }
   if (!draft.vehicle.trim()) {
     return "Select a vehicle for this travel order.";
+  }
+  if (draft.driverPresent) {
+    if (!draft.driverAgentId.trim()) {
+      return "Select a driver from the travelers list.";
+    }
+    if (!draft.driverLicenseNo.trim()) {
+      return "Enter the driver license number.";
+    }
   }
   const gatePassError = validateTravelOrderGatePass(draft.gatePass);
   if (gatePassError) return gatePassError;
