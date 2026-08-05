@@ -15,7 +15,7 @@ type TravelOrderApprovalModalProps = {
 
 /**
  * Popup for reviewing / approving a travel order from notifications
- * (works for Level 2+ approvers outside the creator's company board).
+ * (works for approvers outside the creator's company board).
  */
 export function TravelOrderApprovalModal({
   open,

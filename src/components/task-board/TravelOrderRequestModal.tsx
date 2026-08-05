@@ -19,6 +19,7 @@ import {
   emptyTravelLocation,
   emptyTravelOrderDraft,
   gatePassDraftHasAnyData,
+  travelOrderApprovedByLabel,
   TRAVEL_ORDER_VEHICLE_OPTIONS,
   validateTravelOrderDraft,
   validateTravelOrderGatePass,
@@ -39,7 +40,7 @@ type TravelOrderRequestModalProps = {
   /** Main task / field assignment name. */
   mainTaskName?: string;
   scopedCompanyTeamId?: string | null;
-  /** When set, agent pickers are scoped to this agent's company. */
+  /** Current operator agent id — used as the automatic requester/traveler, not to lock pickers. */
   companyScopeAgentId?: string | null;
   /** Allow editing the travel order name inside the modal (standalone create). */
   allowEditDetails?: boolean;
@@ -65,7 +66,6 @@ export function TravelOrderRequestModal({
 }: TravelOrderRequestModalProps) {
   void _unusedTaskGroupTitle;
   const [draft, setDraft] = useState<TravelOrderDraft>(() => emptyTravelOrderDraft());
-  const [companyAgents, setCompanyAgents] = useState<AgentOption[]>([]);
   const [allAgents, setAllAgents] = useState<AgentOption[]>([]);
   const [agentQuery, setAgentQuery] = useState("");
   const [confirmQuery, setConfirmQuery] = useState("");
@@ -104,11 +104,7 @@ export function TravelOrderRequestModal({
   }
 
   function findAgent(agentId: string): AgentOption | null {
-    return (
-      companyAgents.find((a) => a.id === agentId) ??
-      allAgents.find((a) => a.id === agentId) ??
-      null
-    );
+    return allAgents.find((a) => a.id === agentId) ?? null;
   }
 
   useEffect(() => {
@@ -125,27 +121,15 @@ export function TravelOrderRequestModal({
     setLevelsPromptOpen(false);
     setLevelsCountInput("2");
     let cancelled = false;
-    const companyUrl = companyScopeAgentId
-      ? `/api/agents?forMainAgentId=${encodeURIComponent(companyScopeAgentId)}`
-      : scopedCompanyTeamId
-        ? `/api/agents?company=${encodeURIComponent(scopedCompanyTeamId)}`
-        : "/api/agents";
-    void Promise.all([
-      fetch(companyUrl, { cache: "no-store" }).then((res) => (res.ok ? res.json() : [])),
-      fetch("/api/agents?anyCompany=1", { cache: "no-store" }).then((res) =>
-        res.ok ? res.json() : [],
-      ),
-    ])
-      .then(([companyList, anyList]) => {
+    // Approvers, confirmer, and travelers are never company-locked.
+    void fetch("/api/agents?anyCompany=1", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((anyList) => {
         if (cancelled) return;
-        setCompanyAgents(parseAgentList(companyList));
         setAllAgents(parseAgentList(anyList));
       })
       .catch(() => {
-        if (!cancelled) {
-          setCompanyAgents([]);
-          setAllAgents([]);
-        }
+        if (!cancelled) setAllAgents([]);
       });
     return () => {
       cancelled = true;
@@ -512,7 +496,7 @@ export function TravelOrderRequestModal({
       if (draft.approvalLevels.length > 0) {
         for (const lvl of draft.approvalLevels) {
           if (!lvl.agentId.trim()) {
-            setError(`Assign an approver for Level ${lvl.level} before continuing.`);
+            setError(`Assign an approver for ${travelOrderApprovedByLabel(lvl.optional === true)} before continuing.`);
             return;
           }
         }
@@ -943,7 +927,7 @@ export function TravelOrderRequestModal({
                     Approvals run in order for required levels. You can assign anyone from any
                     company at every level.
                     {approvalLevelsAllowOptional(draft.approvalLevels.length)
-                      ? " With 3+ levels, you can mark levels optional — approving an optional level completes the chain early, and optional levels do not block later required steps."
+                      ? " With 3+ levels, you can mark seats optional — only required APPROVED BY steps follow the chain. Optional approvers can act anytime and never finish the order alone; every required approval is still needed."
                       : ""}
                   </p>
                   <div className={travelOrderApprovalGridClass(draft.approvalLevels.length)}>
@@ -965,16 +949,14 @@ export function TravelOrderRequestModal({
                           )}
                         >
                           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                            Level {lvl.level}
                             <span
                               className={cn(
-                                "ml-1.5 text-[10px] font-bold uppercase tracking-wide",
                                 optional
                                   ? "text-sky-700 dark:text-sky-300"
-                                  : "text-zinc-500",
+                                  : "text-zinc-500 dark:text-zinc-500",
                               )}
                             >
-                              {optional ? "Optional" : "Required"}
+                              {travelOrderApprovedByLabel(optional)}
                             </span>
                           </p>
                           <p
@@ -1026,7 +1008,8 @@ export function TravelOrderRequestModal({
                           {picking ? (
                             <div className="mt-2 space-y-2">
                               <p className="text-[11px] text-zinc-500">
-                                Search personnel from any company for Level {lvl.level}.
+                                Search personnel from any company for this{" "}
+                                {travelOrderApprovedByLabel(optional)} step.
                               </p>
                               <input
                                 type="search"

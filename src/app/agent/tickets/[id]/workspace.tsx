@@ -2110,33 +2110,13 @@ export function AgentWorkspace({
         <div className="border-t border-zinc-200 bg-zinc-50 px-3 py-3 sm:px-5 sm:py-4 dark:border-zinc-800/90 dark:bg-zinc-950/35">
           <div className="text-sm text-zinc-600 dark:text-zinc-400">
             {isAgentViewer
-              ? "Use the right-side controls to request more information, update priority, or transfer this request to a colleague."
+              ? "Use the right-side controls to update priority or transfer this request to a colleague."
               : "Use the right-side panel to add information, cancel an unassigned request, or verify the resolution when asked."}
           </div>
         </div>
         </div>
       </div>
 
-      <article className="rounded-2xl border border-zinc-200 bg-white p-4 text-xs text-zinc-600 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:text-zinc-300 dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Audit log</h2>
-          <button
-            type="button"
-            onClick={() => setLogModalOpen(true)}
-            className="rounded-full border border-zinc-300 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-          >
-            View all log
-          </button>
-        </div>
-        <ul className="mt-3 space-y-2">
-          {ticket.activities.slice(-6).map((a) => (
-            <li key={a.id}>
-              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{a.summary}</span>
-              <div className="text-[11px] text-zinc-500 dark:text-zinc-400">{a.createdAt.toLocaleString()}</div>
-            </li>
-          ))}
-        </ul>
-      </article>
       </div>
 
       <aside className="min-w-0 space-y-4">
@@ -2145,44 +2125,23 @@ export function AgentWorkspace({
         ) : (
           <>
         <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-            Request more information
-          </h2>
-          {["IN_PROGRESS", "ESCALATED", "OPEN"].includes(ticket.status) ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                patch({ action: "request_more_info", note: "Requested more information from the requestor." })
-              }
-              className="mt-3 min-h-10 w-full rounded-lg border border-amber-500 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-500/10"
-            >
-              Request more information
-            </button>
-          ) : ticket.status === "PENDING_INFO" ? (
-            <div className="mt-3 space-y-2">
-              <p className="text-sm text-zinc-600 dark:text-zinc-300">
-                Waiting for the requestor to reply.
-              </p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => patch({ action: "status", status: "IN_PROGRESS", note: "Customer replied" })}
-                className="min-h-10 w-full rounded-lg border border-zinc-300 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-              >
-                Resume after customer reply
-              </button>
-            </div>
-          ) : (
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-              More-information requests are available while the ticket is open or in progress.
-          </p>
-          )}
-        </article>
-
-        <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
           <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Request controls</h2>
           <div className="mt-3 flex flex-col gap-2">
+            {ticket.status === "PENDING_INFO" ? (
+              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-950/20">
+                <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                  Waiting for the requestor to reply.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => patch({ action: "status", status: "IN_PROGRESS", note: "Customer replied" })}
+                  className="min-h-10 w-full rounded-lg border border-zinc-300 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Resume after customer reply
+                </button>
+              </div>
+            ) : null}
             {canUpdatePriority ? (
               <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Priority level</label>
@@ -3210,6 +3169,27 @@ export function AgentWorkspace({
           </>
         )}
       </aside>
+
+      <article className="rounded-2xl border border-zinc-200 bg-white p-4 text-xs text-zinc-600 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 xl:col-span-2 dark:border-zinc-800 dark:bg-surface dark:text-zinc-300 dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Audit log</h2>
+          <button
+            type="button"
+            onClick={() => setLogModalOpen(true)}
+            className="rounded-full border border-zinc-300 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white hover:bg-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            View all log
+          </button>
+        </div>
+        <ul className="mt-3 space-y-2">
+          {ticket.activities.slice(-6).map((a) => (
+            <li key={a.id}>
+              <span className="font-semibold text-zinc-900 dark:text-zinc-100">{a.summary}</span>
+              <div className="text-[11px] text-zinc-500 dark:text-zinc-400">{a.createdAt.toLocaleString()}</div>
+            </li>
+          ))}
+        </ul>
+      </article>
 
       {logModalOpen ? (
         <div className="fixed inset-0 z-[70]">

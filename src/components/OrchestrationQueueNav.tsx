@@ -82,7 +82,7 @@ export function OrchestrationQueueNav() {
 
   if (canAccessAssignmentBoard) {
     return (
-      <nav className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+      <nav className="overflow-x-auto pb-1 sm:pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
         <Tabs tabs={adminTabs} activeTab={activeTab} onTabChange={goToTab} />
       </nav>
     );
@@ -91,7 +91,7 @@ export function OrchestrationQueueNav() {
   if (onAssignment) return null;
 
   return (
-    <nav className="overflow-x-auto pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+    <nav className="overflow-x-auto pb-1 sm:pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
       <Tabs tabs={personnelTabs} activeTab={activeTab} onTabChange={goToTab} />
     </nav>
   );

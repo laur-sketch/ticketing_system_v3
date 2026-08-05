@@ -23,8 +23,10 @@ export type TravelOrderApprovalLevelDraft = {
   level: number;
   agentId: string;
   /**
-   * When true (only allowed with 3+ levels), approving this level completes the
-   * whole hierarchy early. Optional levels also do not block later required levels.
+   * When true (only allowed with 3+ levels), this seat is optional: it does not
+   * follow the required approval chain (always actionable), does not block later
+   * required seats, and never finishes the order alone — every required APPROVED BY
+   * must still approve.
    */
   optional?: boolean;
 };
@@ -329,6 +331,11 @@ export function approvalLevelsAllowOptional(levelCount: number): boolean {
   return levelCount >= 3;
 }
 
+/** Display label for a hierarchical approval seat (UI uppercases this). */
+export function travelOrderApprovedByLabel(optional?: boolean): string {
+  return optional ? "Approved By: (Optional)" : "Approved By: (Required)";
+}
+
 export function isValidLatLng(lat: unknown, lng: unknown): lat is number {
   if (
     typeof lat !== "number" ||
@@ -367,7 +374,7 @@ export function validateTravelOrderDraft(draft: TravelOrderDraft): string | null
   if (draft.approvalLevels.length > 0) {
     for (const lvl of draft.approvalLevels) {
       if (!lvl.agentId.trim()) {
-        return `Assign an approver for Level ${lvl.level}.`;
+        return `Assign an approver for ${travelOrderApprovedByLabel(lvl.optional === true)}.`;
       }
     }
   } else if (draft.approvedByAgentIds.length === 0) {
@@ -518,8 +525,9 @@ function sortApprovalLevels<T extends ApprovalLevelLike>(levels: T[]): T[] {
 }
 
 /**
- * A level is unlocked when every *required* level before it is approved.
- * Optional levels ahead of it do not block.
+ * Required seats unlock in order (every prior *required* seat must be approved).
+ * Optional seats do not follow the chain — they are always actionable until the
+ * hierarchy is satisfied.
  */
 export function isApprovalLevelUnlocked(
   levels: ApprovalLevelLike[],
@@ -528,6 +536,7 @@ export function isApprovalLevelUnlocked(
   const sorted = sortApprovalLevels(levels);
   const target = sorted.find((l) => l.level === levelNumber);
   if (!target) return false;
+  if (isApprovalLevelOptional(target)) return true;
   return sorted
     .filter((l) => l.level < levelNumber && !isApprovalLevelOptional(l))
     .every((l) => Boolean(l.approvedAt));
@@ -551,17 +560,15 @@ export function getCurrentApprovalLevel(
 }
 
 /**
- * Hierarchy is complete when:
- * - any optional level has approved (early complete), or
- * - every required level has approved (optional leftovers may be skipped).
- * If every level is optional, at least one approval is required.
+ * Hierarchy is complete when every *required* level has approved.
+ * Optional seats never finish the chain early — whether they approve or not,
+ * all required approvers are still needed. Leftover optional seats may be skipped
+ * after the required set is done. If every level is optional, at least one
+ * approval is required.
  */
 export function isApprovalHierarchySatisfied(levels: ApprovalLevelLike[]): boolean {
   if (levels.length === 0) return false;
   const sorted = sortApprovalLevels(levels);
-  if (sorted.some((l) => isApprovalLevelOptional(l) && Boolean(l.approvedAt))) {
-    return true;
-  }
   const required = sorted.filter((l) => !isApprovalLevelOptional(l));
   if (required.length === 0) {
     return sorted.some((l) => Boolean(l.approvedAt));
@@ -574,20 +581,15 @@ export function allApprovalLevelsComplete(levels: ApprovalLevelLike[]): boolean 
   return isApprovalHierarchySatisfied(levels);
 }
 
-/** Level the operator should act on (their unlocked incomplete assignment, else current). */
+/** Level the operator should act on (their unlocked incomplete assignment only). */
 export function getOperatorActionableApprovalLevel(
   levels: TravelOrderApprovalLevelStored[] | TravelOrderApprovalLevelDto[],
   operatorAgentId: string | null | undefined,
-  opts?: { canAssignWork?: boolean },
+  _opts?: { canAssignWork?: boolean },
 ): TravelOrderApprovalLevelStored | TravelOrderApprovalLevelDto | null {
   const unlocked = getUnlockedIncompleteLevels(levels);
-  if (!unlocked.length) return null;
-  if (operatorAgentId) {
-    const mine = unlocked.find((l) => l.agentId === operatorAgentId);
-    if (mine) return mine;
-  }
-  if (opts?.canAssignWork) return unlocked[0] ?? null;
-  return null;
+  if (!unlocked.length || !operatorAgentId) return null;
+  return unlocked.find((l) => l.agentId === operatorAgentId) ?? null;
 }
 
 export function isDesignatedApprover(
@@ -617,19 +619,19 @@ export function canApproveTravelOrderNow(
     approvedByAgentIds?: string[] | null;
     approvalLevels?: TravelOrderApprovalLevelStored[] | TravelOrderApprovalLevelDto[] | null;
   },
-  opts?: { canAssignWork?: boolean },
+  _opts?: { canAssignWork?: boolean },
 ): boolean {
   if (order.status !== TRAVEL_ORDER_STATUS.SUBMITTED) return false;
-  if (opts?.canAssignWork) return true;
   if (!operatorAgentId) return false;
   const levels = order.approvalLevels ?? [];
   if (hasHierarchicalApprovals(levels)) {
+    // Only the designated assignee for an unlocked seat may approve — no admin proxy.
     return getOperatorActionableApprovalLevel(levels, operatorAgentId) != null;
   }
   return isDesignatedApprover(operatorAgentId, order);
 }
 
-/** Current-level approver (or admin) may reject a submitted travel order. */
+/** Current-level designated approver may reject a submitted travel order. */
 export function canRejectTravelOrderNow(
   operatorAgentId: string | null | undefined,
   order: {
@@ -643,18 +645,18 @@ export function canRejectTravelOrderNow(
   return canApproveTravelOrderNow(operatorAgentId, order, opts);
 }
 
-/** Designated confirmer (or admin) may confirm or decline confirmation on a running order. */
+/** Designated confirmer may confirm or decline confirmation on a running order. */
 export function canConfirmTravelOrderNow(
   operatorAgentId: string | null | undefined,
   order: {
     status?: string;
     confirmationByAgentId?: string | null;
   },
-  opts?: { canAssignWork?: boolean },
+  _opts?: { canAssignWork?: boolean },
 ): boolean {
   if (order.status !== TRAVEL_ORDER_STATUS.APPROVED) return false;
   if (!order.confirmationByAgentId) return false;
-  if (opts?.canAssignWork) return true;
+  // Only the designated confirmer — no admin proxy.
   return Boolean(operatorAgentId && operatorAgentId === order.confirmationByAgentId);
 }
 
