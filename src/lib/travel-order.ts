@@ -41,7 +41,97 @@ export type TravelOrderDraft = {
   /** Selected vehicle option value. */
   vehicle: string;
   locations: TravelOrderLocationDraft[];
+  /** Optional Gate Pass (page 3). */
+  gatePass: TravelOrderGatePassDraft;
 };
+
+/** Create-time / editable Gate Pass fields. */
+export type TravelOrderGatePassDraft = {
+  /** False when the user skips the Gate Pass page. */
+  included: boolean;
+  /** `datetime-local` value (YYYY-MM-DDTHH:mm) or empty. */
+  estDepartureAt: string;
+  estArrivalAt: string;
+  actualDepartureStartedAt: string | null;
+  actualDepartureStartedLatitude: number | null;
+  actualDepartureStartedLongitude: number | null;
+  actualDepartureEndedAt: string | null;
+  actualDepartureEndedLatitude: number | null;
+  actualDepartureEndedLongitude: number | null;
+};
+
+export function emptyGatePassDraft(
+  partial?: Partial<TravelOrderGatePassDraft>,
+): TravelOrderGatePassDraft {
+  return {
+    included: partial?.included ?? false,
+    estDepartureAt: partial?.estDepartureAt ?? "",
+    estArrivalAt: partial?.estArrivalAt ?? "",
+    actualDepartureStartedAt: partial?.actualDepartureStartedAt ?? null,
+    actualDepartureStartedLatitude: partial?.actualDepartureStartedLatitude ?? null,
+    actualDepartureStartedLongitude: partial?.actualDepartureStartedLongitude ?? null,
+    actualDepartureEndedAt: partial?.actualDepartureEndedAt ?? null,
+    actualDepartureEndedLatitude: partial?.actualDepartureEndedLatitude ?? null,
+    actualDepartureEndedLongitude: partial?.actualDepartureEndedLongitude ?? null,
+  };
+}
+
+export function gatePassDraftHasAnyData(gp: TravelOrderGatePassDraft): boolean {
+  return Boolean(
+    gp.estDepartureAt.trim() ||
+      gp.estArrivalAt.trim() ||
+      gp.actualDepartureStartedAt ||
+      gp.actualDepartureEndedAt,
+  );
+}
+
+/** Validate Gate Pass only when the user opted in or entered any field. */
+export function validateTravelOrderGatePass(gp: TravelOrderGatePassDraft): string | null {
+  if (!gp.included && !gatePassDraftHasAnyData(gp)) return null;
+
+  const dep = gp.estDepartureAt.trim();
+  const arr = gp.estArrivalAt.trim();
+  if (dep) {
+    const d = Date.parse(dep);
+    if (!Number.isFinite(d)) return "Est. Departure date/time is invalid.";
+  }
+  if (arr) {
+    const a = Date.parse(arr);
+    if (!Number.isFinite(a)) return "Est. Arrival date/time is invalid.";
+  }
+  if (dep && arr) {
+    const d = Date.parse(dep);
+    const a = Date.parse(arr);
+    if (Number.isFinite(d) && Number.isFinite(a) && a < d) {
+      return "Est. Arrival must be on or after Est. Departure.";
+    }
+  }
+  if (gp.actualDepartureStartedAt && gp.actualDepartureEndedAt) {
+    const s = Date.parse(gp.actualDepartureStartedAt);
+    const e = Date.parse(gp.actualDepartureEndedAt);
+    if (Number.isFinite(s) && Number.isFinite(e) && e < s) {
+      return "Actual Departure End must be on or after Start.";
+    }
+  }
+  return null;
+}
+
+/** Convert datetime-local / ISO string to Date, or null when empty/invalid. */
+export function parseOptionalDateTimeInput(raw: string | null | undefined): Date | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const ms = Date.parse(raw.trim());
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms);
+}
+
+/** Format an ISO timestamp for `<input type="datetime-local" />`. */
+export function toDatetimeLocalValue(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (!Number.isFinite(dt.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+}
 
 /** Preset vehicle choices for Travel Order requests. */
 export const TRAVEL_ORDER_VEHICLE_OPTIONS = [
@@ -143,6 +233,16 @@ export type TravelOrderDto = {
   travelers?: TravelOrderAgentRef[];
   /** Selected vehicle option value (e.g. COMPANY_VAN). */
   vehicle?: string | null;
+  /** Optional Gate Pass section. */
+  gatePassIncluded?: boolean;
+  estDepartureAt?: string | null;
+  estArrivalAt?: string | null;
+  actualDepartureStartedAt?: string | null;
+  actualDepartureStartedLatitude?: number | null;
+  actualDepartureStartedLongitude?: number | null;
+  actualDepartureEndedAt?: string | null;
+  actualDepartureEndedLatitude?: number | null;
+  actualDepartureEndedLongitude?: number | null;
   /** Why the order was declined (when status is REJECTED). */
   rejectionReason?: string | null;
   rejectedByAgentId?: string | null;
@@ -199,6 +299,7 @@ export function emptyTravelOrderDraft(): TravelOrderDraft {
     additionalTravelerAgentIds: [],
     vehicle: "",
     locations: [emptyTravelLocation()],
+    gatePass: emptyGatePassDraft(),
   };
 }
 
@@ -266,6 +367,8 @@ export function validateTravelOrderDraft(draft: TravelOrderDraft): string | null
   if (!draft.vehicle.trim()) {
     return "Select a vehicle for this travel order.";
   }
+  const gatePassError = validateTravelOrderGatePass(draft.gatePass);
+  if (gatePassError) return gatePassError;
   return null;
 }
 

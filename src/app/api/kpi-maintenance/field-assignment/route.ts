@@ -12,6 +12,10 @@ import {
   normalizeApprovalLevelsForStore,
   normalizeTravelerAgentIds,
   parseApprovedByAgentIds,
+  parseOptionalDateTimeInput,
+  validateTravelOrderGatePass,
+  emptyGatePassDraft,
+  type TravelOrderGatePassDraft,
 } from "@/lib/travel-order";
 import {
   createTravelOrderWithLocations,
@@ -23,19 +27,6 @@ import {
   persistTravelOrderImage,
   removeTravelOrderUploadDir,
 } from "@/lib/travel-order-uploads";
-
-async function assertAgentsInCompany(
-  agentIds: string[],
-  companyTeamId: string,
-): Promise<string | null> {
-  for (const id of agentIds) {
-    const companyId = await resolveAgentDesignatedCompanyId(id);
-    if (companyId !== companyTeamId) {
-      return "Level 1 approver and confirmer must belong to the same company as the requester.";
-    }
-  }
-  return null;
-}
 
 /**
  * POST /api/kpi-maintenance/field-assignment
@@ -64,8 +55,10 @@ export async function POST(req: Request) {
   }
 
   const form = await req.formData();
-  const title = String(form.get("title") ?? "").trim() || "Travel Orders";
   const mainTask = String(form.get("mainTask") ?? "").trim();
+  const title =
+    (mainTask.replace(/\s+/g, " ").toUpperCase() || String(form.get("title") ?? "").trim()) ||
+    "FIELD ASSIGNMENT";
   const orderRequest = String(form.get("orderRequest") ?? "").trim();
   const approvedByAgentId = String(form.get("approvedByAgentId") ?? "").trim();
   const approvedByAgentIdsRaw = String(form.get("approvedByAgentIds") ?? "").trim();
@@ -160,21 +153,53 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Select a valid vehicle for this travel order." }, { status: 400 });
   }
 
-  // Travelers may be from any company; only L1 approver + confirmer stay company-locked.
-  const companyCheckIds = [
-    confirmationByAgentId,
-    ...(approvalLevels.length > 0
-      ? approvalLevels.filter((l) => l.level === 1).map((l) => l.agentId).filter(Boolean)
-      : approvedByAgentIds),
-  ] as string[];
-  const companyCheck = await assertAgentsInCompany(
-    [...new Set(companyCheckIds)],
-    scopedCompanyTeamId,
-  );
-  if (companyCheck) {
-    return NextResponse.json({ error: companyCheck }, { status: 400 });
+  let gatePassDraft: TravelOrderGatePassDraft = emptyGatePassDraft();
+  const gatePassRaw = String(form.get("gatePassJson") ?? "").trim();
+  if (gatePassRaw) {
+    try {
+      const parsed = JSON.parse(gatePassRaw) as Partial<TravelOrderGatePassDraft> & {
+        included?: boolean;
+      };
+      gatePassDraft = {
+        included: parsed.included === true,
+        estDepartureAt:
+          typeof parsed.estDepartureAt === "string" ? parsed.estDepartureAt : "",
+        estArrivalAt: typeof parsed.estArrivalAt === "string" ? parsed.estArrivalAt : "",
+        actualDepartureStartedAt:
+          typeof parsed.actualDepartureStartedAt === "string"
+            ? parsed.actualDepartureStartedAt
+            : null,
+        actualDepartureStartedLatitude:
+          typeof parsed.actualDepartureStartedLatitude === "number"
+            ? parsed.actualDepartureStartedLatitude
+            : null,
+        actualDepartureStartedLongitude:
+          typeof parsed.actualDepartureStartedLongitude === "number"
+            ? parsed.actualDepartureStartedLongitude
+            : null,
+        actualDepartureEndedAt:
+          typeof parsed.actualDepartureEndedAt === "string"
+            ? parsed.actualDepartureEndedAt
+            : null,
+        actualDepartureEndedLatitude:
+          typeof parsed.actualDepartureEndedLatitude === "number"
+            ? parsed.actualDepartureEndedLatitude
+            : null,
+        actualDepartureEndedLongitude:
+          typeof parsed.actualDepartureEndedLongitude === "number"
+            ? parsed.actualDepartureEndedLongitude
+            : null,
+      };
+    } catch {
+      return NextResponse.json({ error: "Invalid gatePassJson." }, { status: 400 });
+    }
+  }
+  const gatePassError = validateTravelOrderGatePass(gatePassDraft);
+  if (gatePassError) {
+    return NextResponse.json({ error: gatePassError }, { status: 400 });
   }
 
+  // Approvers, confirmer, and travelers may be from any company.
   const approvers = await prisma.agent.findMany({
     where: { id: { in: approvedByAgentIds } },
     select: { id: true },
@@ -299,6 +324,23 @@ export async function POST(req: Request) {
       companyTeamId: scopedCompanyTeamId,
       travelerAgentIds,
       vehicle: vehicleRaw,
+      gatePass: gatePassDraft.included
+        ? {
+            included: true,
+            estDepartureAt: parseOptionalDateTimeInput(gatePassDraft.estDepartureAt),
+            estArrivalAt: parseOptionalDateTimeInput(gatePassDraft.estArrivalAt),
+            actualDepartureStartedAt: parseOptionalDateTimeInput(
+              gatePassDraft.actualDepartureStartedAt,
+            ),
+            actualDepartureStartedLatitude: gatePassDraft.actualDepartureStartedLatitude,
+            actualDepartureStartedLongitude: gatePassDraft.actualDepartureStartedLongitude,
+            actualDepartureEndedAt: parseOptionalDateTimeInput(
+              gatePassDraft.actualDepartureEndedAt,
+            ),
+            actualDepartureEndedLatitude: gatePassDraft.actualDepartureEndedLatitude,
+            actualDepartureEndedLongitude: gatePassDraft.actualDepartureEndedLongitude,
+          }
+        : { included: false },
       status: "SUBMITTED",
       locations: normalizedLocations,
     });

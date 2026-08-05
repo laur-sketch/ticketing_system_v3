@@ -26,24 +26,28 @@ import {
   type KpiChecklistProgress,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
-import { countItProjectSubKpiStatus, itProjectAggregatedProgressFromRaw, itProjectChecklistItems, itProjectStatusProgress, usesProjectTimelineTracker } from "@/lib/it-project-subkpis";
+import {
+  countItProjectSubKpiStatus,
+  itProjectAggregatedProgressFromRaw,
+  itProjectChecklistItems,
+  itProjectStatusProgress,
+  usesProjectTimelineTracker,
+} from "@/lib/it-project-subkpis";
 import {
   isItProjectImplementationPillar,
   isJobOrderRequestPillar,
-  IT_PROJECT_IMPLEMENTATION_TITLE,
-  IT_TASK_PILLAR_TITLES,
-  JOB_ORDER_REQUEST_PILLAR_TITLE,
 } from "@/lib/it-task-pillar-titles";
 import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
-import { prisma } from "@/lib/prisma";
 import {
   donutKeyForTaskMetricsRow,
   FIELD_ASSIGNMENT_DONUT_KEY,
+  kpiMatchesTaskMetricsType,
   PROJECTS_DONUT_KEY,
   TASK_FREQUENCY_DONUT_KEYS,
   type TaskMetricsTaskType,
 } from "@/lib/task-metrics-task-type";
+import { prisma } from "@/lib/prisma";
 import {
   applyPenaltiesToAssigneeProgress,
   applyPenaltyToTaskEfficiency,
@@ -331,13 +335,8 @@ function averageDailyProgress(rows: KpiChecklistProgress[]): KpiChecklistProgres
   return { total, done, missing, percent };
 }
 
-export type TaskChecklistIncludedTaskItem = {
-  id: string;
-  title: string;
-  done: boolean;
-};
-
-export type TaskChecklistIncludedTaskPhase = {
+/** Live Task Board rows that feed a company-view donut (admin extended view). */
+export type TaskChecklistIncludedPhase = {
   id: string;
   name: string;
   total: number;
@@ -345,17 +344,19 @@ export type TaskChecklistIncludedTaskPhase = {
   percent: number;
 };
 
-/** Live Task Board row shown under a Task Metrics donut in extended view. */
 export type TaskChecklistIncludedTask = {
   id: string;
   title: string;
-  assigneeName?: string | null;
-  frequency?: string | null;
+  /** Recurring cadence for tasks; null for projects (projects are one-off). */
+  frequency: string | null;
+  assigneeName: string | null;
   total: number;
   done: number;
+  missing: number;
   percent: number;
-  items: TaskChecklistIncludedTaskItem[];
-  phases?: TaskChecklistIncludedTaskPhase[];
+  items: Array<{ id: string; title: string; done: boolean }>;
+  /** Project timeline extended view — progress per phase instead of flat sub-tasks. */
+  phases?: TaskChecklistIncludedPhase[];
 };
 
 export type TaskChecklistPillarMetric = KpiChecklistProgress & {
@@ -369,7 +370,7 @@ export type TaskChecklistPillarMetric = KpiChecklistProgress & {
   assigneeProgress?: TaskAssigneeProgress[];
   /** Sum of contributor tasks across every counted period (personnel monthly rollup). */
   assigneeProgressAccumulated?: TaskAssigneeProgress[];
-  /** Live Task Board rows currently mapped into this donut (extended view). */
+  /** Main tasks (and their checklist items) that contribute to this donut. */
   includedTasks?: TaskChecklistIncludedTask[];
 };
 
@@ -422,6 +423,87 @@ export function kpiMaintenanceWhereForTaskMetrics(
   return { assignedAgentId };
 }
 
+function buildIncludedTasksFromKpis(
+  rows: ReadonlyArray<{
+    id: string;
+    title: string;
+    mainTask?: string | null;
+    itProjectName?: string | null;
+    frequency: string | KpiFrequency | null;
+    subKpis: unknown;
+    assignedAgent?: { id: string; name: string } | null;
+  }>,
+  opts?: {
+    itemsForRow?: (row: (typeof rows)[number]) => SubKpiItem[];
+    isDone?: (item: SubKpiItem) => boolean;
+    /** When true, omit frequency and attach phase progress for timeline projects. */
+    projectMode?: boolean;
+  },
+): TaskChecklistIncludedTask[] {
+  const out: TaskChecklistIncludedTask[] = [];
+  for (const row of rows) {
+    let title = kpiMainTaskLabel(row).trim();
+    if (!title || isItProjectImplementationPillar(title) || isJobOrderRequestPillar(title)) {
+      title =
+        (row.itProjectName ?? "").trim() ||
+        (row.mainTask ?? "").trim() ||
+        (opts?.projectMode ? "Untitled project" : row.title.trim());
+    }
+    if (!title) continue;
+    const projectMode = opts?.projectMode === true;
+    if (projectMode) {
+      const agg = itProjectAggregatedProgressFromRaw(row.subKpis);
+      const phases = agg.phases
+        .filter((ph) => ph.total > 0 || ph.phaseName.trim().length > 0)
+        .map((ph) => ({
+          id: ph.phaseId,
+          name: ph.phaseName.trim() || "Phase",
+          total: ph.total,
+          done: ph.done,
+          percent: ph.percent,
+        }));
+      const total = agg.totalItems;
+      const done = agg.totalDone;
+      out.push({
+        id: row.id,
+        title,
+        frequency: null,
+        assigneeName: row.assignedAgent?.name?.trim() || null,
+        total,
+        done,
+        missing: Math.max(0, total - done),
+        percent: total > 0 ? Math.round((done / total) * 100) : agg.averagePercent,
+        items: [],
+        phases,
+      });
+      continue;
+    }
+    const items = (opts?.itemsForRow?.(row) ?? collectChecklistProgressItems(row.subKpis, title)).filter(
+      (item) => item.title.trim().length > 0,
+    );
+    const isDone = opts?.isDone ?? ((item: SubKpiItem) => Boolean(item.done));
+    const total = items.length;
+    const done = items.reduce((sum, item) => sum + (isDone(item) ? 1 : 0), 0);
+    const missing = Math.max(0, total - done);
+    out.push({
+      id: row.id,
+      title,
+      frequency: String(row.frequency ?? "").toUpperCase() || "—",
+      assigneeName: row.assignedAgent?.name?.trim() || null,
+      total,
+      done,
+      missing,
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+      items: items.map((item) => ({
+        id: item.id,
+        title: item.title.trim(),
+        done: isDone(item),
+      })),
+    });
+  }
+  return out.sort((a, b) => a.title.localeCompare(b.title));
+}
+
 function isProjectTimelineMetricsKpi(row: {
   title: string;
   subKpis: unknown;
@@ -432,8 +514,13 @@ function isProjectTimelineMetricsKpi(row: {
   return isProjectTask(row.subKpis) || usesProjectTimelineTracker(row.subKpis);
 }
 
-function pillarKeyForProjectKpi(title: string): string {
-  return pillarFromKpiTitle(title) ?? normalizeDynamicPillarTitle(title) ?? IT_PROJECT_IMPLEMENTATION_TITLE;
+/** All Project task-type rows register under a single PROJECTS donut. */
+function pillarKeyForProjectKpi(_row: {
+  title: string;
+  mainTask?: string | null;
+  itProjectName?: string | null;
+}): string {
+  return PROJECTS_DONUT_KEY;
 }
 
 /**
@@ -446,15 +533,23 @@ async function computeProjectTimelinePillarMetricsByTitle(args: {
   timeZone: string;
   fromYmd: string;
   toYmd: string;
+  taskType?: TaskMetricsTaskType;
 }): Promise<TaskChecklistPillarMetrics> {
   const zone = normalizeTimeZone(args.timeZone);
+  const taskType = args.taskType ?? "task";
+  if (taskType !== "project") {
+    return {};
+  }
   const rows = await prisma.kpiMaintenance.findMany({
     where: {
       isRecurring: false,
       ...args.kpiWhere,
     },
     select: {
+      id: true,
       title: true,
+      mainTask: true,
+      itProjectName: true,
       subKpis: true,
       frequency: true,
       isRecurring: true,
@@ -481,18 +576,18 @@ async function computeProjectTimelinePillarMetricsByTitle(args: {
     return dues.some((d) => d >= args.fromYmd && d <= args.toYmd);
   };
 
-  const projectRows = rows.filter((row) => isProjectTimelineMetricsKpi(row) && inRange(row));
+  const projectRows = rows.filter(
+    (row) =>
+      isProjectTimelineMetricsKpi(row) &&
+      inRange(row) &&
+      kpiMatchesTaskMetricsType(row, taskType),
+  );
   const byPillar = new Map<string, typeof projectRows>();
   for (const row of projectRows) {
-    const pillar = pillarKeyForProjectKpi(row.title);
+    const pillar = pillarKeyForProjectKpi(row);
     const list = byPillar.get(pillar) ?? [];
     list.push(row);
     byPillar.set(pillar, list);
-  }
-
-  // Always materialize the legacy IT PROJECT bucket so callers can merge cleanly.
-  if (!byPillar.has(IT_PROJECT_IMPLEMENTATION_TITLE)) {
-    byPillar.set(IT_PROJECT_IMPLEMENTATION_TITLE, []);
   }
 
   const nowMs = Date.now();
@@ -554,6 +649,9 @@ async function computeProjectTimelinePillarMetricsByTitle(args: {
       periodsInRange: pillarRows.length,
       assigneeProgress,
       assigneeProgressAccumulated: assigneeProgress,
+      includedTasks: buildIncludedTasksFromKpis(pillarRows, {
+        projectMode: true,
+      }),
     };
   }
 
@@ -705,6 +803,7 @@ function buildIncludedTasksForKpis(
 
     if (isProjectTimelineMetricsKpi(kpi)) {
       const agg = itProjectAggregatedProgressFromRaw(kpi.subKpis);
+      const missing = Math.max(0, agg.totalItems - agg.totalDone);
       return {
         id: kpi.id,
         title: kpi.title,
@@ -712,8 +811,9 @@ function buildIncludedTasksForKpis(
         frequency,
         total: agg.totalItems,
         done: agg.totalDone,
+        missing,
         percent: agg.averagePercent,
-        items: [] as TaskChecklistIncludedTaskItem[],
+        items: [],
         phases: agg.phases.map((ph) => ({
           id: ph.phaseId,
           name: ph.phaseName,
@@ -738,6 +838,7 @@ function buildIncludedTasksForKpis(
       frequency,
       total: progress.total,
       done: progress.done,
+      missing: progress.missing,
       percent: progress.percent,
       items,
     };
@@ -1377,29 +1478,31 @@ export async function computeTaskChecklistPillarMetrics(args: {
   toYmd: string;
   timeZone: string;
   kpiWhere?: Prisma.KpiMaintenanceWhereInput;
-  /** When set, group into Task / Project / Field donuts instead of legacy IT pillars. */
   taskType?: TaskMetricsTaskType;
 }): Promise<TaskChecklistPillarMetrics> {
-  const { metricsCadence, fromYmd, toYmd, timeZone, kpiWhere = {}, taskType } = args;
+  const { metricsCadence, fromYmd, toYmd, timeZone, kpiWhere = {}, taskType = "task" } = args;
   const zone = normalizeTimeZone(timeZone);
 
-  const kpisWhereAnd: Prisma.KpiMaintenanceWhereInput[] = [
-    {
+  const kpisWhereAnd: Prisma.KpiMaintenanceWhereInput[] = [];
+  if (taskType === "task") {
+    // Recurring tasks + completed one-offs (incomplete one-offs stay off the Task donuts).
+    kpisWhereAnd.push({
       OR: [
         { isRecurring: true },
         { isRecurring: false, lastFullCompletionAt: { not: null } },
       ],
-    },
-  ];
+    });
+  }
   if (Object.keys(kpiWhere).length > 0) {
     kpisWhereAnd.push(kpiWhere);
   }
   const kpis = await prisma.kpiMaintenance.findMany({
-    where: { AND: kpisWhereAnd },
+    where: kpisWhereAnd.length > 0 ? { AND: kpisWhereAnd } : {},
     select: {
       id: true,
       title: true,
       mainTask: true,
+      itProjectName: true,
       frequency: true,
       subKpis: true,
       assignedAgent: { select: { id: true, name: true } },
@@ -1413,41 +1516,34 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
   const kpisByPillar = new Map<string, (typeof kpis)[number][]>();
   for (const kpi of kpis) {
-    const pillar = taskType
-      ? donutKeyForTaskMetricsRow(kpi, taskType)
-      : pillarFromKpiTitle(kpi.title) ?? normalizeDynamicPillarTitle(kpi.title);
-    if (!pillar || pillar === "HELPDESK SUPPORT" || pillar === "USER SUPPORT") continue;
+    const groupKey = pillarFromKpiTitle(kpi.title);
+    if (groupKey === "HELPDESK SUPPORT" || groupKey === "USER SUPPORT") continue;
+    const pillar = donutKeyForTaskMetricsRow(kpi, taskType);
+    if (!pillar) continue;
     const list = kpisByPillar.get(pillar) ?? [];
     list.push(kpi);
     kpisByPillar.set(pillar, list);
   }
 
-  const canonicalPillars = taskType
-    ? taskType === "task"
+  /** Task type always exposes fixed donuts; Project / Field use a single bucket. */
+  const pillarsToCompute =
+    taskType === "task"
       ? [...TASK_FREQUENCY_DONUT_KEYS]
       : taskType === "field"
         ? [FIELD_ASSIGNMENT_DONUT_KEY]
-        : [PROJECTS_DONUT_KEY]
-    : IT_TASK_PILLAR_TITLES.filter(
-        (p) => p !== "HELPDESK SUPPORT" && p !== "USER SUPPORT",
-      );
-  const dynamicPillars = taskType
-    ? []
-    : [...kpisByPillar.keys()]
-        .filter((p) => !(IT_TASK_PILLAR_TITLES as readonly string[]).includes(p))
-        .sort();
-  const pillarsToCompute: string[] = [...canonicalPillars, ...dynamicPillars];
+        : [PROJECTS_DONUT_KEY];
 
   const selectedByPillar = new Map<string, (typeof kpis)[number][]>();
   const allSelectedKpis: (typeof kpis)[number][] = [];
   for (const pillar of pillarsToCompute) {
     const pillarKpis = kpisByPillar.get(pillar) ?? [];
-    // Frequency / field / project buckets already classify rows — do not re-filter by cadence.
-    const selected = taskType
-      ? pillarKpis
-      : selectKpisForPillarTaskMetrics(pillarKpis, metricsCadence);
+    // Frequency / type buckets are already typed — keep every row in the bucket.
+    const selected =
+      taskType === "task" || taskType === "field"
+        ? pillarKpis
+        : selectKpisForPillarTaskMetrics(pillarKpis, metricsCadence);
+    selectedByPillar.set(pillar, selected);
     if (selected.length > 0) {
-      selectedByPillar.set(pillar, selected);
       allSelectedKpis.push(...selected);
     }
   }
@@ -1483,74 +1579,18 @@ export async function computeTaskChecklistPillarMetrics(args: {
     timeZone: zone,
     fromYmd,
     toYmd,
+    taskType,
   });
 
   const result: TaskChecklistPillarMetrics = {};
-
-  if (taskType === "project") {
-    const projectEntries = Object.entries(projectMetricsByPillar).filter(
-      ([, metric]) => (metric?.periodsCounted ?? 0) > 0 || (metric?.total ?? 0) > 0,
-    );
-    const includedTasks = buildIncludedTasksForKpis(kpisByPillar.get(PROJECTS_DONUT_KEY) ?? []);
-    if (projectEntries.length === 0) {
-      result[PROJECTS_DONUT_KEY] = {
-        total: 0,
-        done: 0,
-        missing: 0,
-        percent: 0,
-        periodsCounted: 0,
-        periodsInRange: 0,
-        dailyProgressRows: [],
-        assigneeProgress: [],
-        assigneeProgressAccumulated: [],
-        includedTasks,
-      };
-      return result;
-    }
-    let total = 0;
-    let done = 0;
-    let missing = 0;
-    let percentSum = 0;
-    let periodsCounted = 0;
-    let periodsInRange = 0;
-    for (const [, metric] of projectEntries) {
-      if (!metric) continue;
-      total += metric.total;
-      done += metric.done;
-      missing += metric.missing;
-      percentSum += metric.percent;
-      periodsCounted += metric.periodsCounted;
-      periodsInRange += metric.periodsInRange;
-    }
-    const n = projectEntries.length;
-    result[PROJECTS_DONUT_KEY] = {
-      total,
-      done,
-      missing,
-      percent: n > 0 ? Math.round(percentSum / n) : 0,
-      periodsCounted,
-      periodsInRange,
-      dailyProgressRows: [],
-      assigneeProgress: [],
-      assigneeProgressAccumulated: [],
-      includedTasks,
-    };
-    return result;
-  }
-
-  const pillarsWithProjectMetrics = taskType
-    ? new Set<string>()
-    : new Set(
-        Object.entries(projectMetricsByPillar)
-          .filter(
-            ([pillar, metric]) =>
-              pillar === IT_PROJECT_IMPLEMENTATION_TITLE ||
-              pillar === JOB_ORDER_REQUEST_PILLAR_TITLE ||
-              (metric?.periodsCounted ?? 0) > 0 ||
-              (metric?.total ?? 0) > 0,
-          )
-          .map(([pillar]) => pillar),
-      );
+  const pillarsWithProjectMetrics = new Set(
+    Object.entries(projectMetricsByPillar)
+      .filter(
+        ([, metric]) =>
+          (metric?.periodsCounted ?? 0) > 0 || (metric?.total ?? 0) > 0,
+      )
+      .map(([pillar]) => pillar),
+  );
 
   const pillarsForLoop = [
     ...pillarsToCompute,
@@ -1575,21 +1615,6 @@ export async function computeTaskChecklistPillarMetrics(args: {
     const includedTasks = buildIncludedTasksForKpis(
       taskType ? (selectedByPillar.get(pillar) ?? []) : pillarKpis,
     );
-    if (pillarKpis.length === 0 && !(taskType && includedTasks.length > 0)) {
-      result[pillar] = {
-        total: 0,
-        done: 0,
-        missing: 0,
-        percent: 0,
-        periodsCounted: 0,
-        periodsInRange: 0,
-        dailyProgressRows: [],
-        assigneeProgress: [],
-        assigneeProgressAccumulated: [],
-        includedTasks,
-      };
-      continue;
-    }
 
     // For task/field buckets, include every mapped row (including project-like field tasks).
     const rowsForProgress =

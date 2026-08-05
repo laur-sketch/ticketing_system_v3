@@ -12,7 +12,7 @@ import {
   launchPadLabelClass,
   launchPadPrimaryButtonClass,
 } from "@/components/auth/SignInLaunchPadShell";
-import { isSessionExpired } from "@/lib/session-expiry-client";
+import { isSessionExpired, logoutExpiredSession } from "@/lib/session-expiry-client";
 import { sanitizeCallbackUrl } from "@/lib/session-expiry";
 import { RedirectLoadingIndicator } from "@/components/ui/redirect-loading-indicator";
 
@@ -103,10 +103,16 @@ function SignInForm() {
   }, []);
 
   useEffect(() => {
-    if (status !== "authenticated" || !session || isSessionExpired(session)) return;
+    if (status !== "authenticated" || !session) return;
+    if (isSessionExpired(session)) {
+      logoutExpiredSession(
+        sessionExpiredReason === "session-expired-midnight" ? "midnight" : "idle",
+      );
+      return;
+    }
     setRedirecting(true);
     window.location.replace(callbackUrl);
-  }, [status, session, callbackUrl]);
+  }, [status, session, callbackUrl, sessionExpiredReason]);
 
   useEffect(() => {
     if (!googleEnabled || !wantsGoogle || googleRedirectStarted.current) return;

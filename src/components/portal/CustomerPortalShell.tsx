@@ -15,11 +15,11 @@ export function CustomerPortalShell({ children }: { children: React.ReactNode })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   if (isSessionExpired(data)) {
-    return <SessionLogoutSplash />;
+    return <SessionLogoutSplash reason="midnight" />;
   }
 
   if (status === "unauthenticated" && isAuthRequiredPath(pathname)) {
-    return <SessionLogoutSplash message="Sign in required…" />;
+    return <SessionLogoutSplash message="Sign in required…" logout={false} />;
   }
 
   if (status === "loading" && !data) {
