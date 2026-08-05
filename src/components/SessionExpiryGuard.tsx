@@ -11,24 +11,24 @@ import {
   sessionExpiresAtMs,
 } from "@/lib/session-expiry-client";
 
-/** Signs the user out when the session reaches local midnight (all roles). */
+/** Clears the session when JWT / midnight expiry is reached (all roles). */
 export function SessionExpiryGuard() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const loggingOutRef = useRef(false);
 
-  function logoutOnce() {
+  function logoutOnce(reason: "idle" | "midnight" = "midnight") {
     if (loggingOutRef.current) return;
     loggingOutRef.current = true;
-    logoutExpiredSession("midnight");
+    logoutExpiredSession(reason);
   }
 
   useLayoutEffect(() => {
     if (loggingOutRef.current || status === "loading") return;
 
     if (session && isSessionExpired(session)) {
-      logoutOnce();
+      logoutOnce("midnight");
       return;
     }
 
@@ -46,18 +46,18 @@ export function SessionExpiryGuard() {
 
     const delay = expiresAtMs - Date.now();
     if (delay <= 0) {
-      logoutOnce();
+      logoutOnce("midnight");
       return;
     }
 
-    const timer = window.setTimeout(logoutOnce, delay);
+    const timer = window.setTimeout(() => logoutOnce("midnight"), delay);
     return () => window.clearTimeout(timer);
   }, [session, status]);
 
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== "visible" || status !== "authenticated" || !session) return;
-      if (isSessionExpired(session)) logoutOnce();
+      if (isSessionExpired(session)) logoutOnce("midnight");
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);

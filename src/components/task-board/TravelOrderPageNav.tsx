@@ -3,7 +3,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-export type TravelOrderFormPage = 1 | 2;
+export type TravelOrderFormPage = 1 | 2 | 3;
 
 type TravelOrderPageNavProps = {
   page: TravelOrderFormPage;
@@ -17,7 +17,7 @@ type TravelOrderPageNavProps = {
   className?: string;
 };
 
-/** Tab switcher + optional Back/Next for Travel Order two-page forms. */
+/** Tab switcher + optional Back/Next for Travel Order multi-page forms. */
 export function TravelOrderPageNav({
   page,
   onPageChange,
@@ -34,7 +34,7 @@ export function TravelOrderPageNav({
       )}
     >
       <div
-        className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60"
+        className="inline-flex flex-wrap rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60"
         role="tablist"
         aria-label="Travel order pages"
       >
@@ -66,26 +66,40 @@ export function TravelOrderPageNav({
         >
           2 · Approvals
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={page === 3}
+          onClick={() => onPageChange(3)}
+          className={cn(
+            "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+            page === 3
+              ? "bg-orange-600 text-white shadow-sm"
+              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+          )}
+        >
+          3 · Gate Pass
+        </button>
       </div>
 
       {showStepButtons ? (
         <div className="flex flex-wrap gap-1.5">
-          {page === 2 ? (
+          {page > 1 ? (
             <button
               type="button"
               disabled={backDisabled}
-              onClick={() => onPageChange(1)}
+              onClick={() => onPageChange((page - 1) as TravelOrderFormPage)}
               className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >
               <ChevronLeft className="size-3.5" aria-hidden />
               Back
             </button>
           ) : null}
-          {page === 1 ? (
+          {page < 3 ? (
             <button
               type="button"
               disabled={nextDisabled}
-              onClick={() => onPageChange(2)}
+              onClick={() => onPageChange((page + 1) as TravelOrderFormPage)}
               className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next

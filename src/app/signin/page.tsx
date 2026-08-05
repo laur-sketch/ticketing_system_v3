@@ -5,14 +5,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { Eye, EyeOff } from "lucide-react";
+import { GoogleMark } from "@/components/auth/GoogleAuthButton";
 import {
-  AuthShell,
-  authInputClass,
-  authLabelClass,
-  authPrimaryButtonClass,
-} from "@/components/auth/AuthShell";
-import { AuthDivider, GoogleAuthButton } from "@/components/auth/GoogleAuthButton";
-import { isSessionExpired } from "@/lib/session-expiry-client";
+  SignInLaunchPadShell,
+  launchPadInputClass,
+  launchPadLabelClass,
+  launchPadPrimaryButtonClass,
+} from "@/components/auth/SignInLaunchPadShell";
+import { isSessionExpired, logoutExpiredSession } from "@/lib/session-expiry-client";
 import { sanitizeCallbackUrl } from "@/lib/session-expiry";
 import { RedirectLoadingIndicator } from "@/components/ui/redirect-loading-indicator";
 
@@ -33,6 +33,8 @@ function postLoginDestination(resUrl: string | null | undefined, fallback: strin
 function oauthErrorMessage(code: string | null): string | null {
   if (!code) return null;
   switch (code) {
+    case "use_password":
+      return "Staff accounts must sign in with username and password. Google sign-in is for customers only.";
     case "OAuthSignin":
     case "OAuthCallback":
       return "Google sign-in could not complete. Check that NEXTAUTH_URL matches the site URL and the Google OAuth redirect URI is configured.";
@@ -72,6 +74,8 @@ function SignInForm() {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  const [formReady, setFormReady] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const [resetOpen, setResetOpen] = useState(false);
   const [resetIdentifier, setResetIdentifier] = useState("");
@@ -79,6 +83,10 @@ function SignInForm() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFormReady(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,10 +103,16 @@ function SignInForm() {
   }, []);
 
   useEffect(() => {
-    if (status !== "authenticated" || !session || isSessionExpired(session)) return;
+    if (status !== "authenticated" || !session) return;
+    if (isSessionExpired(session)) {
+      logoutExpiredSession(
+        sessionExpiredReason === "session-expired-midnight" ? "midnight" : "idle",
+      );
+      return;
+    }
     setRedirecting(true);
     window.location.replace(callbackUrl);
-  }, [status, session, callbackUrl]);
+  }, [status, session, callbackUrl, sessionExpiredReason]);
 
   useEffect(() => {
     if (!googleEnabled || !wantsGoogle || googleRedirectStarted.current) return;
@@ -108,19 +122,28 @@ function SignInForm() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    e.stopPropagation();
+    if (!formReady || submitting || redirecting) return;
+    setSubmitting(true);
     setError(null);
-    const res = await signIn("credentials", {
-      username,
-      password,
-      callbackUrl,
-      redirect: false,
-    });
-    if (res?.error) {
-      setError("Invalid username or password.");
-      return;
+    try {
+      const res = await signIn("credentials", {
+        username: username.trim(),
+        password,
+        callbackUrl,
+        redirect: false,
+      });
+      if (res?.error) {
+        setError("Invalid username or password.");
+        setSubmitting(false);
+        return;
+      }
+      setRedirecting(true);
+      window.location.href = postLoginDestination(res?.url, callbackUrl);
+    } catch {
+      setError("Sign-in failed. Please try again.");
+      setSubmitting(false);
     }
-    setRedirecting(true);
-    window.location.href = postLoginDestination(res?.url, callbackUrl);
   }
 
   function openResetPanel() {
@@ -165,7 +188,7 @@ function SignInForm() {
 
   if (redirecting) {
     return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-4 text-foreground">
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-[#050505] px-4 text-[#e0e0e0]">
         <RedirectLoadingIndicator />
         <p className="text-sm font-medium">Redirecting…</p>
       </div>
@@ -173,44 +196,54 @@ function SignInForm() {
   }
 
   return (
-    <AuthShell mode="signin">
-      <h1 className="text-[1.5rem] font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-[1.65rem]">
-        Sign in
-      </h1>
-      <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-        Use your HRIS username and password from the employee directory, or continue with Google.
-      </p>
+    <SignInLaunchPadShell>
+      <div className="mb-8 text-center">
+        <h2 className="mb-2 text-2xl font-semibold text-white">Sign in</h2>
+        <p className="text-sm text-[#888888]">
+          Use your HRIS username and password from the employee directory, or continue with Google.
+        </p>
+      </div>
 
       {banner ? (
-        <p className="mt-4 rounded-lg border border-orange-500/25 bg-orange-500/[0.08] px-3 py-2 text-xs leading-snug text-orange-900 dark:text-orange-100/90 sm:text-[13px]">
+        <p className="mb-5 rounded-xl border border-[#ff6b00]/25 bg-[#ff6b00]/10 px-3 py-2 text-xs leading-snug text-orange-100">
           {banner}
         </p>
       ) : null}
 
-      <form onSubmit={onSubmit} className="mt-6 space-y-4">
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Username</span>
+      <form method="post" action="/signin" onSubmit={onSubmit} className="space-y-5">
+        <div>
+          <label htmlFor="signin-username" className={launchPadLabelClass}>
+            Username
+          </label>
           <input
+            id="signin-username"
+            name="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
             autoComplete="username"
             placeholder="you or name@company.com"
-            className={authInputClass}
+            className={`${launchPadInputClass} mt-2`}
+            disabled={submitting || redirecting}
           />
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Password</span>
-          <div className="relative">
+        <div>
+          <label htmlFor="signin-password" className={launchPadLabelClass}>
+            Password
+          </label>
+          <div className="relative mt-2">
             <input
+              id="signin-password"
+              name="password"
               type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
               placeholder="••••••••"
-              className={`${authInputClass} pr-11`}
+              className={`${launchPadInputClass} pr-12`}
+              disabled={submitting || redirecting}
             />
             <button
               type="button"
@@ -225,92 +258,97 @@ function SignInForm() {
               onPointerCancel={() => setShowPassword(false)}
               onBlur={() => setShowPassword(false)}
               tabIndex={-1}
-              className="absolute right-1.5 top-1/2 inline-flex size-8 -translate-y-1/2 select-none items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f97316]/40 active:scale-95 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 transition hover:text-white"
             >
               {showPassword ? (
-                <EyeOff className="size-4" aria-hidden />
+                <EyeOff className="size-5" aria-hidden />
               ) : (
-                <Eye className="size-4" aria-hidden />
+                <Eye className="size-5" aria-hidden />
               )}
             </button>
           </div>
-        </label>
+        </div>
 
         {error ? (
-          <p className="rounded-lg border border-red-500/30 bg-red-500/[0.07] px-2.5 py-2 text-xs text-red-700 dark:text-red-200/90 sm:text-[13px]">
+          <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
             {error}
           </p>
         ) : null}
 
-        <button type="submit" className={authPrimaryButtonClass}>
-          Sign in
-        </button>
-
-        <div className="flex items-center justify-end">
+        <div className="flex flex-col items-stretch gap-4 pt-2">
           <button
-            type="button"
-            onClick={openResetPanel}
-            className="text-[12px] font-medium text-[#f97316] transition hover:text-[#fb923c] sm:text-[13px]"
+            type="submit"
+            disabled={!formReady || submitting || redirecting}
+            className={launchPadPrimaryButtonClass}
+            data-no-particles="true"
           >
-            Forgot password? Request reset
+            {!formReady ? "Preparing…" : submitting ? "Signing in…" : "Sign in"}
           </button>
+          <div className="relative z-10 flex items-center justify-between gap-3 text-xs leading-normal">
+            <button
+              type="button"
+              onClick={openResetPanel}
+              className="text-[#ff6b00] transition-colors hover:text-orange-400"
+            >
+              Forgot password?
+            </button>
+            <Link href="/signup" className="font-medium text-[#ff6b00] transition-colors hover:text-orange-400">
+              Create account
+            </Link>
+          </div>
         </div>
       </form>
 
       {resetOpen ? (
-        <section className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+        <section className="mt-5 rounded-2xl border border-white/10 bg-black/40 p-4">
           <div className="flex items-start justify-between gap-3">
-            <h2 className="text-[12px] font-bold uppercase tracking-[0.18em] text-zinc-700 dark:text-zinc-300">
+            <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300">
               Request password reset
-            </h2>
+            </h3>
             <button
               type="button"
               onClick={() => setResetOpen(false)}
-              className="shrink-0 rounded-md border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800/70"
+              className="shrink-0 rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-gray-400 transition hover:bg-white/5 hover:text-white"
             >
               Close
             </button>
           </div>
           {resetMessage ? (
-            <p className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-2.5 py-2 text-[12px] text-emerald-800 dark:text-emerald-100/90">
+            <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-[12px] text-emerald-100">
               {resetMessage}
             </p>
           ) : null}
           {resetError ? (
-            <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-2.5 py-2 text-[12px] text-red-700 dark:text-red-200/90">
+            <p className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-[12px] text-red-200">
               {resetError}
             </p>
           ) : null}
           <form onSubmit={submitResetRequest} className="mt-3 space-y-3">
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-600 dark:text-zinc-500">
-                Username or email
-              </span>
+            <label className="flex flex-col gap-1.5">
+              <span className={launchPadLabelClass}>Username or email</span>
               <input
                 value={resetIdentifier}
                 onChange={(e) => setResetIdentifier(e.target.value)}
                 required
                 autoComplete="username"
                 placeholder="you or name@company.com"
-                className={authInputClass}
+                className={launchPadInputClass}
               />
             </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-600 dark:text-zinc-500">
-                Reason (optional)
-              </span>
+            <label className="flex flex-col gap-1.5">
+              <span className={launchPadLabelClass}>Reason (optional)</span>
               <textarea
                 value={resetReason}
                 onChange={(e) => setResetReason(e.target.value)}
                 rows={2}
                 placeholder="Brief context to help the SuperAdmin verify the request."
-                className={`${authInputClass} resize-none`}
+                className={`${launchPadInputClass} resize-none`}
               />
             </label>
             <button
               type="submit"
               disabled={resetBusy}
-              className={`${authPrimaryButtonClass} disabled:cursor-not-allowed disabled:opacity-60`}
+              className={launchPadPrimaryButtonClass}
             >
               {resetBusy ? "Sending request…" : "Send request to SuperAdmin"}
             </button>
@@ -319,23 +357,20 @@ function SignInForm() {
       ) : null}
 
       {googleEnabled ? (
-        <>
-          <AuthDivider />
-          <GoogleAuthButton
-            variant="secondary"
-            label="Continue with Google"
+        <div className="mt-6 flex justify-center">
+          <button
+            type="button"
+            aria-label="Continue with Google"
+            title="Continue with Google"
+            className="inline-flex appearance-none items-center justify-center border-0 bg-transparent p-0 shadow-none outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#ff6b00]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#050505]"
             onClick={() => void signIn("google", { callbackUrl })}
-          />
-        </>
+            data-no-particles="true"
+          >
+            <GoogleMark className="size-7" />
+          </button>
+        </div>
       ) : null}
-
-      <p className="mt-6 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
-        New here?{" "}
-        <Link href="/signup" className="font-semibold text-[#f97316] hover:text-[#fb923c]">
-          Create account
-        </Link>
-      </p>
-    </AuthShell>
+    </SignInLaunchPadShell>
   );
 }
 
@@ -343,9 +378,9 @@ export default function SignInPage() {
   return (
     <Suspense
       fallback={
-        <AuthShell mode="signin">
-          <p className="text-sm text-zinc-500">Loading…</p>
-        </AuthShell>
+        <SignInLaunchPadShell>
+          <p className="text-center text-sm text-gray-400">Loading…</p>
+        </SignInLaunchPadShell>
       }
     >
       <SignInForm />

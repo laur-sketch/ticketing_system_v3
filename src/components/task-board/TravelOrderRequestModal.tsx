@@ -8,16 +8,20 @@ import {
   travelOrderApprovalGridClass,
   type TravelOrderFormPage,
 } from "@/components/task-board/TravelOrderPageNav";
+import { TravelOrderGatePassFields } from "@/components/task-board/TravelOrderGatePassFields";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import {
   agentIdsFromApprovalLevels,
   approvalLevelsAllowOptional,
   buildEmptyApprovalLevels,
+  emptyGatePassDraft,
   emptyTravelLocation,
   emptyTravelOrderDraft,
+  gatePassDraftHasAnyData,
   TRAVEL_ORDER_VEHICLE_OPTIONS,
   validateTravelOrderDraft,
+  validateTravelOrderGatePass,
   type TravelOrderDraft,
   type TravelOrderLocationDraft,
 } from "@/lib/travel-order";
@@ -30,7 +34,7 @@ type AgentOption = {
 
 type TravelOrderRequestModalProps = {
   open: boolean;
-  /** Task group title (KpiMaintenance.title). */
+  /** @deprecated Task groups removed — title is derived from the Field Assignment label. */
   taskGroupTitle?: string;
   /** Main task / field assignment name. */
   mainTaskName?: string;
@@ -44,13 +48,14 @@ type TravelOrderRequestModalProps = {
 };
 
 /**
- * Create-time Travel Order form (two pages):
+ * Create-time Travel Order form (three pages):
  * Page 1: Purpose of travel → Travelers → Vehicle → Location(s)
  * Page 2: To be Approved by → To be Confirmed by
+ * Page 3: Gate Pass (optional)
  */
 export function TravelOrderRequestModal({
   open,
-  taskGroupTitle = "Travel Orders",
+  taskGroupTitle: _unusedTaskGroupTitle = "Travel Orders",
   mainTaskName = "",
   scopedCompanyTeamId,
   companyScopeAgentId = null,
@@ -58,6 +63,7 @@ export function TravelOrderRequestModal({
   onClose,
   onCreated,
 }: TravelOrderRequestModalProps) {
+  void _unusedTaskGroupTitle;
   const [draft, setDraft] = useState<TravelOrderDraft>(() => emptyTravelOrderDraft());
   const [companyAgents, setCompanyAgents] = useState<AgentOption[]>([]);
   const [allAgents, setAllAgents] = useState<AgentOption[]>([]);
@@ -146,41 +152,39 @@ export function TravelOrderRequestModal({
 
   const filteredAgents = useMemo(() => {
     const q = agentQuery.trim().toLowerCase();
-    if (!q) return companyAgents.slice(0, 40);
-    return companyAgents
+    if (!q) return allAgents.slice(0, 40);
+    return allAgents
       .filter(
         (a) =>
           a.name.toLowerCase().includes(q) ||
           (a.email ?? "").toLowerCase().includes(q),
       )
       .slice(0, 40);
-  }, [companyAgents, agentQuery]);
+  }, [allAgents, agentQuery]);
 
   const filteredConfirmAgents = useMemo(() => {
     const q = confirmQuery.trim().toLowerCase();
-    if (!q) return companyAgents.slice(0, 40);
-    return companyAgents
+    if (!q) return allAgents.slice(0, 40);
+    return allAgents
       .filter(
         (a) =>
           a.name.toLowerCase().includes(q) ||
           (a.email ?? "").toLowerCase().includes(q),
       )
       .slice(0, 40);
-  }, [companyAgents, confirmQuery]);
+  }, [allAgents, confirmQuery]);
 
   const filteredLevelAgents = useMemo(() => {
-    const pool =
-      assigningLevel != null && assigningLevel >= 2 ? allAgents : companyAgents;
     const q = levelPickerQuery.trim().toLowerCase();
-    if (!q) return pool.slice(0, 40);
-    return pool
+    if (!q) return allAgents.slice(0, 40);
+    return allAgents
       .filter(
         (a) =>
           a.name.toLowerCase().includes(q) ||
           (a.email ?? "").toLowerCase().includes(q),
       )
       .slice(0, 40);
-  }, [allAgents, companyAgents, assigningLevel, levelPickerQuery]);
+  }, [allAgents, levelPickerQuery]);
 
   const filteredTravelerAgents = useMemo(() => {
     const q = travelerQuery.trim().toLowerCase();
@@ -196,9 +200,9 @@ export function TravelOrderRequestModal({
       .slice(0, 40);
   }, [allAgents, travelerQuery, companyScopeAgentId]);
 
-  const selectedApprovers = companyAgents.filter((a) =>
-    draft.approvedByAgentIds.includes(a.id),
-  );
+  const selectedApprovers = draft.approvedByAgentIds
+    .map((id) => findAgent(id))
+    .filter((a): a is AgentOption => a != null);
   const selectedConfirmer = findAgent(draft.confirmationByAgentId);
   const selectedTravelers = draft.additionalTravelerAgentIds
     .map((id) => findAgent(id))
@@ -327,28 +331,53 @@ export function TravelOrderRequestModal({
     });
   }
 
-  async function submit() {
-    const validationError = validateTravelOrderDraft(draft);
+  async function submit(opts?: { skipGatePass?: boolean }) {
+    const draftForSubmit: TravelOrderDraft = opts?.skipGatePass
+      ? { ...draft, gatePass: emptyGatePassDraft() }
+      : {
+          ...draft,
+          gatePass: {
+            ...draft.gatePass,
+            included:
+              draft.gatePass.included || gatePassDraftHasAnyData(draft.gatePass),
+          },
+        };
+
+    const validationError = validateTravelOrderDraft(draftForSubmit);
     if (validationError) {
       setError(validationError);
+      if (validationError.toLowerCase().includes("gate pass") || validationError.toLowerCase().includes("est.")) {
+        setFormPage(3);
+      } else if (
+        validationError.toLowerCase().includes("approv") ||
+        validationError.toLowerCase().includes("confirm")
+      ) {
+        setFormPage(2);
+      } else {
+        setFormPage(1);
+      }
       return;
     }
     if (!effectiveMainTask.trim()) {
       setError("Enter the purpose of travel.");
+      setFormPage(1);
       return;
     }
 
     const approvedByAgentIds = hierarchical
-      ? agentIdsFromApprovalLevels(draft.approvalLevels)
-      : draft.approvedByAgentIds;
+      ? agentIdsFromApprovalLevels(draftForSubmit.approvalLevels)
+      : draftForSubmit.approvedByAgentIds;
 
     setBusy(true);
     setError(null);
     try {
       const form = new FormData();
-      form.set("title", (taskGroupTitle.trim() || "Travel Orders"));
+      form.set(
+        "title",
+        (effectiveMainTask.trim().replace(/\s+/g, " ").toUpperCase() || "FIELD ASSIGNMENT"),
+      );
       form.set("mainTask", effectiveMainTask.trim());
-      form.set("orderRequest", draft.orderRequest.trim());
+      form.set("orderRequest", draftForSubmit.orderRequest.trim());
       form.set("approvedByAgentIds", JSON.stringify(approvedByAgentIds));
       if (approvedByAgentIds[0]) {
         form.set("approvedByAgentId", approvedByAgentIds[0]);
@@ -357,7 +386,7 @@ export function TravelOrderRequestModal({
         form.set(
           "approvalLevels",
           JSON.stringify(
-            draft.approvalLevels.map((lvl) => ({
+            draftForSubmit.approvalLevels.map((lvl) => ({
               level: lvl.level,
               agentId: lvl.agentId,
               optional: lvl.optional === true,
@@ -365,23 +394,39 @@ export function TravelOrderRequestModal({
           ),
         );
       }
-      form.set("confirmationByAgentId", draft.confirmationByAgentId.trim());
+      form.set("confirmationByAgentId", draftForSubmit.confirmationByAgentId.trim());
       form.set(
         "additionalTravelerAgentIds",
-        JSON.stringify(draft.additionalTravelerAgentIds),
+        JSON.stringify(draftForSubmit.additionalTravelerAgentIds),
       );
-      form.set("vehicle", draft.vehicle.trim());
+      form.set("vehicle", draftForSubmit.vehicle.trim());
       if (scopedCompanyTeamId) form.set("scopedCompanyTeamId", scopedCompanyTeamId);
       form.set(
         "locationsJson",
         JSON.stringify(
-          draft.locations.map((loc) => ({
+          draftForSubmit.locations.map((loc) => ({
             label: loc.label.trim(),
             latitude: null,
             longitude: null,
             remarks: null,
           })),
         ),
+      );
+      const gp = draftForSubmit.gatePass;
+      form.set(
+        "gatePassJson",
+        JSON.stringify({
+          included: gp.included && gatePassDraftHasAnyData(gp),
+          estDepartureAt: gp.estDepartureAt.trim() || null,
+          estArrivalAt: gp.estArrivalAt.trim() || null,
+          // Actual times are captured only after full approval.
+          actualDepartureStartedAt: null,
+          actualDepartureStartedLatitude: null,
+          actualDepartureStartedLongitude: null,
+          actualDepartureEndedAt: null,
+          actualDepartureEndedLatitude: null,
+          actualDepartureEndedLongitude: null,
+        }),
       );
 
       const res = await fetch("/api/kpi-maintenance/field-assignment", {
@@ -421,6 +466,23 @@ export function TravelOrderRequestModal({
         return;
       }
     }
+    if (page === 3 && formPage === 2) {
+      if (draft.approvalLevels.length > 0) {
+        for (const lvl of draft.approvalLevels) {
+          if (!lvl.agentId.trim()) {
+            setError(`Assign an approver for Level ${lvl.level} before continuing.`);
+            return;
+          }
+        }
+      } else if (draft.approvedByAgentIds.length === 0) {
+        setError("Select at least one approver before continuing.");
+        return;
+      }
+      if (!draft.confirmationByAgentId.trim()) {
+        setError("Select who will confirm this travel order before continuing.");
+        return;
+      }
+    }
     setError(null);
     setFormPage(page);
   }
@@ -431,7 +493,7 @@ export function TravelOrderRequestModal({
     <TaskBoardPopup
       open={open}
       title="Request for Travel Order"
-  description={`Field Assignment · ${(taskGroupTitle.trim() || "Travel Orders")}`}
+  description={`Field Assignment · ${(effectiveMainTask.trim() || "Travel order")}`}
       onClose={() => {
         if (!busy) onClose();
       }}
@@ -655,7 +717,7 @@ export function TravelOrderRequestModal({
               ))}
             </div>
           </>
-        ) : (
+        ) : formPage === 2 ? (
           <>
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -728,8 +790,8 @@ export function TravelOrderRequestModal({
               {hierarchical ? (
                 <>
                   <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
-                    Approvals run in order for required levels. Level 1 is limited to your company;
-                    Level 2+ can be anyone.
+                    Approvals run in order for required levels. You can assign anyone from any
+                    company at every level.
                     {approvalLevelsAllowOptional(draft.approvalLevels.length)
                       ? " With 3+ levels, you can mark levels optional — approving an optional level completes the chain early, and optional levels do not block later required steps."
                       : ""}
@@ -814,9 +876,7 @@ export function TravelOrderRequestModal({
                           {picking ? (
                             <div className="mt-2 space-y-2">
                               <p className="text-[11px] text-zinc-500">
-                                {lvl.level === 1
-                                  ? "Level 1: colleagues from the requester’s company only."
-                                  : "Level 2+: personnel from any company."}
+                                Search personnel from any company for Level {lvl.level}.
                               </p>
                               <input
                                 type="search"
@@ -864,9 +924,8 @@ export function TravelOrderRequestModal({
               ) : (
                 <>
                   <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
-                    Select one or more approvers from your company. Any selected person can approve
-                    the travel order. Use Set Levels for sequential multi-step approval (Level 2+ can
-                    be any company).
+                    Select one or more approvers from any company. Any selected person can approve
+                    the travel order. Use Set Levels for sequential multi-step approval.
                   </p>
                   <input
                     type="search"
@@ -953,7 +1012,7 @@ export function TravelOrderRequestModal({
                 To be Confirmed by:
               </p>
               <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
-                Only colleagues from your company are listed (same rule as Level 1 approval).
+                Select who will confirm this travel order. Personnel from any company are listed.
               </p>
               {selectedConfirmer ? (
                 <div className="min-w-0 rounded-xl border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
@@ -1018,6 +1077,13 @@ export function TravelOrderRequestModal({
               </div>
             </div>
           </>
+        ) : (
+          <TravelOrderGatePassFields
+            value={draft.gatePass}
+            disabled={busy}
+            showActualTimes={false}
+            onChange={(gatePass) => setDraft((prev) => ({ ...prev, gatePass }))}
+          />
         )}
 
         <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
@@ -1033,7 +1099,7 @@ export function TravelOrderRequestModal({
             >
               Next
             </Button>
-          ) : (
+          ) : formPage === 2 ? (
             <>
               <Button
                 type="button"
@@ -1042,6 +1108,33 @@ export function TravelOrderRequestModal({
                 onClick={() => goToPage(1)}
               >
                 Back
+              </Button>
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => goToPage(3)}
+                className="bg-orange-600 text-white hover:bg-orange-500"
+              >
+                Next
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => goToPage(2)}
+              >
+                Back
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void submit({ skipGatePass: true })}
+              >
+                Continue without Gate Pass
               </Button>
               <Button
                 type="button"

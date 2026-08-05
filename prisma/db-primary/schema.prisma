@@ -379,6 +379,17 @@ model TravelOrder {
   /// Field Assignment KPI % recorded on Submit as Done: (checked/total)*100.
   kpiPercent         Int?                  @map("kpi_percent")
   kpiSubmittedAt     DateTime?             @map("kpi_submitted_at") @db.Timestamptz(3)
+  /// Optional Gate Pass page was filled (false when skipped).
+  gatePassIncluded   Boolean               @default(false) @map("gate_pass_included")
+  estDepartureAt     DateTime?             @map("est_departure_at") @db.Timestamptz(3)
+  estArrivalAt       DateTime?             @map("est_arrival_at") @db.Timestamptz(3)
+  /// Actual departure Start/End (same pattern as location visit).
+  actualDepartureStartedAt        DateTime? @map("actual_departure_started_at") @db.Timestamptz(3)
+  actualDepartureStartedLatitude  Float?    @map("actual_departure_started_latitude")
+  actualDepartureStartedLongitude Float?    @map("actual_departure_started_longitude")
+  actualDepartureEndedAt          DateTime? @map("actual_departure_ended_at") @db.Timestamptz(3)
+  actualDepartureEndedLatitude    Float?    @map("actual_departure_ended_latitude")
+  actualDepartureEndedLongitude   Float?    @map("actual_departure_ended_longitude")
   status             String                @default("SUBMITTED") @map("status")
   createdBy          String                @map("created_by")
   createdAt          DateTime              @default(now()) @map("created_at")

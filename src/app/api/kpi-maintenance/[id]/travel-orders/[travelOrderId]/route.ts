@@ -9,11 +9,19 @@ import {
   canConfirmTravelOrderNow,
   getOperatorActionableApprovalLevel,
   hasHierarchicalApprovals,
+  isTravelOrderApproved,
+  isTravelOrderTraveler,
+  parseOptionalDateTimeInput,
+  validateTravelOrderGatePass,
+  emptyGatePassDraft,
+  gatePassDraftHasAnyData,
+  type TravelOrderGatePassDraft,
 } from "@/lib/travel-order";
 import {
   approveTravelOrderSequential,
   findTravelOrderById,
   serializeTravelOrder,
+  updateTravelOrderGatePass,
   updateTravelOrderStatus,
 } from "@/lib/travel-order-db";
 import { triggerTravelOrderConfirmedSideEffects } from "@/lib/sync/travel-order-confirm-side-effects";
@@ -46,11 +54,132 @@ export async function PATCH(
     status?: string;
     action?: string;
     rejectionReason?: string;
+    gatePass?: Partial<TravelOrderGatePassDraft> & {
+      visitAction?: "start" | "end";
+      latitude?: number;
+      longitude?: number;
+      capturedAt?: string;
+    };
   };
   const action = typeof body.action === "string" ? body.action.trim().toLowerCase() : "";
   const statusRaw = typeof body.status === "string" ? body.status.trim().toUpperCase() : "";
   const operatorId = perms.operator?.id ?? null;
   const canAssignWork = Boolean(perms.canAssignWork);
+
+  if (action === "gate-pass" || action === "gate-pass-visit") {
+    const isTraveler = isTravelOrderTraveler(operatorId, order);
+    if (!canAssignWork && !isTraveler) {
+      return NextResponse.json(
+        { error: "Only travelers (or an admin) can update Gate Pass details." },
+        { status: 403 },
+      );
+    }
+
+    if (action === "gate-pass-visit") {
+      if (!isTravelOrderApproved(order.status)) {
+        return NextResponse.json(
+          {
+            error:
+              "Actual departure and arrival can only be captured after the travel order is fully approved.",
+          },
+          { status: 403 },
+        );
+      }
+      const visitAction = body.gatePass?.visitAction;
+      if (visitAction !== "start" && visitAction !== "end") {
+        return NextResponse.json({ error: "Provide visitAction start or end." }, { status: 400 });
+      }
+      const capturedAt = parseOptionalDateTimeInput(body.gatePass?.capturedAt) ?? new Date();
+      const lat =
+        typeof body.gatePass?.latitude === "number" && Number.isFinite(body.gatePass.latitude)
+          ? body.gatePass.latitude
+          : null;
+      const lng =
+        typeof body.gatePass?.longitude === "number" && Number.isFinite(body.gatePass.longitude)
+          ? body.gatePass.longitude
+          : null;
+      try {
+        const updated = await updateTravelOrderGatePass({
+          travelOrderId,
+          kpiMaintenanceId: id,
+          included: true,
+          visitAction,
+          actualDepartureStartedAt: visitAction === "start" ? capturedAt : undefined,
+          actualDepartureStartedLatitude: visitAction === "start" ? lat : undefined,
+          actualDepartureStartedLongitude: visitAction === "start" ? lng : undefined,
+          actualDepartureEndedAt: visitAction === "end" ? capturedAt : undefined,
+          actualDepartureEndedLatitude: visitAction === "end" ? lat : undefined,
+          actualDepartureEndedLongitude: visitAction === "end" ? lng : undefined,
+        });
+        if (!updated) {
+          return NextResponse.json({ error: "Travel order could not be updated." }, { status: 500 });
+        }
+        return NextResponse.json({ travelOrder: serializeTravelOrder(updated) });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not update Gate Pass.";
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+    }
+
+    const raw = body.gatePass ?? {};
+    const draft: TravelOrderGatePassDraft = {
+      ...emptyGatePassDraft(),
+      included: raw.included !== false,
+      estDepartureAt: typeof raw.estDepartureAt === "string" ? raw.estDepartureAt : "",
+      estArrivalAt: typeof raw.estArrivalAt === "string" ? raw.estArrivalAt : "",
+      actualDepartureStartedAt:
+        typeof raw.actualDepartureStartedAt === "string" ? raw.actualDepartureStartedAt : null,
+      actualDepartureStartedLatitude:
+        typeof raw.actualDepartureStartedLatitude === "number"
+          ? raw.actualDepartureStartedLatitude
+          : null,
+      actualDepartureStartedLongitude:
+        typeof raw.actualDepartureStartedLongitude === "number"
+          ? raw.actualDepartureStartedLongitude
+          : null,
+      actualDepartureEndedAt:
+        typeof raw.actualDepartureEndedAt === "string" ? raw.actualDepartureEndedAt : null,
+      actualDepartureEndedLatitude:
+        typeof raw.actualDepartureEndedLatitude === "number"
+          ? raw.actualDepartureEndedLatitude
+          : null,
+      actualDepartureEndedLongitude:
+        typeof raw.actualDepartureEndedLongitude === "number"
+          ? raw.actualDepartureEndedLongitude
+          : null,
+    };
+    if (!draft.included && !gatePassDraftHasAnyData(draft)) {
+      draft.included = false;
+    } else {
+      draft.included = true;
+    }
+    const gateErr = validateTravelOrderGatePass(draft);
+    if (gateErr) {
+      return NextResponse.json({ error: gateErr }, { status: 400 });
+    }
+    try {
+      const updated = await updateTravelOrderGatePass({
+        travelOrderId,
+        kpiMaintenanceId: id,
+        included: draft.included,
+        estDepartureAt: parseOptionalDateTimeInput(draft.estDepartureAt),
+        estArrivalAt: parseOptionalDateTimeInput(draft.estArrivalAt),
+        actualDepartureStartedAt: parseOptionalDateTimeInput(draft.actualDepartureStartedAt),
+        actualDepartureStartedLatitude: draft.actualDepartureStartedLatitude,
+        actualDepartureStartedLongitude: draft.actualDepartureStartedLongitude,
+        actualDepartureEndedAt: parseOptionalDateTimeInput(draft.actualDepartureEndedAt),
+        actualDepartureEndedLatitude: draft.actualDepartureEndedLatitude,
+        actualDepartureEndedLongitude: draft.actualDepartureEndedLongitude,
+      });
+      if (!updated) {
+        return NextResponse.json({ error: "Travel order could not be updated." }, { status: 500 });
+      }
+      return NextResponse.json({ travelOrder: serializeTravelOrder(updated) });
+    } catch (err) {
+      console.error("[travel-orders] gate-pass update failed:", err);
+      return NextResponse.json({ error: "Could not update Gate Pass." }, { status: 500 });
+    }
+  }
 
   // Sequential / flat approve via action or APPROVED status.
   if (action === "approve-level" || statusRaw === TRAVEL_ORDER_STATUS.APPROVED) {

@@ -76,6 +76,15 @@ export type TravelOrderRow = {
   companyTeamId: string | null;
   travelerAgentIds: string[];
   vehicle: string | null;
+  gatePassIncluded: boolean;
+  estDepartureAt: Date | null;
+  estArrivalAt: Date | null;
+  actualDepartureStartedAt: Date | null;
+  actualDepartureStartedLatitude: number | null;
+  actualDepartureStartedLongitude: number | null;
+  actualDepartureEndedAt: Date | null;
+  actualDepartureEndedLatitude: number | null;
+  actualDepartureEndedLongitude: number | null;
   rejectionReason: string | null;
   rejectedByAgentId: string | null;
   rejectedAt: Date | null;
@@ -122,6 +131,15 @@ type RawTravelOrder = {
   company_team_id: string | null;
   traveler_agent_ids: unknown;
   vehicle: string | null;
+  gate_pass_included: boolean | null;
+  est_departure_at: Date | string | null;
+  est_arrival_at: Date | string | null;
+  actual_departure_started_at: Date | string | null;
+  actual_departure_started_latitude: number | null;
+  actual_departure_started_longitude: number | null;
+  actual_departure_ended_at: Date | string | null;
+  actual_departure_ended_latitude: number | null;
+  actual_departure_ended_longitude: number | null;
   rejection_reason: string | null;
   rejected_by_agent_id: string | null;
   rejected_at: Date | string | null;
@@ -223,6 +241,31 @@ function mapOrderBase(
     companyTeamId: order.company_team_id,
     travelerAgentIds,
     vehicle: typeof order.vehicle === "string" && order.vehicle.trim() ? order.vehicle.trim() : null,
+    gatePassIncluded: order.gate_pass_included === true,
+    estDepartureAt: asDate(order.est_departure_at),
+    estArrivalAt: asDate(order.est_arrival_at),
+    actualDepartureStartedAt: asDate(order.actual_departure_started_at),
+    actualDepartureStartedLatitude:
+      typeof order.actual_departure_started_latitude === "number" &&
+      Number.isFinite(order.actual_departure_started_latitude)
+        ? order.actual_departure_started_latitude
+        : null,
+    actualDepartureStartedLongitude:
+      typeof order.actual_departure_started_longitude === "number" &&
+      Number.isFinite(order.actual_departure_started_longitude)
+        ? order.actual_departure_started_longitude
+        : null,
+    actualDepartureEndedAt: asDate(order.actual_departure_ended_at),
+    actualDepartureEndedLatitude:
+      typeof order.actual_departure_ended_latitude === "number" &&
+      Number.isFinite(order.actual_departure_ended_latitude)
+        ? order.actual_departure_ended_latitude
+        : null,
+    actualDepartureEndedLongitude:
+      typeof order.actual_departure_ended_longitude === "number" &&
+      Number.isFinite(order.actual_departure_ended_longitude)
+        ? order.actual_departure_ended_longitude
+        : null,
     rejectionReason:
       typeof order.rejection_reason === "string" && order.rejection_reason.trim()
         ? order.rejection_reason.trim()
@@ -361,6 +404,17 @@ export async function createTravelOrderWithLocations(input: {
   companyTeamId?: string | null;
   travelerAgentIds?: string[];
   vehicle?: string | null;
+  gatePass?: {
+    included?: boolean;
+    estDepartureAt?: Date | null;
+    estArrivalAt?: Date | null;
+    actualDepartureStartedAt?: Date | null;
+    actualDepartureStartedLatitude?: number | null;
+    actualDepartureStartedLongitude?: number | null;
+    actualDepartureEndedAt?: Date | null;
+    actualDepartureEndedLatitude?: number | null;
+    actualDepartureEndedLongitude?: number | null;
+  } | null;
   status?: string;
   locations: LocationInput[];
 }): Promise<TravelOrderRow> {
@@ -398,12 +452,35 @@ export async function createTravelOrderWithLocations(input: {
   );
   const vehicle =
     typeof input.vehicle === "string" && input.vehicle.trim() ? input.vehicle.trim() : null;
+  const gp = input.gatePass ?? null;
+  const gatePassIncluded = Boolean(gp?.included);
+  const estDepartureAt = gatePassIncluded ? (gp?.estDepartureAt ?? null) : null;
+  const estArrivalAt = gatePassIncluded ? (gp?.estArrivalAt ?? null) : null;
+  const actualDepartureStartedAt = gatePassIncluded
+    ? (gp?.actualDepartureStartedAt ?? null)
+    : null;
+  const actualDepartureStartedLatitude = gatePassIncluded
+    ? (gp?.actualDepartureStartedLatitude ?? null)
+    : null;
+  const actualDepartureStartedLongitude = gatePassIncluded
+    ? (gp?.actualDepartureStartedLongitude ?? null)
+    : null;
+  const actualDepartureEndedAt = gatePassIncluded ? (gp?.actualDepartureEndedAt ?? null) : null;
+  const actualDepartureEndedLatitude = gatePassIncluded
+    ? (gp?.actualDepartureEndedLatitude ?? null)
+    : null;
+  const actualDepartureEndedLongitude = gatePassIncluded
+    ? (gp?.actualDepartureEndedLongitude ?? null)
+    : null;
 
   await prisma.$executeRaw`
     INSERT INTO travel_orders (
       id, kpi_maintenance_id, order_request, status,
       approved_by_agent_id, approved_by_agent_ids, approval_levels, confirmation_by_agent_id,
       created_by_agent_id, company_team_id, traveler_agent_ids, vehicle,
+      gate_pass_included, est_departure_at, est_arrival_at,
+      actual_departure_started_at, actual_departure_started_latitude, actual_departure_started_longitude,
+      actual_departure_ended_at, actual_departure_ended_latitude, actual_departure_ended_longitude,
       created_by, created_at, updated_at
     ) VALUES (
       ${id},
@@ -418,6 +495,15 @@ export async function createTravelOrderWithLocations(input: {
       ${companyTeamId},
       ${JSON.stringify(travelerAgentIds)}::jsonb,
       ${vehicle},
+      ${gatePassIncluded},
+      ${estDepartureAt},
+      ${estArrivalAt},
+      ${actualDepartureStartedAt},
+      ${actualDepartureStartedLatitude},
+      ${actualDepartureStartedLongitude},
+      ${actualDepartureEndedAt},
+      ${actualDepartureEndedLatitude},
+      ${actualDepartureEndedLongitude},
       ${input.createdBy},
       ${now},
       ${now}
@@ -469,6 +555,15 @@ export async function findTravelOrdersByKpiId(
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.gate_pass_included, false) AS gate_pass_included,
+      t.est_departure_at,
+      t.est_arrival_at,
+      t.actual_departure_started_at,
+      t.actual_departure_started_latitude,
+      t.actual_departure_started_longitude,
+      t.actual_departure_ended_at,
+      t.actual_departure_ended_latitude,
+      t.actual_departure_ended_longitude,
       t.rejection_reason,
       t.rejected_by_agent_id,
       t.rejected_at,
@@ -531,6 +626,15 @@ export async function findTravelOrderById(
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.gate_pass_included, false) AS gate_pass_included,
+      t.est_departure_at,
+      t.est_arrival_at,
+      t.actual_departure_started_at,
+      t.actual_departure_started_latitude,
+      t.actual_departure_started_longitude,
+      t.actual_departure_ended_at,
+      t.actual_departure_ended_latitude,
+      t.actual_departure_ended_longitude,
       t.rejection_reason,
       t.rejected_by_agent_id,
       t.rejected_at,
@@ -606,6 +710,15 @@ export async function findTravelOrdersVisibleToAgent(input: {
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.gate_pass_included, false) AS gate_pass_included,
+      t.est_departure_at,
+      t.est_arrival_at,
+      t.actual_departure_started_at,
+      t.actual_departure_started_latitude,
+      t.actual_departure_started_longitude,
+      t.actual_departure_ended_at,
+      t.actual_departure_ended_latitude,
+      t.actual_departure_ended_longitude,
       t.rejection_reason,
       t.rejected_by_agent_id,
       t.rejected_at,
@@ -697,6 +810,15 @@ export async function listPendingTravelApprovalsForAgent(
       t.company_team_id,
       COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
       t.vehicle,
+      COALESCE(t.gate_pass_included, false) AS gate_pass_included,
+      t.est_departure_at,
+      t.est_arrival_at,
+      t.actual_departure_started_at,
+      t.actual_departure_started_latitude,
+      t.actual_departure_started_longitude,
+      t.actual_departure_ended_at,
+      t.actual_departure_ended_latitude,
+      t.actual_departure_ended_longitude,
       t.rejection_reason,
       t.rejected_by_agent_id,
       t.rejected_at,
@@ -781,6 +903,129 @@ export async function updateTravelOrderLocationAttachments(
       updated_at = ${now}
     WHERE id = ${locationId}
   `;
+}
+
+export async function updateTravelOrderGatePass(input: {
+  travelOrderId: string;
+  kpiMaintenanceId: string;
+  included: boolean;
+  estDepartureAt?: Date | null;
+  estArrivalAt?: Date | null;
+  actualDepartureStartedAt?: Date | null;
+  actualDepartureStartedLatitude?: number | null;
+  actualDepartureStartedLongitude?: number | null;
+  actualDepartureEndedAt?: Date | null;
+  actualDepartureEndedLatitude?: number | null;
+  actualDepartureEndedLongitude?: number | null;
+  /** When set, only patches Start or End actual departure (keeps other fields). */
+  visitAction?: "start" | "end" | null;
+}): Promise<TravelOrderRow | null> {
+  const now = new Date();
+  const order = await findTravelOrderById(input.travelOrderId);
+  if (!order || order.kpiMaintenanceId !== input.kpiMaintenanceId) return null;
+
+  if (input.visitAction === "start") {
+    if (order.actualDepartureStartedAt) {
+      throw new Error("Actual departure Start was already captured.");
+    }
+    const startedAt = input.actualDepartureStartedAt ?? now;
+    await prisma.$executeRaw`
+      UPDATE travel_orders
+      SET
+        gate_pass_included = true,
+        actual_departure_started_at = ${startedAt},
+        actual_departure_started_latitude = ${input.actualDepartureStartedLatitude ?? null},
+        actual_departure_started_longitude = ${input.actualDepartureStartedLongitude ?? null},
+        updated_at = ${now}
+      WHERE id = ${input.travelOrderId}
+        AND kpi_maintenance_id = ${input.kpiMaintenanceId}
+    `;
+    return findTravelOrderById(input.travelOrderId);
+  }
+
+  if (input.visitAction === "end") {
+    if (!order.actualDepartureStartedAt) {
+      throw new Error("Press Start before End for actual departure.");
+    }
+    if (order.actualDepartureEndedAt) {
+      throw new Error("Actual departure End was already captured.");
+    }
+    const endedAt = input.actualDepartureEndedAt ?? now;
+    await prisma.$executeRaw`
+      UPDATE travel_orders
+      SET
+        gate_pass_included = true,
+        actual_departure_ended_at = ${endedAt},
+        actual_departure_ended_latitude = ${input.actualDepartureEndedLatitude ?? null},
+        actual_departure_ended_longitude = ${input.actualDepartureEndedLongitude ?? null},
+        updated_at = ${now}
+      WHERE id = ${input.travelOrderId}
+        AND kpi_maintenance_id = ${input.kpiMaintenanceId}
+    `;
+    return findTravelOrderById(input.travelOrderId);
+  }
+
+  if (!input.included) {
+    await prisma.$executeRaw`
+      UPDATE travel_orders
+      SET
+        gate_pass_included = false,
+        est_departure_at = NULL,
+        est_arrival_at = NULL,
+        actual_departure_started_at = NULL,
+        actual_departure_started_latitude = NULL,
+        actual_departure_started_longitude = NULL,
+        actual_departure_ended_at = NULL,
+        actual_departure_ended_latitude = NULL,
+        actual_departure_ended_longitude = NULL,
+        updated_at = ${now}
+      WHERE id = ${input.travelOrderId}
+        AND kpi_maintenance_id = ${input.kpiMaintenanceId}
+    `;
+    return findTravelOrderById(input.travelOrderId);
+  }
+
+  await prisma.$executeRaw`
+    UPDATE travel_orders
+    SET
+      gate_pass_included = true,
+      est_departure_at = ${input.estDepartureAt ?? null},
+      est_arrival_at = ${input.estArrivalAt ?? null},
+      actual_departure_started_at = ${
+        input.actualDepartureStartedAt !== undefined
+          ? input.actualDepartureStartedAt
+          : order.actualDepartureStartedAt
+      },
+      actual_departure_started_latitude = ${
+        input.actualDepartureStartedLatitude !== undefined
+          ? input.actualDepartureStartedLatitude
+          : order.actualDepartureStartedLatitude
+      },
+      actual_departure_started_longitude = ${
+        input.actualDepartureStartedLongitude !== undefined
+          ? input.actualDepartureStartedLongitude
+          : order.actualDepartureStartedLongitude
+      },
+      actual_departure_ended_at = ${
+        input.actualDepartureEndedAt !== undefined
+          ? input.actualDepartureEndedAt
+          : order.actualDepartureEndedAt
+      },
+      actual_departure_ended_latitude = ${
+        input.actualDepartureEndedLatitude !== undefined
+          ? input.actualDepartureEndedLatitude
+          : order.actualDepartureEndedLatitude
+      },
+      actual_departure_ended_longitude = ${
+        input.actualDepartureEndedLongitude !== undefined
+          ? input.actualDepartureEndedLongitude
+          : order.actualDepartureEndedLongitude
+      },
+      updated_at = ${now}
+    WHERE id = ${input.travelOrderId}
+      AND kpi_maintenance_id = ${input.kpiMaintenanceId}
+  `;
+  return findTravelOrderById(input.travelOrderId);
 }
 
 export async function updateTravelOrderStatus(input: {
@@ -1170,6 +1415,19 @@ export function serializeTravelOrder(row: TravelOrderRow) {
     travelerAgentIds: row.travelerAgentIds,
     travelers: row.travelers,
     vehicle: row.vehicle,
+    gatePassIncluded: row.gatePassIncluded,
+    estDepartureAt: row.estDepartureAt ? row.estDepartureAt.toISOString() : null,
+    estArrivalAt: row.estArrivalAt ? row.estArrivalAt.toISOString() : null,
+    actualDepartureStartedAt: row.actualDepartureStartedAt
+      ? row.actualDepartureStartedAt.toISOString()
+      : null,
+    actualDepartureStartedLatitude: row.actualDepartureStartedLatitude,
+    actualDepartureStartedLongitude: row.actualDepartureStartedLongitude,
+    actualDepartureEndedAt: row.actualDepartureEndedAt
+      ? row.actualDepartureEndedAt.toISOString()
+      : null,
+    actualDepartureEndedLatitude: row.actualDepartureEndedLatitude,
+    actualDepartureEndedLongitude: row.actualDepartureEndedLongitude,
     rejectionReason: row.rejectionReason ?? null,
     rejectedByAgentId: row.rejectedByAgentId ?? null,
     rejectedByAgent: row.rejectedByAgent ?? null,

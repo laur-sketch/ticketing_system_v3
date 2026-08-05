@@ -10,6 +10,10 @@ import {
   type TravelOrderFormPage,
 } from "@/components/task-board/TravelOrderPageNav";
 import {
+  TravelOrderGatePassFields,
+  gatePassDraftFromOrder,
+} from "@/components/task-board/TravelOrderGatePassFields";
+import {
   canApproveTravelOrderNow,
   canCancelTravelOrderNow,
   canConfirmTravelOrderNow,
@@ -27,6 +31,7 @@ import {
   travelOrderLocationVisitStatusLabel,
   travelOrderVehicleLabel,
   type TravelOrderDto,
+  type TravelOrderGatePassDraft,
   type TravelOrderLocationDto,
 } from "@/lib/travel-order";
 import { cn } from "@/lib/cn";
@@ -104,10 +109,16 @@ export function TravelOrderSummaryPanel({
     capturedAt: string | null;
   } | null>(null);
   const [orderPages, setOrderPages] = useState<Record<string, TravelOrderFormPage>>({});
+  const [gatePassEdits, setGatePassEdits] = useState<Record<string, TravelOrderGatePassDraft>>({});
   const remarksTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const gatePassTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   function setOrderPage(orderId: string, page: TravelOrderFormPage) {
     setOrderPages((prev) => ({ ...prev, [orderId]: page }));
+  }
+
+  function gatePassValue(order: TravelOrderDto): TravelOrderGatePassDraft {
+    return gatePassEdits[order.id] ?? gatePassDraftFromOrder(order);
   }
 
   const reload = useCallback(async () => {
@@ -137,14 +148,106 @@ export function TravelOrderSummaryPanel({
 
   useEffect(() => {
     const timers = remarksTimers.current;
+    const gpTimers = gatePassTimers.current;
     return () => {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
+      for (const t of gpTimers.values()) clearTimeout(t);
+      gpTimers.clear();
     };
   }, []);
 
+  async function patchGatePass(
+    orderId: string,
+    body: Record<string, unknown>,
+  ): Promise<TravelOrderDto> {
+    const res = await fetch(
+      `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    const payload = (await res.json().catch(() => ({}))) as {
+      travelOrder?: TravelOrderDto;
+      error?: string;
+    };
+    if (!res.ok || !payload.travelOrder) {
+      throw new Error(payload.error ?? "Could not update Gate Pass.");
+    }
+    replaceOrder(payload.travelOrder);
+    return payload.travelOrder;
+  }
+
+  async function captureGatePassActual(order: TravelOrderDto, visitAction: "start" | "end") {
+    const key = `gp-${visitAction}-${order.id}`;
+    setBusyKey(key);
+    setActionError(null);
+    let latitude: number | null = null;
+    let longitude: number | null = null;
+    try {
+      const gps = await readDeviceGps();
+      latitude = gps.latitude;
+      longitude = gps.longitude;
+    } catch {
+      // GPS optional for Gate Pass.
+    }
+    try {
+      await patchGatePass(order.id, {
+        action: "gate-pass-visit",
+        gatePass: {
+          visitAction,
+          latitude,
+          longitude,
+          capturedAt: new Date().toISOString(),
+        },
+      });
+    } catch (err: unknown) {
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : visitAction === "start"
+            ? "Could not capture actual departure Start."
+            : "Could not capture actual departure End.",
+      );
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  function scheduleGatePassEstimateSave(orderId: string, draft: TravelOrderGatePassDraft) {
+    const existing = gatePassTimers.current.get(orderId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      void (async () => {
+        setBusyKey(`gp-est-${orderId}`);
+        setActionError(null);
+        try {
+          await patchGatePass(orderId, {
+            action: "gate-pass",
+            gatePass: {
+              ...draft,
+              included: true,
+            },
+          });
+        } catch (err: unknown) {
+          setActionError(err instanceof Error ? err.message : "Could not save Gate Pass.");
+        } finally {
+          setBusyKey((prev) => (prev === `gp-est-${orderId}` ? null : prev));
+        }
+      })();
+    }, 600);
+    gatePassTimers.current.set(orderId, timer);
+  }
+
   function replaceOrder(next: TravelOrderDto) {
     setOrders((prev) => prev.map((o) => (o.id === next.id ? next : o)));
+    setGatePassEdits((prev) => {
+      if (!(next.id in prev)) return prev;
+      const { [next.id]: _, ...rest } = prev;
+      return rest;
+    });
   }
 
   async function approveOrder(order: TravelOrderDto) {
@@ -886,7 +989,7 @@ export function TravelOrderSummaryPanel({
                     ) : null}
                   </div>
                 </>
-              ) : (
+              ) : formPage === 2 ? (
                 <>
                   <div className="space-y-2">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
@@ -1287,6 +1390,31 @@ export function TravelOrderSummaryPanel({
                     </div>
                   </div>
                 </>
+              ) : (
+                <div className="space-y-3">
+                  {!order.gatePassIncluded &&
+                  !gatePassValue(order).estDepartureAt &&
+                  !gatePassValue(order).estArrivalAt &&
+                  !gatePassValue(order).actualDepartureStartedAt ? (
+                    <p className="rounded-lg border border-dashed border-zinc-300 px-2.5 py-2 text-[11px] text-zinc-500 dark:border-zinc-700">
+                      Gate Pass was skipped at creation. You can still fill it in below.
+                    </p>
+                  ) : null}
+                  <TravelOrderGatePassFields
+                    value={gatePassValue(order)}
+                    disabled={rejected || cancelled || !allowCheckIn}
+                    showActualTimes={approved}
+                    allowActualCapture={approved && allowCheckIn && !rejected && !cancelled}
+                    startBusy={busyKey === `gp-start-${order.id}`}
+                    endBusy={busyKey === `gp-end-${order.id}`}
+                    formatCapturedAt={formatCheckedAt}
+                    onChange={(next) => {
+                      setGatePassEdits((prev) => ({ ...prev, [order.id]: next }));
+                      scheduleGatePassEstimateSave(order.id, next);
+                    }}
+                    onCaptureActual={(action) => void captureGatePassActual(order, action)}
+                  />
+                </div>
               )}
             </div>
           );

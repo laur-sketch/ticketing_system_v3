@@ -13,8 +13,6 @@ export type BrandLockupVariant =
   | "customer-sidebar"
   /** Customer portal top bar — logo + title */
   | "customer-topnav"
-  /** Landing marketing header */
-  | "landing-header"
   /** Auth desktop header */
   | "auth-header"
   /** Auth mobile hero block */
@@ -77,13 +75,6 @@ function lockupInner(variant: BrandLockupVariant) {
       return (
         <div className="flex min-w-0 items-center">
           <BrandLogo className="h-9 w-auto max-w-[min(150px,48vw)] shrink-0 object-contain object-left sm:h-10" />
-        </div>
-      );
-    case "landing-header":
-      return (
-        <div className="flex items-center gap-3 md:gap-4">
-          <BrandLogo className="h-14 w-auto max-w-[240px]" />
-          <span className="text-sm font-bold tracking-[0.05em] text-zinc-900 dark:text-zinc-100 md:text-base">{BRAND_TITLE}</span>
         </div>
       );
     case "auth-header":
