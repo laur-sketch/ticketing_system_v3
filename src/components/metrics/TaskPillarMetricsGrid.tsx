@@ -14,7 +14,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { JOB_ORDER_REQUEST_PILLAR_TITLE } from "@/lib/it-task-pillar-titles";
-import { type KpiFrequencyCode } from "@/lib/kpi-recurrence";
+import type { TaskMetricsCadence } from "@/lib/task-metrics-range";
 import {
   isInvertedChecklistPillar,
   kpiChecklistMetricView,
@@ -57,6 +57,7 @@ const PILLAR_DISPLAY_NAMES: Record<string, string> = {
   WEEKLY: "Weekly",
   MONTHLY: "Monthly",
   QUARTERLY: "Quarterly",
+  SEMI_ANNUAL: "Semi Annual",
   "FIELD ASSIGNMENT": "Field Assignment",
   PROJECTS: "Projects",
   "IT PROJECT IMPLEMENTATION": "Projects",
@@ -418,22 +419,9 @@ function monthTokenFromLabel(label: string): string {
   return `${unique[0]}-${unique[unique.length - 1]}`;
 }
 
-function csvDateLabelForCadence(cadence: KpiFrequencyCode, label: string): string {
-  if (cadence === "DAILY") {
-    const parsed = new Date(label);
-    if (Number.isFinite(parsed.getTime())) {
-      return parsed.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      });
-    }
-    return label;
-  }
-  if (cadence === "WEEKLY") return `Week: ${label}`;
-  if (cadence === "MONTHLY") return label;
-  if (cadence === "QUARTERLY") return `Quarterly: ${label}`;
+function csvDateLabelForCadence(cadence: TaskMetricsCadence, label: string): string {
+  if (cadence === "MONTHLY") return `Monthly: ${label}`;
+  if (cadence === "YEARLY") return `Yearly: ${label}`;
   return label;
 }
 
@@ -630,7 +618,7 @@ export function ContributorPersonalKpiCard({
 
 function csvLayoutRowsForPillar(args: {
   pillar: string;
-  metricsCadence: KpiFrequencyCode;
+  metricsCadence: TaskMetricsCadence;
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
@@ -723,7 +711,7 @@ function csvBooleanCellDisplay(cell: string): ReactNode {
 
 function sourceDetailsForPillar(args: {
   pillar: string;
-  metricsCadence: KpiFrequencyCode;
+  metricsCadence: TaskMetricsCadence;
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
@@ -870,7 +858,7 @@ export function TaskPillarMetricsGrid({
 }: {
   /** Checklist pillar metrics from snapshots (range-aware averages). */
   checklistPillars: TaskChecklistPillarMetrics | null;
-  metricsCadence: KpiFrequencyCode;
+  metricsCadence: TaskMetricsCadence;
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;

@@ -28,7 +28,7 @@ import {
 import type { PersonnelTicketMetric } from "@/lib/kpis";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
-import { DEFAULT_TIME_ZONE, type KpiFrequencyCode, isKpiMetricsWorkingYmd } from "@/lib/kpi-recurrence";
+import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import type {
   CsatStarDistributionRow,
   TaskChecklistPillarMetrics,
@@ -40,6 +40,7 @@ import {
   formatTaskMetricsPeriodLabel,
   resolveTaskMetricsQueryRange,
   taskMetricsMergedPeriod,
+  type TaskMetricsCadence,
 } from "@/lib/task-metrics-range";
 import {
   TASK_METRICS_TASK_TYPE_OPTIONS,
@@ -159,7 +160,7 @@ function InsightsPageInner() {
   const [to, setTo] = useState(defaultRange.to);
 
   const taskMetricsDefaults = useMemo(() => defaultTaskMetricsRangeForCadence("MONTHLY"), []);
-  const [taskMetricsCadence, setTaskMetricsCadence] = useState<KpiFrequencyCode>("MONTHLY");
+  const [taskMetricsCadence, setTaskMetricsCadence] = useState<TaskMetricsCadence>("MONTHLY");
   const [taskMetricsDailyDate, setTaskMetricsDailyDate] = useState(taskMetricsDefaults.dailyDate);
   const [taskMetricsFrom, setTaskMetricsFrom] = useState(taskMetricsDefaults.from);
   const [taskMetricsTo, setTaskMetricsTo] = useState(taskMetricsDefaults.to);
@@ -277,7 +278,7 @@ function InsightsPageInner() {
     taskMetricsViewMode,
   ]);
 
-  function handleTaskMetricsCadenceChange(next: KpiFrequencyCode) {
+  function handleTaskMetricsCadenceChange(next: TaskMetricsCadence) {
     setTaskMetricsCadence(next);
     const defaults = defaultTaskMetricsRangeForCadence(next);
     setTaskMetricsDailyDate(defaults.dailyDate);
@@ -789,7 +790,7 @@ function TaskMetricsPanel({
   rangeTo,
   onRangeFromChange,
   onRangeToChange,
-  reportingTimeZone,
+  reportingTimeZone: _reportingTimeZone,
   companies,
   selectedCompany,
   onSelectedCompanyChange,
@@ -812,8 +813,8 @@ function TaskMetricsPanel({
   userSupportTickets: TaskMetricsUserSupportTickets | null;
   loading: boolean;
   error: string | null;
-  taskMetricsCadence: KpiFrequencyCode;
-  onTaskMetricsCadenceChange: (v: KpiFrequencyCode) => void;
+  taskMetricsCadence: TaskMetricsCadence;
+  onTaskMetricsCadenceChange: (v: TaskMetricsCadence) => void;
   dailyDate: string;
   onDailyDateChange: (v: string) => void;
   rangeFrom: string;
@@ -833,10 +834,7 @@ function TaskMetricsPanel({
   canExtendView?: boolean;
 }) {
   const freq = taskMetricsCadence;
-  const isDaily = freq === "DAILY";
   const isMonthly = freq === "MONTHLY";
-  const reportingDayIsSunday =
-    isDaily && dailyDate.trim() !== "" && !isKpiMetricsWorkingYmd(dailyDate, reportingTimeZone);
 
   const reportingPeriodLabel = formatTaskMetricsPeriodLabel(freq, {
     dailyDate,
@@ -1338,7 +1336,7 @@ function TaskMetricsPanel({
                 Cadence
               </span>
               <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
-                {(["WEEKLY", "MONTHLY", "QUARTERLY"] as const).map((f) => (
+                {(["MONTHLY", "YEARLY"] as const).map((f) => (
                   <button
                     key={f}
                     type="button"
@@ -1350,7 +1348,7 @@ function TaskMetricsPanel({
                         : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
                     )}
                   >
-                    {f === "WEEKLY" ? "Weekly" : f === "MONTHLY" ? "Monthly" : "Quarterly"}
+                    {f === "MONTHLY" ? "Monthly" : "Yearly"}
                   </button>
                 ))}
               </div>
@@ -1359,23 +1357,13 @@ function TaskMetricsPanel({
           <div
             className={cn(
               "w-full rounded-xl border border-zinc-200 bg-zinc-50/90 p-2.5 dark:border-zinc-700/80 dark:bg-zinc-900/50",
-              isDaily || isMonthly ? "sm:max-w-[12rem]" : "sm:max-w-[20rem]",
+              "sm:max-w-[12rem]",
             )}
           >
             <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-              {isDaily ? "Reporting day" : isMonthly ? "Reporting month" : "Reporting range"}
+              {isMonthly ? "Reporting month" : "Reporting year"}
             </span>
-            {isDaily ? (
-              <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                Date
-                <DatePickerField
-                  value={dailyDate}
-                  onChange={(e) => onDailyDateChange(e.target.value)}
-                  wrapperClassName="mt-1.5"
-                  inputClassName="min-w-[10.5rem]"
-                />
-              </label>
-            ) : isMonthly ? (
+            {isMonthly ? (
               <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
                 Month
                 <DatePickerField
@@ -1391,28 +1379,20 @@ function TaskMetricsPanel({
                 />
               </label>
             ) : (
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                  Start
-                  <DatePickerField
-                    value={rangeFrom}
-                    max={rangeTo || undefined}
-                    onChange={(e) => onRangeFromChange(e.target.value)}
-                    wrapperClassName="mt-1.5"
-                    inputClassName="min-w-0"
-                  />
-                </label>
-                <label className="flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                  End
-                  <DatePickerField
-                    value={rangeTo}
-                    min={rangeFrom || undefined}
-                    onChange={(e) => onRangeToChange(e.target.value)}
-                    wrapperClassName="mt-1.5"
-                    inputClassName="min-w-0"
-                  />
-                </label>
-              </div>
+              <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+                Year
+                <DatePickerField
+                  granularity="year"
+                  value={rangeFrom}
+                  onChange={(e) => {
+                    const y = e.target.value;
+                    onRangeFromChange(y);
+                    onRangeToChange(y);
+                  }}
+                  wrapperClassName="mt-1.5"
+                  inputClassName="min-w-[10.5rem]"
+                />
+              </label>
             )}
             {loading ? (
               <p className="mt-3 text-xs font-semibold text-orange-700 dark:text-orange-300">Updating metrics…</p>
@@ -1423,12 +1403,6 @@ function TaskMetricsPanel({
       {error ? (
         <p className="mt-4 rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/30 dark:text-rose-100">
           {error}
-        </p>
-      ) : null}
-      {reportingDayIsSunday ? (
-        <p className="mt-4 rounded-xl border border-zinc-300 bg-zinc-100 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">
-          Sundays are not counted for task metrics (checklist KPIs, helpdesk, and user support). Pick a
-          Monday–Saturday reporting day, or use weekly / monthly cadence.
         </p>
       ) : null}
       <div className={cn("mt-6", loading && "pointer-events-none opacity-60")}>
@@ -1443,7 +1417,7 @@ function TaskMetricsPanel({
             includeTicketPillars={false}
             preferPillarOrder={
               taskType === "task"
-                ? ["ONE-OFF", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"]
+                ? ["ONE-OFF", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL"]
                 : taskType === "field"
                   ? ["FIELD ASSIGNMENT"]
                   : ["PROJECTS"]

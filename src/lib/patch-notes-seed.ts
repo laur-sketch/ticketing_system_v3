@@ -169,7 +169,7 @@ export const PATCH_NOTE_SEEDS: PatchNoteSeed[] = [
         {
           title: "Hierarchical travel-order approvals",
           description:
-            "Configure multi-level approvers, including optional levels that can complete the chain early when allowed.",
+            "Configure multi-level approvers, including optional seats that skip the required chain and never finish the order alone — every required approver must still approve.",
         },
         {
           title: "Location Start / End GPS",

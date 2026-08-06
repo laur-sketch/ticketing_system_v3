@@ -21,6 +21,7 @@ export const TASK_FREQUENCY_DONUT_KEYS = [
   "WEEKLY",
   "MONTHLY",
   "QUARTERLY",
+  "SEMI_ANNUAL",
 ] as const;
 
 export type TaskFrequencyDonutKey = (typeof TASK_FREQUENCY_DONUT_KEYS)[number];
@@ -66,7 +67,7 @@ export function kpiMatchesTaskMetricsType(
 
 /**
  * Donut key for the selected Task Type:
- * - Task → ONE-OFF / DAILY / WEEKLY / MONTHLY / QUARTERLY
+ * - Task → ONE-OFF / DAILY / WEEKLY / MONTHLY / QUARTERLY / SEMI_ANNUAL
  * - Project → single PROJECTS bucket (all projects)
  * - Field Assignment → single FIELD ASSIGNMENT bucket
  */
@@ -92,7 +93,8 @@ export function donutKeyForTaskMetricsRow(
     frequency === "DAILY" ||
     frequency === "WEEKLY" ||
     frequency === "MONTHLY" ||
-    frequency === "QUARTERLY"
+    frequency === "QUARTERLY" ||
+    frequency === "SEMI_ANNUAL"
   ) {
     return frequency;
   }

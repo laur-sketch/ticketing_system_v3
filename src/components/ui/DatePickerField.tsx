@@ -12,8 +12,8 @@ type DatePickerFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type"> 
   shellClassName?: string;
   /** @deprecated Use shellClassName */
   inputClassName?: string;
-  /** `month` uses YYYY-MM (no day); default is full calendar date. */
-  granularity?: "date" | "month";
+  /** `month` uses YYYY-MM; `year` uses YYYY; default is full calendar date. */
+  granularity?: "date" | "month" | "year";
 };
 
 function formatMonthLabel(ym: string): string {
@@ -51,9 +51,12 @@ export function DatePickerField({
   const inputRef = useRef<HTMLInputElement>(null);
   const displayValue = typeof value === "string" ? value : "";
   const isMonth = granularity === "month";
-  const placeholder = isMonth ? "YYYY-MM" : "YYYY-MM-DD";
+  const isYear = granularity === "year";
+  const placeholder = isYear ? "YYYY" : isMonth ? "YYYY-MM" : "YYYY-MM-DD";
   const shown =
-    isMonth && /^\d{4}-\d{2}$/.test(displayValue) ? formatMonthLabel(displayValue) : displayValue;
+    isMonth && /^\d{4}-\d{2}$/.test(displayValue)
+      ? formatMonthLabel(displayValue)
+      : displayValue;
 
   function openPicker() {
     const el = inputRef.current;
@@ -90,11 +93,14 @@ export function DatePickerField({
       </div>
       <input
         ref={inputRef}
-        type={isMonth ? "month" : "date"}
+        type={isYear ? "number" : isMonth ? "month" : "date"}
         disabled={disabled}
         value={value}
+        min={isYear ? 2000 : undefined}
+        max={isYear ? 2100 : undefined}
+        step={isYear ? 1 : undefined}
         tabIndex={disabled ? -1 : 0}
-        aria-label={props["aria-label"] ?? props.name ?? (isMonth ? "Month" : "Date")}
+        aria-label={props["aria-label"] ?? props.name ?? (isYear ? "Year" : isMonth ? "Month" : "Date")}
         className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
         {...props}
       />

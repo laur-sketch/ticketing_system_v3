@@ -1,6 +1,10 @@
 import { runComputeUserEfficiencyBreakdowns } from "@/lib/efficiency/user-efficiency-breakdown";
 
-/** Fire-and-forget refresh of merged personnel efficiency after penalty changes. */
+/**
+ * Fire-and-forget dump of overall user KPI into merged MySQL after primary
+ * task/KPI progress, completion, or penalty changes.
+ * Primary remains source of truth; merged is dump/fetch only.
+ */
 export function triggerEfficiencyRecomputeBackground(): void {
   void runComputeUserEfficiencyBreakdowns({
     dryRun: false,

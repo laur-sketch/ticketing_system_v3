@@ -6,6 +6,7 @@ import {
   getDailyPeriodKey,
   getMonthlyPeriodKey,
   getQuarterlyPeriodKey,
+  getSemiAnnualPeriodKey,
   getWeeklyPeriodKey,
   isKpiMetricsWorkingDay,
   normalizeTimeZone,
@@ -38,6 +39,7 @@ import {
   isJobOrderRequestPillar,
 } from "@/lib/it-task-pillar-titles";
 import { pillarFromKpiTitle } from "@/lib/kpi-sheet-import-snapshots";
+import type { TaskMetricsCadence } from "@/lib/task-metrics-range";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import {
   donutKeyForTaskMetricsRow,
@@ -251,7 +253,12 @@ export function enumeratePeriodKeysForKpiInRange(
   }
 
   const dom = typeof kpi.recurrenceMonthDay === "number" ? kpi.recurrenceMonthDay : 1;
-  const getPeriodKey = freq === "QUARTERLY" ? getQuarterlyPeriodKey : getMonthlyPeriodKey;
+  const getPeriodKey =
+    freq === "QUARTERLY"
+      ? getQuarterlyPeriodKey
+      : freq === "SEMI_ANNUAL"
+        ? getSemiAnnualPeriodKey
+        : getMonthlyPeriodKey;
   while (cursor <= end) {
     keys.add(getPeriodKey(cursor.toJSDate(), dom, zone));
     cursor = cursor.plus({ days: 1 });
@@ -269,27 +276,33 @@ type KpiRowForMetrics = Pick<KpiRowForSnapshot, "frequency" | "title">;
  */
 export function selectKpisForPillarTaskMetrics<T extends KpiRowForMetrics>(
   pillarKpis: T[],
-  metricsCadence: KpiFrequencyCode,
+  metricsCadence: TaskMetricsCadence,
 ): T[] {
   if (pillarKpis.length === 0) return [];
   const daily = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "DAILY");
   const weekly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "WEEKLY");
   const monthly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "MONTHLY");
   const quarterly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "QUARTERLY");
+  const semiAnnual = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "SEMI_ANNUAL");
 
-  if (metricsCadence === "DAILY") return daily;
-
+  // Prefer the most granular rows that exist so monthly/yearly windows still roll up.
   if (daily.length > 0) return daily;
-
-  if (metricsCadence === "WEEKLY") {
-    return weekly.length > 0 ? weekly : monthly;
-  }
-
+  if (weekly.length > 0) return weekly;
   if (metricsCadence === "MONTHLY") {
-    return monthly.length > 0 ? monthly : quarterly.length > 0 ? quarterly : weekly;
+    return monthly.length > 0
+      ? monthly
+      : quarterly.length > 0
+        ? quarterly
+        : semiAnnual;
   }
-
-  return quarterly.length > 0 ? quarterly : monthly.length > 0 ? monthly : weekly;
+  // YEARLY: monthly → quarterly → semi-annual
+  return monthly.length > 0
+    ? monthly
+    : quarterly.length > 0
+      ? quarterly
+      : semiAnnual.length > 0
+        ? semiAnnual
+        : weekly;
 }
 
 function averageProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress & {
@@ -1392,7 +1405,7 @@ function buildMonthlySubtaskCsvRows(args: {
     const checksList: Array<Record<string, boolean>> = [];
     for (const kpi of args.pillarKpis) {
       const freq = kpi.frequency as KpiFrequencyCode;
-      if (freq !== "MONTHLY" && freq !== "QUARTERLY") continue;
+      if (freq !== "MONTHLY" && freq !== "QUARTERLY" && freq !== "SEMI_ANNUAL") continue;
       const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, args.zone);
       for (const key of periodKeys) {
         const resolved = progressForKpiPeriod({
@@ -1427,7 +1440,7 @@ function buildMonthlySubtaskCsvRows(args: {
 export function buildSubtaskCsvPreviewForPillar(args: {
   pillar: string;
   pillarKpis: KpiForSubtaskCsv[];
-  metricsCadence: KpiFrequencyCode;
+  metricsCadence: TaskMetricsCadence;
   fromYmd: string;
   toYmd: string;
   zone: string;
@@ -1444,7 +1457,7 @@ export function buildSubtaskCsvPreviewForPillar(args: {
     args.metricsCadence === "MONTHLY" &&
     args.pillarKpis.some((kpi) => {
       const freq = kpi.frequency as KpiFrequencyCode;
-      return freq === "MONTHLY" || freq === "QUARTERLY";
+      return freq === "MONTHLY" || freq === "QUARTERLY" || freq === "SEMI_ANNUAL";
     });
 
   const rows = useMonthlyLayout
@@ -1473,7 +1486,7 @@ export function buildSubtaskCsvPreviewForPillar(args: {
 }
 
 export async function computeTaskChecklistPillarMetrics(args: {
-  metricsCadence: KpiFrequencyCode;
+  metricsCadence: TaskMetricsCadence;
   fromYmd: string;
   toYmd: string;
   timeZone: string;
@@ -1814,7 +1827,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
 /** Headline percent for a pillar (respects inverted checklist pillars). */
 export function pillarMetricPercent(
   pillar: string,
-  _metricsCadence: KpiFrequencyCode,
+  _metricsCadence: TaskMetricsCadence,
   agg: KpiChecklistProgress,
 ): number {
   return kpiChecklistMetricView(agg, isInvertedChecklistPillar(pillar)).percent;
