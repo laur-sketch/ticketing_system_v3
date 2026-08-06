@@ -105,9 +105,17 @@ import { SeekAssistanceModal } from "@/components/task-board/SeekAssistanceModal
 import { SubTasksManagerPopup } from "@/components/task-board/SubTasksManagerPopup";
 import { TravelOrderSummaryPanel } from "@/components/task-board/TravelOrderSummaryPanel";
 import { TravelOrderRequestModal } from "@/components/task-board/TravelOrderRequestModal";
+import { TravelOrderOfflineBanner } from "@/components/offline/TravelOrderOfflineBanner";
 import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import type { TravelOrderDto } from "@/lib/travel-order";
 import { travelOrderVehicleLabel } from "@/lib/travel-order";
+import {
+  cacheTravelOrders,
+  listAllCachedTravelOrders,
+  listOfflineDrafts,
+  offlineDraftAsListItem,
+} from "@/lib/offline/travel-order-offline-db";
+import { isBrowserOnline } from "@/lib/offline/travel-order-sync";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
@@ -208,6 +216,8 @@ function boardLayoutSectionLabel(key: string): string {
       return "Monthly";
     case "QUARTERLY":
       return "Quarterly";
+    case "SEMI_ANNUAL":
+      return "Semi Annual";
     case PROJECTS_DONUT_KEY:
       return "Projects";
     case FIELD_ASSIGNMENT_DONUT_KEY:
@@ -1532,7 +1542,7 @@ export function AgentKpiKanbanFlow({
     if (draft.isRecurring && draft.frequency === "WEEKLY") {
       taskSchedule.recurrenceWeekday = draft.recurrenceWeekday;
     }
-    if (draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY")) {
+    if (draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY" || draft.frequency === "SEMI_ANNUAL")) {
       taskSchedule.recurrenceMonthDay = draft.recurrenceMonthDay;
     }
 
@@ -1581,6 +1591,20 @@ export function AgentKpiKanbanFlow({
     setCompanyTravelOrdersLoading(true);
     setCompanyTravelOrdersError(null);
     try {
+      const pendingDrafts = (await listOfflineDrafts("pending"))
+        .filter((d) => !d.serverTravelOrderId)
+        .map(offlineDraftAsListItem);
+
+      if (!isBrowserOnline()) {
+        const cached = await listAllCachedTravelOrders();
+        setCompanyTravelOrders([...pendingDrafts, ...cached]);
+        if (pendingDrafts.length === 0 && cached.length === 0) {
+          setCompanyTravelOrdersError(
+            "You are offline and no cached travel orders are available yet.",
+          );
+        }
+        return;
+      }
       const res = await fetch("/api/travel-orders", { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as {
         travelOrders?: TravelOrderDto[];
@@ -1589,12 +1613,23 @@ export function AgentKpiKanbanFlow({
       if (!res.ok) {
         throw new Error(body.error ?? "Could not load travel orders.");
       }
-      setCompanyTravelOrders(Array.isArray(body.travelOrders) ? body.travelOrders : []);
+      const list = Array.isArray(body.travelOrders) ? body.travelOrders : [];
+      setCompanyTravelOrders([...pendingDrafts, ...list]);
+      void cacheTravelOrders(list);
     } catch (err: unknown) {
-      setCompanyTravelOrders([]);
-      setCompanyTravelOrdersError(
-        err instanceof Error ? err.message : "Could not load travel orders.",
-      );
+      const pendingDrafts = (await listOfflineDrafts("pending").catch(() => []))
+        .filter((d) => !d.serverTravelOrderId)
+        .map(offlineDraftAsListItem);
+      const cached = await listAllCachedTravelOrders().catch(() => []);
+      if (pendingDrafts.length > 0 || cached.length > 0) {
+        setCompanyTravelOrders([...pendingDrafts, ...cached]);
+        setCompanyTravelOrdersError("Showing cached travel orders (offline or network error).");
+      } else {
+        setCompanyTravelOrders([]);
+        setCompanyTravelOrdersError(
+          err instanceof Error ? err.message : "Could not load travel orders.",
+        );
+      }
     } finally {
       setCompanyTravelOrdersLoading(false);
     }
@@ -3385,6 +3420,7 @@ export function AgentKpiKanbanFlow({
               <option value="WEEKLY">Weekly</option>
               <option value="MONTHLY">Monthly</option>
               <option value="QUARTERLY">Quarterly</option>
+              <option value="SEMI_ANNUAL">Semi Annual</option>
             </select>
           </label>
         ) : (
@@ -3415,9 +3451,17 @@ export function AgentKpiKanbanFlow({
             </select>
           </label>
         ) : null}
-        {draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY") ? (
+        {draft.isRecurring &&
+        (draft.frequency === "MONTHLY" ||
+          draft.frequency === "QUARTERLY" ||
+          draft.frequency === "SEMI_ANNUAL") ? (
           <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            {draft.frequency === "QUARTERLY" ? "4-month cycle" : "Month cycle"} starts on day (1–31, {tz})
+            {draft.frequency === "QUARTERLY"
+              ? "4-month cycle"
+              : draft.frequency === "SEMI_ANNUAL"
+                ? "6-month cycle"
+                : "Month cycle"}{" "}
+            starts on day (1–31, {tz})
             <select
               value={draft.recurrenceMonthDay}
               disabled={busyId === r.id}
@@ -4384,6 +4428,7 @@ export function AgentKpiKanbanFlow({
             New Travel Order
           </button>
         </div>
+        <TravelOrderOfflineBanner className="mb-3" />
         {companyTravelOrdersError ? (
           <p className="mb-3 rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-200">
             {companyTravelOrdersError}
@@ -4400,6 +4445,7 @@ export function AgentKpiKanbanFlow({
         ) : (
           <ul className="space-y-2">
             {companyTravelOrders.map((order) => {
+              const pendingSync = order.status === "PENDING_SYNC" || !order.kpiMaintenanceId;
               const travelers =
                 (order.travelers?.length ?? 0) > 0
                   ? (order.travelers ?? []).map((t) => t.name).join(", ")
@@ -4408,11 +4454,13 @@ export function AgentKpiKanbanFlow({
                 <li key={order.id}>
                   <button
                     type="button"
+                    disabled={pendingSync}
                     onClick={() => {
+                      if (pendingSync || !order.kpiMaintenanceId) return;
                       setTravelOrdersOpen(false);
                       openActiveTask(order.kpiMaintenanceId);
                     }}
-                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 text-left transition hover:border-orange-400/60 hover:bg-orange-50/50 dark:border-zinc-700 dark:bg-zinc-950/50 dark:hover:border-orange-500/40 dark:hover:bg-orange-950/20"
+                    className="flex w-full items-start justify-between gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 text-left transition hover:border-orange-400/60 hover:bg-orange-50/50 disabled:cursor-default disabled:opacity-90 dark:border-zinc-700 dark:bg-zinc-950/50 dark:hover:border-orange-500/40 dark:hover:bg-orange-950/20"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
@@ -4424,10 +4472,11 @@ export function AgentKpiKanbanFlow({
                       <p className="mt-1 text-xs text-zinc-500">
                         Travelers: {travelers}
                         {order.vehicle ? ` · Vehicle: ${travelOrderVehicleLabel(order.vehicle)}` : ""}
+                        {pendingSync ? " · Saved offline — will sync when online" : ""}
                       </p>
                     </div>
                     <span className="shrink-0 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      {order.status}
+                      {pendingSync ? "PENDING SYNC" : order.status}
                     </span>
                   </button>
                 </li>
@@ -4442,10 +4491,13 @@ export function AgentKpiKanbanFlow({
         allowEditDetails
         companyScopeAgentId={operatorAgentId}
         onClose={() => setCreateTravelOrderOpen(false)}
-        onCreated={({ kpiId }) => {
+        onCreated={({ kpiId, offlineQueued }) => {
           setCreateTravelOrderOpen(false);
-          void load();
           void reloadCompanyTravelOrders();
+          if (offlineQueued) {
+            return;
+          }
+          void load();
           openActiveTask(kpiId);
         }}
       />

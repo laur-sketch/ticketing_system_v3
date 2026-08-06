@@ -105,6 +105,7 @@
     "@turf/length": "^7.3.5",
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
+    "dexie": "^4.4.4",
     "framer-motion": "^12.40.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.8.0",
@@ -115,7 +116,8 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "workbox-window": "^7.4.1"
   },
   "devDependencies": {
     "@mermaid-js/mermaid-cli": "^11.15.0",
@@ -138,7 +140,8 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "workbox-build": "^7.4.1"
   },
   "overrides": {
     "esbuild": "^0.28.1",
