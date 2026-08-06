@@ -4368,7 +4368,7 @@ export function AgentKpiKanbanFlow({
       <TaskBoardPopup
         open={travelOrdersOpen}
         title="Travel Orders"
-        description="Travel orders for your company, plus any where you are an assigned traveler. Create a request, add co-travelers, and open a row for approvals and check-ins."
+        description="Travel orders for your company, plus any where you are a traveler, approver, or confirmer. Create a request, add co-travelers, and open a row for approvals and check-ins."
         onClose={() => setTravelOrdersOpen(false)}
         size="lg"
       >

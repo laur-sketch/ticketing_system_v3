@@ -10,10 +10,12 @@ import {
   parseApprovalLevels,
   parseTravelerAgentIds,
   parseTravelOrderAttachments,
+  parseTravelOrderFileAttachments,
   TRAVEL_ORDER_STATUS,
   type TravelOrderApprovalLevelDto,
   type TravelOrderApprovalLevelStored,
   type TravelOrderAttachment,
+  type TravelOrderFileAttachment,
   type TravelOrderAgentRef,
 } from "@/lib/travel-order";
 
@@ -67,6 +69,7 @@ export type TravelOrderRow = {
   id: string;
   kpiMaintenanceId: string;
   orderRequest: string;
+  attachments: TravelOrderFileAttachment[];
   status: string;
   approvedByAgentId: string | null;
   approvedByAgentIds: string[];
@@ -126,6 +129,7 @@ type RawTravelOrder = {
   id: string;
   kpi_maintenance_id: string;
   order_request: string;
+  attachments?: unknown;
   status: string;
   approved_by_agent_id: string | null;
   approved_by_agent_ids: unknown;
@@ -234,6 +238,7 @@ function mapOrderBase(
     id: order.id,
     kpiMaintenanceId: order.kpi_maintenance_id,
     orderRequest: order.order_request,
+    attachments: parseTravelOrderFileAttachments(order.attachments),
     status: order.status,
     approvedByAgentId: order.approved_by_agent_id ?? approvedByAgentIds[0] ?? null,
     approvedByAgentIds,
@@ -524,7 +529,7 @@ export async function createTravelOrderWithLocations(input: {
 
   await prisma.$executeRaw`
     INSERT INTO travel_orders (
-      id, kpi_maintenance_id, order_request, status,
+      id, kpi_maintenance_id, order_request, attachments, status,
       approved_by_agent_id, approved_by_agent_ids, approval_levels, confirmation_by_agent_id,
       created_by_agent_id, company_team_id, traveler_agent_ids, vehicle,
       driver_present, driver_agent_id, driver_license_no,
@@ -536,6 +541,7 @@ export async function createTravelOrderWithLocations(input: {
       ${id},
       ${input.kpiMaintenanceId},
       ${input.orderRequest},
+      ${JSON.stringify([])}::jsonb,
       ${status},
       ${primaryApproverId},
       ${JSON.stringify(approvedByAgentIds)}::jsonb,
@@ -599,6 +605,7 @@ export async function findTravelOrdersByKpiId(
       t.id,
       t.kpi_maintenance_id,
       t.order_request,
+      COALESCE(t.attachments, '[]'::jsonb) AS attachments,
       t.status,
       t.approved_by_agent_id,
       t.approved_by_agent_ids,
@@ -677,6 +684,7 @@ export async function findTravelOrderById(
       t.id,
       t.kpi_maintenance_id,
       t.order_request,
+      COALESCE(t.attachments, '[]'::jsonb) AS attachments,
       t.status,
       t.approved_by_agent_id,
       t.approved_by_agent_ids,
@@ -768,6 +776,7 @@ export async function findTravelOrdersVisibleToAgent(input: {
       t.id,
       t.kpi_maintenance_id,
       t.order_request,
+      COALESCE(t.attachments, '[]'::jsonb) AS attachments,
       t.status,
       t.approved_by_agent_id,
       t.approved_by_agent_ids,
@@ -883,6 +892,7 @@ export async function listPendingTravelApprovalsForAgent(
       t.id,
       t.kpi_maintenance_id,
       t.order_request,
+      COALESCE(t.attachments, '[]'::jsonb) AS attachments,
       t.status,
       t.approved_by_agent_id,
       t.approved_by_agent_ids,
@@ -991,6 +1001,20 @@ export async function updateTravelOrderLocationAttachments(
       attachments = ${JSON.stringify(attachments)}::jsonb,
       updated_at = ${now}
     WHERE id = ${locationId}
+  `;
+}
+
+export async function updateTravelOrderAttachments(
+  travelOrderId: string,
+  attachments: TravelOrderFileAttachment[],
+): Promise<void> {
+  const now = new Date();
+  await prisma.$executeRaw`
+    UPDATE travel_orders
+    SET
+      attachments = ${JSON.stringify(attachments)}::jsonb,
+      updated_at = ${now}
+    WHERE id = ${travelOrderId}
   `;
 }
 
@@ -1491,6 +1515,7 @@ export function serializeTravelOrder(row: TravelOrderRow) {
     id: row.id,
     kpiMaintenanceId: row.kpiMaintenanceId,
     orderRequest: row.orderRequest,
+    attachments: row.attachments,
     status: row.status,
     approvedByAgentId: row.approvedByAgentId,
     approvedByAgent: row.approvedByAgent,

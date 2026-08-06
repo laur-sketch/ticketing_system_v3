@@ -351,6 +351,8 @@ model TravelOrder {
   kpiMaintenanceId   String                @map("kpi_maintenance_id")
   kpiMaintenance     KpiMaintenance        @relation(fields: [kpiMaintenanceId], references: [id], onDelete: Cascade)
   orderRequest       String                @map("order_request") @db.Text
+  /// Order-level supporting files (images + docs): [{ storedFileName, originalName, mimeType, size, uploadedAt }]
+  attachments        Json                  @default("[]") @map("attachments")
   approvedByAgentId  String?               @map("approved_by_agent_id")
   approvedByAgent    Agent?                @relation("TravelOrderApprover", fields: [approvedByAgentId], references: [id], onDelete: SetNull)
   /// One or more designated approvers (agent ids). `approvedByAgentId` keeps the primary/first for legacy joins.

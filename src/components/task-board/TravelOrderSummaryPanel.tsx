@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DateTime } from "luxon";
-import { ImagePlus, Loader2, MapPin, X } from "lucide-react";
+import { FileText, ImagePlus, Loader2, MapPin, X } from "lucide-react";
 import { MapLocationPicker } from "@/components/task-board/MapLocationPicker";
 import {
   TravelOrderPageNav,
@@ -26,6 +26,7 @@ import {
   isApprovalLevelUnlocked,
   isTravelOrderApproved,
   isTravelOrderRunning,
+  isTravelOrderFileImage,
   TRAVEL_ORDER_STATUS,
   travelOrderApprovedByLabel,
   travelOrderLocationVisitStatus,
@@ -698,6 +699,51 @@ export function TravelOrderSummaryPanel({
                       {order.orderRequest || "—"}
                     </p>
                   </div>
+
+                  {(order.attachments?.length ?? 0) > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                        Attachments
+                      </p>
+                      <ul className="flex flex-wrap gap-2">
+                        {order.attachments!.map((att) => {
+                          const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
+                          const isImage = isTravelOrderFileImage(att);
+                          return (
+                            <li key={att.storedFileName}>
+                              {isImage ? (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900"
+                                  title={att.originalName}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={href}
+                                    alt={att.originalName}
+                                    className="h-20 w-20 object-cover"
+                                  />
+                                </a>
+                              ) : (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                  title={att.originalName}
+                                >
+                                  <FileText className="size-3.5 shrink-0" aria-hidden />
+                                  <span className="truncate">{att.originalName}</span>
+                                </a>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
 
                   <div className="space-y-1">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">

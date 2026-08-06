@@ -14,9 +14,14 @@ import {
   findTravelOrderById,
   findTravelOrdersByKpiId,
   serializeTravelOrder,
+  updateTravelOrderAttachments,
   updateTravelOrderLocationAttachments,
 } from "@/lib/travel-order-db";
-import { persistTravelOrderImage } from "@/lib/travel-order-uploads";
+import {
+  MAX_TRAVEL_ORDER_ATTACHMENTS,
+  persistTravelOrderAttachment,
+  persistTravelOrderImage,
+} from "@/lib/travel-order-uploads";
 
 /** GET /api/kpi-maintenance/:id/travel-orders — list travel orders for a task. */
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -78,6 +83,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   let approvalLevels: ReturnType<typeof normalizeApprovalLevelsForStore> = [];
   let locations: LocationBody[] = [];
   const pendingFilesByIndex = new Map<number, File[]>();
+  const pendingOrderAttachments: File[] = [];
 
   if (contentType.includes("multipart/form-data")) {
     const form = await req.formData();
@@ -116,8 +122,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       return NextResponse.json({ error: "Invalid locationsJson." }, { status: 400 });
     }
     for (const [key, value] of form.entries()) {
+      if (!(value instanceof File) || value.size <= 0) continue;
+      if (key === "attachment" || key === "attachments") {
+        pendingOrderAttachments.push(value);
+        continue;
+      }
       const match = /^location_(\d+)_image$/.exec(key);
-      if (!match || !(value instanceof File) || value.size <= 0) continue;
+      if (!match) continue;
       const idx = Number(match[1]);
       const list = pendingFilesByIndex.get(idx) ?? [];
       list.push(value);
@@ -243,7 +254,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  if (pendingFilesByIndex.size > 0) {
+  if (pendingFilesByIndex.size > 0 || pendingOrderAttachments.length > 0) {
     const locs = [...created.locations].sort((a, b) => a.sortOrder - b.sortOrder);
     for (let i = 0; i < locs.length; i++) {
       const files = pendingFilesByIndex.get(i) ?? [];
@@ -262,10 +273,31 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         ...uploaded,
       ]);
     }
+
+    if (pendingOrderAttachments.length > 0) {
+      if (pendingOrderAttachments.length > MAX_TRAVEL_ORDER_ATTACHMENTS) {
+        return NextResponse.json(
+          { error: `You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.` },
+          { status: 400 },
+        );
+      }
+      const uploaded = [];
+      for (const file of pendingOrderAttachments.slice(0, MAX_TRAVEL_ORDER_ATTACHMENTS)) {
+        const saved = await persistTravelOrderAttachment(id, created.id, file);
+        if ("error" in saved) {
+          return NextResponse.json({ error: saved.error }, { status: 400 });
+        }
+        uploaded.push(saved);
+      }
+      await updateTravelOrderAttachments(created.id, [
+        ...(created.attachments ?? []),
+        ...uploaded,
+      ]);
+    }
   }
 
   const fresh =
-    pendingFilesByIndex.size > 0
+    pendingFilesByIndex.size > 0 || pendingOrderAttachments.length > 0
       ? await findTravelOrderById(created.id)
       : created;
   if (!fresh) {

@@ -3,10 +3,32 @@ import { createReadStream, existsSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { requireRole } from "@/lib/access";
-import { travelOrderExistsForKpi } from "@/lib/travel-order-db";
+import { isIntakeAttachmentImage } from "@/lib/ticket-intake-screenshots-meta";
+import { findTravelOrderById, travelOrderExistsForKpi } from "@/lib/travel-order-db";
 import { travelOrderUploadDir } from "@/lib/travel-order-uploads";
 
-/** GET image attachment for a travel order location. */
+function guessMimeFromStoredName(storedFileName: string): string {
+  const lower = storedFileName.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".docx"))
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".xlsx"))
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
+  if (lower.endsWith(".pptx"))
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
+  if (lower.endsWith(".csv")) return "text/csv";
+  if (lower.endsWith(".txt")) return "text/plain";
+  return "application/octet-stream";
+}
+
+/** GET attachment for a travel order (order-level or location visit image). */
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string; travelOrderId: string; file: string }> },
@@ -27,12 +49,30 @@ export async function GET(
     return NextResponse.json({ error: "File not found." }, { status: 404 });
   }
 
+  const order = await findTravelOrderById(travelOrderId);
+  const orderAtt = order?.attachments?.find((a) => a.storedFileName === storedFileName);
+  const locationAtt = order?.locations
+    .flatMap((loc) => loc.attachments)
+    .find((a) => a.storedFileName === storedFileName);
+
+  const mimeType =
+    orderAtt?.mimeType ||
+    locationAtt?.mimeType ||
+    guessMimeFromStoredName(storedFileName);
+  const originalName =
+    orderAtt?.originalName || locationAtt?.originalName || storedFileName;
+  const isImage = isIntakeAttachmentImage({
+    mimeType,
+    originalName,
+  });
+  const safeDownloadName = originalName.replace(/"/g, "").slice(0, 180) || storedFileName;
+
   const stream = createReadStream(fullPath);
   const webStream = Readable.toWeb(stream) as unknown as ReadableStream;
-  const mime = storedFileName.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
   return new NextResponse(webStream, {
     headers: {
-      "Content-Type": mime,
+      "Content-Type": mimeType,
+      "Content-Disposition": `${isImage ? "inline" : "attachment"}; filename="${safeDownloadName}"`,
       "Cache-Control": "private, max-age=3600",
     },
   });
