@@ -12,6 +12,11 @@ import { TravelOrderGatePassFields } from "@/components/task-board/TravelOrderGa
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import {
+  INTAKE_ATTACHMENT_ACCEPT,
+  MAX_SCREENSHOT_BYTES,
+  isAllowedIntakeAttachment,
+} from "@/lib/ticket-intake-screenshots-constants";
+import {
   agentIdsFromApprovalLevels,
   approvalLevelsAllowOptional,
   buildEmptyApprovalLevels,
@@ -23,6 +28,7 @@ import {
   TRAVEL_ORDER_VEHICLE_OPTIONS,
   validateTravelOrderDraft,
   validateTravelOrderGatePass,
+  MAX_TRAVEL_ORDER_ATTACHMENTS,
   type TravelOrderDraft,
   type TravelOrderLocationDraft,
 } from "@/lib/travel-order";
@@ -78,6 +84,7 @@ export function TravelOrderRequestModal({
   const [formPage, setFormPage] = useState<TravelOrderFormPage>(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
 
   const hierarchical = draft.approvalLevels.length > 0;
   /** Internal KPI mainTask — derived from purpose of travel (no separate name field). */
@@ -110,6 +117,7 @@ export function TravelOrderRequestModal({
   useEffect(() => {
     if (!open) return;
     setDraft(emptyTravelOrderDraft());
+    setPendingAttachments([]);
     setError(null);
     setFormPage(1);
     setAgentQuery("");
@@ -380,6 +388,23 @@ export function TravelOrderRequestModal({
       setFormPage(1);
       return;
     }
+    if (pendingAttachments.length > MAX_TRAVEL_ORDER_ATTACHMENTS) {
+      setError(`You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.`);
+      setFormPage(1);
+      return;
+    }
+    for (const file of pendingAttachments) {
+      if (file.size > MAX_SCREENSHOT_BYTES) {
+        setError("Each attachment must be at most 5MB.");
+        setFormPage(1);
+        return;
+      }
+      if (!isAllowedIntakeAttachment(file.type || "", file.name)) {
+        setError("Attachments must be images or documents (PDF, Word, Excel, PowerPoint, CSV, TXT).");
+        setFormPage(1);
+        return;
+      }
+    }
 
     const approvedByAgentIds = hierarchical
       ? agentIdsFromApprovalLevels(draftForSubmit.approvalLevels)
@@ -454,6 +479,9 @@ export function TravelOrderRequestModal({
           actualDepartureEndedLongitude: null,
         }),
       );
+      for (const file of pendingAttachments) {
+        form.append("attachment", file);
+      }
 
       const res = await fetch("/api/kpi-maintenance/field-assignment", {
         method: "POST",
@@ -552,6 +580,87 @@ export function TravelOrderRequestModal({
                 className="mt-1 resize-y rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
             </label>
+
+            <div className="space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
+                Attachments
+              </p>
+              <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
+                Optional supporting images or documents (max {MAX_TRAVEL_ORDER_ATTACHMENTS}, 5MB each).
+              </p>
+              {pendingAttachments.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {pendingAttachments.map((file, index) => (
+                    <li
+                      key={`${file.name}-${file.size}-${index}`}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900/60"
+                    >
+                      <span className="min-w-0 truncate font-medium text-zinc-800 dark:text-zinc-200">
+                        {file.name}
+                        <span className="ml-1 font-normal text-zinc-500">
+                          ({Math.max(1, Math.round(file.size / 1024))} KB)
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          setPendingAttachments((prev) => prev.filter((_, i) => i !== index))
+                        }
+                        className="shrink-0 rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                        title="Remove file"
+                      >
+                        <X className="size-3.5" aria-hidden />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <label
+                className={cn(
+                  "inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900",
+                  (busy || pendingAttachments.length >= MAX_TRAVEL_ORDER_ATTACHMENTS) &&
+                    "pointer-events-none opacity-50",
+                )}
+              >
+                <Plus className="size-3.5" aria-hidden />
+                Add files
+                <input
+                  type="file"
+                  multiple
+                  accept={INTAKE_ATTACHMENT_ACCEPT}
+                  disabled={busy || pendingAttachments.length >= MAX_TRAVEL_ORDER_ATTACHMENTS}
+                  className="sr-only"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []).filter((f) => f.size > 0);
+                    e.target.value = "";
+                    if (picked.length === 0) return;
+                    setPendingAttachments((prev) => {
+                      const remaining = MAX_TRAVEL_ORDER_ATTACHMENTS - prev.length;
+                      if (remaining <= 0) {
+                        setError(`You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.`);
+                        return prev;
+                      }
+                      const next = [...prev];
+                      for (const file of picked.slice(0, remaining)) {
+                        if (file.size > MAX_SCREENSHOT_BYTES) {
+                          setError("Each attachment must be at most 5MB.");
+                          continue;
+                        }
+                        if (!isAllowedIntakeAttachment(file.type || "", file.name)) {
+                          setError(
+                            "Attachments must be images or documents (PDF, Word, Excel, PowerPoint, CSV, TXT).",
+                          );
+                          continue;
+                        }
+                        next.push(file);
+                      }
+                      return next;
+                    });
+                  }}
+                />
+              </label>
+            </div>
 
             <div className="space-y-2">
               <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">

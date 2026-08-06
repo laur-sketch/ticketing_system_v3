@@ -21,9 +21,12 @@ import {
   createTravelOrderWithLocations,
   findTravelOrderById,
   serializeTravelOrder,
+  updateTravelOrderAttachments,
   updateTravelOrderLocationAttachments,
 } from "@/lib/travel-order-db";
 import {
+  MAX_TRAVEL_ORDER_ATTACHMENTS,
+  persistTravelOrderAttachment,
   persistTravelOrderImage,
   removeTravelOrderUploadDir,
 } from "@/lib/travel-order-uploads";
@@ -242,9 +245,15 @@ export async function POST(req: Request) {
   }
 
   const pendingFilesByIndex = new Map<number, File[]>();
+  const pendingOrderAttachments: File[] = [];
   for (const [key, value] of form.entries()) {
+    if (!(value instanceof File) || value.size <= 0) continue;
+    if (key === "attachment" || key === "attachments") {
+      pendingOrderAttachments.push(value);
+      continue;
+    }
     const match = /^location_(\d+)_image$/.exec(key);
-    if (!match || !(value instanceof File) || value.size <= 0) continue;
+    if (!match) continue;
     const idx = Number(match[1]);
     const list = pendingFilesByIndex.get(idx) ?? [];
     list.push(value);
@@ -389,18 +398,36 @@ export async function POST(req: Request) {
         ...uploaded,
       ]);
     }
+
+    if (pendingOrderAttachments.length > 0) {
+      if (pendingOrderAttachments.length > MAX_TRAVEL_ORDER_ATTACHMENTS) {
+        throw new Error(`You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.`);
+      }
+      const uploaded = [];
+      for (const file of pendingOrderAttachments.slice(0, MAX_TRAVEL_ORDER_ATTACHMENTS)) {
+        const saved = await persistTravelOrderAttachment(kpi.id, travelOrder.id, file);
+        if ("error" in saved) {
+          throw new Error(saved.error);
+        }
+        uploaded.push(saved);
+      }
+      await updateTravelOrderAttachments(travelOrder.id, [
+        ...(travelOrder.attachments ?? []),
+        ...uploaded,
+      ]);
+    }
   } catch (err) {
     // Uploads happen after KPI + travel order commits — roll both back on failure.
     await prisma.travelOrder.delete({ where: { id: travelOrder.id } }).catch(() => undefined);
     await prisma.kpiMaintenance.delete({ where: { id: kpi.id } }).catch(() => undefined);
     await removeTravelOrderUploadDir(kpi.id, travelOrder.id).catch(() => undefined);
-    const message = err instanceof Error ? err.message : "Could not save travel-order images.";
+    const message = err instanceof Error ? err.message : "Could not save travel-order attachments.";
     console.error("[field-assignment] upload/attach failed; rolled back:", err);
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const fresh =
-    pendingFilesByIndex.size > 0
+    pendingFilesByIndex.size > 0 || pendingOrderAttachments.length > 0
       ? await findTravelOrderById(travelOrder.id)
       : travelOrder;
 

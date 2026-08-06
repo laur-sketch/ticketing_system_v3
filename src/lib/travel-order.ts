@@ -1,7 +1,27 @@
 import { point } from "@turf/helpers";
 import type { TaskScreenshotMetaItem } from "@/lib/task-screenshot-meta";
+import { isIntakeAttachmentImage } from "@/lib/ticket-intake-screenshots-meta";
 
+/** Location visit images (JPEG/PNG only). */
 export type TravelOrderAttachment = TaskScreenshotMetaItem;
+
+/** Order-level supporting files (images + documents). */
+export type TravelOrderFileAttachment = {
+  storedFileName: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string;
+};
+
+/** Max order-level supporting files on create (client + server). */
+export const MAX_TRAVEL_ORDER_ATTACHMENTS = 10;
+
+export function isTravelOrderFileImage(
+  item: Pick<TravelOrderFileAttachment, "mimeType" | "originalName">,
+): boolean {
+  return isIntakeAttachmentImage(item);
+}
 
 /** Client/server DTO for one travel-order location pin. */
 export type TravelOrderLocationDraft = {
@@ -222,6 +242,8 @@ export type TravelOrderDto = {
   id: string;
   kpiMaintenanceId: string;
   orderRequest: string;
+  /** Order-level supporting files (images + documents). */
+  attachments?: TravelOrderFileAttachment[];
   status: string;
   /** Primary/first approver (legacy). */
   approvedByAgentId: string | null;
@@ -702,6 +724,34 @@ export function parseTravelOrderAttachments(raw: unknown): TaskScreenshotMetaIte
       originalName: typeof r.originalName === "string" ? r.originalName : storedFileName,
       mimeType:
         r.mimeType === "image/png" || r.mimeType === "image/jpeg" ? r.mimeType : "image/jpeg",
+      size: typeof r.size === "number" && Number.isFinite(r.size) ? r.size : 0,
+      uploadedAt: typeof r.uploadedAt === "string" ? r.uploadedAt : new Date().toISOString(),
+    });
+  }
+  return out;
+}
+
+/** Parse order-level supporting files (images + documents). */
+export function parseTravelOrderFileAttachments(raw: unknown): TravelOrderFileAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TravelOrderFileAttachment[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const storedFileName = typeof r.storedFileName === "string" ? r.storedFileName.trim() : "";
+    if (!storedFileName || storedFileName.includes("..") || /[/\\]/.test(storedFileName)) {
+      continue;
+    }
+    out.push({
+      storedFileName,
+      originalName:
+        typeof r.originalName === "string" && r.originalName.trim()
+          ? r.originalName.trim().slice(0, 200)
+          : storedFileName,
+      mimeType:
+        typeof r.mimeType === "string" && r.mimeType.trim()
+          ? r.mimeType.trim()
+          : "application/octet-stream",
       size: typeof r.size === "number" && Number.isFinite(r.size) ? r.size : 0,
       uploadedAt: typeof r.uploadedAt === "string" ? r.uploadedAt : new Date().toISOString(),
     });
