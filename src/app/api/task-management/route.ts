@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { TaskStatus } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
@@ -47,7 +48,7 @@ export async function GET() {
   const role = session.user.role;
 
   const where =
-    role === "Admin" || role === "SuperAdmin"
+    role === "Admin" || isElevatedUserRole(role)
       ? {}
       : perms.canAssignWork
         ? {}
@@ -150,7 +151,7 @@ export async function PATCH(req: Request) {
   const isAssignee = !!perms.operator && perms.operator.id === task.assignedAgentId;
 
   /** SuperAdmin/Admin can update schedule/penalty; assignees use lifecycle/status. */
-  const canManage = session.user.role === "Admin" || session.user.role === "SuperAdmin" || perms.canAssignWork;
+  const canManage = session.user.role === "Admin" || isElevatedUserRole(session.user.role) || perms.canAssignWork;
   if (
     body.dueAt !== undefined ||
     body.delayPenaltyAmount !== undefined ||
@@ -198,7 +199,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json(updated);
   }
 
-  if (session.user.role === "Admin" || session.user.role === "SuperAdmin") {
+  if (session.user.role === "Admin" || isElevatedUserRole(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!isAssignee) {

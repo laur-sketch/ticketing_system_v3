@@ -1,7 +1,11 @@
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { MAX_SCREENSHOT_BYTES, MAX_SCREENSHOT_COUNT } from "./ticket-intake-screenshots-constants";
+import {
+  isAllowedIntakeAttachment,
+  MAX_SCREENSHOT_BYTES,
+  MAX_SCREENSHOT_COUNT,
+} from "./ticket-intake-screenshots-constants";
 import type { IntakeScreenshotMetaItem } from "./ticket-intake-screenshots-meta";
 
 function isProbablyImageFile(file: File): boolean {
@@ -10,24 +14,8 @@ function isProbablyImageFile(file: File): boolean {
   return /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(file.name);
 }
 
-function isProbablyDocumentFile(file: File): boolean {
-  const t = (file.type || "").toLowerCase();
-  if (
-    t === "application/pdf" ||
-    t === "application/msword" ||
-    t === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    t === "application/vnd.ms-excel" ||
-    t === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-    t === "text/plain" ||
-    t === "text/csv"
-  ) {
-    return true;
-  }
-  return /\.(pdf|docx?|xlsx?|csv|txt)$/i.test(file.name);
-}
-
 export function isAllowedIntakeAttachmentFile(file: File): boolean {
-  return isProbablyImageFile(file) || isProbablyDocumentFile(file);
+  return isAllowedIntakeAttachment(file.type || "", file.name);
 }
 
 export function validateScreenshotFiles(

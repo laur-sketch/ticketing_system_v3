@@ -10,8 +10,11 @@ import {
   getOperatorActionableApprovalLevel,
   hasHierarchicalApprovals,
   isTravelOrderApproved,
+  isTravelOrderConfirmReady,
   isTravelOrderTraveler,
+  isValidLatLng,
   parseOptionalDateTimeInput,
+  travelOrderHasGatePass,
   validateTravelOrderGatePass,
   emptyGatePassDraft,
   gatePassDraftHasAnyData,
@@ -98,6 +101,23 @@ export async function PATCH(
         typeof body.gatePass?.longitude === "number" && Number.isFinite(body.gatePass.longitude)
           ? body.gatePass.longitude
           : null;
+      if (!isValidLatLng(lat, lng)) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not capture a valid GPS position for Gate Pass. Allow location access and try again.",
+          },
+          { status: 400 },
+        );
+      }
+      const startGuardOnDuty =
+        typeof body.gatePass?.startGuardOnDuty === "string"
+          ? body.gatePass.startGuardOnDuty
+          : undefined;
+      const endGuardOnDuty =
+        typeof body.gatePass?.endGuardOnDuty === "string"
+          ? body.gatePass.endGuardOnDuty
+          : undefined;
       try {
         const updated = await updateTravelOrderGatePass({
           travelOrderId,
@@ -107,9 +127,11 @@ export async function PATCH(
           actualDepartureStartedAt: visitAction === "start" ? capturedAt : undefined,
           actualDepartureStartedLatitude: visitAction === "start" ? lat : undefined,
           actualDepartureStartedLongitude: visitAction === "start" ? lng : undefined,
+          gatePassStartGuardOnDuty: visitAction === "start" ? startGuardOnDuty : undefined,
           actualDepartureEndedAt: visitAction === "end" ? capturedAt : undefined,
           actualDepartureEndedLatitude: visitAction === "end" ? lat : undefined,
           actualDepartureEndedLongitude: visitAction === "end" ? lng : undefined,
+          gatePassEndGuardOnDuty: visitAction === "end" ? endGuardOnDuty : undefined,
         });
         if (!updated) {
           return NextResponse.json({ error: "Travel order could not be updated." }, { status: 500 });
@@ -147,6 +169,8 @@ export async function PATCH(
         typeof raw.actualDepartureEndedLongitude === "number"
           ? raw.actualDepartureEndedLongitude
           : null,
+      startGuardOnDuty: typeof raw.startGuardOnDuty === "string" ? raw.startGuardOnDuty : "",
+      endGuardOnDuty: typeof raw.endGuardOnDuty === "string" ? raw.endGuardOnDuty : "",
     };
     if (!draft.included && !gatePassDraftHasAnyData(draft)) {
       draft.included = false;
@@ -167,9 +191,11 @@ export async function PATCH(
         actualDepartureStartedAt: parseOptionalDateTimeInput(draft.actualDepartureStartedAt),
         actualDepartureStartedLatitude: draft.actualDepartureStartedLatitude,
         actualDepartureStartedLongitude: draft.actualDepartureStartedLongitude,
+        gatePassStartGuardOnDuty: draft.startGuardOnDuty,
         actualDepartureEndedAt: parseOptionalDateTimeInput(draft.actualDepartureEndedAt),
         actualDepartureEndedLatitude: draft.actualDepartureEndedLatitude,
         actualDepartureEndedLongitude: draft.actualDepartureEndedLongitude,
+        gatePassEndGuardOnDuty: draft.endGuardOnDuty,
       });
       if (!updated) {
         return NextResponse.json({ error: "Travel order could not be updated." }, { status: 500 });
@@ -310,6 +336,16 @@ export async function PATCH(
         return NextResponse.json(
           { error: "Only the designated confirmer can confirm this travel order." },
           { status: 403 },
+        );
+      }
+      if (!isTravelOrderConfirmReady(order)) {
+        return NextResponse.json(
+          {
+            error: travelOrderHasGatePass(order)
+              ? "Confirm unlocks after Gate Pass Actual Arrival End is captured."
+              : "Confirm unlocks after every location visit is completed.",
+          },
+          { status: 400 },
         );
       }
     }

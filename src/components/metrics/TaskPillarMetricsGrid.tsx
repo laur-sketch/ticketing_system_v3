@@ -261,17 +261,6 @@ function PillarDonutCard({
             </>
           )}
         </svg>
-        <ul className="mt-3 grid w-full gap-1.5 text-[11px]">
-          {segments.map((s) => (
-            <li key={s.key} className="flex items-center justify-between gap-2 text-zinc-600 dark:text-zinc-400">
-              <span className="flex items-center gap-2">
-                <span className="size-2.5 rounded-sm" style={{ backgroundColor: s.color }} />
-                {s.label}
-              </span>
-              <span className="tabular-nums font-semibold text-zinc-900 dark:text-zinc-200">{s.value}</span>
-            </li>
-          ))}
-        </ul>
       </div>
     </article>
   );
@@ -721,6 +710,22 @@ function csvBooleanCellDisplay(cell: string): ReactNode {
   return cell;
 }
 
+/** Average of each listed task's Total data recorded % (extended donut summary). */
+function averageIncludedTasksTotalDataRecorded(
+  tasks: readonly TaskChecklistIncludedTask[],
+): number | null {
+  const values: number[] = [];
+  for (const task of tasks) {
+    const pct =
+      task.totalDataRecordedPercent ??
+      task.recordedPercent ??
+      (task.total > 0 ? task.percent : null);
+    if (pct != null && Number.isFinite(pct)) values.push(pct);
+  }
+  if (values.length === 0) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
 function sourceDetailsForPillar(args: {
   pillar: string;
   metricsCadence: KpiFrequencyCode;
@@ -738,12 +743,15 @@ function sourceDetailsForPillar(args: {
   showCsvPreview: boolean;
   notes: string[];
   includedTasks: TaskChecklistIncludedTask[];
+  /** Same headline percent shown on the Task Metrics donut for this pillar. */
+  donutPercent: number | null;
 } {
   const { pillar, metricsCadence, reportingPeriodLabel, helpdeskTickets, userSupportTickets, checklistPillars } = args;
   if (pillar === "HELPDESK SUPPORT") {
     const total = (helpdeskTickets?.closedCount ?? 0) + (helpdeskTickets?.openTicketsInPeriod ?? 0);
     return {
       title: "Request Support Source",
+      donutPercent: helpdeskTickets?.percent ?? null,
       rows: [
         { label: "Collected from", value: "Request records plus imported helpdesk CSV snapshots when available" },
         { label: "Recorded as", value: "Closed vs open request counts for the selected working-day range" },
@@ -773,6 +781,8 @@ function sourceDetailsForPillar(args: {
     const total = userSupportTickets?.totalTickets ?? 0;
     return {
       title: "User Support Source",
+      donutPercent:
+        average == null ? null : Math.round((average / 5) * 100),
       rows: [
         { label: "Collected from", value: "Request star ratings submitted for requests in the selected reporting period" },
         { label: "Recorded as", value: "Average CSAT star rating across rated requests" },
@@ -812,6 +822,7 @@ function sourceDetailsForPillar(args: {
   );
   return {
     title: `${pillarDisplayName(pillar)} Source`,
+    donutPercent: (agg?.total ?? 0) > 0 ? view.percent : null,
     rows: [
       {
         label: "Collected from",
@@ -898,6 +909,9 @@ export function TaskPillarMetricsGrid({
     : null;
   const canShowExtendedTasks =
     canExtendView && (inspected?.includedTasks.length ?? 0) > 0;
+  const totalDonutDataPercent = inspected
+    ? averageIncludedTasksTotalDataRecorded(inspected.includedTasks)
+    : null;
 
   const mainTaskPillars = Object.keys(checklistPillars ?? {})
     .filter((p) => p !== "HELPDESK SUPPORT" && p !== "USER SUPPORT")
@@ -1062,6 +1076,17 @@ export function TaskPillarMetricsGrid({
                   {inspected.includedTasks.some((t) => (t.phases?.length ?? 0) > 0) ? "project" : "task"}
                   {inspected.includedTasks.length === 1 ? "" : "s"}).
                 </p>
+                {totalDonutDataPercent != null ? (
+                  <div className="rounded-xl border border-orange-400/30 bg-orange-500/5 px-3 py-2 dark:border-orange-500/20">
+                    <p className="text-xs font-semibold text-orange-800 dark:text-orange-200">
+                      Total Donut Data · {totalDonutDataPercent}%
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                      Average of Total data recorded across the tasks listed below
+                      {reportingPeriodLabel ? ` · ${reportingPeriodLabel}` : ""}.
+                    </p>
+                  </div>
+                ) : null}
                 <ul className="space-y-3">
                   {inspected.includedTasks.map((task) => {
                     const showPhases = (task.phases?.length ?? 0) > 0;
@@ -1079,11 +1104,22 @@ export function TaskPillarMetricsGrid({
                               </p>
                             ) : null}
                           </div>
-                          <p className="shrink-0 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                            {showPhases
-                              ? `${task.percent}% · ${task.done}/${task.total} complete`
-                              : `${task.done}/${task.total} done · ${task.percent}%`}
-                          </p>
+                          <div className="shrink-0 text-right text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                            <p>
+                              {showPhases
+                                ? `${task.done}/${task.total} complete`
+                                : `${task.done}/${task.total} done`}
+                            </p>
+                            <p className="mt-0.5 text-[11px] font-medium text-orange-700 dark:text-orange-300">
+                              Recorded data{" "}
+                              {task.recordedPercent != null ? task.recordedPercent : task.percent}%
+                            </p>
+                            {task.totalDataRecordedPercent != null ? (
+                              <p className="mt-0.5 text-[11px] font-medium text-sky-700 dark:text-sky-300">
+                                Total data recorded {task.totalDataRecordedPercent}%
+                              </p>
+                            ) : null}
+                          </div>
                         </div>
                         {showPhases ? (
                           <ul className="mt-2 space-y-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
@@ -1117,9 +1153,25 @@ export function TaskPillarMetricsGrid({
                                 >
                                   {item.done ? "✓" : "○"}
                                 </span>
-                                <span className={item.done ? "line-through opacity-70" : undefined}>
+                                <span
+                                  className={cn(
+                                    "min-w-0 flex-1 truncate",
+                                    item.done ? "line-through opacity-70" : undefined,
+                                  )}
+                                >
                                   {item.title}
+                                  {item.assigneeName ? (
+                                    <span className="font-normal text-zinc-500 dark:text-zinc-400">
+                                      {" "}
+                                      · {item.assigneeName}
+                                    </span>
+                                  ) : null}
                                 </span>
+                                {item.recordedPercent != null ? (
+                                  <span className="shrink-0 text-[11px] font-medium text-orange-700 dark:text-orange-300">
+                                    {item.recordedPercent}%
+                                  </span>
+                                ) : null}
                               </li>
                             ))}
                           </ul>

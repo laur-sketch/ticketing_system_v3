@@ -504,6 +504,30 @@ export async function applyDailyPillarPercentSnapshots(args: {
   days: DailyPillarPercentRow[];
   assignedAgentId?: string;
 }): Promise<ApplyKpiSheetSnapshotResult> {
+  return applyDailyPercentSnapshotsByTitle({
+    title: args.pillar,
+    titleAliases: [args.pillar],
+    timeZone: args.timeZone,
+    days: args.days,
+    assignedAgentId: args.assignedAgentId,
+    ensureDaily: true,
+    ensureDailyPillar: args.pillar,
+  });
+}
+
+/**
+ * Apply daily percent snapshots to a Task Board KPI matched by title (and optional aliases).
+ * Used for legacy / dynamic titles such as SYSTEMS AVAILABILITY that are not in the IT pillar enum.
+ */
+export async function applyDailyPercentSnapshotsByTitle(args: {
+  title: string;
+  titleAliases?: string[];
+  timeZone: string;
+  days: DailyPillarPercentRow[];
+  assignedAgentId?: string;
+  ensureDaily?: boolean;
+  ensureDailyPillar?: ItTaskPillarTitle;
+}): Promise<ApplyKpiSheetSnapshotResult> {
   const zone = normalizeTimeZone(args.timeZone);
   const skipped: ApplyKpiSheetSnapshotResult["skipped"] = [];
   let applied = 0;
@@ -513,10 +537,17 @@ export async function applyDailyPillarPercentSnapshots(args: {
       ? { assignedAgentId: args.assignedAgentId }
       : {};
 
-  const kpis = await prisma.kpiMaintenance.findMany({
+  const aliases = [
+    args.title,
+    ...(args.titleAliases ?? []),
+  ]
+    .map((t) => t.trim().replace(/\s+/g, " ").toUpperCase())
+    .filter(Boolean);
+  const aliasSet = new Set(aliases);
+
+  const allRecurring = await prisma.kpiMaintenance.findMany({
     where: {
       isRecurring: true,
-      title: args.pillar,
       frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"] },
       ...whereAgent,
     },
@@ -529,41 +560,55 @@ export async function applyDailyPillarPercentSnapshots(args: {
     },
   });
 
+  let kpis = allRecurring.filter((k) =>
+    aliasSet.has(k.title.trim().replace(/\s+/g, " ").toUpperCase()),
+  );
+
   if (kpis.length === 0) {
-    skipped.push({ reason: "no KPI row for pillar", detail: args.pillar });
+    skipped.push({ reason: "no KPI row for title", detail: aliases.join(" | ") });
     return { applied, skipped };
   }
 
   let dailyKpis = kpis.filter((k) => k.frequency === "DAILY");
-  if (dailyKpis.length === 0) {
-    const ensured = await ensureDailyKpiForPillar(args.pillar);
-    if (!ensured) {
-      skipped.push({ reason: "no KPI row for pillar", detail: args.pillar });
-      return { applied, skipped };
+  if (dailyKpis.length === 0 && args.ensureDaily && args.ensureDailyPillar) {
+    const ensured = await ensureDailyKpiForPillar(args.ensureDailyPillar);
+    if (ensured) {
+      const refreshed = await prisma.kpiMaintenance.findMany({
+        where: {
+          isRecurring: true,
+          title: { in: [...aliasSet] },
+          frequency: "DAILY",
+          ...whereAgent,
+        },
+        select: {
+          id: true,
+          title: true,
+          frequency: true,
+          recurrenceWeekday: true,
+          recurrenceMonthDay: true,
+        },
+      });
+      dailyKpis = refreshed;
+      kpis = refreshed;
     }
-    const refreshed = await prisma.kpiMaintenance.findMany({
-      where: {
-        isRecurring: true,
-        title: args.pillar,
-        frequency: "DAILY",
-        ...whereAgent,
-      },
-      select: {
-        id: true,
-        title: true,
-        frequency: true,
-        recurrenceWeekday: true,
-        recurrenceMonthDay: true,
-      },
-    });
-    dailyKpis = refreshed;
+  }
+
+  if (dailyKpis.length === 0) {
+    // Prefer writing against the matched row even if still MONTHLY — caller can set frequency.
+    dailyKpis = kpis;
   }
 
   for (const { ymd, percent } of args.days) {
     const at = DateTime.fromISO(ymd, { zone }).toJSDate();
     const periodKey = getDailyPeriodKey(at, zone);
     for (const kpi of dailyKpis) {
-      await upsertPercentSnapshotForKpi({ kpi, zone, periodKey, at, percent });
+      await upsertPercentSnapshotForKpi({
+        kpi: { ...kpi, frequency: "DAILY" },
+        zone,
+        periodKey,
+        at,
+        percent,
+      });
       applied += 1;
     }
   }

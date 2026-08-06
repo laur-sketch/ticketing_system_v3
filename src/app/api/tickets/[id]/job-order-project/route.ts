@@ -33,7 +33,7 @@ export async function GET(
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!["SuperAdmin", "Admin", "Personnel"].includes(session.user.role)) {
+  if (!["SuperAdmin", "HighAdmin", "Admin", "Personnel"].includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -55,7 +55,7 @@ export async function GET(
   }> = [];
 
   if (listProjects) {
-    const roleIsAdmin = ["SuperAdmin", "Admin"].includes(session.user.role);
+    const roleIsAdmin = ["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role);
     const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
     const canAssignWork = roleIsAdmin || companyCoordinator;
     const operator = await findSessionAgentWithTeam({

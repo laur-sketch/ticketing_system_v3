@@ -130,7 +130,17 @@ export async function POST(req: Request) {
   const travelerAgentIds = normalizeTravelerAgentIds({
     createdByAgentId: creatorAgentId,
     additionalTravelerAgentIds: additionalTravelerIds,
+    exemptRequesterFromTravelers:
+      String(form.get("exemptRequesterFromTravelers") ?? "").trim() === "1" ||
+      String(form.get("exemptRequesterFromTravelers") ?? "").trim().toLowerCase() ===
+        "true",
   });
+  if (travelerAgentIds.length === 0) {
+    return NextResponse.json(
+      { error: "Add at least one traveler, or leave the requestor on the travelers list." },
+      { status: 400 },
+    );
+  }
 
   let locations: Array<{
     label?: string;
@@ -208,6 +218,9 @@ export async function POST(req: Request) {
           typeof parsed.actualDepartureEndedLongitude === "number"
             ? parsed.actualDepartureEndedLongitude
             : null,
+        startGuardOnDuty:
+          typeof parsed.startGuardOnDuty === "string" ? parsed.startGuardOnDuty : "",
+        endGuardOnDuty: typeof parsed.endGuardOnDuty === "string" ? parsed.endGuardOnDuty : "",
       };
     } catch {
       return NextResponse.json({ error: "Invalid gatePassJson." }, { status: 400 });
@@ -362,11 +375,13 @@ export async function POST(req: Request) {
             ),
             actualDepartureStartedLatitude: gatePassDraft.actualDepartureStartedLatitude,
             actualDepartureStartedLongitude: gatePassDraft.actualDepartureStartedLongitude,
+            gatePassStartGuardOnDuty: gatePassDraft.startGuardOnDuty.trim() || null,
             actualDepartureEndedAt: parseOptionalDateTimeInput(
               gatePassDraft.actualDepartureEndedAt,
             ),
             actualDepartureEndedLatitude: gatePassDraft.actualDepartureEndedLatitude,
             actualDepartureEndedLongitude: gatePassDraft.actualDepartureEndedLongitude,
+            gatePassEndGuardOnDuty: gatePassDraft.endGuardOnDuty.trim() || null,
           }
         : { included: false },
       status: "SUBMITTED",

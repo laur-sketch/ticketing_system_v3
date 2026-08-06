@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DateTime } from "luxon";
-import { FileText, ImagePlus, Loader2, MapPin, X } from "lucide-react";
+import { FileText, ImagePlus, Loader2, MapPin, Paperclip, Plus, X } from "lucide-react";
+import { INTAKE_ATTACHMENT_ACCEPT } from "@/lib/ticket-intake-screenshots-constants";
 import { MapLocationPicker } from "@/components/task-board/MapLocationPicker";
 import {
   TravelOrderPageNav,
@@ -27,10 +28,14 @@ import {
   isTravelOrderApproved,
   isTravelOrderRunning,
   isTravelOrderFileImage,
+  isTravelOrderConfirmReady,
+  MAX_TRAVEL_ORDER_ATTACHMENTS,
   TRAVEL_ORDER_STATUS,
   travelOrderApprovedByLabel,
+  travelOrderHasGatePass,
   travelOrderLocationVisitStatus,
   travelOrderLocationVisitStatusLabel,
+  travelOrderLocationsUnlocked,
   travelOrderVehicleLabel,
   type TravelOrderDto,
   type TravelOrderGatePassDraft,
@@ -186,23 +191,18 @@ export function TravelOrderSummaryPanel({
     const key = `gp-${visitAction}-${order.id}`;
     setBusyKey(key);
     setActionError(null);
-    let latitude: number | null = null;
-    let longitude: number | null = null;
+    const draft = gatePassValue(order);
     try {
       const gps = await readDeviceGps();
-      latitude = gps.latitude;
-      longitude = gps.longitude;
-    } catch {
-      // GPS optional for Gate Pass.
-    }
-    try {
       await patchGatePass(order.id, {
         action: "gate-pass-visit",
         gatePass: {
           visitAction,
-          latitude,
-          longitude,
+          latitude: gps.latitude,
+          longitude: gps.longitude,
           capturedAt: new Date().toISOString(),
+          startGuardOnDuty: draft.startGuardOnDuty,
+          endGuardOnDuty: draft.endGuardOnDuty,
         },
       });
     } catch (err: unknown) {
@@ -231,6 +231,8 @@ export function TravelOrderSummaryPanel({
             gatePass: {
               ...draft,
               included: true,
+              startGuardOnDuty: draft.startGuardOnDuty,
+              endGuardOnDuty: draft.endGuardOnDuty,
             },
           });
         } catch (err: unknown) {
@@ -468,6 +470,68 @@ export function TravelOrderSummaryPanel({
     remarksTimers.current.set(key, timer);
   }
 
+  async function uploadOrderAttachments(order: TravelOrderDto, fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    const existing = order.attachments ?? [];
+    const remaining = MAX_TRAVEL_ORDER_ATTACHMENTS - existing.length;
+    if (remaining <= 0) {
+      setActionError(`You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.`);
+      return;
+    }
+    const files = Array.from(fileList).slice(0, remaining);
+    const key = `order-att-${order.id}`;
+    setBusyKey(key);
+    setActionError(null);
+    try {
+      const form = new FormData();
+      for (const file of files) form.append("attachment", file);
+      const res = await fetch(
+        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/attachments`,
+        { method: "POST", body: form },
+      );
+      const payload = (await res.json().catch(() => ({}))) as {
+        travelOrder?: TravelOrderDto;
+        error?: string;
+      };
+      if (!res.ok || !payload.travelOrder) {
+        throw new Error(payload.error ?? "Could not upload attachments.");
+      }
+      replaceOrder(payload.travelOrder);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Could not upload attachments.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function removeOrderAttachment(order: TravelOrderDto, storedFileName: string) {
+    const key = `rm-order-${order.id}-${storedFileName}`;
+    setBusyKey(key);
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/attachments`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ removeAttachment: storedFileName }),
+        },
+      );
+      const payload = (await res.json().catch(() => ({}))) as {
+        travelOrder?: TravelOrderDto;
+        error?: string;
+      };
+      if (!res.ok || !payload.travelOrder) {
+        throw new Error(payload.error ?? "Could not remove attachment.");
+      }
+      replaceOrder(payload.travelOrder);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Could not remove attachment.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function uploadLocationImages(order: TravelOrderDto, loc: TravelOrderLocationDto, fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     const remaining = MAX_LOCATION_IMAGES - loc.attachments.length;
@@ -541,6 +605,33 @@ export function TravelOrderSummaryPanel({
     });
   }
 
+  function openGatePassGpsPin(order: TravelOrderDto, kind: "start" | "end") {
+    const gp = gatePassValue(order);
+    if (kind === "start") {
+      if (gp.actualDepartureStartedLatitude == null || gp.actualDepartureStartedLongitude == null) {
+        return;
+      }
+      setMapLoc({
+        label: "Gate Pass · Actual Departure",
+        kind: "start",
+        latitude: gp.actualDepartureStartedLatitude,
+        longitude: gp.actualDepartureStartedLongitude,
+        capturedAt: gp.actualDepartureStartedAt,
+      });
+      return;
+    }
+    if (gp.actualDepartureEndedLatitude == null || gp.actualDepartureEndedLongitude == null) {
+      return;
+    }
+    setMapLoc({
+      label: "Gate Pass · Actual Arrival",
+      kind: "end",
+      latitude: gp.actualDepartureEndedLatitude,
+      longitude: gp.actualDepartureEndedLongitude,
+      capturedAt: gp.actualDepartureEndedAt,
+    });
+  }
+
   if (loading) {
     return (
       <p className="flex items-center gap-2 text-xs text-zinc-500">
@@ -596,6 +687,9 @@ export function TravelOrderSummaryPanel({
             order,
             { canAssignWork },
           );
+          const confirmReady = isTravelOrderConfirmReady(order);
+          const locationsUnlocked = travelOrderLocationsUnlocked(order);
+          const hasGatePass = travelOrderHasGatePass(order);
           const rejected = order.status === TRAVEL_ORDER_STATUS.REJECTED;
           const cancelled = order.status === TRAVEL_ORDER_STATUS.CANCELLED;
           const canCancelThis = canCancelTravelOrderNow(operatorAgentId, order);
@@ -700,50 +794,115 @@ export function TravelOrderSummaryPanel({
                     </p>
                   </div>
 
-                  {(order.attachments?.length ?? 0) > 0 ? (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
-                        Attachments
-                      </p>
-                      <ul className="flex flex-wrap gap-2">
-                        {order.attachments!.map((att) => {
-                          const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
-                          const isImage = isTravelOrderFileImage(att);
-                          return (
-                            <li key={att.storedFileName}>
-                              {isImage ? (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="block overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900"
-                                  title={att.originalName}
-                                >
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={href}
-                                    alt={att.originalName}
-                                    className="h-20 w-20 object-cover"
-                                  />
-                                </a>
+                  {(() => {
+                    const attachments = order.attachments ?? [];
+                    const canManageAttachments = approved && allowCheckIn && !rejected && !cancelled;
+                    const remainingSlots = MAX_TRAVEL_ORDER_ATTACHMENTS - attachments.length;
+                    const uploadBusy = busyKey === `order-att-${order.id}`;
+                    if (!canManageAttachments && attachments.length === 0) return null;
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                          Attachments
+                        </p>
+                        {attachments.length > 0 ? (
+                          <ul className="flex flex-wrap gap-2">
+                            {attachments.map((att) => {
+                              const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
+                              const isImage = isTravelOrderFileImage(att);
+                              const removing = busyKey === `rm-order-${order.id}-${att.storedFileName}`;
+                              return (
+                                <li key={att.storedFileName} className="relative">
+                                  {isImage ? (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900"
+                                      title={att.originalName}
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={href}
+                                        alt={att.originalName}
+                                        className="h-20 w-20 object-cover"
+                                      />
+                                    </a>
+                                  ) : (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                      title={att.originalName}
+                                    >
+                                      <FileText className="size-3.5 shrink-0" aria-hidden />
+                                      <span className="truncate">{att.originalName}</span>
+                                    </a>
+                                  )}
+                                  {canManageAttachments ? (
+                                    <button
+                                      type="button"
+                                      disabled={removing || uploadBusy}
+                                      onClick={() =>
+                                        void removeOrderAttachment(order, att.storedFileName)
+                                      }
+                                      className="absolute -right-1.5 -top-1.5 rounded-full border border-zinc-300 bg-white p-0.5 text-zinc-600 shadow-sm hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
+                                      title="Remove attachment"
+                                    >
+                                      {removing ? (
+                                        <Loader2 className="size-3 animate-spin" aria-hidden />
+                                      ) : (
+                                        <X className="size-3" aria-hidden />
+                                      )}
+                                    </button>
+                                  ) : null}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : null}
+                        {canManageAttachments ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              id={`travel-order-att-${order.id}`}
+                              type="file"
+                              multiple
+                              accept={INTAKE_ATTACHMENT_ACCEPT}
+                              className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+                              tabIndex={-1}
+                              aria-hidden
+                              disabled={uploadBusy || remainingSlots <= 0}
+                              onChange={(e) => {
+                                void uploadOrderAttachments(order, e.target.files);
+                                e.target.value = "";
+                              }}
+                            />
+                            <button
+                              type="button"
+                              disabled={uploadBusy || remainingSlots <= 0}
+                              onClick={() =>
+                                document.getElementById(`travel-order-att-${order.id}`)?.click()
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                            >
+                              {uploadBusy ? (
+                                <Loader2 className="size-3.5 animate-spin" aria-hidden />
                               ) : (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                                  title={att.originalName}
-                                >
-                                  <FileText className="size-3.5 shrink-0" aria-hidden />
-                                  <span className="truncate">{att.originalName}</span>
-                                </a>
+                                <Plus className="size-3.5" aria-hidden />
                               )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ) : null}
+                              <Paperclip className="size-3.5" aria-hidden />
+                              Add files
+                            </button>
+                            <span className="text-[10px] text-zinc-500">
+                              {attachments.length}/{MAX_TRAVEL_ORDER_ATTACHMENTS} · PDF, Word, Excel,
+                              images · available while travel order is running
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
 
                   <div className="space-y-1">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
@@ -783,6 +942,11 @@ export function TravelOrderSummaryPanel({
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
                       Location
                     </p>
+                    {approved && hasGatePass && !locationsUnlocked ? (
+                      <p className="rounded-lg border border-dashed border-orange-400/50 bg-orange-500/5 px-2.5 py-2 text-[11px] text-orange-800 dark:border-orange-500/30 dark:text-orange-200">
+                        Locations stay locked until Gate Pass Actual Departure Start is captured.
+                      </p>
+                    ) : null}
                     <ul className="space-y-2">
                       {order.locations.map((loc) => {
                         const visitStatus = travelOrderLocationVisitStatus(loc);
@@ -796,6 +960,7 @@ export function TravelOrderSummaryPanel({
                         const hasEndGps =
                           (loc.endedLatitude ?? loc.latitude) != null &&
                           (loc.endedLongitude ?? loc.longitude) != null;
+                        const locActionsEnabled = allowCheckIn && locationsUnlocked;
 
                         if (!approved) {
                           return (
@@ -808,7 +973,27 @@ export function TravelOrderSummaryPanel({
                                 {loc.label}
                               </p>
                               <p className="mt-0.5 text-[11px] text-zinc-500">
-                                Start/End GPS capture, remarks, and images unlock after approval.
+                                Start/End GPS capture, remarks, and images unlock after approval
+                                {hasGatePass
+                                  ? ", then after Gate Pass Actual Departure Start."
+                                  : "."}
+                              </p>
+                            </li>
+                          );
+                        }
+
+                        if (!locationsUnlocked) {
+                          return (
+                            <li
+                              key={loc.id}
+                              className="rounded-lg border border-dashed border-zinc-300 px-2.5 py-2 dark:border-zinc-700"
+                            >
+                              <p className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                <MapPin className="size-3.5 text-orange-600" aria-hidden />
+                                {loc.label}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-zinc-500">
+                                Locked until Gate Pass Actual Departure Start.
                               </p>
                             </li>
                           );
@@ -852,7 +1037,7 @@ export function TravelOrderSummaryPanel({
                                   </p>
                                   <button
                                     type="button"
-                                    disabled={!allowCheckIn || started || startBusy || ended}
+                                    disabled={!locActionsEnabled || started || startBusy || ended}
                                     onClick={() => void captureVisit(order, loc, "start")}
                                     className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-45"
                                   >
@@ -893,7 +1078,7 @@ export function TravelOrderSummaryPanel({
                                   </p>
                                   <button
                                     type="button"
-                                    disabled={!allowCheckIn || !started || ended || endBusy}
+                                    disabled={!locActionsEnabled || !started || ended || endBusy}
                                     onClick={() => void captureVisit(order, loc, "end")}
                                     className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-200"
                                   >
@@ -936,7 +1121,7 @@ export function TravelOrderSummaryPanel({
                                 <textarea
                                   rows={2}
                                   defaultValue={loc.remarks ?? ""}
-                                  disabled={!allowCheckIn}
+                                  disabled={!locActionsEnabled}
                                   onChange={(e) =>
                                     scheduleRemarksSave(order.id, loc.id, e.target.value)
                                   }
@@ -945,9 +1130,36 @@ export function TravelOrderSummaryPanel({
                                 />
                               </label>
                               <div className="flex flex-wrap items-center gap-2">
-                                <label
+                                <input
+                                  id={`travel-loc-img-${loc.id}`}
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/jpg"
+                                  multiple
+                                  className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+                                  tabIndex={-1}
+                                  aria-hidden
+                                  disabled={
+                                    !locActionsEnabled ||
+                                    loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                    busyKey === `img-${loc.id}`
+                                  }
+                                  onChange={(e) => {
+                                    void uploadLocationImages(order, loc, e.target.files);
+                                    e.target.value = "";
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  disabled={
+                                    !locActionsEnabled ||
+                                    loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                    busyKey === `img-${loc.id}`
+                                  }
+                                  onClick={() =>
+                                    document.getElementById(`travel-loc-img-${loc.id}`)?.click()
+                                  }
                                   className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${
-                                    !allowCheckIn ||
+                                    !locActionsEnabled ||
                                     loc.attachments.length >= MAX_LOCATION_IMAGES ||
                                     busyKey === `img-${loc.id}`
                                       ? "pointer-events-none opacity-50"
@@ -960,22 +1172,7 @@ export function TravelOrderSummaryPanel({
                                     <ImagePlus className="size-3.5 text-orange-600" aria-hidden />
                                   )}
                                   Upload image
-                                  <input
-                                    type="file"
-                                    accept="image/jpeg,image/png,image/jpg"
-                                    multiple
-                                    className="sr-only"
-                                    disabled={
-                                      !allowCheckIn ||
-                                      loc.attachments.length >= MAX_LOCATION_IMAGES ||
-                                      busyKey === `img-${loc.id}`
-                                    }
-                                    onChange={(e) => {
-                                      void uploadLocationImages(order, loc, e.target.files);
-                                      e.target.value = "";
-                                    }}
-                                  />
-                                </label>
+                                </button>
                                 <span className="text-[10px] text-zinc-500">
                                   {loc.attachments.length}/{MAX_LOCATION_IMAGES} · JPG/PNG
                                 </span>
@@ -1004,7 +1201,7 @@ export function TravelOrderSummaryPanel({
                                             className="h-16 w-16 object-cover"
                                           />
                                         </a>
-                                        {allowCheckIn ? (
+                                        {locActionsEnabled ? (
                                           <button
                                             type="button"
                                             disabled={removing}
@@ -1375,6 +1572,7 @@ export function TravelOrderSummaryPanel({
                             <button
                               type="button"
                               disabled={
+                                !confirmReady ||
                                 busyKey === `confirm-${order.id}` ||
                                 busyKey === `reject-${order.id}` ||
                                 declineDraft?.orderId === order.id
@@ -1405,6 +1603,13 @@ export function TravelOrderSummaryPanel({
                               Do not confirm
                             </button>
                           </div>
+                          {!confirmReady ? (
+                            <p className="text-[11px] text-zinc-500">
+                              {hasGatePass
+                                ? "Confirm unlocks after Gate Pass Actual Arrival End is captured."
+                                : "Confirm unlocks after every location visit is completed."}
+                            </p>
+                          ) : null}
                           {declineDraft?.orderId === order.id && declineDraft.asConfirmer ? (
                             <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
                               <label className="block space-y-1">
@@ -1482,6 +1687,7 @@ export function TravelOrderSummaryPanel({
                       scheduleGatePassEstimateSave(order.id, next);
                     }}
                     onCaptureActual={(action) => void captureGatePassActual(order, action)}
+                    onOpenGps={(kind) => openGatePassGpsPin(order, kind)}
                   />
                 </div>
               )}

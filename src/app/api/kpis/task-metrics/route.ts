@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import {
@@ -12,7 +13,7 @@ import { parseTaskMetricsTaskType } from "@/lib/task-metrics-task-type";
 
 export async function GET(req: Request) {
   const startedAt = Date.now();
-  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "HighAdmin", "Admin", "Personnel"]);
   if (unauthorized) return unauthorized;
 
   const { searchParams } = new URL(req.url);
@@ -28,7 +29,7 @@ export async function GET(req: Request) {
   const companyId =
     session?.user?.role === "Admin"
       ? (await resolveStaffCompanyTeamId(session.user.email)) ?? "__none__"
-      : session?.user?.role === "SuperAdmin"
+      : isElevatedUserRole(session?.user?.role)
         ? searchParams.get("companyId")?.trim() || null
         : null;
   // Apply the company scope for SuperAdmin too, so the personnel view matches

@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, Menu, SlidersHorizontal } from "lucide-react";
@@ -86,10 +88,10 @@ export function Nav() {
   const mobileNotifPanelRef = useRef<HTMLDivElement | null>(null);
   const desktopNotifPanelRef = useRef<HTMLDivElement | null>(null);
   const role = data?.user?.role;
-  const isAdminRole = role === "SuperAdmin" || role === "Admin";
+  const isAdminRole = isElevatedPlatformRole(role) || role === "Admin";
   const userEmail = data?.user?.email ?? "unknown";
   const showUtilities =
-    role === "SuperAdmin" || role === "Admin" || role === "Personnel";
+    isElevatedPlatformRole(role) || role === "Admin" || role === "Personnel";
 
   const refreshUnreadOpenCount = useCallback(async (lastSeenMs: number, email: string) => {
     try {
@@ -527,7 +529,7 @@ export function Nav() {
               >
                 <SlidersHorizontal size={15} />
               </Link>
-              <PatchNotesControl visible={role === "SuperAdmin"} />
+              <PatchNotesControl visible={isElevatedPlatformRole(role)} />
             </div>
           </>
         ) : null}

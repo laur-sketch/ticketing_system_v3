@@ -11,7 +11,7 @@ const ON_DUTY_PAGE_SIZE = 18;
 export default async function ActivitiesPage() {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) redirect("/");
 
   const lockedCompanyFilter = await resolveAdminOnDutyCompanyFilter(
     session.user.role,

@@ -141,6 +141,41 @@ export function numericalRecordProgressPercent(
   return Math.round((act / target) * 100);
 }
 
+/**
+ * Total recorded-data percent across sub-tasks with a numerical target:
+ * `sum(actual) / sum(target) * 100` (missing actuals count as 0).
+ */
+export function totalRecordedDataPercent(
+  items: ReadonlyArray<
+    Pick<
+      SubKpiItem,
+      | "completionRequirements"
+      | "completionMode"
+      | "screenshotsEnabled"
+      | "beforeScreenshot"
+      | "afterScreenshot"
+      | "numericalValue"
+      | "numericalTarget"
+    >
+  >,
+): number | null {
+  let sumActual = 0;
+  let sumTarget = 0;
+  let counted = 0;
+  for (const item of items) {
+    const target = item.numericalTarget;
+    if (target == null || !Number.isFinite(target) || target === 0) continue;
+    const req = resolveSubKpiCompletionRequirements(item);
+    const hasValue = hasNumericalRecord(item);
+    if (!req.numerical && !hasValue) continue;
+    counted += 1;
+    sumTarget += target;
+    sumActual += hasValue ? (item.numericalValue as number) : 0;
+  }
+  if (counted === 0 || sumTarget === 0) return null;
+  return Math.round((sumActual / sumTarget) * 100);
+}
+
 /** Sub-task progress (0–1+) averaged across enabled completion requirements. */
 export function subKpiItemProgressFraction(
   item: Pick<

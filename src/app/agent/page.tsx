@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Search } from "lucide-react";
@@ -174,12 +175,12 @@ export default async function AgentHome({
 
   const showKpiCompanyFilter =
     boardTab === "kpi" &&
-    (session.user.role === "SuperAdmin" ||
+    (isElevatedUserRole(session.user.role) ||
       companyCoordinator);
   const showTicketCompanyFilter =
     boardTab === "ticket" &&
     session.user.role !== "Personnel" &&
-    (session.user.role === "SuperAdmin" ||
+    (isElevatedUserRole(session.user.role) ||
       session.user.role === "Admin" ||
       companyCoordinator);
   const showTopTicketFilters = boardTab !== "kpi";
@@ -192,14 +193,14 @@ export default async function AgentHome({
 
   const adminScopedCompanyId =
     (isCompanyBoard || boardTab === "kpi") &&
-    session.user.role !== "SuperAdmin" &&
+    !isElevatedUserRole(session.user.role) &&
     (session.user.role === "Admin" || companyCoordinator)
       ? await resolveStaffCompanyTeamId(session.user.email)
       : null;
 
   /** Admin/coordinator own queue — used to keep Request Board totals aligned with Company Board. */
   const adminTicketQueueCompanyId =
-    session.user.role !== "SuperAdmin" &&
+    !isElevatedUserRole(session.user.role) &&
     (session.user.role === "Admin" || companyCoordinator)
       ? await resolveStaffCompanyTeamId(session.user.email)
       : null;
@@ -233,7 +234,7 @@ export default async function AgentHome({
 
   /** Roster team ids for SuperAdmin Request Board when company = ALL (matches Company Board). */
   const rosterTeamIdsForTicketScope =
-    boardTab === "ticket" && session.user.role === "SuperAdmin"
+    boardTab === "ticket" && isElevatedUserRole(session.user.role)
       ? (
           rosterTeamsForTicketFilter.length > 0
             ? rosterTeamsForTicketFilter
@@ -317,7 +318,7 @@ export default async function AgentHome({
     } else if (adminTicketQueueCompanyId) {
       /** Admin/coordinator: default to own queue so totals match Company Board. */
       companyScope = { teamId: adminTicketQueueCompanyId };
-    } else if (session.user.role === "SuperAdmin" && rosterTeamIdsForTicketScope.length > 0) {
+    } else if (isElevatedUserRole(session.user.role) && rosterTeamIdsForTicketScope.length > 0) {
       /** SuperAdmin with All: roster companies only (same universe as Company Board). */
       companyScope = { teamId: { in: rosterTeamIdsForTicketScope } };
     }
@@ -1231,7 +1232,7 @@ export default async function AgentHome({
                     adminScopedCompanyId ?? (showKpiCompanyFilter ? selectedCompany : "ALL")
                   }
                   showAdminTaskManagement={
-                    session.user.role === "SuperAdmin" || session.user.role === "Admin"
+                    isElevatedUserRole(session.user.role) || session.user.role === "Admin"
                   }
                   focusTaskId={focusTaskId}
                 />

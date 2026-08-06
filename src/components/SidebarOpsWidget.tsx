@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -146,7 +148,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
   const { data: session } = useSession();
   const role = session?.user?.role ?? "Personnel";
   const email = session?.user?.email ?? "";
-  const isAdmin = role === "SuperAdmin" || role === "Admin";
+  const isAdmin = isElevatedPlatformRole(role) || role === "Admin";
   const [data, setData] = useState<SidebarSummary | null>(null);
   const [failed, setFailed] = useState(false);
   const [editing, setEditing] = useState(false);

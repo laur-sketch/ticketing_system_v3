@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { prisma } from "@/lib/prisma";
-import { isTravelOrderApproved, isTravelOrderTraveler, isValidLatLng } from "@/lib/travel-order";
+import { isTravelOrderApproved, isTravelOrderTraveler, isValidLatLng, travelOrderLocationsUnlocked } from "@/lib/travel-order";
 import {
   findTravelOrderById,
   serializeTravelOrder,
@@ -46,6 +46,18 @@ async function loadApprovedLocation(
         {
           error:
             "Location Start/End GPS, remarks, and images are available after the travel order is approved.",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  if (!travelOrderLocationsUnlocked(order)) {
+    return {
+      error: NextResponse.json(
+        {
+          error:
+            "Locations stay locked until Gate Pass Actual Departure Start is captured.",
         },
         { status: 400 },
       ),

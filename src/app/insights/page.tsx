@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -125,7 +127,7 @@ function InsightsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isPersonnel = session?.user?.role === "Personnel";
-  const isAdminRole = session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
+  const isAdminRole = isElevatedPlatformRole(session?.user?.role) || session?.user?.role === "Admin";
   const isCompanyScopedAdmin = session?.user?.role === "Admin";
   const tabFromUrl = parseInsightsTab(searchParams.get("tab"));
   const [activeTab, setActiveTab] = useState<InsightsTab>(tabFromUrl ?? "ticket-metrics");
@@ -176,6 +178,7 @@ function InsightsPageInner() {
   const [personnelRfpFinanceMetrics, setPersonnelRfpFinanceMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelIrsCanvassMetrics, setPersonnelIrsCanvassMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelFtrPreparedMetrics, setPersonnelFtrPreparedMetrics] = useState<PersonnelTicketMetric[]>([]);
+  const [personnelAcaSubmittedMetrics, setPersonnelAcaSubmittedMetrics] = useState<PersonnelTicketMetric[]>([]);
   const [personnelDelayPenalties, setPersonnelDelayPenalties] = useState<PersonnelDelayPenaltyRow[]>([]);
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
@@ -240,6 +243,7 @@ function InsightsPageInner() {
         setPersonnelRfpFinanceMetrics([]);
         setPersonnelIrsCanvassMetrics([]);
         setPersonnelFtrPreparedMetrics([]);
+        setPersonnelAcaSubmittedMetrics([]);
         setPersonnelDelayPenalties([]);
         return;
       }
@@ -252,6 +256,7 @@ function InsightsPageInner() {
         personnelRfpFinanceMetrics?: PersonnelTicketMetric[];
         personnelIrsCanvassMetrics?: PersonnelTicketMetric[];
         personnelFtrPreparedMetrics?: PersonnelTicketMetric[];
+        personnelAcaSubmittedMetrics?: PersonnelTicketMetric[];
         personnelDelayPenalties?: PersonnelDelayPenaltyRow[];
       };
       setTaskMetricsHelpdesk(json.taskMetricsHelpdesk);
@@ -262,6 +267,7 @@ function InsightsPageInner() {
       setPersonnelRfpFinanceMetrics(json.personnelRfpFinanceMetrics ?? []);
       setPersonnelIrsCanvassMetrics(json.personnelIrsCanvassMetrics ?? []);
       setPersonnelFtrPreparedMetrics(json.personnelFtrPreparedMetrics ?? []);
+      setPersonnelAcaSubmittedMetrics(json.personnelAcaSubmittedMetrics ?? []);
       setPersonnelDelayPenalties(json.personnelDelayPenalties ?? []);
     } finally {
       setTaskMetricsLoading(false);
@@ -478,6 +484,7 @@ function InsightsPageInner() {
             personnelRfpFinanceMetrics={personnelRfpFinanceMetrics}
             personnelIrsCanvassMetrics={personnelIrsCanvassMetrics}
             personnelFtrPreparedMetrics={personnelFtrPreparedMetrics}
+            personnelAcaSubmittedMetrics={personnelAcaSubmittedMetrics}
             personnelDelayPenalties={personnelDelayPenalties}
             helpdeskTickets={taskMetricsHelpdesk}
             userSupportTickets={taskMetricsUserSupport}
@@ -776,6 +783,7 @@ function TaskMetricsPanel({
   personnelRfpFinanceMetrics,
   personnelIrsCanvassMetrics,
   personnelFtrPreparedMetrics,
+  personnelAcaSubmittedMetrics,
   personnelDelayPenalties,
   helpdeskTickets,
   userSupportTickets,
@@ -807,6 +815,7 @@ function TaskMetricsPanel({
   personnelRfpFinanceMetrics: PersonnelTicketMetric[];
   personnelIrsCanvassMetrics: PersonnelTicketMetric[];
   personnelFtrPreparedMetrics: PersonnelTicketMetric[];
+  personnelAcaSubmittedMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
@@ -1042,6 +1051,26 @@ function TaskMetricsPanel({
       });
     }
 
+    const liveAcaSubmittedByName = new Map<string, PersonnelTicketMetric>();
+    for (const metric of personnelAcaSubmittedMetrics) {
+      const key = normalizePersonName(metric.name);
+      if (!key) continue;
+      const existing = liveAcaSubmittedByName.get(key);
+      if (!existing) {
+        liveAcaSubmittedByName.set(key, { ...metric });
+        continue;
+      }
+      const closed = existing.closed + metric.closed;
+      const pending = existing.pending + metric.pending;
+      const total = closed + pending;
+      liveAcaSubmittedByName.set(key, {
+        ...existing,
+        closed,
+        pending,
+        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+      });
+    }
+
     const cards: PersonnelCombinedMetricCard[] = rows.map((row) => {
       const livePenalty =
         penaltyById.get(row.sourceUserId) ??
@@ -1074,6 +1103,7 @@ function TaskMetricsPanel({
       const rfpFinance = liveRfpFinanceByName.get(normalizePersonName(row.name)) ?? null;
       const irsCanvass = liveIrsCanvassByName.get(normalizePersonName(row.name)) ?? null;
       const ftrPrepared = liveFtrPreparedByName.get(normalizePersonName(row.name)) ?? null;
+      const acaSubmitted = liveAcaSubmittedByName.get(normalizePersonName(row.name)) ?? null;
 
       return {
         id: row.sourceUserId,
@@ -1117,6 +1147,13 @@ function TaskMetricsPanel({
               efficiency: Math.round(ftrPrepared.efficiency),
             }
           : null,
+        acaSubmitted: acaSubmitted
+          ? {
+              closed: acaSubmitted.closed,
+              pending: acaSubmitted.pending,
+              efficiency: Math.round(acaSubmitted.efficiency),
+            }
+          : null,
         tasks:
           row.totalTasks > 0 || row.taskEfficiency != null
             ? {
@@ -1147,6 +1184,7 @@ function TaskMetricsPanel({
         rfpFinance: null,
         irsCanvass: null,
         ftrPrepared: null,
+        acaSubmitted: null,
         tasks: null,
       };
       cards.push(card);
@@ -1200,6 +1238,15 @@ function TaskMetricsPanel({
         efficiency: Math.round(live.efficiency),
       };
     }
+    for (const live of liveAcaSubmittedByName.values()) {
+      const card = ensureCard(live.name, live.id);
+      if (!card) continue;
+      card.acaSubmitted = {
+        closed: live.closed,
+        pending: live.pending,
+        efficiency: Math.round(live.efficiency),
+      };
+    }
 
     return cards;
   }, [
@@ -1211,6 +1258,7 @@ function TaskMetricsPanel({
     personnelRfpFinanceMetrics,
     personnelIrsCanvassMetrics,
     personnelFtrPreparedMetrics,
+    personnelAcaSubmittedMetrics,
   ]);
 
   return (
@@ -1439,16 +1487,20 @@ function TaskMetricsPanel({
             reportingPeriodLabel={reportingPeriodLabel}
             helpdeskTickets={helpdeskTickets}
             userSupportTickets={userSupportTickets}
-            includeChecklistPillars={showCompanyTaskMetrics}
-            includeTicketPillars={false}
+            includeChecklistPillars={showCompanyTaskMetrics && taskType !== "requests"}
+            includeTicketPillars={taskType === "requests"}
             preferPillarOrder={
-              taskType === "task"
-                ? ["ONE-OFF", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"]
-                : taskType === "field"
-                  ? ["FIELD ASSIGNMENT"]
-                  : ["PROJECTS"]
+              taskType === "requests"
+                ? null
+                : taskType === "task"
+                  ? ["ONE-OFF", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY"]
+                  : taskType === "field"
+                    ? ["FIELD ASSIGNMENT"]
+                    : ["PROJECTS"]
             }
-            showEmptyPillars={taskType === "task" || taskType === "field" || taskType === "project"}
+            showEmptyPillars={
+              taskType === "task" || taskType === "field" || taskType === "project"
+            }
             canExtendView={canExtendView}
           />
         ) : (

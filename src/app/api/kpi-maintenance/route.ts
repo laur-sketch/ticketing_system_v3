@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { KpiFrequency, Prisma } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
@@ -51,6 +52,8 @@ import {
   wrapForPersist,
   wrapForPersistWithExistingMeta,
   markProjectTask,
+  setInvertedRecording,
+  setLinkedJobOrderOnSubKpis,
   canAdjustNumericalTarget,
   canMutateSubKpiAssignee,
   hasItemsInUnassignedSegment,
@@ -448,9 +451,9 @@ export async function GET(req: Request) {
       };
     }),
     canAssignWork: perms.canAssignWork,
-    canUnassignWork: session.user.role === "SuperAdmin",
-    canCompleteUnassignedWork: session.user.role === "SuperAdmin",
-    canAssignOffline: session.user.role === "SuperAdmin",
+    canUnassignWork: isElevatedUserRole(session.user.role),
+    canCompleteUnassignedWork: isElevatedUserRole(session.user.role),
+    canAssignOffline: isElevatedUserRole(session.user.role),
     operatorAgentId: perms.operator?.id ?? null,
     operatorAgentName: perms.operator?.name ?? null,
     rosterCompanies: perms.canAssignWork
@@ -524,6 +527,8 @@ export async function POST(req: Request) {
     taskDelayPenaltyFrequency?: string | null;
     enableSubtaskAssignees?: boolean;
     isProject?: boolean;
+    /** Unchecked = 100%; checked items reduce the recorded percent. */
+    invertedRecording?: boolean;
     /** When creating a Project from a Job Order, auto-link after save. */
     linkedJobOrderTicketId?: string | null;
   };
@@ -586,7 +591,7 @@ export async function POST(req: Request) {
   if (assigneeId && !assignee) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
   }
-  if (assigneeId && session.user.role !== "SuperAdmin" && !(await isAgentOnDutyFromMergedDb(assigneeId))) {
+  if (assigneeId && !isElevatedUserRole(session.user.role) && !(await isAgentOnDutyFromMergedDb(assigneeId))) {
     return NextResponse.json(
       { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
       { status: 400 },
@@ -763,6 +768,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Projects must be one-off (non-recurring)." }, { status: 400 });
     }
     subKpisPersist = markProjectTask(subKpisPersist);
+  }
+  if (!isItProject && body.invertedRecording === true) {
+    subKpisPersist = setInvertedRecording(subKpisPersist, true);
   }
 
   const linkedJobOrderTicketId =
@@ -1298,7 +1306,7 @@ export async function PATCH(req: Request) {
       return true;
     }
     const subAssigneeId = subKpiAssignedAgentId(item);
-    return session.user.role === "SuperAdmin" && !kpiRow.assignedAgentId && !subAssigneeId;
+    return isElevatedUserRole(session.user.role) && !kpiRow.assignedAgentId && !subAssigneeId;
   };
   const canCompleteSubKpi = (subKpiId: string) => {
     const item = subKpiItems.find((it) => it.id === subKpiId);
@@ -1766,7 +1774,7 @@ export async function PATCH(req: Request) {
     }
     if (
       assignedAgentId &&
-      session.user.role !== "SuperAdmin" &&
+      !isElevatedUserRole(session.user.role) &&
       !(await isAgentOnDutyFromMergedDb(assignedAgentId))
     ) {
       return NextResponse.json(
@@ -2101,7 +2109,7 @@ export async function PATCH(req: Request) {
     }
     const reassignedAgentId = body.assignedAgentId?.trim() ?? "";
     if (!reassignedAgentId) {
-      if (session.user.role !== "SuperAdmin") {
+      if (!isElevatedUserRole(session.user.role)) {
         return NextResponse.json({ error: "Only SuperAdmin can move tasks back to unassigned." }, { status: 403 });
       }
       const updated = await prisma.kpiMaintenance.update({
@@ -2120,7 +2128,7 @@ export async function PATCH(req: Request) {
     if (!assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
-    if (session.user.role !== "SuperAdmin" && !(await isAgentOnDutyFromMergedDb(assignee.id))) {
+    if (!isElevatedUserRole(session.user.role) && !(await isAgentOnDutyFromMergedDb(assignee.id))) {
       return NextResponse.json(
         { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
         { status: 400 },

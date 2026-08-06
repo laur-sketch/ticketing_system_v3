@@ -6,6 +6,7 @@ import {
   loadFtrPreparedPersonnelMetrics,
   loadIrsCanvassPersonnelMetrics,
 } from "@/lib/irs-ftr-role-kpis";
+import { loadAcaSubmittedPersonnelMetrics } from "@/lib/aca-role-kpis";
 import {
   computeTaskChecklistPillarMetrics,
   enumerateYmdDaysInRange,
@@ -470,6 +471,8 @@ export type TaskMetricsPayload = {
   personnelIrsCanvassMetrics: PersonnelTicketMetric[];
   /** FTR Prepared By — closed/pending/efficiency per agent. */
   personnelFtrPreparedMetrics: PersonnelTicketMetric[];
+  /** ACA Submitted By — closed/pending/efficiency per agent. */
+  personnelAcaSubmittedMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
 };
 
@@ -488,7 +491,10 @@ export async function computeTaskMetrics(
   /** Helpdesk / User Support use Manila working days even when the browser sends UTC before hydration. */
   const helpdeskTz = snapshotTimeZoneForTaskMetrics(opts.timeZone);
   const taskType =
-    opts.taskType === "project" || opts.taskType === "field" || opts.taskType === "task"
+    opts.taskType === "project" ||
+    opts.taskType === "field" ||
+    opts.taskType === "task" ||
+    opts.taskType === "requests"
       ? opts.taskType
       : undefined;
   const workingDays = workingDayIntervalsInRange(range, helpdeskTz);
@@ -579,13 +585,14 @@ export async function computeTaskMetrics(
       ? await loadRfpRolePersonnelMetrics(scoped, workingDays)
       : { requestor: [], accounting: [], finance: [] };
 
-  const [personnelIrsCanvassMetrics, personnelFtrPreparedMetrics] =
+  const [personnelIrsCanvassMetrics, personnelFtrPreparedMetrics, personnelAcaSubmittedMetrics] =
     workingDays.length > 0
       ? await Promise.all([
           loadIrsCanvassPersonnelMetrics(scoped, workingDays),
           loadFtrPreparedPersonnelMetrics(scoped, workingDays),
+          loadAcaSubmittedPersonnelMetrics(scoped, workingDays),
         ])
-      : [[], []];
+      : [[], [], []];
 
   const personnelDelayPenalties = await loadPersonnelDelayPenalties(
     kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
@@ -603,6 +610,7 @@ export async function computeTaskMetrics(
     personnelRfpFinanceMetrics: rfpRoleMetrics.finance,
     personnelIrsCanvassMetrics,
     personnelFtrPreparedMetrics,
+    personnelAcaSubmittedMetrics,
     personnelDelayPenalties,
   };
 }
@@ -652,12 +660,13 @@ async function loadPersonnelTicketMetrics(
   // Keep the agent scope (company / personnel) — a plain `assignedAgentId: { not: null }`
   // key would silently replace the scoped filter spread before it.
   // Counts Issue/Concern, Job Order, etc. Closed uses ticket.closedAt (set when the
-  // requestor confirms / ticket closes). RFP / IRS / FTR use dedicated role KPIs
+  // requestor confirms / ticket closes). RFP / IRS / FTR / ACA use dedicated role KPIs
   // gated the same way so procedural credits are not double-counted here.
   const proceduralRequestTypes = [
     "REQUEST_FOR_PAYMENT",
     "ITEM_REQUISITION_SLIP",
     "FUND_TRANSFER_REQUEST",
+    "AUTHORITY_TO_CONDUCT_ACTIVITY",
   ] as const;
   const assignedAgentFilter =
     (scoped as { assignedAgentId?: unknown }).assignedAgentId ?? ({ not: null } as const);

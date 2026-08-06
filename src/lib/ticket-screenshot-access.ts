@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import type { Session } from "next-auth";
 import { customerCanAccessTicket } from "@/lib/access";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
@@ -48,7 +49,7 @@ export async function canAccessTicketScreenshot(
   }
 
   if (role === "Customer") return false;
-  if (role === "SuperAdmin") return true;
+  if (isElevatedUserRole(role)) return true;
 
   const operator = await findSessionAgentWithTeam({
     email: session.user.email,

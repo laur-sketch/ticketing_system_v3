@@ -19,7 +19,7 @@ const FREQ = new Set(["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "LIFETIME"]);
  * Ticket activity + ticket metrics remain in PostgreSQL.
  */
 export async function GET(req: Request) {
-  const { unauthorized } = await requireRole(["SuperAdmin", "Admin"]);
+  const { unauthorized } = await requireRole(["SuperAdmin", "HighAdmin", "Admin"]);
   if (unauthorized) return unauthorized;
 
   const { searchParams } = new URL(req.url);

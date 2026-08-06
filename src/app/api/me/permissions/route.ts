@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/access";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
@@ -12,7 +13,7 @@ export async function GET() {
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
 
   /** Assignment board is SuperAdmin / Admin only; Personnel use request-approval on tickets. */
-  const canAccessAssignmentBoard = role === "SuperAdmin" || role === "Admin";
+  const canAccessAssignmentBoard = isElevatedUserRole(role) || role === "Admin";
 
   return NextResponse.json({
     canAccessAssignmentBoard,

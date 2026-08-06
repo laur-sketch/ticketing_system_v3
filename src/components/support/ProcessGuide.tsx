@@ -108,7 +108,7 @@ const APPROVAL_LANES = [
   },
   {
     title: "Item Requisition",
-    acronym: "I.R.S.",
+    acronym: "R.S.",
     tone: "from-emerald-500/20 to-transparent",
     steps: ["Canvass", "Approve pricing", "Advance seats", "Green-lit"],
     note: "Canvassed By sets pricing; approvers complete sequential Done steps.",
@@ -212,7 +212,7 @@ export function ProcessGuide() {
           </h1>
           <p className="max-w-2xl text-sm leading-relaxed text-zinc-400 sm:text-base">
             How requests move from intake through assignment, procedural approvals, confirmation,
-            and closure — including Issue/Concern, RFP, IRS, FTR, Job Order, and ACA.
+            and closure — including Issue/Concern, RFP, R.S., FTR, Job Order, and ACA.
           </p>
           <div className="flex flex-wrap gap-3 pt-1">
             <Link

@@ -39,7 +39,7 @@ export default async function AdminTicketRequestsPage({
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) redirect("/");
 
   const params = await searchParams;
   const submitted = firstQuery(params.submitted) === "1";

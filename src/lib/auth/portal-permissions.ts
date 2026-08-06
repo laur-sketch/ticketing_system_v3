@@ -1,7 +1,7 @@
 import type { PortalRole } from "@/lib/staff-role";
 import {
   isAdminPortalRole,
-  isPlatformSuperAdminPortalRole,
+  isElevatedPlatformRole,
   isStaffPortalRole,
   normalizePortalRole,
 } from "@/lib/staff-role";
@@ -18,9 +18,9 @@ function role(ctx: PortalPermissionContext): PortalRole | null {
   return normalizePortalRole(ctx.role);
 }
 
-/** SuperAdmin: full platform access. */
+/** SuperAdmin / HighAdmin: full platform access. */
 export function canManageAllCompanies(ctx: PortalPermissionContext): boolean {
-  return isPlatformSuperAdminPortalRole(ctx.role);
+  return isElevatedPlatformRole(ctx.role);
 }
 
 /** Admin (or legacy headPrivileges): company-scoped coordinator. */
@@ -34,7 +34,10 @@ export function canCoordinateCompany(
   return ctx.staffDesignatedCompanyId === companyTeamId;
 }
 
-/** Personnel/Admin staff may be assigned tickets/KPIs within their company. */
+/**
+ * Personnel / Admin / HighAdmin may be assigned tickets/KPIs and selected as approvers.
+ * SuperAdmin stays non-assignable (HRIS super_admin is excluded from agent pickers).
+ */
 export function canBeAssignedStaffWork(ctx: PortalPermissionContext): boolean {
   return isStaffPortalRole(ctx.role);
 }
@@ -68,5 +71,7 @@ export function displayRoleLabel(ctx: PortalPermissionContext): string {
   const r = role(ctx);
   if (!r) return ctx.role;
   if (r === "Admin" && ctx.headPrivileges) return "Admin (Head)";
+  if (r === "HighAdmin") return "High Admin";
+  if (r === "SuperAdmin") return "Super Admin";
   return r;
 }

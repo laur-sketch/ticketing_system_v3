@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { Prisma, TicketStatus } from "@prisma/client/primary";
 import { requireRole } from "@/lib/access";
@@ -33,7 +34,7 @@ async function buildSidebarSummary(input: {
   email: string | null | undefined;
   name: string | null | undefined;
 }): Promise<SidebarSummary> {
-  const isSuperAdmin = input.role === "SuperAdmin";
+  const isSuperAdmin = isElevatedUserRole(input.role);
   const isPersonnel = input.role === "Personnel";
   const scopedCompanyTeamId =
     isSuperAdmin || isPersonnel ? null : await resolveStaffCompanyTeamId(input.email);

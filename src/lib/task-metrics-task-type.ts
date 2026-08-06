@@ -3,7 +3,7 @@ import { isFieldAssignmentTask, isProjectTask } from "@/lib/kpi-subkpis";
 import { usesProjectTimelineTracker } from "@/lib/it-project-subkpis";
 
 /** Task metrics Task Type filter (no All — always scoped). */
-export type TaskMetricsTaskType = "task" | "project" | "field";
+export type TaskMetricsTaskType = "task" | "project" | "field" | "requests";
 
 export const TASK_METRICS_TASK_TYPE_OPTIONS: Array<{
   value: TaskMetricsTaskType;
@@ -12,6 +12,7 @@ export const TASK_METRICS_TASK_TYPE_OPTIONS: Array<{
   { value: "task", label: "Task" },
   { value: "project", label: "Project" },
   { value: "field", label: "Field Assignment" },
+  { value: "requests", label: "Requests" },
 ];
 
 /** Fixed donut order when Task Type = Task. */
@@ -31,7 +32,7 @@ export const PROJECTS_DONUT_KEY = "PROJECTS";
 
 export function parseTaskMetricsTaskType(raw: string | null | undefined): TaskMetricsTaskType {
   const v = (raw ?? "").trim().toLowerCase();
-  if (v === "project" || v === "field") return v;
+  if (v === "project" || v === "field" || v === "requests") return v;
   return "task";
 }
 
@@ -51,7 +52,7 @@ function isFieldLike(row: { subKpis: unknown }): boolean {
 export function taskMetricsCategoryOf(row: {
   title: string;
   subKpis: unknown;
-}): TaskMetricsTaskType {
+}): Exclude<TaskMetricsTaskType, "requests"> {
   if (isFieldLike(row)) return "field";
   if (isProjectLike(row)) return "project";
   return "task";
@@ -61,6 +62,8 @@ export function kpiMatchesTaskMetricsType(
   row: { title: string; subKpis: unknown },
   taskType: TaskMetricsTaskType,
 ): boolean {
+  // Requests is ticket-based (HELPDESK / USER SUPPORT), not KpiMaintenance rows.
+  if (taskType === "requests") return false;
   return taskMetricsCategoryOf(row) === taskType;
 }
 
@@ -69,6 +72,7 @@ export function kpiMatchesTaskMetricsType(
  * - Task → ONE-OFF / DAILY / WEEKLY / MONTHLY / QUARTERLY
  * - Project → single PROJECTS bucket (all projects)
  * - Field Assignment → single FIELD ASSIGNMENT bucket
+ * - Requests → no checklist donuts (ticket HELPDESK / USER SUPPORT only)
  */
 export function donutKeyForTaskMetricsRow(
   row: {
@@ -81,6 +85,7 @@ export function donutKeyForTaskMetricsRow(
   },
   taskType: TaskMetricsTaskType,
 ): string | null {
+  if (taskType === "requests") return null;
   if (!kpiMatchesTaskMetricsType(row, taskType)) return null;
 
   if (taskType === "field") return FIELD_ASSIGNMENT_DONUT_KEY;

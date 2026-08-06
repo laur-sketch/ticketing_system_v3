@@ -51,6 +51,12 @@ export type PersonnelCombinedMetricCard = {
     pending: number;
     efficiency: number;
   } | null;
+  /** ACA Submitted By role KPI. */
+  acaSubmitted: {
+    closed: number;
+    pending: number;
+    efficiency: number;
+  } | null;
   tasks: {
     closed: number;
     pending: number;
@@ -84,6 +90,7 @@ export function personnelRequestBuckets(
     row.rfpFinance,
     row.irsCanvass,
     row.ftrPrepared,
+    row.acaSubmitted,
   ].filter((bucket): bucket is NonNullable<typeof bucket> => bucket != null);
 }
 
@@ -315,6 +322,7 @@ export function mergePersonnelMetricCards(
       rfpFinance: null,
       irsCanvass: null,
       ftrPrepared: null,
+      acaSubmitted: null,
       tasks: null,
     };
     // The same person can own several agent rows (legacy emails, duplicate
@@ -344,6 +352,7 @@ export function mergePersonnelMetricCards(
       rfpFinance: null,
       irsCanvass: null,
       ftrPrepared: null,
+      acaSubmitted: null,
       tasks: null,
     };
     const normalized = normalizePersonnelTaskTotals(task.total, task.done);

@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { findPortalByEmailOnly } from "@/lib/portal-account";
 import { loadPortalStaffAssignmentColorMap } from "@/lib/portal-staff-assignment-color-sql";
 import {
@@ -110,7 +111,7 @@ export async function loadPersonnelAccountsPayload(viewer: {
   email: string | null | undefined;
 }): Promise<PersonnelAccountsPayload> {
   const email = (viewer.email ?? "").trim().toLowerCase();
-  const isSuperAdmin = viewer.role === "SuperAdmin";
+  const isSuperAdmin = isElevatedUserRole(viewer.role);
   const sourceTags = resolveHrisSourceTags();
   const secondaryDatabaseName = resolveSecondaryDatabaseName();
 

@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function ReportsPage() {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) redirect("/");
 
   const { from, to } = parseKpiRangeFromQuery(null, null);
   const scopedTeamId =

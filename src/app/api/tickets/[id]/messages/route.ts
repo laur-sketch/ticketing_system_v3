@@ -24,7 +24,7 @@ export async function POST(
           session.user.email,
         )
       : ensureTicketOwnership(ticket.contactEmail, session.user.email);
-  const isAdminOrAgent = ["SuperAdmin", "Admin", "Personnel"].includes(session.user.role);
+  const isAdminOrAgent = ["SuperAdmin", "HighAdmin", "Admin", "Personnel"].includes(session.user.role);
   if (session.user.role === "Personnel") {
     const operator = await findSessionAgentId({ email: session.user.email, name: session.user.name });
     if (!operator || operator.id !== ticket.assignedAgentId) {
@@ -47,10 +47,10 @@ export async function POST(
   if (actor === "AGENT" && !isAdminOrAgent) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (actor === "USER" && !isOwner && !["SuperAdmin", "Admin"].includes(session.user.role)) {
+  if (actor === "USER" && !isOwner && !["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (actor === "SYSTEM" && !["SuperAdmin", "Admin"].includes(session.user.role)) {
+  if (actor === "SYSTEM" && !["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -523,6 +523,7 @@ function rawEnvelopeMeta(raw: unknown) {
       taskCount: null as number | null,
       isFieldAssignment: false,
       isProject: false,
+      invertedRecording: false,
       linkedJobOrderTicketId: null as string | null,
       linkedJobOrderTicketNumber: null as string | null,
     };
@@ -565,6 +566,7 @@ function rawEnvelopeMeta(raw: unknown) {
         : null,
     isFieldAssignment: raw.isFieldAssignment === true,
     isProject: raw.isProject === true,
+    invertedRecording: raw.invertedRecording === true,
     linkedJobOrderTicketId:
       typeof raw.linkedJobOrderTicketId === "string" && raw.linkedJobOrderTicketId.trim()
         ? raw.linkedJobOrderTicketId.trim()
@@ -578,8 +580,8 @@ function rawEnvelopeMeta(raw: unknown) {
 
 function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof rawEnvelopeMeta>): Prisma.InputJsonValue {
   if (!isPlainObject(base)) return base;
-  return {
-    ...base,
+  const next: Record<string, unknown> = {
+    ...(base as Record<string, unknown>),
     ...(meta.taskPriority ? { taskPriority: meta.taskPriority } : {}),
     ...(meta.pillarScreenshotsEnabled ? { pillarScreenshotsEnabled: true } : {}),
     ...(meta.pillarBeforeScreenshot.length > 0 ? { pillarBeforeScreenshot: meta.pillarBeforeScreenshot } : {}),
@@ -595,7 +597,6 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.pillarCompletionRequirements
       ? { pillarCompletionRequirements: meta.pillarCompletionRequirements }
       : {}),
-    ...(meta.pillarDone ? { pillarDone: true } : {}),
     ...(meta.pillarNumericalTarget != null ? { pillarNumericalTarget: meta.pillarNumericalTarget } : {}),
     ...(meta.pillarNumericalValue != null ? { pillarNumericalValue: meta.pillarNumericalValue } : {}),
     ...(meta.pillarDueDate ? { pillarDueDate: meta.pillarDueDate } : {}),
@@ -603,6 +604,7 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
     ...(meta.taskCount != null ? { taskCount: meta.taskCount } : {}),
     ...(meta.isFieldAssignment ? { isFieldAssignment: true } : {}),
     ...(meta.isProject ? { isProject: true } : {}),
+    ...(meta.invertedRecording ? { invertedRecording: true } : {}),
     ...(meta.linkedJobOrderTicketId
       ? {
           linkedJobOrderTicketId: meta.linkedJobOrderTicketId,
@@ -611,7 +613,11 @@ function withEnvelopeMeta(base: Prisma.InputJsonValue, meta: ReturnType<typeof r
             : {}),
         }
       : {}),
-  } as Prisma.InputJsonValue;
+  };
+  // Always apply pillarDone explicitly — omitting it left a prior `true` stuck on the envelope.
+  if (meta.pillarDone) next.pillarDone = true;
+  else delete next.pillarDone;
+  return next as Prisma.InputJsonValue;
 }
 
 function stripLinkedJobOrderKeys(value: Prisma.InputJsonValue): Prisma.InputJsonValue {
@@ -717,6 +723,45 @@ export function markProjectTask(raw: unknown): Prisma.InputJsonValue {
   meta.isProject = true;
   meta.isFieldAssignment = false;
   return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+/** When true, unchecked items count toward 100% and checked items reduce the percent. */
+export function isInvertedRecordingTask(raw: unknown): boolean {
+  return rawEnvelopeMeta(raw).invertedRecording === true;
+}
+
+export function setInvertedRecording(raw: unknown, inverted: boolean): Prisma.InputJsonValue {
+  const meta = rawEnvelopeMeta(raw);
+  meta.invertedRecording = inverted === true;
+  return withEnvelopeMeta(ensureEnvelope(raw), meta);
+}
+
+/**
+ * Task uses inverted recording when the create-time flag is set, or when the
+ * legacy pillar title is in the inverted checklist set.
+ */
+export function taskUsesInvertedRecording(opts: {
+  title?: string | null;
+  subKpis: unknown;
+}): boolean {
+  if (isInvertedRecordingTask(opts.subKpis)) return true;
+  const title = opts.title?.trim();
+  return Boolean(title && isInvertedChecklistPillar(title));
+}
+
+/** Apply inverted recording to raw checklist progress for metrics / donut display. */
+export function progressWithInvertedRecording(
+  progress: KpiChecklistProgress,
+  invert: boolean,
+): KpiChecklistProgress {
+  if (!invert) return progress;
+  const view = kpiChecklistMetricView(progress, true);
+  return {
+    total: view.total,
+    done: view.positive,
+    missing: view.negative,
+    percent: view.percent,
+  };
 }
 
 export function getLinkedJobOrderFromSubKpis(

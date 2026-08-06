@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import type { Prisma } from "@prisma/client/primary";
 import { TicketCategory, TicketPriority } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
@@ -151,7 +152,7 @@ export async function GET(req: Request) {
   const limitParam = Number.parseInt(searchParams.get("limit") ?? "50", 10);
   const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 50;
   const operator =
-    session.user.role === "Personnel" || session.user.role === "Admin" || session.user.role === "SuperAdmin"
+    session.user.role === "Personnel" || session.user.role === "Admin" || isElevatedUserRole(session.user.role)
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
 
@@ -176,7 +177,7 @@ export async function GET(req: Request) {
   const tickets = await prisma.ticket.findMany({
     where: {
       ...(status ? { status: status as never } : {}),
-      ...(session.user.role === "SuperAdmin" && teamIdParam ? { teamId: teamIdParam } : {}),
+      ...(isElevatedUserRole(session.user.role) && teamIdParam ? { teamId: teamIdParam } : {}),
       ...(adminCompanyWhere ?? {}),
       ...(personnelWhere ?? {}),
       ...(session.user.role === "Customer"
@@ -259,6 +260,7 @@ export async function POST(req: Request) {
     let deliveryOfCheckRaw: string | undefined;
     let bankNameAccountNumberRaw: string | undefined;
     let deferPaymentModeToAccountingRaw: string | boolean | undefined;
+    let skipApprovedByRaw: string | boolean | undefined;
     let requisitionItemsRaw: unknown;
     let purposeOfRequestRaw: string | undefined;
     let fundTransferAmountRaw: string | undefined;
@@ -331,6 +333,8 @@ export async function POST(req: Request) {
       bankNameAccountNumberRaw = bna != null ? String(bna) : undefined;
       const deferMop = fd.get("deferPaymentModeToAccounting");
       deferPaymentModeToAccountingRaw = deferMop != null ? String(deferMop) : undefined;
+      const skipAb = fd.get("skipApprovedBy");
+      skipApprovedByRaw = skipAb != null ? String(skipAb) : undefined;
       const ri = fd.get("requisitionItems");
       if (typeof ri === "string" && ri.trim()) {
         try {
@@ -453,6 +457,10 @@ export async function POST(req: Request) {
         typeof body.deferPaymentModeToAccounting === "string"
           ? body.deferPaymentModeToAccounting
           : undefined;
+      skipApprovedByRaw =
+        typeof body.skipApprovedBy === "boolean" || typeof body.skipApprovedBy === "string"
+          ? body.skipApprovedBy
+          : undefined;
       requisitionItemsRaw = body.requisitionItems;
       purposeOfRequestRaw =
         typeof body.purposeOfRequest === "string" ? body.purposeOfRequest : undefined;
@@ -507,7 +515,7 @@ export async function POST(req: Request) {
 
     const intakeApprovalAssignees = parseApprovalAssigneesPayload(approvalAssigneesRaw);
     const canSetIntakeApprovalAssignees =
-      session.user.role === "SuperAdmin" ||
+      isElevatedUserRole(session.user.role) ||
       session.user.role === "Admin" ||
       session.user.role === "Personnel";
     if (intakeApprovalAssignees && !canSetIntakeApprovalAssignees) {
@@ -544,7 +552,7 @@ export async function POST(req: Request) {
       (effectiveRequestorEmail.includes("@") ? effectiveRequestorEmail.split("@")[0] : "") ||
       "User";
 
-    const staffIntakeRoles = new Set(["SuperAdmin", "Admin", "Personnel"]);
+    const staffIntakeRoles = new Set(["SuperAdmin", "HighAdmin", "Admin", "Personnel"]);
     const intakeNameTrimmed = (contactNameRaw ?? "").trim();
     const intakeEmailTrimmed = (contactEmailRaw ?? "").trim().toLowerCase();
     if (staffIntakeRoles.has(session.user.role)) {
@@ -580,12 +588,26 @@ export async function POST(req: Request) {
         requestType === "FUND_TRANSFER_REQUEST" ||
         requestType === "JOB_ORDER")
     ) {
+      const deferPaymentModeToAccountingEarly =
+        deferPaymentModeToAccountingRaw === true ||
+        deferPaymentModeToAccountingRaw === "true" ||
+        deferPaymentModeToAccountingRaw === "1" ||
+        deferPaymentModeToAccountingRaw === "on";
+      const skipApprovedByEarly =
+        skipApprovedByRaw === true ||
+        skipApprovedByRaw === "true" ||
+        skipApprovedByRaw === "1" ||
+        skipApprovedByRaw === "on";
       const requiredByType: Record<string, Array<{ key: string; label: string }>> = {
         REQUEST_FOR_PAYMENT: [
           { key: "notedByAgentId", label: "Noted By" },
-          { key: "approvedByAgentId", label: "Approved By" },
-          { key: "accountingAgentId", label: "Approved By (Accounting)" },
-          { key: "financeAgentId", label: "Approved By (Finance)" },
+          ...(skipApprovedByEarly ? [] : [{ key: "approvedByAgentId", label: "Approved By" }]),
+          ...(deferPaymentModeToAccountingEarly
+            ? []
+            : [
+                { key: "accountingAgentId", label: "Approved By (Accounting)" },
+                { key: "financeAgentId", label: "Approved By (Finance)" },
+              ]),
         ],
         FUND_TRANSFER_REQUEST: [
           { key: "recommendingApprovalAgentId", label: "Recommending Approval" },
@@ -648,6 +670,11 @@ export async function POST(req: Request) {
       deferPaymentModeToAccountingRaw === "true" ||
       deferPaymentModeToAccountingRaw === "1" ||
       deferPaymentModeToAccountingRaw === "on";
+    const skipApprovedBy =
+      skipApprovedByRaw === true ||
+      skipApprovedByRaw === "true" ||
+      skipApprovedByRaw === "1" ||
+      skipApprovedByRaw === "on";
     if (requestType === "REQUEST_FOR_PAYMENT") {
       if (!payee || !inPaymentOf || !amount) {
         return NextResponse.json(
@@ -1083,7 +1110,7 @@ export async function POST(req: Request) {
       const isStaffIntake =
         session.user.role === "Personnel" ||
         session.user.role === "Admin" ||
-        session.user.role === "SuperAdmin";
+        isElevatedUserRole(session.user.role);
 
       if (rawCompanyTeamId) {
         const selectedTeam = await resolveRosterTeamById(rawCompanyTeamId);
@@ -1120,9 +1147,15 @@ export async function POST(req: Request) {
         requestType === "REQUEST_FOR_PAYMENT"
           ? [
               pickAgentId(intakeApprovalAssignees.notedByAgentId),
-              pickAgentId(intakeApprovalAssignees.approvedByAgentId),
-              pickAgentId(intakeApprovalAssignees.accountingAgentId),
-              pickAgentId(intakeApprovalAssignees.financeAgentId),
+              ...(skipApprovedBy
+                ? []
+                : [pickAgentId(intakeApprovalAssignees.approvedByAgentId)]),
+              ...(deferPaymentModeToAccounting
+                ? []
+                : [
+                    pickAgentId(intakeApprovalAssignees.accountingAgentId),
+                    pickAgentId(intakeApprovalAssignees.financeAgentId),
+                  ]),
             ].filter((v): v is string => Boolean(v))
           : candidateIds;
       const idsToValidate =
@@ -1163,35 +1196,47 @@ export async function POST(req: Request) {
           }
           return null;
         }
+        // Approved By is cross-company (any roster). Noted By stays on requestor company;
+        // Accounting/Finance stay on Send-to company when set at intake.
         for (const check of [
           await assertCompany(
             pickAgentId(intakeApprovalAssignees.notedByAgentId),
             requestorCompanyId,
             "Noted By",
           ),
-          await assertCompany(
-            pickAgentId(intakeApprovalAssignees.approvedByAgentId),
-            sendToCompanyId,
-            "Approved By",
-          ),
-          await assertCompany(
-            pickAgentId(intakeApprovalAssignees.accountingAgentId),
-            sendToCompanyId,
-            "Approved By (Accounting)",
-          ),
-          await assertCompany(
-            pickAgentId(intakeApprovalAssignees.financeAgentId),
-            sendToCompanyId,
-            "Approved By (Finance)",
-          ),
+          ...(deferPaymentModeToAccounting
+            ? []
+            : [
+                await assertCompany(
+                  pickAgentId(intakeApprovalAssignees.accountingAgentId),
+                  sendToCompanyId,
+                  "Approved By (Accounting)",
+                ),
+                await assertCompany(
+                  pickAgentId(intakeApprovalAssignees.financeAgentId),
+                  sendToCompanyId,
+                  "Approved By (Finance)",
+                ),
+              ]),
         ]) {
           if (check) return check;
         }
         const roleEntries: Array<[PaymentApprovalStep, string | null]> = [
           ["NOTED_BY", pickAgentId(intakeApprovalAssignees.notedByAgentId)],
-          ["APPROVED_BY", pickAgentId(intakeApprovalAssignees.approvedByAgentId)],
-          ["APPROVED_BY_ACCOUNTING", pickAgentId(intakeApprovalAssignees.accountingAgentId)],
-          ["APPROVED_BY_FINANCE", pickAgentId(intakeApprovalAssignees.financeAgentId)],
+          ...(skipApprovedBy
+            ? []
+            : ([
+                ["APPROVED_BY", pickAgentId(intakeApprovalAssignees.approvedByAgentId)],
+              ] as Array<[PaymentApprovalStep, string | null]>)),
+          ...(deferPaymentModeToAccounting
+            ? []
+            : ([
+                [
+                  "APPROVED_BY_ACCOUNTING",
+                  pickAgentId(intakeApprovalAssignees.accountingAgentId),
+                ],
+                ["APPROVED_BY_FINANCE", pickAgentId(intakeApprovalAssignees.financeAgentId)],
+              ] as Array<[PaymentApprovalStep, string | null]>)),
         ];
         const seen = new Map<string, PaymentApprovalStep>();
         for (const [step, agentId] of roleEntries) {
@@ -1256,7 +1301,14 @@ export async function POST(req: Request) {
       let meta = await initPaymentApprovalMetaIfNeeded(ticket.id);
       if (deferPaymentModeToAccounting) {
         meta = { ...meta, deferPaymentModeToAccounting: true };
+      }
+      if (skipApprovedBy) {
+        meta = { ...meta, skipApprovedBy: true, approvedByAgentId: null };
+      }
+      if (deferPaymentModeToAccounting || skipApprovedBy) {
         await savePaymentApprovalMeta(ticket.id, meta);
+      }
+      if (deferPaymentModeToAccounting) {
         await logActivity(
           ticket.id,
           "USER",
@@ -1264,16 +1316,33 @@ export async function POST(req: Request) {
           "Mode of payment will be set by Accounting on the ticket.",
         );
       }
+      if (skipApprovedBy) {
+        await logActivity(
+          ticket.id,
+          "USER",
+          "Approved By skipped",
+          "After Noted By, this request continues at Approved By (Accounting).",
+        );
+      }
       if (intakeApprovalAssignees) {
         const nextAssignees: Partial<PaymentApprovalAssignees> = {
           notedByAgentId: pickAgentId(intakeApprovalAssignees.notedByAgentId),
-          approvedByAgentId: pickAgentId(intakeApprovalAssignees.approvedByAgentId),
-          accountingAgentId: pickAgentId(intakeApprovalAssignees.accountingAgentId),
-          financeAgentId: pickAgentId(intakeApprovalAssignees.financeAgentId),
+          approvedByAgentId: skipApprovedBy
+            ? null
+            : pickAgentId(intakeApprovalAssignees.approvedByAgentId),
+          accountingAgentId: deferPaymentModeToAccounting
+            ? null
+            : pickAgentId(intakeApprovalAssignees.accountingAgentId),
+          financeAgentId: deferPaymentModeToAccounting
+            ? null
+            : pickAgentId(intakeApprovalAssignees.financeAgentId),
         };
         meta = applyPaymentApprovalAssignees(meta, nextAssignees);
         if (deferPaymentModeToAccounting) {
           meta = { ...meta, deferPaymentModeToAccounting: true };
+        }
+        if (skipApprovedBy) {
+          meta = { ...meta, skipApprovedBy: true, approvedByAgentId: null };
         }
         await savePaymentApprovalMeta(ticket.id, meta);
         const boardAssigneeId = currentPaymentStepBoardAssigneeId(meta);

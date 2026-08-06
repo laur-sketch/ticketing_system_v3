@@ -48,6 +48,11 @@ export type PaymentApprovalMeta = PaymentApprovalAssignees & {
    * filled on ticket details at APPROVED BY ACCOUNTING instead of at create.
    */
   deferPaymentModeToAccounting?: boolean;
+  /**
+   * Intake skipped the Approved By seat — after Noted By is green-lit, the chain
+   * continues at Approved By (Accounting).
+   */
+  skipApprovedBy?: boolean;
 };
 
 export const PAYMENT_APPROVAL_STEP_LABELS: Record<PaymentApprovalStep, string> = {
@@ -140,6 +145,7 @@ export function parsePaymentApprovalMeta(raw: unknown): PaymentApprovalMeta | nu
     completed,
     stepApproved,
     deferPaymentModeToAccounting: o.deferPaymentModeToAccounting === true,
+    skipApprovedBy: o.skipApprovedBy === true,
   };
 }
 
@@ -190,7 +196,7 @@ export function currentPaymentStepBoardAssigneeId(
 /** Agent ids already assigned to a procedural approval role on this request. */
 export function paymentApprovalParticipantIds(meta: PaymentApprovalMeta): Set<string> {
   const ids = new Set<string>();
-  for (const step of PAYMENT_APPROVAL_STEPS) {
+  for (const step of paymentApprovalStepsFor(meta)) {
     const id = assigneeIdForStep(meta, step);
     if (id) ids.add(id);
   }
@@ -200,6 +206,9 @@ export function paymentApprovalParticipantIds(meta: PaymentApprovalMeta): Set<st
 /**
  * One person may hold only one procedural approval role on a single Request for Payment.
  * Re-selecting the same person for the same step is allowed.
+ * Open seats (no dedicated assignee) may be filled by someone who already completed an
+ * earlier role — otherwise deferred Accounting work cannot proceed when Accounting /
+ * Finance were left unset at intake.
  */
 export function canAssignPaymentApprover(opts: {
   meta: PaymentApprovalMeta;
@@ -212,8 +221,10 @@ export function canAssignPaymentApprover(opts: {
   }
   const currentForStep = assigneeIdForStep(meta, forStep);
   if (currentForStep === agentId) return { ok: true };
+  // Unset role seat: allow the current board holder to take it even after an earlier signature.
+  if (!currentForStep) return { ok: true };
 
-  for (const step of PAYMENT_APPROVAL_STEPS) {
+  for (const step of paymentApprovalStepsFor(meta)) {
     if (step === forStep) continue;
     const existing = assigneeIdForStep(meta, step);
     if (existing === agentId) {
@@ -226,10 +237,90 @@ export function canAssignPaymentApprover(opts: {
   return { ok: true };
 }
 
+/** True when Accounting and Finance roles were left unset at intake. */
+export function paymentAccountingFinanceAssigneesUnset(meta: PaymentApprovalMeta): boolean {
+  return !meta.accountingAgentId?.trim() && !meta.financeAgentId?.trim();
+}
+
+/** Procedural steps that apply for this request (Approved By may be skipped at intake). */
+export function paymentApprovalStepsFor(
+  meta: Pick<PaymentApprovalMeta, "skipApprovedBy"> | null | undefined,
+): PaymentApprovalStep[] {
+  if (meta?.skipApprovedBy) {
+    return PAYMENT_APPROVAL_STEPS.filter((step) => step !== "APPROVED_BY");
+  }
+  return [...PAYMENT_APPROVAL_STEPS];
+}
+
+/** Noted By and Approved By have both been marked Done (green-lit). */
+export function paymentNotedAndApprovedByComplete(meta: PaymentApprovalMeta): boolean {
+  if (!meta.completed.NOTED_BY) return false;
+  if (meta.skipApprovedBy) return true;
+  return Boolean(meta.completed.APPROVED_BY);
+}
+
+function paymentModeDeferredOrEmpty(
+  meta: PaymentApprovalMeta,
+  modeOfPayment: string | null | undefined,
+): boolean {
+  return meta.deferPaymentModeToAccounting === true || !(modeOfPayment ?? "").trim();
+}
+
+/**
+ * Board holder / Admin may set or change Mode of payment after Noted By + Approved By
+ * are green-lit:
+ * - On APPROVED BY ACCOUNTING (set initially or edit an existing mode)
+ * - On APPROVED BY when mode was deferred and Accounting/Finance seats are still unset
+ */
+export function canEditDeferredPaymentMode(opts: {
+  meta: PaymentApprovalMeta;
+  proceduralStep: PaymentProceduralStep | PaymentApprovalStep | "DONE" | null;
+  modeOfPayment: string | null | undefined;
+}): boolean {
+  const { meta, proceduralStep, modeOfPayment } = opts;
+  if (!proceduralStep || proceduralStep === "DONE") return false;
+  if (!paymentNotedAndApprovedByComplete(meta)) return false;
+  if (proceduralStep === "APPROVED_BY_ACCOUNTING") return true;
+  if (!paymentModeDeferredOrEmpty(meta, modeOfPayment)) return false;
+  return paymentAccountingFinanceAssigneesUnset(meta) && proceduralStep === "APPROVED_BY";
+}
+
+/**
+ * After Noted By + Approved By are green-lit and mode was deferred, the board holder
+ * (or Admin) may assign the missing Accounting / Finance seats.
+ */
+export function canAssignDeferredPaymentAccountingFinance(opts: {
+  meta: PaymentApprovalMeta;
+  modeOfPayment: string | null | undefined;
+}): boolean {
+  const { meta, modeOfPayment } = opts;
+  if (!paymentModeDeferredOrEmpty(meta, modeOfPayment)) return false;
+  if (!paymentNotedAndApprovedByComplete(meta)) return false;
+  return !meta.accountingAgentId?.trim() || !meta.financeAgentId?.trim();
+}
+
+/**
+ * When the current step has no dedicated role assignee, allow the board assignee to
+ * continue even if they already signed an earlier role (releases Approved By signee lock).
+ */
+export function paymentStepAllowsRepeatSigner(
+  meta: PaymentApprovalMeta,
+  step: PaymentApprovalStep,
+): boolean {
+  return !assigneeIdForStep(meta, step)?.trim();
+}
+
 export function nextPaymentApprovalStep(
   step: PaymentProceduralStep,
+  meta?: Pick<PaymentApprovalMeta, "skipApprovedBy"> | null,
 ): PaymentProceduralStep {
   if (step === "DONE") return "DONE";
+  if (step === "NOTED_BY" && meta?.skipApprovedBy) {
+    return "APPROVED_BY_ACCOUNTING";
+  }
+  if (step === "APPROVED_BY" && meta?.skipApprovedBy) {
+    return "APPROVED_BY_ACCOUNTING";
+  }
   const idx = PAYMENT_APPROVAL_STEPS.indexOf(step);
   if (idx < 0) return "NOTED_BY";
   if (idx >= PAYMENT_APPROVAL_STEPS.length - 1) return "DONE";
@@ -248,6 +339,12 @@ export function canCompletePaymentApprovalStep(opts: {
   const { meta, actorAgentId, ticketAssignedAgentId } = opts;
   if (meta.proceduralStep === "DONE") {
     return { ok: false, error: "All payment approval steps are already complete." };
+  }
+  if (meta.skipApprovedBy && meta.proceduralStep === "APPROVED_BY") {
+    return {
+      ok: false,
+      error: "Approved By was skipped for this request. Refresh to continue at Accounting.",
+    };
   }
   if (!ticketAssignedAgentId) {
     return {
@@ -321,7 +418,7 @@ export function completePaymentApprovalStep(meta: PaymentApprovalMeta): PaymentA
   const step = meta.proceduralStep;
   return {
     ...meta,
-    proceduralStep: nextPaymentApprovalStep(step),
+    proceduralStep: nextPaymentApprovalStep(step, meta),
     completed: {
       ...meta.completed,
       [step]: new Date().toISOString(),

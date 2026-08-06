@@ -34,7 +34,7 @@ import {
   type ItProjectPhase,
 } from "@/lib/it-project-subkpis";
 import { ProjectTimelineKanban } from "@/components/task-board/ProjectTimelineKanban";
-import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
+import { kpiHasDistinctMainTask, kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   kpiChecklistMetricView,
@@ -59,6 +59,7 @@ import {
   subKpiProgressMismatchWarning,
   taskDailyPenaltyAmountFromSubKpis,
   taskDelayPenaltyFrequencyFromSubKpis,
+  taskUsesInvertedRecording,
   SUB_KPI_PROGRESS_MISMATCH_WARNING,
   canMutateSubKpiAssignee,
   isSubKpiAssigneeUnlocked,
@@ -672,7 +673,10 @@ export function AgentKpiKanbanFlow({
       };
     }
     const p = kpiChecklistProgress(r.subKpis, taskLabel(r));
-    const view = kpiChecklistMetricView(p, false);
+    const view = kpiChecklistMetricView(
+      p,
+      taskUsesInvertedRecording({ title: r.title, subKpis: r.subKpis }),
+    );
     return {
       total: view.total,
       done: view.done,
@@ -696,7 +700,9 @@ export function AgentKpiKanbanFlow({
       return incompletePastDeadlineDelayMs(r, nowMs, tz);
     }
     const p = progress(r);
-    if (p.total === 0 || p.done === p.total) return 0;
+    if (p.total === 0) return 0;
+    const complete = p.inverted ? p.negative === 0 : p.done === p.total;
+    if (complete) return 0;
     return incompletePastDeadlineDelayMs(r, nowMs, tz);
   }
 
@@ -709,6 +715,19 @@ export function AgentKpiKanbanFlow({
 
   function statusOf(r: KpiRecord): KpiBoardStatus {
     const p = progress(r);
+    // Inverted recording is monitoring-style: all-clear stays Current, never Done via checkboxes.
+    if (p.inverted && !isTimelineProjectRecord(r)) {
+      if (r.isRecurring === false) {
+        const delayed = taskKanbanDerivedStatus(r, {
+          total: p.total,
+          done: 0,
+          nowMs,
+          timeZone: tz,
+        });
+        if (delayed === "DELAYED") return "DELAYED";
+      }
+      return "CURRENT";
+    }
     return taskKanbanDerivedStatus(r, {
       total: p.total,
       done: p.done,
@@ -760,7 +779,10 @@ export function AgentKpiKanbanFlow({
 
   function taskCardDone(r: KpiRecord) {
     const p = progress(r);
-    return p.total > 0 && p.done === p.total;
+    if (p.total === 0) return false;
+    // Inverted tasks are not "finished" when clear — they keep recording until flagged.
+    if (p.inverted) return false;
+    return p.done === p.total;
   }
 
   function taskWillFinishAfterToggle(r: KpiRecord, subKpiId: string, currentlyDone: boolean) {
@@ -2307,20 +2329,34 @@ export function AgentKpiKanbanFlow({
         id: operatorAgentId,
         name: operatorAgentName,
       });
+    const hidePillarTitle = pillarOnlyMode && !kpiHasDistinctMainTask(r);
     return (
       <div
         key={s.id}
         className={cn(
-          "rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40",
+          "rounded-lg border border-zinc-200/80 bg-white/60 dark:border-zinc-700 dark:bg-zinc-950/40",
+          // Pillar-only main-task checkbox is a single compact row — avoid subtask card padding.
+          pillarOnlyMode ? "px-2.5 py-1.5" : "p-3",
           finished && "border-emerald-300/70 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-950/20",
         )}
       >
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-1 items-start gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+        <div
+          className={cn(
+            "flex flex-wrap justify-between gap-2",
+            pillarOnlyMode ? "items-center" : "items-start",
+          )}
+        >
+          <div
+            className={cn(
+              "flex items-center gap-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100",
+              !hidePillarTitle && "min-w-0 flex-1",
+              !pillarOnlyMode && "items-start",
+            )}
+          >
             {showCheckbox ? (
               <input
                 type="checkbox"
-                className="mt-1"
+                className={cn("size-4 shrink-0", !pillarOnlyMode && "mt-1")}
                 checked={finished}
                 disabled={!subCompletable}
                 onChange={() => void toggleSubKpi(r.id, s.id, finished)}
@@ -2355,7 +2391,7 @@ export function AgentKpiKanbanFlow({
                 className={cn(
                   "min-w-0",
                   finished && "line-through opacity-70",
-                  pillarOnlyMode && !kpiHasDistinctMainTask(r) && "sr-only",
+                  hidePillarTitle && "sr-only",
                 )}
               >
                 {pillarOnlyMode ? taskLabel(r) : s.title}
@@ -2486,6 +2522,7 @@ export function AgentKpiKanbanFlow({
             </select>
           </label>
         ) : null}
+        {showPriority || !recurring ? (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {showPriority ? (
             <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
@@ -2588,6 +2625,7 @@ export function AgentKpiKanbanFlow({
             </label>
           ) : null}
         </div>
+        ) : null}
         {!pillarOnlyMode ? renderTaskScreenshotFields(r, s, subEditable) : null}
         {!pillarOnlyMode ? renderSubKpiScreenshotUploadFields(r, s, subEditable) : null}
         {renderNumericalRecordField(r, s, subEditable, canManageSubTasks, pillarOnlyMode)}
@@ -4062,32 +4100,12 @@ export function AgentKpiKanbanFlow({
                                       : r.assignedAgent?.name ?? "—"}
                                   </p>
                                 </>
-                              ) : pillarOnly ? (
-                                <>
-                                  <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                    {taskLabel(r)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
-                                    {kpiPillarLabel(r)} · Assigned:{" "}
-                                    {r.assignedAgent?.name ?? "Unassigned"}
-                                  </p>
-                                </>
-                              ) : kpiHasDistinctMainTask(r) ? (
-                                <>
-                                  <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                    {taskLabel(r)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
-                                    {kpiPillarLabel(r)} · Assigned:{" "}
-                                    {r.assignedAgent?.name ?? "Unassigned"}
-                                  </p>
-                                </>
                               ) : (
                                 <>
                                   <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                                     {taskLabel(r)}
                                   </p>
-                                  <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-400">
+                                  <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
                                     Assigned: {r.assignedAgent?.name ?? "Unassigned"}
                                   </p>
                                 </>

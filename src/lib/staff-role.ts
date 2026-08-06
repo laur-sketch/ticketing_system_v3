@@ -1,11 +1,18 @@
 /**
  * Portal account roles stored on PortalAccount.role:
- * SuperAdmin (full platform access; assignable only by a signed-in SuperAdmin in Personnel registry),
+ * SuperAdmin (full platform access; not selectable as an approver — maps to HRIS super_admin),
+ * HighAdmin (same platform access as SuperAdmin, but may be set as an approver),
  * Admin (company-scoped coordinator), Personnel, Customer.
  * Legacy "Head" strings in the DB are normalized to Admin on read.
  */
 
-export const PORTAL_ROLES = ["SuperAdmin", "Admin", "Personnel", "Customer"] as const;
+export const PORTAL_ROLES = [
+  "SuperAdmin",
+  "HighAdmin",
+  "Admin",
+  "Personnel",
+  "Customer",
+] as const;
 export type PortalRole = (typeof PORTAL_ROLES)[number];
 
 const LEGACY_PERSONNEL = new Set(
@@ -32,19 +39,21 @@ const LEGACY_HEAD = new Set(
 /** Self-service signup: Personnel or Customer; Admin is assigned by SuperAdmin in Portal Accounts. */
 export const SIGNUP_PORTAL_ROLES = ["Customer", "Personnel"] as const;
 
-/** Staff-facing roster / assignment tooling. */
-export const STAFF_PORTAL_ROLES = ["Admin", "Personnel"] as const;
+/** Staff-facing roster / assignment tooling (includes HighAdmin so they can be approvers/assignees). */
+export const STAFF_PORTAL_ROLES = ["HighAdmin", "Admin", "Personnel"] as const;
 
 /** @deprecated use STAFF_PORTAL_ROLES */
 export const STAFF_ROLE_OPTIONS = STAFF_PORTAL_ROLES;
 
 /**
- * Maps stored portal role to SuperAdmin | Admin | Personnel | Customer. Returns null if unknown.
+ * Maps stored portal role to SuperAdmin | HighAdmin | Admin | Personnel | Customer.
+ * Returns null if unknown.
  */
 export function normalizePortalRole(role: string | null | undefined): PortalRole | null {
   const raw = (role ?? "").trim().toLowerCase();
   if (!raw) return null;
   if (raw === "superadmin" || raw === "super_admin" || raw === "super-admin") return "SuperAdmin";
+  if (raw === "highadmin" || raw === "high_admin" || raw === "high-admin") return "HighAdmin";
   if (raw === "admin") return "Admin";
   if (raw === "personnel") return "Personnel";
   if (raw === "customer") return "Customer";
@@ -58,14 +67,29 @@ export function normalizeStaffRoleLabel(role: string | null | undefined): string
   return normalizePortalRole(role);
 }
 
+/** Assignable staff (Admin / Personnel / HighAdmin). SuperAdmin is platform-only. */
 export function isStaffPortalRole(role: string | null | undefined): boolean {
   const n = normalizePortalRole(role);
-  return n === "Admin" || n === "Personnel";
+  return n === "HighAdmin" || n === "Admin" || n === "Personnel";
 }
 
-/** Stored portal role grants JWT SuperAdmin; not a company-queue staff tier. */
+/** True SuperAdmin only (excluded from approver pickers via HRIS super_admin). */
 export function isPlatformSuperAdminPortalRole(role: string | null | undefined): boolean {
   return normalizePortalRole(role) === "SuperAdmin";
+}
+
+/** HighAdmin portal role. */
+export function isHighAdminPortalRole(role: string | null | undefined): boolean {
+  return normalizePortalRole(role) === "HighAdmin";
+}
+
+/**
+ * SuperAdmin or HighAdmin — same platform privileges.
+ * Prefer this over `role === "SuperAdmin"` for access checks.
+ */
+export function isElevatedPlatformRole(role: string | null | undefined): boolean {
+  const n = normalizePortalRole(role);
+  return n === "SuperAdmin" || n === "HighAdmin";
 }
 
 /** Company coordinator tier (assignment board, KPI assignment within company scope). */

@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
@@ -36,7 +37,7 @@ export default async function AgentTicketPage({
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin", "Personnel"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Admin", "Personnel"].includes(session.user.role)) redirect("/");
 
   const { id } = await params;
   const sp = await searchParams;
@@ -264,8 +265,8 @@ export default async function AgentTicketPage({
       : null;
   const operator = operatorByEmail ?? operatorByName;
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
-  const isAdmin = session.user.role === "SuperAdmin" || session.user.role === "Admin";
-  const isSuperAdmin = session.user.role === "SuperAdmin";
+  const isAdmin = isElevatedUserRole(session.user.role) || session.user.role === "Admin";
+  const isSuperAdmin = isElevatedUserRole(session.user.role);
   const isPersonnel = session.user.role === "Personnel";
   const adminCompanyTeamId =
     session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;

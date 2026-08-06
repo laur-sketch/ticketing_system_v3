@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import type { Session } from "next-auth";
 import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
@@ -92,15 +93,15 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
   const outsideTeamRow = await ensureOutsideCompanyTeam();
 
   const cardMode: CompanyBoardCardMode =
-    role === "SuperAdmin" || role === "Admin" || companyAdminPrivileges ? "staff" : "personnel";
+    isElevatedUserRole(role) || role === "Admin" || companyAdminPrivileges ? "staff" : "personnel";
 
-  const isAdminScope = role !== "SuperAdmin" && (role === "Admin" || companyAdminPrivileges);
+  const isAdminScope = !isElevatedUserRole(role) && (role === "Admin" || companyAdminPrivileges);
 
   let teamWhere: Prisma.TeamWhereInput | undefined;
   let excludedTeamIds: string[] = [];
   let restrictTicketTeamIds: string[] | null = null;
 
-  if (role === "SuperAdmin") {
+  if (isElevatedUserRole(role)) {
     teamWhere = undefined;
   } else if (isAdminScope) {
     if (!staffCompanyId) {

@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import {
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
   const perms = await resolveOpsPermissions(session);
   const agentId = perms.operator?.id ?? null;
   const isMonitor =
-    session.user.role === "Admin" || session.user.role === "SuperAdmin";
+    session.user.role === "Admin" || isElevatedUserRole(session.user.role);
   if (!agentId && !isMonitor) {
     return NextResponse.json({ delayedPhases: [], newlyNotified: [] });
   }

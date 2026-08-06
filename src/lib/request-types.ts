@@ -15,7 +15,7 @@ export const REQUEST_TYPES = [
   {
     id: "ITEM_REQUISITION_SLIP",
     label: "ITEM REQUISITION SLIP",
-    acronym: "I.R.S.",
+    acronym: "R.S.",
     description: "Request items or supplies for your team.",
   },
   {
@@ -56,13 +56,17 @@ export function requestTypeLabel(id: string | null | undefined): string {
   return found?.label ?? (id?.trim() || "ISSUE/CONCERN TICKET");
 }
 
-/** Short badge text for boards (TICKET, R.F.P., I.R.S., F.T.R., J.O.). */
+/** Short badge text for boards (TICKET, R.F.P., R.S., F.T.R., J.O.). */
 export function requestTypeAcronym(idOrLabel: string | null | undefined): string {
   const raw = (idOrLabel ?? "").trim();
   if (!raw) return "TICKET";
   const byId = REQUEST_TYPES.find((t) => t.id === raw);
   if (byId) return byId.acronym;
   const normalized = raw.toUpperCase();
+  // Legacy acronym before R.S. rename.
+  if (normalized === "I.R.S." || normalized === "IRS") {
+    return "R.S.";
+  }
   const byLabel = REQUEST_TYPES.find(
     (t) =>
       t.label === normalized ||

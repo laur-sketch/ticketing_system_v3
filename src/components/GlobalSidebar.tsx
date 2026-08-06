@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
@@ -35,7 +37,7 @@ type NavItem =
   | { kind: "group"; label: string; children: NavChild[] };
 
 function linksForRole(role: string | undefined): NavItem[] {
-  if (role === "SuperAdmin") {
+  if (isElevatedPlatformRole(role)) {
     return [
       { kind: "link", href: "/", label: "Dashboard" },
       {
@@ -319,7 +321,7 @@ function GlobalSidebarInner() {
   const searchParams = useSearchParams();
   const { data } = useSession();
   const role = data?.user?.role;
-  const roleLabel = role === "SuperAdmin" ? "SuperAdmin" : role ?? "Staff";
+  const roleLabel = role === "HighAdmin" || role === "SuperAdmin" ? role : role ?? "Staff";
   const userName = data?.user?.name ?? data?.user?.email ?? "Account";
   const userEmail = data?.user?.email ?? "";
   const avatarEmail = userEmail.trim().toLowerCase();

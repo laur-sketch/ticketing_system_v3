@@ -11,7 +11,16 @@ export function hasRole(
   allowed: UserRole[],
 ): boolean {
   if (!role) return false;
-  if (role === "SuperAdmin" && allowed.includes("Admin")) return true;
+  // SuperAdmin and HighAdmin share platform access; both satisfy Admin / SuperAdmin / HighAdmin gates.
+  if (role === "SuperAdmin" || role === "HighAdmin") {
+    if (
+      allowed.includes("Admin") ||
+      allowed.includes("SuperAdmin") ||
+      allowed.includes("HighAdmin")
+    ) {
+      return true;
+    }
+  }
   return allowed.includes(role);
 }
 

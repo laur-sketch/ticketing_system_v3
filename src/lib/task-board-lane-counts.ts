@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import { taskKanbanDerivedStatus } from "@/lib/kpi-cycle-state";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
@@ -6,7 +7,11 @@ import {
   usesProjectTimelineTracker,
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
-import { hasSubKpiAssignedTo, kpiChecklistProgress } from "@/lib/kpi-subkpis";
+import {
+  hasSubKpiAssignedTo,
+  kpiChecklistProgress,
+  taskUsesInvertedRecording,
+} from "@/lib/kpi-subkpis";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
@@ -46,7 +51,7 @@ export async function countTaskBoardLanes(input: {
   name: string | null | undefined;
   timeZone?: string;
 }): Promise<TaskBoardLaneCounts> {
-  const isSuperAdmin = input.role === "SuperAdmin";
+  const isSuperAdmin = isElevatedUserRole(input.role);
   const isPersonnel = input.role === "Personnel";
   const operator = await findSessionAgentId({ email: input.email, name: input.name });
   const timeZone = input.timeZone?.trim() || DEFAULT_TIME_ZONE;
@@ -98,12 +103,24 @@ export async function countTaskBoardLanes(input: {
   let delayed = 0;
   for (const row of rows) {
     const p = progressForRow(row);
-    const status = taskKanbanDerivedStatus(row, {
-      total: p.total,
-      done: p.done,
-      nowMs,
-      timeZone,
-    });
+    const inverted = taskUsesInvertedRecording({ title: row.title, subKpis: row.subKpis });
+    // Inverted recording stays in Current (monitoring); only non-recurring delay can move it.
+    const status =
+      inverted && !isTimelineBoardRecord(row)
+        ? taskKanbanDerivedStatus(row, {
+            total: p.total,
+            done: 0,
+            nowMs,
+            timeZone,
+          }) === "DELAYED"
+          ? "DELAYED"
+          : "CURRENT"
+        : taskKanbanDerivedStatus(row, {
+            total: p.total,
+            done: p.done,
+            nowMs,
+            timeZone,
+          });
     if (status === "DONE") done += 1;
     else if (status === "DELAYED") delayed += 1;
     else current += 1;

@@ -6,7 +6,7 @@ import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 
 /** Lightweight company list for Request / Task metrics filters (avoids heavy tracker queries). */
 export async function GET() {
-  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "HighAdmin", "Admin"]);
   if (unauthorized) return unauthorized;
 
   const teams = sortByRosterOrder(

@@ -398,6 +398,9 @@ model TravelOrder {
   actualDepartureEndedAt          DateTime? @map("actual_departure_ended_at") @db.Timestamptz(3)
   actualDepartureEndedLatitude    Float?    @map("actual_departure_ended_latitude")
   actualDepartureEndedLongitude   Float?    @map("actual_departure_ended_longitude")
+  /// Guard on Duty name captured with Actual Departure Start / End.
+  gatePassStartGuardOnDuty        String?   @map("gate_pass_start_guard_on_duty")
+  gatePassEndGuardOnDuty          String?   @map("gate_pass_end_guard_on_duty")
   status             String                @default("SUBMITTED") @map("status")
   createdBy          String                @map("created_by")
   createdAt          DateTime              @default(now()) @map("created_at")

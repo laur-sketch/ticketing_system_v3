@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
@@ -444,7 +446,7 @@ export function AccountSettingsShell() {
   }
 
   const roleLabel = useMemo(() => role || "—", [role]);
-  const isAdminRole = role === "SuperAdmin" || role === "Admin";
+  const isAdminRole = isElevatedPlatformRole(role) || role === "Admin";
 
   if (status === "loading") {
     return <p className="text-sm text-zinc-500">Loading session…</p>;

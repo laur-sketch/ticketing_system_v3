@@ -58,8 +58,10 @@ export type TravelOrderDraft = {
   /** Hierarchical chain; empty = flat multi-approver mode. */
   approvalLevels: TravelOrderApprovalLevelDraft[];
   confirmationByAgentId: string;
-  /** Co-travelers in addition to the creator (creator is always included server-side). */
+  /** Co-travelers in addition to the creator (unless requester is exempt). */
   additionalTravelerAgentIds: string[];
+  /** When true, the requestor is not included in the travelers list. */
+  exemptRequesterFromTravelers: boolean;
   /** Selected vehicle option value. */
   vehicle: string;
   /** When true, show Driver + License No. fields. */
@@ -85,6 +87,10 @@ export type TravelOrderGatePassDraft = {
   actualDepartureEndedAt: string | null;
   actualDepartureEndedLatitude: number | null;
   actualDepartureEndedLongitude: number | null;
+  /** Guard on Duty name under Actual Departure Start. */
+  startGuardOnDuty: string;
+  /** Guard on Duty name under Actual Arrival End. */
+  endGuardOnDuty: string;
 };
 
 export function emptyGatePassDraft(
@@ -100,6 +106,8 @@ export function emptyGatePassDraft(
     actualDepartureEndedAt: partial?.actualDepartureEndedAt ?? null,
     actualDepartureEndedLatitude: partial?.actualDepartureEndedLatitude ?? null,
     actualDepartureEndedLongitude: partial?.actualDepartureEndedLongitude ?? null,
+    startGuardOnDuty: partial?.startGuardOnDuty ?? "",
+    endGuardOnDuty: partial?.endGuardOnDuty ?? "",
   };
 }
 
@@ -220,10 +228,11 @@ export type TravelOrderLocationDto = {
 export type TravelOrderLocationVisitStatus = "pending" | "in_progress" | "completed";
 
 export function travelOrderLocationVisitStatus(
-  loc: Pick<
-    TravelOrderLocationDto,
-    "startedAt" | "endedAt" | "checkedAt"
-  >,
+  loc: Pick<TravelOrderLocationDto, "startedAt" | "endedAt" | "checkedAt"> | {
+    startedAt?: string | Date | null;
+    endedAt?: string | Date | null;
+    checkedAt?: string | Date | null;
+  },
 ): TravelOrderLocationVisitStatus {
   if (loc.endedAt || loc.checkedAt) return "completed";
   if (loc.startedAt) return "in_progress";
@@ -236,6 +245,66 @@ export function travelOrderLocationVisitStatusLabel(
   if (status === "completed") return "Completed";
   if (status === "in_progress") return "In Progress";
   return "Not started";
+}
+
+/** True when this travel order opted into Gate Pass. */
+export function travelOrderHasGatePass(order: {
+  gatePassIncluded?: boolean | null;
+}): boolean {
+  return order.gatePassIncluded === true;
+}
+
+/**
+ * Location Start/End / remarks / images unlock:
+ * - With Gate Pass: after Actual Departure Start is captured
+ * - Without Gate Pass: once the order is fully approved
+ */
+export function travelOrderLocationsUnlocked(order: {
+  status?: string | null;
+  gatePassIncluded?: boolean | null;
+  actualDepartureStartedAt?: string | Date | null;
+}): boolean {
+  if (!isTravelOrderApproved(order.status ?? "")) return false;
+  if (travelOrderHasGatePass(order)) {
+    return Boolean(order.actualDepartureStartedAt);
+  }
+  return true;
+}
+
+export function travelOrderAllLocationsCompleted(
+  order: {
+    locations?: Array<{
+      startedAt?: string | Date | null;
+      endedAt?: string | Date | null;
+      checkedAt?: string | Date | null;
+    }> | null;
+  },
+): boolean {
+  const locs = order.locations ?? [];
+  if (locs.length === 0) return false;
+  return locs.every((loc) => travelOrderLocationVisitStatus(loc) === "completed");
+}
+
+/**
+ * Confirm unlock:
+ * - With Gate Pass: after Actual Arrival End is captured
+ * - Without Gate Pass: after every location visit is completed
+ */
+export function isTravelOrderConfirmReady(order: {
+  status?: string | null;
+  gatePassIncluded?: boolean | null;
+  actualDepartureEndedAt?: string | Date | null;
+  locations?: Array<{
+    startedAt?: string | Date | null;
+    endedAt?: string | Date | null;
+    checkedAt?: string | Date | null;
+  }> | null;
+}): boolean {
+  if (order.status !== TRAVEL_ORDER_STATUS.APPROVED) return false;
+  if (travelOrderHasGatePass(order)) {
+    return Boolean(order.actualDepartureEndedAt);
+  }
+  return travelOrderAllLocationsCompleted(order);
 }
 
 export type TravelOrderDto = {
@@ -273,9 +342,11 @@ export type TravelOrderDto = {
   actualDepartureStartedAt?: string | null;
   actualDepartureStartedLatitude?: number | null;
   actualDepartureStartedLongitude?: number | null;
+  gatePassStartGuardOnDuty?: string | null;
   actualDepartureEndedAt?: string | null;
   actualDepartureEndedLatitude?: number | null;
   actualDepartureEndedLongitude?: number | null;
+  gatePassEndGuardOnDuty?: string | null;
   /** Why the order was declined (when status is REJECTED). */
   rejectionReason?: string | null;
   rejectedByAgentId?: string | null;
@@ -330,6 +401,7 @@ export function emptyTravelOrderDraft(): TravelOrderDraft {
     approvalLevels: [],
     confirmationByAgentId: "",
     additionalTravelerAgentIds: [],
+    exemptRequesterFromTravelers: false,
     vehicle: "",
     driverPresent: false,
     driverAgentId: "",
@@ -408,6 +480,9 @@ export function validateTravelOrderDraft(draft: TravelOrderDraft): string | null
   if (!draft.vehicle.trim()) {
     return "Select a vehicle for this travel order.";
   }
+  if (draft.exemptRequesterFromTravelers && draft.additionalTravelerAgentIds.length === 0) {
+    return "Add at least one traveler, or uncheck Exempt Me from Travelers.";
+  }
   if (draft.driverPresent) {
     if (!draft.driverAgentId.trim()) {
       return "Select a driver from the travelers list.";
@@ -434,26 +509,39 @@ export function parseApprovedByAgentIds(raw: unknown, fallbackId?: string | null
   return [...new Set(out)];
 }
 
+/**
+ * Travelers stored on the order. The creator is only used as a legacy fallback
+ * when the stored list is empty (older rows).
+ */
 export function parseTravelerAgentIds(
   raw: unknown,
   creatorAgentId?: string | null,
 ): string[] {
   const out = parseApprovedByAgentIds(raw);
-  if (typeof creatorAgentId === "string" && creatorAgentId.trim()) {
-    out.unshift(creatorAgentId.trim());
+  if (
+    out.length === 0 &&
+    typeof creatorAgentId === "string" &&
+    creatorAgentId.trim()
+  ) {
+    out.push(creatorAgentId.trim());
   }
   return [...new Set(out)];
 }
 
-/** Build traveler list: creator first, then additional co-travelers. */
+/** Build traveler list from requestor + co-travelers (requestor optional). */
 export function normalizeTravelerAgentIds(input: {
   createdByAgentId: string;
   additionalTravelerAgentIds?: string[];
+  /** When true, omit the requestor from the travelers list. */
+  exemptRequesterFromTravelers?: boolean;
 }): string[] {
   const creator = input.createdByAgentId.trim();
   const extra = (input.additionalTravelerAgentIds ?? [])
     .map((id) => id.trim())
     .filter((id) => id && id !== creator);
+  if (input.exemptRequesterFromTravelers) {
+    return [...new Set(extra.filter(Boolean))];
+  }
   return [...new Set([creator, ...extra].filter(Boolean))];
 }
 

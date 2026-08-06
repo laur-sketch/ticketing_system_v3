@@ -5,6 +5,7 @@ import { TicketDetailsPrintButton } from "@/components/tickets/TicketDetailsPrin
 import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client/primary";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { FileText } from "lucide-react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { requestTypeLabel } from "@/lib/request-types";
@@ -22,11 +23,14 @@ import {
 } from "@/lib/item-requisition";
 import {
   assigneeIdForStep,
+  canEditDeferredPaymentMode,
+  canAssignDeferredPaymentAccountingFinance,
   isPaymentStepApprovedAck,
-  PAYMENT_APPROVAL_STEPS,
   PAYMENT_APPROVAL_STEP_LABELS,
+  paymentApprovalStepsFor,
   paymentApprovalParticipantIds,
   paymentProceduralStatusLabel,
+  paymentStepAllowsRepeatSigner,
   paymentStepRequiresApprovedAck,
   paymentStepShowsApprovedButton,
   paymentStepShowsDoneButton,
@@ -224,6 +228,10 @@ export function AgentWorkspace({
     deliveryOfCheck: "",
     bankNameAccountNumber: "",
   });
+  /** When true, Mode of payment fields are editable; Save returns them to read-only. */
+  const [paymentModeEditing, setPaymentModeEditing] = useState(false);
+  /** When true, IRS pricing columns are editable; Save Pricing returns them to read-only. */
+  const [requisitionPricingEditing, setRequisitionPricingEditing] = useState(false);
 
   useEffect(() => {
     setApprovalDraft({
@@ -266,6 +274,7 @@ export function AgentWorkspace({
       isFundTransferRequest ||
       isJobOrderApprovalRequest) &&
     (canSetApprovalAssignees ||
+      canAssignPaymentAccountingFinance ||
       isPersonnel ||
       Boolean(sessionAgentId && ticket.assignedAgentId === sessionAgentId));
 
@@ -285,7 +294,12 @@ export function AgentWorkspace({
     }
 
     void (async () => {
-      if (isPaymentRequest && canSetApprovalAssignees) {
+      if (
+        isPaymentRequest &&
+        (canSetApprovalAssignees ||
+          canAssignPaymentAccountingFinance ||
+          Boolean(sessionAgentId && ticket.assignedAgentId === sessionAgentId))
+      ) {
         const [requestorRows, sendToRows] = await Promise.all([
           requestorCompanyTeamId
             ? loadCompanyAgents(requestorCompanyTeamId)
@@ -299,7 +313,7 @@ export function AgentWorkspace({
         setApprovalAgents(sendToRows.length > 0 ? sendToRows : requestorRows);
         return;
       }
-      if (isJobOrderApprovalRequest) {
+      if (isJobOrderApprovalRequest || isFundTransferRequest) {
         const anyRes = await fetch("/api/agents?anyCompany=1", { cache: "no-store" });
         const anyRows = anyRes.ok
           ? ((await anyRes.json()) as Array<{ id: string; name: string; email: string }>)
@@ -325,9 +339,13 @@ export function AgentWorkspace({
   }, [
     needsApprovalAgentList,
     canSetApprovalAssignees,
+    canAssignPaymentAccountingFinance,
     isPaymentRequest,
     isJobOrderApprovalRequest,
+    isFundTransferRequest,
     ticket.teamId,
+    ticket.assignedAgentId,
+    sessionAgentId,
     requestorCompanyTeamId,
   ]);
 
@@ -367,6 +385,7 @@ export function AgentWorkspace({
         deliveryOfCheck: "",
         bankNameAccountNumber: "",
       });
+      setPaymentModeEditing(false);
       return;
     }
     setPaymentModeDraft({
@@ -374,6 +393,10 @@ export function AgentWorkspace({
       deliveryOfCheck: paymentDetails.deliveryOfCheck || "",
       bankNameAccountNumber: paymentDetails.bankNameAccountNumber || "",
     });
+    // After a successful save (or initial load with a mode set), stay read-only until Edit.
+    if (paymentDetails.modeOfPayment?.trim()) {
+      setPaymentModeEditing(false);
+    }
   }, [paymentDetails]);
 
   const requisitionDetails = useMemo(
@@ -409,6 +432,22 @@ export function AgentWorkspace({
       itemRequisitionApprovalMeta &&
       itemRequisitionApprovalMeta.proceduralStep !== "DONE",
   );
+  const requisitionPricingNeedsInitialSet = Boolean(
+    canEditRequisitionPricing &&
+      !(
+        requisitionDetails?.items.some(
+          (i) =>
+            Boolean(i.unitPrice?.trim()) ||
+            Boolean(i.priceQuotation?.trim()) ||
+            Boolean(i.nameOfSupplier?.trim()) ||
+            Boolean(i.terms?.trim()),
+        ) ?? false
+      ),
+  );
+  const showRequisitionPricingEditor = Boolean(
+    canEditRequisitionPricing &&
+      (requisitionPricingEditing || requisitionPricingNeedsInitialSet),
+  );
   const showRequisitionPricingColumns = Boolean(
     canEditRequisitionPricing ||
       (requisitionDetails?.items.some(
@@ -437,6 +476,7 @@ export function AgentWorkspace({
   useEffect(() => {
     if (!requisitionDetails) {
       setPricingDraft([]);
+      setRequisitionPricingEditing(false);
       return;
     }
     setPricingDraft(
@@ -451,6 +491,17 @@ export function AgentWorkspace({
         };
       }),
     );
+    // After a successful save (or load with pricing already set), stay read-only until Edit.
+    const hasPricing = requisitionDetails.items.some(
+      (i) =>
+        Boolean(i.unitPrice?.trim()) ||
+        Boolean(i.priceQuotation?.trim()) ||
+        Boolean(i.nameOfSupplier?.trim()) ||
+        Boolean(i.terms?.trim()),
+    );
+    if (hasPricing) {
+      setRequisitionPricingEditing(false);
+    }
   }, [requisitionDetails]);
 
   const intakeScreenshots = useMemo(
@@ -482,7 +533,7 @@ export function AgentWorkspace({
   const paymentCompletedApproverIds = useMemo(() => {
     if (!paymentApprovalMeta) return new Set<string>();
     const ids = new Set<string>();
-    for (const step of PAYMENT_APPROVAL_STEPS) {
+    for (const step of paymentApprovalStepsFor(paymentApprovalMeta)) {
       if (!paymentApprovalMeta.completed[step]) continue;
       const id = assigneeIdForStep(paymentApprovalMeta, step);
       if (id) ids.add(id);
@@ -503,21 +554,52 @@ export function AgentWorkspace({
   const sessionAlreadyApprovedThisRequest = Boolean(
     sessionAgentId && paymentCompletedApproverIds.has(sessionAgentId),
   );
+  /** Open Accounting/Finance seats unlock the prior-signee lock for the board assignee. */
+  const currentPaymentStepAllowsRepeatSigner = Boolean(
+    paymentApprovalMeta &&
+      currentPaymentStep &&
+      paymentStepAllowsRepeatSigner(paymentApprovalMeta, currentPaymentStep),
+  );
 
   const canCompleteCurrentPaymentStep = Boolean(
     currentPaymentStep &&
       sessionAgentId &&
       ticket.assignedAgentId === sessionAgentId &&
-      !sessionAlreadyApprovedThisRequest,
+      (!sessionAlreadyApprovedThisRequest || currentPaymentStepAllowsRepeatSigner),
   );
   const canEditPaymentMode = Boolean(
     isAgentViewer &&
       isPaymentRequest &&
-      currentPaymentStep === "APPROVED_BY_ACCOUNTING" &&
-      isTicketAssignee &&
-      (paymentApprovalMeta?.deferPaymentModeToAccounting === true ||
-        !paymentDetails?.modeOfPayment?.trim()),
+      paymentApprovalMeta &&
+      (isTicketAssignee || canSetApprovalAssignees || canAssignPaymentAccountingFinance) &&
+      canEditDeferredPaymentMode({
+        meta: paymentApprovalMeta,
+        proceduralStep: currentPaymentStep,
+        modeOfPayment: paymentDetails?.modeOfPayment,
+      }),
   );
+  const paymentModeNeedsInitialSet = Boolean(
+    canEditPaymentMode && !(paymentDetails?.modeOfPayment ?? "").trim(),
+  );
+  const showPaymentModeEditor = Boolean(
+    canEditPaymentMode && (paymentModeEditing || paymentModeNeedsInitialSet),
+  );
+  const canAssignDeferredAccountingFinance = Boolean(
+    isAgentViewer &&
+      isPaymentRequest &&
+      paymentApprovalMeta &&
+      (isTicketAssignee || canSetApprovalAssignees || canAssignPaymentAccountingFinance) &&
+      canAssignDeferredPaymentAccountingFinance({
+        meta: paymentApprovalMeta,
+        modeOfPayment: paymentDetails?.modeOfPayment,
+      }),
+  );
+  const deferredAccountingFinanceRoster =
+    sendToApprovalAgents.length > 0 ? sendToApprovalAgents : approvalAgents;
+  const deferredAccountingFinanceExcludedIds = useMemo(() => {
+    if (!paymentApprovalMeta) return new Set<string>();
+    return paymentApprovalParticipantIds(paymentApprovalMeta);
+  }, [paymentApprovalMeta]);
   const currentStepNeedsApprovedAck = Boolean(
     currentPaymentStep && paymentStepRequiresApprovedAck(currentPaymentStep),
   );
@@ -783,7 +865,7 @@ export function AgentWorkspace({
       }
       if (paymentDetails.notes) notes = paymentDetails.notes;
       if (paymentApprovalMeta) {
-        for (const step of PAYMENT_APPROVAL_STEPS) {
+        for (const step of paymentApprovalStepsFor(paymentApprovalMeta)) {
           const agentId = assigneeIdForStep(paymentApprovalMeta, step);
           const name = agentId
             ? paymentApprovalAgentNames[agentId]?.trim() || "Unknown"
@@ -875,18 +957,16 @@ export function AgentWorkspace({
       );
       if (fundTransferDetails.reason) notes = fundTransferDetails.reason;
       if (fundTransferApprovalMeta) {
+        // Prepared By is intake-only (ticket header); do not repeat in approvals.
         for (const step of FUND_TRANSFER_APPROVAL_STEPS) {
+          if (step === "PREPARED_BY") continue;
           const agentId = fundTransferAssigneeIdForStep(fundTransferApprovalMeta, step);
           const assigneeName = agentId
             ? fundTransferApprovalAgentNames[agentId]?.trim() || null
             : null;
-          const name =
-            step === "PREPARED_BY"
-              ? assigneeName || ticket.contactName?.trim() || "—"
-              : assigneeName || "—";
           approvals.push({
             label: FUND_TRANSFER_APPROVAL_STEP_LABELS[step],
-            name,
+            name: assigneeName || "—",
             done: Boolean(fundTransferApprovalMeta.completed[step]),
           });
         }
@@ -1119,7 +1199,7 @@ export function AgentWorkspace({
                 </div>
               </dl>
               <dl className="space-y-2 text-sm">
-                {canEditPaymentMode ? (
+                {showPaymentModeEditor ? (
                   <>
                     <div>
                       <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
@@ -1212,7 +1292,7 @@ export function AgentWorkspace({
                         </dd>
                       </div>
                     ) : null}
-                    <div className="pt-1">
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
                       <button
                         type="button"
                         disabled={busy}
@@ -1228,8 +1308,18 @@ export function AgentWorkspace({
                       >
                         Save
                       </button>
-                      <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                        Save this section before marking APPROVED BY ACCOUNTING as Done.
+                      <button
+                        type="button"
+                        disabled={busy || paymentModeNeedsInitialSet}
+                        onClick={() => setPaymentModeEditing(true)}
+                        className="min-h-9 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                      >
+                        Edit
+                      </button>
+                      <p className="basis-full text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {canAssignDeferredAccountingFinance
+                          ? "Save mode of payment, then assign Accounting and Finance below before continuing."
+                          : "Save locks this section to read-only. Use Edit to change it again afterward."}
                       </p>
                     </div>
                   </>
@@ -1264,6 +1354,36 @@ export function AgentWorkspace({
                         <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
                           {paymentDetails.bankNameAccountNumber}
                         </dd>
+                      </div>
+                    ) : null}
+                    {canEditPaymentMode ? (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={busy || !paymentModeEditing}
+                          onClick={() =>
+                            patch({
+                              action: "update_payment_mode",
+                              modeOfPayment: paymentModeDraft.modeOfPayment,
+                              deliveryOfCheck: paymentModeDraft.deliveryOfCheck,
+                              bankNameAccountNumber: paymentModeDraft.bankNameAccountNumber,
+                            })
+                          }
+                          className="min-h-9 rounded-lg border border-orange-500/40 bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setPaymentModeEditing(true)}
+                          className="min-h-9 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                        >
+                          Edit
+                        </button>
+                        <p className="basis-full text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Click Edit to change mode of payment, then Save to lock it again.
+                        </p>
                       </div>
                     ) : null}
                   </>
@@ -1318,7 +1438,7 @@ export function AgentWorkspace({
                             {item.particular || "—"}
                           </td>
                           {showRequisitionPricingColumns ? (
-                            canEditRequisitionPricing ? (
+                            showRequisitionPricingEditor ? (
                               <>
                                 <td className="px-3 py-2">
                                   <div className="flex min-w-[6.5rem] items-center gap-1">
@@ -1416,25 +1536,41 @@ export function AgentWorkspace({
               </div>
               {canEditRequisitionPricing ? (
                 <div className="space-y-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      patch({
-                        action: "update_item_requisition_pricing",
-                        items: pricingDraft,
-                      })
-                    }
-                    className="min-h-9 rounded-lg border border-orange-500/40 bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                  >
-                    Save Pricing
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy || !showRequisitionPricingEditor}
+                      onClick={() =>
+                        patch({
+                          action: "update_item_requisition_pricing",
+                          items: pricingDraft,
+                        })
+                      }
+                      className="min-h-9 rounded-lg border border-orange-500/40 bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                    >
+                      Save Pricing
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy || requisitionPricingNeedsInitialSet}
+                      onClick={() => setRequisitionPricingEditing(true)}
+                      className="min-h-9 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
+                    >
+                      Edit
+                    </button>
+                  </div>
                   {currentRequisitionStep === "CANVASSED_BY" ? (
                     <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                       Saving pricing stamps you as Canvassed By and returns this request to the
                       Assignment Board for Approved By.
                     </p>
-                  ) : null}
+                  ) : (
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {showRequisitionPricingEditor
+                        ? "Save Pricing locks this section to read-only. Use Edit to change it again afterward."
+                        : "Click Edit to change pricing, then Save Pricing to lock it again."}
+                    </p>
+                  )}
                 </div>
               ) : null}
               <div>
@@ -1677,8 +1813,12 @@ export function AgentWorkspace({
             </p>
           )}
           {paymentDetails && paymentApprovalMeta ? (
-            <div className="mt-4 grid grid-cols-1 items-start gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 sm:grid-cols-2 lg:grid-cols-5 dark:border-zinc-800/80">
-              {PAYMENT_APPROVAL_STEPS.map((step) => {
+            <div
+              className={`mt-4 grid grid-cols-1 items-start gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 sm:grid-cols-2 dark:border-zinc-800/80 ${
+                paymentApprovalMeta.skipApprovedBy ? "lg:grid-cols-3" : "lg:grid-cols-5"
+              }`}
+            >
+              {paymentApprovalStepsFor(paymentApprovalMeta).map((step) => {
                 const completedAt = paymentApprovalMeta.completed[step];
                 const agentId = assigneeIdForStep(paymentApprovalMeta, step);
                 const name = agentId
@@ -1743,18 +1883,14 @@ export function AgentWorkspace({
             </div>
           ) : null}
           {fundTransferDetails && fundTransferApprovalMeta ? (
-            <div className="mt-4 grid grid-cols-1 items-start gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 sm:grid-cols-2 lg:grid-cols-3 dark:border-zinc-800/80">
-              {FUND_TRANSFER_APPROVAL_STEPS.map((step) => {
+            <div className="mt-4 grid grid-cols-1 items-start gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 sm:grid-cols-2 dark:border-zinc-800/80">
+              {/* Prepared By is intake-only (ticket header); form shows procedural roles only. */}
+              {FUND_TRANSFER_APPROVAL_STEPS.filter((step) => step !== "PREPARED_BY").map((step) => {
                 const completedAt = fundTransferApprovalMeta.completed[step];
                 const agentId = fundTransferAssigneeIdForStep(fundTransferApprovalMeta, step);
-                const assigneeName = agentId
+                const name = agentId
                   ? fundTransferApprovalAgentNames[agentId]?.trim() || null
                   : null;
-                // Creator is always Prepared By (stamped on create / backfilled on open).
-                const name =
-                  step === "PREPARED_BY"
-                    ? assigneeName || ticket.contactName?.trim() || null
-                    : assigneeName;
                 return (
                   <div key={step} className="min-w-0 self-start">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
@@ -1995,43 +2131,44 @@ export function AgentWorkspace({
           {intakeScreenshots.length > 0 ? (
             <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                {isAcaRequest ? "Related documents" : "Screenshots from request"}
+                {isAcaRequest ? "Related documents" : "Attachments"}
               </p>
               {(acaApprovalMeta?.relatedTicketIds?.length ?? 0) > 0 && isAcaRequest ? (
                 <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
                   Ticket refs: {acaApprovalMeta!.relatedTicketIds!.join(", ")}
                 </p>
               ) : null}
-              <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <ul className="mt-2 flex flex-wrap gap-3">
                 {intakeScreenshots.map((m) => {
                   const href = `/api/tickets/${ticket.id}/screenshots/${encodeURIComponent(m.storedFileName)}`;
                   const isImage = isIntakeAttachmentImage(m);
                   return (
-                    <li
-                      key={m.storedFileName}
-                      className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700/80 dark:bg-zinc-950/50"
-                    >
-                      <a href={href} target="_blank" rel="noreferrer" className="block">
+                    <li key={m.storedFileName} className="w-[5.5rem]">
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group flex flex-col items-center gap-1.5 rounded-lg p-1 outline-none transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-orange-500/40 dark:hover:bg-zinc-800/60"
+                        title={m.originalName}
+                      >
                         {isImage ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={href}
                             alt={m.originalName}
-                            className="h-28 w-full object-cover object-top"
+                            className="size-12 rounded-md border border-zinc-200 object-cover object-top dark:border-zinc-700"
                             loading="lazy"
                           />
                         ) : (
-                          <div className="flex h-28 items-center justify-center bg-zinc-100 px-3 text-center text-xs font-semibold text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-                            Document
-                          </div>
+                          <span className="flex size-12 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-orange-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-orange-400">
+                            <FileText className="size-7" strokeWidth={1.5} aria-hidden />
+                            <span className="sr-only">Document</span>
+                          </span>
                         )}
+                        <span className="w-full truncate text-center text-[10px] text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-500 dark:group-hover:text-zinc-200">
+                          {m.originalName}
+                        </span>
                       </a>
-                      <p
-                        className="truncate px-1.5 py-1 text-[10px] text-zinc-600 dark:text-zinc-500"
-                        title={m.originalName}
-                      >
-                        {m.originalName}
-                      </p>
                     </li>
                   );
                 })}
@@ -2229,6 +2366,79 @@ export function AgentWorkspace({
               </div>
             ) : null}
 
+            {isPaymentRequest && canAssignDeferredAccountingFinance ? (
+              <div className="space-y-2 rounded-xl border border-orange-400/40 bg-orange-500/5 p-3 dark:border-orange-500/30 dark:bg-orange-500/10">
+                <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  Set Accounting & Finance assignees
+                </p>
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Mode of payment is to be set by Accounting. Noted By
+                  {paymentApprovalMeta?.skipApprovedBy ? "" : " and Approved By"}{" "}
+                  {paymentApprovalMeta?.skipApprovedBy ? "is" : "are"} complete — assign these
+                  roles (different people), then hand off. Set mode of payment in the request details
+                  above if it is still pending.
+                </p>
+                <CompanyUserSearchField
+                  label="Approved By (Accounting)"
+                  users={deferredAccountingFinanceRoster}
+                  value={approvalDraft.accountingAgentId || ""}
+                  excludedIds={
+                    new Set(
+                      [
+                        ...deferredAccountingFinanceExcludedIds,
+                        approvalDraft.financeAgentId || "",
+                      ].filter((id) => id && id !== approvalDraft.accountingAgentId),
+                    )
+                  }
+                  disabled={busy}
+                  placeholder="Search by name or email…"
+                  onChange={(agentId) =>
+                    setApprovalDraft((prev) => ({
+                      ...prev,
+                      accountingAgentId: agentId || null,
+                    }))
+                  }
+                />
+                <CompanyUserSearchField
+                  label="Approved By (Finance)"
+                  users={deferredAccountingFinanceRoster}
+                  value={approvalDraft.financeAgentId || ""}
+                  excludedIds={
+                    new Set(
+                      [
+                        ...deferredAccountingFinanceExcludedIds,
+                        approvalDraft.accountingAgentId || "",
+                      ].filter((id) => id && id !== approvalDraft.financeAgentId),
+                    )
+                  }
+                  disabled={busy}
+                  placeholder="Search by name or email…"
+                  onChange={(agentId) =>
+                    setApprovalDraft((prev) => ({
+                      ...prev,
+                      financeAgentId: agentId || null,
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  disabled={
+                    busy || !approvalDraft.accountingAgentId || !approvalDraft.financeAgentId
+                  }
+                  onClick={() =>
+                    patch({
+                      action: "set_payment_approval_assignees",
+                      accountingAgentId: approvalDraft.accountingAgentId,
+                      financeAgentId: approvalDraft.financeAgentId,
+                    })
+                  }
+                  className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
+                >
+                  Save Accounting & Finance assignees
+                </button>
+              </div>
+            ) : null}
+
             {isPaymentRequest && canSetApprovalAssignees ? (
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
@@ -2285,7 +2495,10 @@ export function AgentWorkspace({
                         : `Complete ${PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]}`}
                     </button>
                   </div>
-                ) : currentPaymentStep && sessionAlreadyApprovedThisRequest && isTicketAssignee ? (
+                ) : currentPaymentStep &&
+                  sessionAlreadyApprovedThisRequest &&
+                  isTicketAssignee &&
+                  !currentPaymentStepAllowsRepeatSigner ? (
                   <p className="text-[11px] text-amber-700 dark:text-amber-300">
                     You already approved an earlier step on this request, so Done is hidden.
                     {showPaymentSubmitForNextApproval
@@ -2406,7 +2619,9 @@ export function AgentWorkspace({
                           Done
                         </button>
                       </div>
-                    ) : sessionAlreadyApprovedThisRequest && isTicketAssignee ? (
+                    ) : sessionAlreadyApprovedThisRequest &&
+                      isTicketAssignee &&
+                      !currentPaymentStepAllowsRepeatSigner ? (
                       <p className="text-[11px] text-amber-700 dark:text-amber-300">
                         You already approved an earlier step on this request, so Done is hidden.
                         {showPaymentSubmitForNextApproval
@@ -2484,6 +2699,7 @@ export function AgentWorkspace({
             {isPaymentRequest &&
             !canSetApprovalAssignees &&
             !canRequestPaymentApproval &&
+            !canAssignDeferredAccountingFinance &&
             paymentProceduralLabel ? (
               <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
                 {paymentProceduralLabel} — not green-lit yet. Accounting and Finance must click Approved,
@@ -2816,12 +3032,12 @@ export function AgentWorkspace({
                       Submit for Next Approval
                     </p>
                     <CompanyUserSearchField
-                      label={`${FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]} — company user`}
+                      label={`${FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]} — user`}
                       users={approvalAgents}
                       value={requestApproverId || currentFundTransferStepAssigneeId || ""}
                       onChange={setRequestApproverId}
                       disabled={busy}
-                      placeholder="Search company users…"
+                      placeholder="Search by name or email…"
                     />
                     <button
                       type="button"
@@ -2860,13 +3076,13 @@ export function AgentWorkspace({
                 {currentFundTransferStep ? (
                   <>
                     <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                      {FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]} — company user
+                      {FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]} — user
                       <select
                         value={requestApproverId || currentFundTransferStepAssigneeId || ""}
                         onChange={(e) => setRequestApproverId(e.target.value)}
                         className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                       >
-                        <option value="">Select user from your company</option>
+                        <option value="">Select user by name or email</option>
                         {approvalAgents.map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.name}

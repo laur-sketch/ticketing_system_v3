@@ -30,8 +30,8 @@ const MANAGEABLE = new Set<string>(PORTAL_ROLES);
  * Body: { mergedSourceUserId: string, role: PortalRole }
  */
 export async function PATCH(req: Request) {
-  const { unauthorized } = await requireRole(["SuperAdmin"]);
-  if (unauthorized) return unauthorized;
+  const { session, unauthorized } = await requireRole(["SuperAdmin"]);
+  if (unauthorized || !session) return unauthorized;
 
   try {
     const body = (await req.json().catch(() => ({}))) as {
@@ -48,6 +48,18 @@ export async function PATCH(req: Request) {
     const portalRole = normalizePortalRole(roleRaw);
     if (!portalRole || !MANAGEABLE.has(portalRole)) {
       return NextResponse.json({ error: "Invalid role." }, { status: 400 });
+    }
+    if (portalRole === "SuperAdmin" && session.user.role !== "SuperAdmin") {
+      return NextResponse.json(
+        { error: "Only a SuperAdmin may assign the platform SuperAdmin portal role." },
+        { status: 403 },
+      );
+    }
+    if (portalRole === "HighAdmin" && session.user.role !== "SuperAdmin") {
+      return NextResponse.json(
+        { error: "Only a SuperAdmin may assign the HighAdmin portal role." },
+        { status: 403 },
+      );
     }
 
     const mergedSourceUserId = BigInt(mergedIdRaw);

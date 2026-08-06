@@ -15,7 +15,7 @@ const ACTIVE_STATUSES: TicketStatus[] = ["OPEN", "IN_PROGRESS", "PENDING_INFO", 
 export default async function ManualAssignmentPage() {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/agent");
+  if (!["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) redirect("/agent");
 
   /** SuperAdmin and JWT Admin use the company dropdown to narrow personnel lanes. */
   const isPersonnelCompanyLock = false;

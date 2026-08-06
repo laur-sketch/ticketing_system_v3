@@ -25,6 +25,7 @@ export type RosterCompany = { id: string; name: string };
 
 export function portalRegistryRoleLabel(role: (typeof PORTAL_ROLES)[number]) {
   if (role === "SuperAdmin") return "Super Admin (platform)";
+  if (role === "HighAdmin") return "High Admin (platform + approver)";
   return role;
 }
 

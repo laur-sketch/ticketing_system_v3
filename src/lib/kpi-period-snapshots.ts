@@ -22,7 +22,9 @@ import {
   kpiChecklistProgress,
   normalizeSubKpis,
   pillarVirtualSubKpiItem,
+  progressWithInvertedRecording,
   subKpiProgressOwner,
+  taskUsesInvertedRecording,
   type KpiChecklistProgress,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
@@ -34,6 +36,7 @@ import {
   usesProjectTimelineTracker,
 } from "@/lib/it-project-subkpis";
 import {
+  IT_TASK_PILLAR_TITLES,
   isItProjectImplementationPillar,
   isJobOrderRequestPillar,
 } from "@/lib/it-task-pillar-titles";
@@ -58,6 +61,10 @@ import {
   mergePenaltyDeductionMaps,
   penaltyDeductionsForKpi,
 } from "@/lib/task-delay-penalty";
+import {
+  numericalRecordProgressPercent,
+  totalRecordedDataPercent,
+} from "@/lib/sub-kpi-completion-mode";
 
 export type KpiRowForSnapshot = {
   id: string;
@@ -86,6 +93,54 @@ export function timeZoneFromPeriodKey(periodKey: string | null | undefined): str
   const parts = periodKey.split(":");
   if (parts.length >= 3 && parts[1]) return normalizeTimeZone(parts[1]);
   return DEFAULT_TIME_ZONE;
+}
+
+/**
+ * Asia/Manila and Asia/Taipei are both GMT+8; historical imports and live rollovers
+ * have mixed keys. Return the sibling key so metrics can resolve either form.
+ */
+export function alternateGmt8PeriodKey(periodKey: string): string | null {
+  const m = /^(D|W|M|Q):(Asia\/(?:Manila|Taipei)):(.+)$/.exec(periodKey.trim());
+  if (!m) return null;
+  const prefix = m[1]!;
+  const zone = m[2]!;
+  const rest = m[3]!;
+  const other = zone === "Asia/Manila" ? "Asia/Taipei" : "Asia/Manila";
+  return `${prefix}:${other}:${rest}`;
+}
+
+/** Canonical key plus GMT+8 alias (Manila ↔ Taipei), de-duplicated. */
+export function periodKeysWithGmt8Aliases(periodKeys: Iterable<string>): string[] {
+  const out = new Set<string>();
+  for (const key of periodKeys) {
+    const trimmed = key.trim();
+    if (!trimmed) continue;
+    out.add(trimmed);
+    const alt = alternateGmt8PeriodKey(trimmed);
+    if (alt) out.add(alt);
+  }
+  return [...out];
+}
+
+/**
+ * Index snapshots under their stored key and under the GMT+8 alias so lookups
+ * using either Asia/Manila or Asia/Taipei period keys resolve the same row.
+ * Prefer an exact-key hit when both aliases already exist in the batch.
+ */
+export function indexSnapshotsByKpiPeriod<T extends { kpiMaintenanceId: string; periodKey: string }>(
+  snapshots: readonly T[],
+): Map<string, T> {
+  const map = new Map<string, T>();
+  for (const snap of snapshots) {
+    map.set(`${snap.kpiMaintenanceId}:${snap.periodKey}`, snap);
+  }
+  for (const snap of snapshots) {
+    const alt = alternateGmt8PeriodKey(snap.periodKey);
+    if (!alt) continue;
+    const aliasKey = `${snap.kpiMaintenanceId}:${alt}`;
+    if (!map.has(aliasKey)) map.set(aliasKey, snap);
+  }
+  return map;
 }
 
 export function resolvePeriodKeyForKpi(
@@ -325,6 +380,16 @@ function snapshotToProgress(s: {
   };
 }
 
+/** Weighted recorded percent: sum(done) / sum(total) across period rows. */
+function weightedRecordedPercent(rows: readonly KpiChecklistProgress[]): number | null {
+  const withData = rows.filter((row) => row.total > 0);
+  if (withData.length === 0) return null;
+  const total = withData.reduce((sum, row) => sum + row.total, 0);
+  const done = withData.reduce((sum, row) => sum + row.done, 0);
+  if (total <= 0) return null;
+  return Math.round((done / total) * 100);
+}
+
 function averageDailyProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress {
   const withData = rows.filter((r) => r.total > 0);
   if (withData.length === 0) return { total: 0, done: 0, missing: 0, percent: 0 };
@@ -335,14 +400,27 @@ function averageDailyProgress(rows: KpiChecklistProgress[]): KpiChecklistProgres
   return { total, done, missing, percent };
 }
 
+export type TaskChecklistIncludedTaskItem = {
+  id: string;
+  title: string;
+  done: boolean;
+  /** Sub-task assignee display name (sub-assignee, else parent assignee). */
+  assigneeName?: string | null;
+  /** Numerical recorded-data percent for this sub-task, when applicable. */
+  recordedPercent?: number | null;
+};
+
 /** Live Task Board rows that feed a company-view donut (admin extended view). */
-export type TaskChecklistIncludedPhase = {
+export type TaskChecklistIncludedTaskPhase = {
   id: string;
   name: string;
   total: number;
   done: number;
   percent: number;
 };
+
+/** @deprecated Prefer {@link TaskChecklistIncludedTaskPhase}. */
+export type TaskChecklistIncludedPhase = TaskChecklistIncludedTaskPhase;
 
 export type TaskChecklistIncludedTask = {
   id: string;
@@ -354,9 +432,18 @@ export type TaskChecklistIncludedTask = {
   done: number;
   missing: number;
   percent: number;
-  items: Array<{ id: string; title: string; done: boolean }>;
+  /** Live recorded-data percent across numerical sub-tasks (`sum actual / sum target`). */
+  recordedPercent?: number | null;
+  /**
+   * Actual recorded-data percent across the selected cadence range:
+   * weighted `sum(done) / sum(total)` including the live active period.
+   */
+  totalDataRecordedPercent?: number | null;
+  /** How many cadence periods contributed to {@link totalDataRecordedPercent}. */
+  totalDataRecordedPeriods?: number;
+  items: TaskChecklistIncludedTaskItem[];
   /** Project timeline extended view — progress per phase instead of flat sub-tasks. */
-  phases?: TaskChecklistIncludedPhase[];
+  phases?: TaskChecklistIncludedTaskPhase[];
 };
 
 export type TaskChecklistPillarMetric = KpiChecklistProgress & {
@@ -793,6 +880,7 @@ function buildIncludedTasksForKpis(
     subKpis: unknown;
     assignedAgent?: { id: string; name: string } | null;
   }>,
+  cadenceProgressByKpiId?: ReadonlyMap<string, readonly KpiChecklistProgress[]>,
 ): TaskChecklistIncludedTask[] {
   return pillarKpis.map((kpi) => {
     const frequency =
@@ -800,6 +888,13 @@ function buildIncludedTasksForKpis(
         ? "ONE-OFF"
         : String(kpi.frequency ?? "").trim().toUpperCase() || null;
     const assigneeName = kpi.assignedAgent?.name?.trim() || null;
+    const invert = taskUsesInvertedRecording({ title: kpi.title, subKpis: kpi.subKpis });
+    const cadenceRows = (cadenceProgressByKpiId?.get(kpi.id) ?? []).map((row) =>
+      progressWithInvertedRecording(row, invert),
+    );
+    const cadenceWithData = cadenceRows.filter((row) => row.total > 0);
+    const totalDataRecordedPercent = weightedRecordedPercent(cadenceRows);
+    const totalDataRecordedPeriods = cadenceWithData.length;
 
     if (isProjectTimelineMetricsKpi(kpi)) {
       const agg = itProjectAggregatedProgressFromRaw(kpi.subKpis);
@@ -813,7 +908,12 @@ function buildIncludedTasksForKpis(
         done: agg.totalDone,
         missing,
         percent: agg.averagePercent,
-        items: [],
+        recordedPercent: agg.averagePercent,
+        totalDataRecordedPercent:
+          totalDataRecordedPercent != null ? totalDataRecordedPercent : agg.averagePercent,
+        totalDataRecordedPeriods:
+          totalDataRecordedPeriods > 0 ? totalDataRecordedPeriods : agg.totalItems > 0 ? 1 : 0,
+        items: [] as TaskChecklistIncludedTaskItem[],
         phases: agg.phases.map((ph) => ({
           id: ph.phaseId,
           name: ph.phaseName,
@@ -825,12 +925,24 @@ function buildIncludedTasksForKpis(
     }
 
     const label = kpiMainTaskLabel(kpi);
-    const progress = kpiChecklistProgress(kpi.subKpis, label);
-    const items = collectChecklistProgressItems(kpi.subKpis, label).map((item) => ({
-      id: item.id,
-      title: item.title,
-      done: rawCheckboxIsDone(item),
-    }));
+    const rawProgress = kpiChecklistProgress(kpi.subKpis, label);
+    const progress = progressWithInvertedRecording(rawProgress, invert);
+    const progressItems = collectChecklistProgressItems(kpi.subKpis, label);
+    const parentAssignee = kpi.assignedAgent
+      ? { id: kpi.assignedAgent.id, name: kpi.assignedAgent.name }
+      : null;
+    const items = progressItems.map((item) => {
+      const owner = subKpiProgressOwner(item, parentAssignee);
+      return {
+        id: item.id,
+        title: item.title,
+        done: rawCheckboxIsDone(item),
+        assigneeName: owner.role === "Unassigned" ? null : owner.name,
+        recordedPercent: numericalRecordProgressPercent(item.numericalValue, item.numericalTarget),
+      };
+    });
+    const liveNumerical = totalRecordedDataPercent(progressItems);
+    const liveRecorded = liveNumerical != null && !invert ? liveNumerical : progress.percent;
     return {
       id: kpi.id,
       title: kpi.title,
@@ -840,6 +952,17 @@ function buildIncludedTasksForKpis(
       done: progress.done,
       missing: progress.missing,
       percent: progress.percent,
+      recordedPercent: liveRecorded,
+      totalDataRecordedPercent:
+        totalDataRecordedPercent != null
+          ? totalDataRecordedPercent
+          : liveRecorded != null
+            ? liveRecorded
+            : progress.total > 0
+              ? progress.percent
+              : null,
+      totalDataRecordedPeriods:
+        totalDataRecordedPeriods > 0 ? totalDataRecordedPeriods : progress.total > 0 ? 1 : 0,
       items,
     };
   });
@@ -1525,13 +1648,23 @@ export async function computeTaskChecklistPillarMetrics(args: {
     kpisByPillar.set(pillar, list);
   }
 
-  /** Task type always exposes fixed donuts; Project / Field use a single bucket. */
-  const pillarsToCompute =
-    taskType === "task"
-      ? [...TASK_FREQUENCY_DONUT_KEYS]
-      : taskType === "field"
-        ? [FIELD_ASSIGNMENT_DONUT_KEY]
-        : [PROJECTS_DONUT_KEY];
+  const canonicalPillars = taskType
+    ? taskType === "requests"
+      ? []
+      : taskType === "task"
+        ? [...TASK_FREQUENCY_DONUT_KEYS]
+        : taskType === "field"
+          ? [FIELD_ASSIGNMENT_DONUT_KEY]
+          : [PROJECTS_DONUT_KEY]
+    : IT_TASK_PILLAR_TITLES.filter(
+        (p) => p !== "HELPDESK SUPPORT" && p !== "USER SUPPORT",
+      );
+  const dynamicPillars = taskType
+    ? []
+    : [...kpisByPillar.keys()]
+        .filter((p) => !(IT_TASK_PILLAR_TITLES as readonly string[]).includes(p))
+        .sort();
+  const pillarsToCompute: string[] = [...canonicalPillars, ...dynamicPillars];
 
   const selectedByPillar = new Map<string, (typeof kpis)[number][]>();
   const allSelectedKpis: (typeof kpis)[number][] = [];
@@ -1557,19 +1690,19 @@ export async function computeTaskChecklistPillarMetrics(args: {
     }
   }
 
+  const queryPeriodKeys = periodKeysWithGmt8Aliases(allPeriodKeys);
+
   const snapshots =
-    uniqueSelected.length === 0 || allPeriodKeys.size === 0
+    uniqueSelected.length === 0 || queryPeriodKeys.length === 0
       ? []
       : await prisma.kpiMaintenancePeriodSnapshot.findMany({
           where: {
             kpiMaintenanceId: { in: uniqueSelected.map((k) => k.id) },
-            periodKey: { in: [...allPeriodKeys] },
+            periodKey: { in: queryPeriodKeys },
           },
         });
 
-  const snapshotByKpiPeriod = new Map(
-    snapshots.map((s) => [`${s.kpiMaintenanceId}:${s.periodKey}`, s] as const),
-  );
+  const snapshotByKpiPeriod = indexSnapshotsByKpiPeriod(snapshots);
 
   const now = new Date();
   const currentPeriodKeyFor = (kpi: (typeof kpis)[number]) => resolvePeriodKeyForKpi(kpi, now, zone);
@@ -1612,9 +1745,22 @@ export async function computeTaskChecklistPillarMetrics(args: {
     const pillarKpis = (selectedByPillar.get(pillar) ?? []).filter(
       (kpi) => !isProjectTimelineMetricsKpi(kpi),
     );
-    const includedTasks = buildIncludedTasksForKpis(
-      taskType ? (selectedByPillar.get(pillar) ?? []) : pillarKpis,
-    );
+    const includedKpisForDonut = taskType ? (selectedByPillar.get(pillar) ?? []) : pillarKpis;
+    if (pillarKpis.length === 0 && !(taskType && includedKpisForDonut.length > 0)) {
+      result[pillar] = {
+        total: 0,
+        done: 0,
+        missing: 0,
+        percent: 0,
+        periodsCounted: 0,
+        periodsInRange: 0,
+        dailyProgressRows: [],
+        assigneeProgress: [],
+        assigneeProgressAccumulated: [],
+        includedTasks: buildIncludedTasksForKpis(includedKpisForDonut),
+      };
+      continue;
+    }
 
     // For task/field buckets, include every mapped row (including project-like field tasks).
     const rowsForProgress =
@@ -1633,7 +1779,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
         dailyProgressRows: [],
         assigneeProgress: [],
         assigneeProgressAccumulated: [],
-        includedTasks,
+        includedTasks: buildIncludedTasksForKpis(includedKpisForDonut),
       };
       continue;
     }
@@ -1641,6 +1787,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
     const progressRows: KpiChecklistProgress[] = [];
     const assigneeBundles: AssigneeProgressBundle[] = [];
     const personnelRoster: PersonnelKpiRosterRow[] = [];
+    const cadenceProgressByKpiId = new Map<string, KpiChecklistProgress[]>();
     const invert = isInvertedChecklistPillar(pillar);
     let periodsInRange = 0;
 
@@ -1649,10 +1796,17 @@ export async function computeTaskChecklistPillarMetrics(args: {
       periodsInRange += periodKeys.length;
       const nowPeriodKey = currentPeriodKeyFor(kpi);
       let countedPeriodsForKpi = 0;
+      /**
+       * Period rows for per-task Total data recorded — always includes the live
+       * active period so the extended view shows actual recorded data.
+       */
+      const kpiCadenceRowsForTotal: KpiChecklistProgress[] = [];
+      const taskInvert = taskUsesInvertedRecording({ title: kpi.title, subKpis: kpi.subKpis });
 
       for (const key of periodKeys) {
         const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
         let progress: KpiChecklistProgress | null = null;
+        let liveForTotal: KpiChecklistProgress | null = null;
         if (snap) {
           progress = snapshotToProgress(snap);
         } else if (key === nowPeriodKey) {
@@ -1660,22 +1814,31 @@ export async function computeTaskChecklistPillarMetrics(args: {
            * Live Task Board checkboxes for the active period when no snapshot exists yet.
            * Count the in-progress period toward the aggregate only once it is fully
            * complete; otherwise an unfinished "today" drags the percent below the
-           * personnel breakdowns, which are snapshot-based. Inverted (incident-style)
-           * pillars keep live inclusion since unchecked means healthy there.
+           * personnel breakdowns, which are snapshot-based. Inverted recording tasks
+           * (and legacy inverted pillars) keep live inclusion since unchecked means healthy.
            */
           const live = kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi));
-          if (invert || (live.total > 0 && live.done >= live.total)) {
+          liveForTotal = live.total > 0 ? live : null;
+          if (taskInvert || invert || (live.total > 0 && live.done >= live.total)) {
             progress = live;
           }
         }
-        if (!progress) continue;
+        if (progress) {
+          countedPeriodsForKpi += 1;
+          const displayProgress = progressWithInvertedRecording(progress, taskInvert);
+          progressRows.push(displayProgress);
+          kpiCadenceRowsForTotal.push(progress);
+          assigneeBundles.push({
+            progress: displayProgress,
+            contributors: contributorProgressForKpiPeriod(kpi, key, nowPeriodKey, snap, rawCheckboxIsDone),
+          });
+        } else if (liveForTotal) {
+          kpiCadenceRowsForTotal.push(liveForTotal);
+        }
+      }
 
-        countedPeriodsForKpi += 1;
-        progressRows.push(progress);
-        assigneeBundles.push({
-          progress,
-          contributors: contributorProgressForKpiPeriod(kpi, key, nowPeriodKey, snap, rawCheckboxIsDone),
-        });
+      if (kpiCadenceRowsForTotal.length > 0) {
+        cadenceProgressByKpiId.set(kpi.id, kpiCadenceRowsForTotal);
       }
 
       personnelRoster.push({
@@ -1685,6 +1848,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
       });
     }
 
+    const includedTasks = buildIncludedTasksForKpis(includedKpisForDonut, cadenceProgressByKpiId);
     const dailyProgressRows: TaskChecklistDailyProgress[] = [];
     const hasDailyKpis = rowsForProgress.some((kpi) => (kpi.frequency as KpiFrequencyCode) === "DAILY");
     for (const ymd of enumerateYmdDaysInRange(fromYmd, toYmd, zone)) {
@@ -1693,19 +1857,29 @@ export async function computeTaskChecklistPillarMetrics(args: {
         if ((kpi.frequency as KpiFrequencyCode) !== "DAILY") continue;
         const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, ymd, ymd, zone);
         const nowPeriodKey = currentPeriodKeyFor(kpi);
+        const taskInvert = taskUsesInvertedRecording({ title: kpi.title, subKpis: kpi.subKpis });
         for (const key of periodKeys) {
           const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
           if (snap) {
-            dayRows.push(snapshotToProgress(snap));
+            dayRows.push(progressWithInvertedRecording(snapshotToProgress(snap), taskInvert));
           } else if (key === nowPeriodKey) {
-            dayRows.push(kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi)));
+            dayRows.push(
+              progressWithInvertedRecording(
+                kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi)),
+                taskInvert,
+              ),
+            );
           }
         }
       }
       if (hasDailyKpis) {
         const dayAgg = averageDailyProgress(dayRows);
         const skipEmptyIncidentDay =
-          isInvertedChecklistPillar(pillar) && dayAgg.total <= 0;
+          (isInvertedChecklistPillar(pillar) ||
+            rowsForProgress.some((kpi) =>
+              taskUsesInvertedRecording({ title: kpi.title, subKpis: kpi.subKpis }),
+            )) &&
+          dayAgg.total <= 0;
         if (!skipEmptyIncidentDay) {
           dailyProgressRows.push({ date: ymd, ...dayAgg });
         }

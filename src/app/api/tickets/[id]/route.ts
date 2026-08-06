@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { customerCanAccessTicket, requireSession } from "@/lib/access";
@@ -41,6 +42,8 @@ import {
   assigneeIdForStep,
   canAssignPaymentApprover,
   canCompletePaymentApprovalStep,
+  canAssignDeferredPaymentAccountingFinance,
+  canEditDeferredPaymentMode,
   canMarkPaymentStepApproved,
   completePaymentApprovalStep,
   currentPaymentStepBoardAssigneeId,
@@ -301,8 +304,8 @@ export async function PATCH(
     session.user.email,
   );
   const isOwner = isRequestor;
-  const isAdminOrAgent = ["SuperAdmin", "Admin", "Personnel"].includes(session.user.role);
-  const roleIsAdmin = ["SuperAdmin", "Admin"].includes(session.user.role);
+  const isAdminOrAgent = ["SuperAdmin", "HighAdmin", "Admin", "Personnel"].includes(session.user.role);
+  const roleIsAdmin = ["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role);
   const operator = await findSessionAgentWithTeam({ email: session.user.email, name: session.user.name });
   const roleIsCompanyAdmin = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const isAssignedOperator = isTicketAssignee({
@@ -471,7 +474,9 @@ export async function PATCH(
             return NextResponse.json(
               {
                 error:
-                  "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY, APPROVED BY ACCOUNTING, and APPROVED BY FINANCE before proceeding.",
+                  meta.skipApprovedBy
+                    ? "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY ACCOUNTING, and APPROVED BY FINANCE before proceeding."
+                    : "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY, APPROVED BY ACCOUNTING, and APPROVED BY FINANCE before proceeding.",
               },
               { status: 400 },
             );
@@ -1252,7 +1257,7 @@ export async function PATCH(
 
     if (action === "set_payment_approval_assignees") {
       if (
-        session.user.role !== "SuperAdmin" &&
+        !isElevatedUserRole(session.user.role) &&
         session.user.role !== "Admin" &&
         session.user.role !== "Personnel"
       ) {
@@ -1269,16 +1274,60 @@ export async function PATCH(
         );
       }
       const meta = await initPaymentApprovalMetaIfNeeded(id);
+      const paymentFields = parsePaymentRequestDescription(ticket.description);
+      const deferredAccountingFinanceAssign = canAssignDeferredPaymentAccountingFinance({
+        meta,
+        modeOfPayment: paymentFields?.modeOfPayment,
+      });
+      const assigneeDeferredEditor = Boolean(isAssignedOperator && deferredAccountingFinanceAssign);
+      const fullAssigneeEditor =
+        isElevatedUserRole(session.user.role) ||
+        session.user.role === "Admin" ||
+        (session.user.role === "Personnel" && !assigneeDeferredEditor);
+      // Board assignee may only fill deferred Accounting / Finance seats after Noted By + Approved By.
+      if (!fullAssigneeEditor && !assigneeDeferredEditor) {
+        return NextResponse.json(
+          {
+            error:
+              "Only the assigned personnel can set Accounting and Finance after Noted By and Approved By are complete on a deferred payment request.",
+          },
+          { status: 403 },
+        );
+      }
       const pickId = (v: unknown): string | null => {
         if (v === null || v === "") return null;
         return typeof v === "string" && v.trim() ? v.trim() : null;
       };
       // Prepared By is intake-only and not editable from Ticket Controls.
       const nextAssignees: Partial<PaymentApprovalAssignees> = {};
-      if ("notedByAgentId" in body) nextAssignees.notedByAgentId = pickId(body.notedByAgentId);
-      if ("approvedByAgentId" in body) nextAssignees.approvedByAgentId = pickId(body.approvedByAgentId);
+      if (fullAssigneeEditor) {
+        if ("notedByAgentId" in body) nextAssignees.notedByAgentId = pickId(body.notedByAgentId);
+        if ("approvedByAgentId" in body) nextAssignees.approvedByAgentId = pickId(body.approvedByAgentId);
+      }
       if ("accountingAgentId" in body) nextAssignees.accountingAgentId = pickId(body.accountingAgentId);
       if ("financeAgentId" in body) nextAssignees.financeAgentId = pickId(body.financeAgentId);
+
+      if (assigneeDeferredEditor && !fullAssigneeEditor) {
+        const keys = Object.keys(nextAssignees);
+        if (keys.some((k) => k !== "accountingAgentId" && k !== "financeAgentId")) {
+          return NextResponse.json(
+            { error: "You can only set Approved By (Accounting) and Approved By (Finance) on this step." },
+            { status: 403 },
+          );
+        }
+        if (!nextAssignees.accountingAgentId && !meta.accountingAgentId) {
+          return NextResponse.json(
+            { error: "Select Approved By (Accounting)." },
+            { status: 400 },
+          );
+        }
+        if (!nextAssignees.financeAgentId && !meta.financeAgentId) {
+          return NextResponse.json(
+            { error: "Select Approved By (Finance)." },
+            { status: 400 },
+          );
+        }
+      }
 
       const agentIds = Object.values(nextAssignees).filter((v): v is string => Boolean(v));
       if (agentIds.length > 0) {
@@ -1615,15 +1664,6 @@ export async function PATCH(
         );
       }
       const meta = await initPaymentApprovalMetaIfNeeded(id);
-      if (meta.proceduralStep !== "APPROVED_BY_ACCOUNTING") {
-        return NextResponse.json(
-          {
-            error:
-              "Mode of payment can only be set when the request is on APPROVED BY ACCOUNTING.",
-          },
-          { status: 400 },
-        );
-      }
       const existing = parsePaymentRequestDescription(ticket.description);
       if (!existing) {
         return NextResponse.json(
@@ -1631,20 +1671,37 @@ export async function PATCH(
           { status: 400 },
         );
       }
-      const maySetMode =
-        meta.deferPaymentModeToAccounting === true || !existing.modeOfPayment.trim();
-      if (!maySetMode) {
+      if (
+        !canEditDeferredPaymentMode({
+          meta,
+          proceduralStep: meta.proceduralStep,
+          modeOfPayment: existing.modeOfPayment,
+        })
+      ) {
         return NextResponse.json(
           {
             error:
-              "Mode of payment was already set at intake. Only deferred requests can update it here.",
+              "Mode of payment can be set or edited on APPROVED BY ACCOUNTING after Noted By and Approved By are complete (or on APPROVED BY when Accounting/Finance were left unset).",
           },
           { status: 400 },
         );
       }
-      if (!ticket.assignedAgentId || operator?.id !== ticket.assignedAgentId) {
+      const adminCompanyTeamId =
+        session.user.role === "Admin"
+          ? await resolveStaffCompanyTeamId(session.user.email)
+          : null;
+      const maySetPaymentMode =
+        isAssignedOperator ||
+        isElevatedUserRole(session.user.role) ||
+        (session.user.role === "Admin" &&
+          Boolean(adminCompanyTeamId) &&
+          adminCompanyTeamId === ticket.teamId);
+      if (!maySetPaymentMode) {
         return NextResponse.json(
-          { error: "Only the assigned Accounting personnel can set Mode of payment." },
+          {
+            error:
+              "Only the assigned personnel or an Admin for this company can set Mode of payment.",
+          },
           { status: 403 },
         );
       }
@@ -1847,7 +1904,7 @@ export async function PATCH(
 
     if (action === "set_item_requisition_approval_assignees") {
       if (
-        session.user.role !== "SuperAdmin" &&
+        !isElevatedUserRole(session.user.role) &&
         session.user.role !== "Admin" &&
         session.user.role !== "Personnel"
       ) {
@@ -2166,7 +2223,7 @@ export async function PATCH(
     }
 
     if (action === "undo_item_requisition_canvass") {
-      if (session.user.role !== "SuperAdmin") {
+      if (!isElevatedUserRole(session.user.role)) {
         return NextResponse.json(
           { error: "Only SuperAdmin can undo Canvassed By." },
           { status: 403 },
@@ -2366,7 +2423,7 @@ export async function PATCH(
 
     if (action === "set_fund_transfer_approval_assignees") {
       if (
-        session.user.role !== "SuperAdmin" &&
+        !isElevatedUserRole(session.user.role) &&
         session.user.role !== "Admin" &&
         session.user.role !== "Personnel"
       ) {
@@ -2663,7 +2720,7 @@ export async function PATCH(
 
     if (action === "set_job_order_approval_assignees") {
       if (
-        session.user.role !== "SuperAdmin" &&
+        !isElevatedUserRole(session.user.role) &&
         session.user.role !== "Admin" &&
         session.user.role !== "Personnel"
       ) {

@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
@@ -7,7 +8,7 @@ const SESSION_TIMEOUT_SIGNIN_URL = "/signin?reason=session-expired";
 
 function isAllowed(role: string | undefined, allowed: string[]) {
   if (!role) return false;
-  if (role === "SuperAdmin" && allowed.includes("Admin")) return true;
+  if (isElevatedUserRole(role) && allowed.includes("Admin")) return true;
   return allowed.includes(role);
 }
 

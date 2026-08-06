@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, MapPin } from "lucide-react";
 import type { TravelOrderGatePassDraft } from "@/lib/travel-order";
 import { toDatetimeLocalValue } from "@/lib/travel-order";
 
@@ -18,6 +18,8 @@ type TravelOrderGatePassFieldsProps = {
   startBusy?: boolean;
   endBusy?: boolean;
   onCaptureActual?: (action: "start" | "end") => void;
+  /** Open map pin for captured Start/End GPS. */
+  onOpenGps?: (kind: "start" | "end") => void;
   /** Format already-captured ISO times for display. */
   formatCapturedAt?: (iso: string | null) => string;
 };
@@ -42,6 +44,7 @@ export function TravelOrderGatePassFields({
   startBusy = false,
   endBusy = false,
   onCaptureActual,
+  onOpenGps,
   formatCapturedAt = defaultFormatCapturedAt,
 }: TravelOrderGatePassFieldsProps) {
   const started = Boolean(value.actualDepartureStartedAt);
@@ -68,7 +71,7 @@ export function TravelOrderGatePassFields({
         </p>
         <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
           {showActualTimes
-            ? "Update estimated times and capture actual departure / arrival when ready."
+            ? "Update estimated times and capture actual departure / arrival GPS when ready."
             : "Fill estimated departure and arrival times. Actual times unlock after the travel order is fully approved. You can skip this page entirely."}
         </p>
       </div>
@@ -123,18 +126,34 @@ export function TravelOrderGatePassFields({
                     {formatCapturedAt(value.actualDepartureStartedAt)}
                   </p>
                   {hasStartGps ? (
-                    <p className="text-[11px] font-semibold text-orange-700 dark:text-orange-300">
+                    <button
+                      type="button"
+                      onClick={() => onOpenGps?.("start")}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700 hover:underline dark:text-orange-300"
+                    >
+                      <MapPin className="size-3" aria-hidden />
                       {value.actualDepartureStartedLatitude!.toFixed(5)},{" "}
                       {value.actualDepartureStartedLongitude!.toFixed(5)}
-                    </p>
+                    </button>
                   ) : null}
                 </div>
               ) : (
                 <p className="text-[11px] text-zinc-500">
-                  Captures time when you depart
-                  {allowActualCapture ? " (GPS if available)" : ""}.
+                  Captures GPS + time when you depart
+                  {allowActualCapture ? ". Allow location access." : "."}
                 </p>
               )}
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                Guard on Duty
+                <input
+                  type="text"
+                  value={value.startGuardOnDuty}
+                  disabled={disabled || ended}
+                  onChange={(e) => patch({ startGuardOnDuty: e.target.value })}
+                  placeholder="Name of guard on duty…"
+                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </label>
             </div>
 
             <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-white/70 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
@@ -158,19 +177,35 @@ export function TravelOrderGatePassFields({
                     {formatCapturedAt(value.actualDepartureEndedAt)}
                   </p>
                   {hasEndGps ? (
-                    <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                    <button
+                      type="button"
+                      onClick={() => onOpenGps?.("end")}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:underline dark:text-emerald-300"
+                    >
+                      <MapPin className="size-3" aria-hidden />
                       {value.actualDepartureEndedLatitude!.toFixed(5)},{" "}
                       {value.actualDepartureEndedLongitude!.toFixed(5)}
-                    </p>
+                    </button>
                   ) : null}
                 </div>
               ) : (
                 <p className="text-[11px] text-zinc-500">
                   {started
-                    ? "Captures time when you arrive."
+                    ? "Captures GPS + time when you arrive."
                     : "Available after Actual Departure Start."}
                 </p>
               )}
+              <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                Guard on Duty
+                <input
+                  type="text"
+                  value={value.endGuardOnDuty}
+                  disabled={disabled || !started}
+                  onChange={(e) => patch({ endGuardOnDuty: e.target.value })}
+                  placeholder="Name of guard on duty…"
+                  className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </label>
             </div>
           </div>
         </div>
@@ -190,9 +225,11 @@ export function gatePassDraftFromOrder(order: {
   actualDepartureStartedAt?: string | null;
   actualDepartureStartedLatitude?: number | null;
   actualDepartureStartedLongitude?: number | null;
+  gatePassStartGuardOnDuty?: string | null;
   actualDepartureEndedAt?: string | null;
   actualDepartureEndedLatitude?: number | null;
   actualDepartureEndedLongitude?: number | null;
+  gatePassEndGuardOnDuty?: string | null;
 }): TravelOrderGatePassDraft {
   return {
     included: order.gatePassIncluded === true,
@@ -204,5 +241,7 @@ export function gatePassDraftFromOrder(order: {
     actualDepartureEndedAt: order.actualDepartureEndedAt ?? null,
     actualDepartureEndedLatitude: order.actualDepartureEndedLatitude ?? null,
     actualDepartureEndedLongitude: order.actualDepartureEndedLongitude ?? null,
+    startGuardOnDuty: order.gatePassStartGuardOnDuty ?? "",
+    endGuardOnDuty: order.gatePassEndGuardOnDuty ?? "",
   };
 }

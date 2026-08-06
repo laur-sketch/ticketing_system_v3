@@ -98,7 +98,7 @@ const portalAccountPatchSelect = {
 } satisfies Prisma.PortalAccountSelect;
 
 export async function PATCH(req: Request) {
-  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "HighAdmin", "Admin"]);
   if (unauthorized) return unauthorized;
 
   const body = (await req.json()) as {
@@ -211,12 +211,19 @@ export async function PATCH(req: Request) {
         { status: 403 },
       );
     }
+    if (role === "HighAdmin" && session.user.role !== "SuperAdmin") {
+      return NextResponse.json(
+        { error: "Only a SuperAdmin may assign the HighAdmin portal role." },
+        { status: 403 },
+      );
+    }
     data.role = role;
     data.headPrivileges = role === "Admin";
     if (role !== "Customer") {
       data.company = { disconnect: true };
       data.customerOrgRole = null;
     }
+    // SuperAdmin has no company queue; HighAdmin may keep a designated company for approver scoping.
     if (role === "SuperAdmin") {
       data.staffDesignatedCompany = { disconnect: true };
     }
@@ -290,10 +297,14 @@ export async function PATCH(req: Request) {
       effective !== "Admin" &&
       effective !== "Personnel" &&
       effective !== "Customer" &&
+      effective !== "HighAdmin" &&
       effective !== "SuperAdmin"
     ) {
       return NextResponse.json(
-        { error: "Designated company applies only to Admin, Personnel, or Customer portal accounts." },
+        {
+          error:
+            "Designated company applies only to HighAdmin, Admin, Personnel, or Customer portal accounts.",
+        },
         { status: 400 },
       );
     }

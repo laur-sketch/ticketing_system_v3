@@ -10,7 +10,7 @@ import {
 import { mapHrisToPortalRole } from "@/lib/auth/role-mapping";
 import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { prismaAuth, prismaPrimary } from "@/lib/prisma";
-import { normalizePortalRole, type PortalRole } from "@/lib/staff-role";
+import { isStaffPortalRole, normalizePortalRole, type PortalRole } from "@/lib/staff-role";
 
 export type SyncPortalProfileResult = {
   authUserId: string;
@@ -136,7 +136,7 @@ async function resolvePrimaryTeamId(companyName: string | null | undefined): Pro
 /**
  * Conflict policy when syncing HRIS/OAuth → Primary portal_accounts:
  * - Profile fields (name, username, image): always refresh from canonical source.
- * - Role: upgrade Customer → staff; never downgrade SuperAdmin/Admin/Personnel automatically.
+ * - Role: upgrade Customer → staff; never downgrade SuperAdmin/HighAdmin/Admin/Personnel automatically.
  * - headPrivileges: set when mapping says Admin head; never clear existing true without manual admin action.
  */
 function buildPortalRoleUpdate(
@@ -151,7 +151,7 @@ function buildPortalRoleUpdate(
   const existingNorm = normalizePortalRole(existing.role) ?? (existing.role as PortalRole);
   const update: { role?: PortalRole; headPrivileges?: boolean } = {};
 
-  if (existingNorm === "SuperAdmin") {
+  if (existingNorm === "SuperAdmin" || existingNorm === "HighAdmin") {
     return update;
   }
 
@@ -160,7 +160,9 @@ function buildPortalRoleUpdate(
     update.headPrivileges = incoming.headPrivileges;
   } else if (
     existingNorm === "Personnel" &&
-    (incoming.portalRole === "Admin" || incoming.portalRole === "SuperAdmin")
+    (incoming.portalRole === "Admin" ||
+      incoming.portalRole === "SuperAdmin" ||
+      incoming.portalRole === "HighAdmin")
   ) {
     update.role = incoming.portalRole;
     if (incoming.headPrivileges) update.headPrivileges = true;
@@ -434,10 +436,7 @@ async function upsertPortalAccount(
 ): Promise<{ portal: ExistingPortalRow; created: boolean }> {
   const email = normalizeCanonicalEmail(profile.email);
   const username = profile.username?.trim().toLowerCase() || null;
-  const isStaff =
-    mapped.portalRole === "Admin" ||
-    mapped.portalRole === "Personnel" ||
-    mapped.portalRole === "SuperAdmin";
+  const isStaff = isStaffPortalRole(mapped.portalRole);
 
   const existing = await findExistingPortal(email, username, profile.hrisSourceUserId);
 
@@ -600,7 +599,7 @@ async function upsertPortalAccount(
 
 async function ensureAgentRow(portal: ExistingPortalRow): Promise<void> {
   const role = normalizePortalRole(portal.role);
-  const isStaff = role === "Admin" || role === "Personnel" || role === "SuperAdmin";
+  const isStaff = isStaffPortalRole(role);
   if (!isStaff || !portal.staffDesignatedCompanyId) return;
 
   try {

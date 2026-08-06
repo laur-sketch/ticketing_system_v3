@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function PersonnelPage() {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Admin"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Admin"].includes(session.user.role)) redirect("/");
 
   const [payload, assignableTeams] = await Promise.all([
     loadPersonnelAccountsPayload({

@@ -1,5 +1,6 @@
 "use client";
 
+
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
@@ -22,7 +23,7 @@ import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import { RegistryFiltersBar } from "@/components/admin/RegistryFiltersBar";
 import { StaffAssignmentColorSelect } from "@/components/admin/StaffAssignmentColorSelect";
 import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
-import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
+import { PORTAL_ROLES, isStaffPortalRole, normalizePortalRole, isElevatedPlatformRole } from "@/lib/staff-role";
 
 type Team = { id: string; name: string };
 
@@ -85,7 +86,7 @@ export function PersonnelClient({
   const [registrySearchQuery, setRegistrySearchQuery] = useState("");
 
   const { data: session, status: sessionStatus } = useSession();
-  const canManagePortalAccounts = session?.user?.role === "SuperAdmin";
+  const canManagePortalAccounts = isElevatedPlatformRole(session?.user?.role);
 
   const filteredPersonnel = useMemo(
     () =>

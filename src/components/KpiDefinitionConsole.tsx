@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { cn } from "@/lib/cn";
@@ -16,7 +16,6 @@ import {
   type SubKpiItem as SubKpi,
 } from "@/lib/kpi-subkpis";
 import type { SubKpiCompletionRequirements } from "@/lib/sub-kpi-completion-mode";
-import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import { DraftSubTasksPopup } from "@/components/task-board/DraftSubTasksPopup";
 import { TravelOrderRequestModal } from "@/components/task-board/TravelOrderRequestModal";
 import { ListChecks } from "lucide-react";
@@ -80,12 +79,11 @@ export function KpiDefinitionConsole({
   );
   const [mainTaskDraft, setMainTaskDraft] = useState("");
   const [mainTaskTargetDateDraft, setMainTaskTargetDateDraft] = useState("");
-  /** Project = one-off work item under a normal task group (no forced IT PROJECT IMPLEMENTATION pillar). */
+  /** Project = one-off work item (no forced IT PROJECT IMPLEMENTATION pillar). */
   const [isProjectMode, setIsProjectMode] = useState(() => Boolean(fromJobOrderTicketId?.trim()));
   /** Field Assignment = one-off travel-order workflow (opens Request for Travel Order). */
   const [isFieldAssignmentMode, setIsFieldAssignmentMode] = useState(false);
   const [travelOrderModalOpen, setTravelOrderModalOpen] = useState(false);
-  const [titleSuggestions, setTitleSuggestions] = useState<string[]>([]);
   const [maintenanceIsRecurring, setMaintenanceIsRecurring] = useState(
     () => !Boolean(fromJobOrderTicketId?.trim()),
   );
@@ -98,12 +96,12 @@ export function KpiDefinitionConsole({
   const [completionBeforeAfterScreenshots, setCompletionBeforeAfterScreenshots] = useState(false);
   const [completionScreenshotUpload, setCompletionScreenshotUpload] = useState(false);
   const [completionNumerical, setCompletionNumerical] = useState(false);
+  const [invertedRecording, setInvertedRecording] = useState(false);
   const [numericalTargetDraft, setNumericalTargetDraft] = useState("");
   const [dailyPenaltyDraft, setDailyPenaltyDraft] = useState("");
   const [enableSubtaskAssignees, setEnableSubtaskAssignees] = useState(true);
   const [draftSubTasksOpen, setDraftSubTasksOpen] = useState(false);
   const [draftSegments, setDraftSegments] = useState<DraftSegmentRow[]>([]);
-  const [newPillarDraft, setNewPillarDraft] = useState("");
   const [scopedCompanyTeamId, setScopedCompanyTeamId] = useState("");
   const [rosterCompanies, setRosterCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [kpiMaintenanceAssignWork, setKpiMaintenanceAssignWork] = useState(false);
@@ -124,9 +122,6 @@ export function KpiDefinitionConsole({
     if (msg) setLocalError(null);
   }
   const [adminDesignatedCompanyId, setAdminDesignatedCompanyId] = useState<string | null>(null);
-  const [adminDesignatedCompanyName, setAdminDesignatedCompanyName] = useState<string | null>(null);
-  const [browseAllOpen, setBrowseAllOpen] = useState(false);
-  const [maintenanceRows, setMaintenanceRows] = useState<KpiDefinitionMaintenanceRecord[]>([]);
   const [linkedJobOrderTicketId, setLinkedJobOrderTicketId] = useState<string | null>(null);
   const [jobOrderPrefillBanner, setJobOrderPrefillBanner] = useState<string | null>(null);
 
@@ -182,7 +177,7 @@ export function KpiDefinitionConsole({
         setSubKpisDraft([]);
         setLinkedJobOrderTicketId(joId);
         setJobOrderPrefillBanner(
-          `Creating a Project from Job Order ${p.ticketNumber ?? ""}. Tagged as Project under “${JOB_ORDER_REQUEST_PILLAR_TITLE}” — save to link automatically. You can move it into another task group after it is assigned.`,
+          `Creating a Project from Job Order ${p.ticketNumber ?? ""}. Tagged as Project under “${JOB_ORDER_REQUEST_PILLAR_TITLE}” — save to link automatically.`,
         );
       } catch {
         /* ignore */
@@ -214,7 +209,6 @@ export function KpiDefinitionConsole({
         };
         if (data.designatedCompanyTeamId) {
           setAdminDesignatedCompanyId(data.designatedCompanyTeamId);
-          setAdminDesignatedCompanyName(data.designatedCompanyName ?? null);
         }
       } catch {
         /* ignore */
@@ -231,7 +225,6 @@ export function KpiDefinitionConsole({
       rosterCompanies.some((c) => c.id === adminDesignatedCompanyId)
     ) {
       setScopedCompanyTeamId(adminDesignatedCompanyId);
-      // Scope the dropdown to show only this company's task groups
       void loadAssignFlag(adminDesignatedCompanyId);
     }
     // loadAssignFlag is stable enough; omit from deps to match prior pattern (defined below).
@@ -256,37 +249,6 @@ export function KpiDefinitionConsole({
       };
       setKpiMaintenanceAssignWork(Boolean(payload.canAssignWork));
       setRosterCompanies(payload.rosterCompanies ?? []);
-      // Store full rows for the browse-all modal
-      setMaintenanceRows(payload.rows ?? []);
-      // When a company filter is active, replace suggestions with only that company's task groups.
-      // Also preserve any custom groups the user added via addCustomTaskGroup (prev).
-      // Without a filter, merge API titles with any locally-added titles.
-      setTitleSuggestions((prev) => {
-        if (companyFilter && companyFilter !== "ALL") {
-          // Scoped: only show task groups belonging to this company
-          const scoped = new Set<string>();
-          if (Array.isArray(payload.rows)) {
-            for (const row of payload.rows) {
-              const t = row.title?.trim();
-              if (t) scoped.add(t);
-            }
-          }
-          // Preserve any custom groups the user added via addCustomTaskGroup
-          for (const t of prev) {
-            if (t.trim()) scoped.add(t.trim());
-          }
-          return Array.from(scoped).sort();
-        }
-        // Unfiltered: merge with any locally-added custom groups
-        const merged = new Set(prev);
-        if (Array.isArray(payload.rows)) {
-          for (const row of payload.rows) {
-            const t = row.title?.trim();
-            if (t) merged.add(t);
-          }
-        }
-        return Array.from(merged).sort();
-      });
     }
   }, [kpiMaintenanceSearch]);
 
@@ -312,22 +274,6 @@ export function KpiDefinitionConsole({
     [completionCheckbox, completionBeforeAfterScreenshots, completionScreenshotUpload, completionNumerical],
   );
 
-  function addCustomTaskGroup() {
-    const normalized = normalizeTaskTitle(newPillarDraft);
-    if (!normalized || isItProjectImplementationPillar(normalized)) {
-      setError("Enter a valid task group name.");
-      return;
-    }
-    setTitleSuggestions((prev) => {
-      if (prev.some((title) => title.toLowerCase() === normalized.toLowerCase())) return prev;
-      return [...prev, normalized];
-    });
-    setMaintenanceTitle(normalized);
-    selectTaskGroup(normalized);
-    setNewPillarDraft("");
-    setLocalError(null);
-  }
-
   function removeSubKpiDraft(id: string) {
     setSubKpisDraft((prev) => prev.filter((s) => s.id !== id));
   }
@@ -341,7 +287,7 @@ export function KpiDefinitionConsole({
       return;
     }
     setDraftUseSegments(true);
-    const phaseLabel = isProjectMode ? "Phase 1" : maintenanceTitle.trim() || "Segment 1";
+    const phaseLabel = isProjectMode ? "Phase 1" : mainTaskDraft.trim() || "Segment 1";
     const phaseDue = isProjectMode ? mainTaskTargetDateDraft.trim() || null : null;
     if (subKpisDraft.length > 0) {
       // Existing flat items become Unsegmented; user can drag into named segments/phases.
@@ -379,11 +325,8 @@ export function KpiDefinitionConsole({
     }
   }
 
-  /**
-   * Selecting a task group only binds the group title.
-   * Always start a fresh task draft — never clone fields/subtasks from a prior task in that group.
-   */
-  function resetTaskDraftForNewGroup() {
+  /** Reset create-form fields after a successful save (or when clearing a draft). */
+  function resetTaskDraftAfterCreate() {
     setMainTaskDraft("");
     setMainTaskTargetDateDraft("");
     setMaintenanceIsRecurring(true);
@@ -398,6 +341,7 @@ export function KpiDefinitionConsole({
     setCompletionBeforeAfterScreenshots(false);
     setCompletionScreenshotUpload(false);
     setCompletionNumerical(false);
+    setInvertedRecording(false);
     setNumericalTargetDraft("");
     setDailyPenaltyDraft("");
     setEnableSubtaskAssignees(true);
@@ -405,19 +349,6 @@ export function KpiDefinitionConsole({
     setIsFieldAssignmentMode(false);
     setTravelOrderModalOpen(false);
     setLocalError(null);
-  }
-
-  function selectMaintenanceTitle(title: string) {
-    setMaintenanceTitle(title);
-    setLocalError(null);
-  }
-
-  /** User picked a task group from search/browse — bind title only, reset all other create fields. */
-  function selectTaskGroup(title: string) {
-    const next = title.trim();
-    setMaintenanceTitle(next);
-    resetTaskDraftForNewGroup();
-    if (!next) setLocalError(null);
   }
 
   function handleTaskTypeChange(next: "task" | "project" | "field") {
@@ -429,6 +360,9 @@ export function KpiDefinitionConsole({
     setIsFieldAssignmentMode(next === "field");
     setLocalError(null);
     setTravelOrderModalOpen(false);
+    if (next === "project" || next === "field") {
+      setInvertedRecording(false);
+    }
     if (next === "project") {
       if (fromJobOrderTicketId?.trim()) {
         setLinkedJobOrderTicketId(fromJobOrderTicketId.trim());
@@ -451,21 +385,9 @@ export function KpiDefinitionConsole({
     }
   }
 
-  function handleMaintenanceTitleBlur() {
-    const normalized = normalizeTaskTitle(maintenanceTitle);
-    if (normalized !== maintenanceTitle) {
-      setMaintenanceTitle(normalized);
-    }
-    selectMaintenanceTitle(normalized);
-  }
-
   async function createMaintenanceRecord() {
     if (INSIGHTS_VIEW_ONLY) return;
     if (isFieldAssignmentMode) {
-      if (!maintenanceTitle.trim()) {
-        setError("Select a task group.");
-        return;
-      }
       if (!mainTaskDraft.trim()) {
         setError("Enter a Field Assignment label.");
         return;
@@ -474,26 +396,22 @@ export function KpiDefinitionConsole({
       return;
     }
     const isJoProjectCreate = Boolean(linkedJobOrderTicketId) && isProjectMode;
-    const title = normalizeTaskTitle(
-      isJoProjectCreate
-        ? maintenanceTitle.trim() || JOB_ORDER_REQUEST_PILLAR_TITLE
-        : maintenanceTitle,
-    );
-    if (!isJoProjectCreate && !maintenanceTitle.trim()) {
-      setError("Select a task group.");
-      return;
-    }
     if (!mainTaskDraft.trim()) {
       setError(isProjectMode ? "Enter a project name." : "Enter a main task name.");
       return;
     }
+    // Title is the work-item name (API also derives this); JO projects keep the reserved pillar title.
+    const title = normalizeTaskTitle(
+      isJoProjectCreate
+        ? maintenanceTitle.trim() || JOB_ORDER_REQUEST_PILLAR_TITLE
+        : mainTaskDraft,
+    );
     if (isItProjectImplementationPillar(title) && isJoProjectCreate) {
       setError("Job Order projects cannot use IT Project Implementation. They stay under Job Order Request.");
       return;
     }
-    if (title !== maintenanceTitle) {
+    if (isJoProjectCreate) {
       setMaintenanceTitle(title);
-      selectMaintenanceTitle(title);
     }
     const freqUpper = (
       !effectiveIsRecurring ? "MONTHLY" : maintenanceFrequency.toUpperCase()
@@ -566,6 +484,7 @@ export function KpiDefinitionConsole({
       mainTask: mainTaskDraft.trim(),
       completionRequirements,
       isProject: isProjectMode === true,
+      invertedRecording: invertedRecording === true,
     };
     if (scopedCompanyTeamId) body.scopedCompanyTeamId = scopedCompanyTeamId;
     if (isProjectMode && linkedJobOrderTicketId) {
@@ -647,10 +566,6 @@ export function KpiDefinitionConsole({
       } else {
         setOk(isProjectMode ? "Project created." : "Task created.");
       }
-      setTitleSuggestions((prev) => {
-        if (prev.some((t) => t.toLowerCase() === title.toLowerCase())) return prev;
-        return [...prev, title].sort();
-      });
       setIsProjectMode(false);
       setIsFieldAssignmentMode(false);
       setTravelOrderModalOpen(false);
@@ -668,11 +583,11 @@ export function KpiDefinitionConsole({
       setCompletionBeforeAfterScreenshots(false);
       setCompletionScreenshotUpload(false);
       setCompletionNumerical(false);
+      setInvertedRecording(false);
       setNumericalTargetDraft("");
       setDailyPenaltyDraft("");
       setEnableSubtaskAssignees(true);
       setScopedCompanyTeamId("");
-      setNewPillarDraft("");
       setDraftSegments([]);
       setLinkedJobOrderTicketId(null);
       setJobOrderPrefillBanner(null);
@@ -680,7 +595,6 @@ export function KpiDefinitionConsole({
       const reload = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, { cache: "no-store" });
       if (reload.ok) {
         const payload = (await reload.json()) as { rows: KpiDefinitionMaintenanceRecord[] };
-        setMaintenanceRows(payload.rows);
         onMaintenanceRecordsUpdated?.(payload.rows);
       }
       void loadAssignFlag(adminDesignatedCompanyId ?? undefined);
@@ -696,10 +610,9 @@ export function KpiDefinitionConsole({
     setError(errMsg);
   }
 
-  const hasTaskGroupSelected = maintenanceTitle.trim().length > 0;
   const isJoCreateFlow = Boolean(linkedJobOrderTicketId || fromJobOrderTicketId?.trim());
-  /** JO creates unlock the form in Project mode without picking a custom task group. */
-  const formUnlocked = hasTaskGroupSelected || isJoCreateFlow;
+  /** Form is available whenever the operator can create work — no task-group pick required. */
+  const formUnlocked = kpiMaintenanceAssignWork;
 
   return (
     <section
@@ -738,49 +651,11 @@ export function KpiDefinitionConsole({
             </p>
             <p className="mt-1 font-semibold">{JOB_ORDER_REQUEST_PILLAR_TITLE}</p>
             <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-              No task group pick needed at create. Move into a group later from the Task Board once the project is
-              assigned.
+              Saving creates the project under Job Order Request and links this Job Order automatically.
             </p>
           </div>
-        ) : (
-          <label className="relative flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
-            Task Group
-            <TaskGroupSearch
-              maintenanceTitle={maintenanceTitle}
-              companyName={adminDesignatedCompanyName}
-              onSelect={(next) => {
-                selectTaskGroup(next);
-              }}
-              onBlur={handleMaintenanceTitleBlur}
-              onBrowseAll={() => setBrowseAllOpen(true)}
-              TASK_TITLE_INPUT_CLASS={TASK_TITLE_INPUT_CLASS}
-            />
-          </label>
-        )}
-        {kpiMaintenanceAssignWork && !hasTaskGroupSelected && !isJoCreateFlow ? (
-          <div className="flex flex-wrap items-end gap-2 md:col-span-2">
-            <label className="flex min-w-[12rem] flex-1 flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              Add task group
-              <input
-                type="text"
-                value={newPillarDraft}
-                onChange={(e) => setNewPillarDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addCustomTaskGroup();
-                  }
-                }}
-                placeholder="New task group name"
-                className={TASK_TITLE_INPUT_CLASS}
-              />
-            </label>
-            <Button type="button" variant="outline" onClick={addCustomTaskGroup} className="rounded-xl px-4">
-              Add task group
-            </Button>
-          </div>
         ) : null}
-        {kpiMaintenanceAssignWork && formUnlocked ? (
+        {kpiMaintenanceAssignWork ? (
           <fieldset className="flex flex-col gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
             <legend className="mb-1 px-0">Task type</legend>
             <div className="grid gap-2 sm:grid-cols-3">
@@ -842,7 +717,7 @@ export function KpiDefinitionConsole({
                 ? "Field Assignment opens a Request for Travel Order with locations, GPS pins, approver, and remarks."
                 : isProjectMode
                   ? "Projects are one-off (non-recurring) and use the same sub-task manager, assignees, and completion conditions as tasks."
-                  : "Tasks can be recurring or one-off under any task group."}
+                  : "Tasks can be recurring or one-off."}
             </p>
           </fieldset>
         ) : null}
@@ -905,8 +780,8 @@ export function KpiDefinitionConsole({
               {isFieldAssignmentMode
                 ? "Shown as a label on the Field Assignment card. Work is tracked on the Travel Order (not as a main-task checklist)."
                 : isProjectMode
-                  ? "The project work item under the task group. With no sub-tasks, completion conditions apply on this project on the Task Board."
-                  : "The specific work item under the task group. Works for recurring and one-off schedules — with no sub-tasks, completion conditions apply on this main task on the Task Board."}
+                  ? "With no sub-tasks, completion conditions apply on this project on the Task Board."
+                  : "Works for recurring and one-off schedules — with no sub-tasks, completion conditions apply on this main task on the Task Board."}
               {!effectiveIsRecurring && !isFieldAssignmentMode
                 ? " Target date applies when there are no sub-tasks (delayed the day after if incomplete)."
                 : null}
@@ -1047,9 +922,7 @@ export function KpiDefinitionConsole({
         <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-3 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p>
-              {!formUnlocked
-                ? "Select a task group to continue."
-                : isProjectMode
+              {isProjectMode
                   ? "Projects are one-off. Add optional sub-tasks in the popup; without them, completion conditions apply on the project."
                   : maintenanceIsRecurring
                     ? "Sub-tasks are optional. Without them, completion conditions apply on the main task each cycle."
@@ -1133,6 +1006,23 @@ export function KpiDefinitionConsole({
               />
               <span>Numerical record (assignees enter a number when completing work)</span>
             </label>
+            {!isProjectMode ? (
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={invertedRecording}
+                  onChange={(e) => setInvertedRecording(e.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  Inverted recording
+                  <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                    Unchecked items count as 100%. Checking boxes lowers the recorded percent (incident /
+                    breach style).
+                  </span>
+                </span>
+              </label>
+            ) : null}
           </div>
           {completionNumerical ? (
             <label className="mt-3 flex max-w-xs flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
@@ -1260,7 +1150,7 @@ export function KpiDefinitionConsole({
 
       <TravelOrderRequestModal
         open={travelOrderModalOpen}
-        taskGroupTitle={normalizeTaskTitle(maintenanceTitle)}
+        taskGroupTitle={normalizeTaskTitle(mainTaskDraft)}
         mainTaskName={mainTaskDraft.trim()}
         scopedCompanyTeamId={scopedCompanyTeamId || adminDesignatedCompanyId}
         companyScopeAgentId={null}
@@ -1268,232 +1158,17 @@ export function KpiDefinitionConsole({
         onCreated={async () => {
           setOk("Field Assignment and travel order created.");
           setTravelOrderModalOpen(false);
-          resetTaskDraftForNewGroup();
+          resetTaskDraftAfterCreate();
           setMaintenanceTitle("");
           setScopedCompanyTeamId("");
           const reload = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, { cache: "no-store" });
           if (reload.ok) {
             const payload = (await reload.json()) as { rows: KpiDefinitionMaintenanceRecord[] };
-            setMaintenanceRows(payload.rows);
             onMaintenanceRecordsUpdated?.(payload.rows);
           }
         }}
       />
-
-      <TaskBoardPopup
-        open={browseAllOpen}
-        title={`Task Groups — ${adminDesignatedCompanyName ?? "Your Company"}`}
-        description="Browse, search, and select a task group for this task."
-        onClose={() => setBrowseAllOpen(false)}
-        size="xl"
-      >
-        <TaskGroupBrowser
-          rows={maintenanceRows}
-          selectedTitle={maintenanceTitle}
-          onSelect={(title) => {
-            selectTaskGroup(title);
-            setBrowseAllOpen(false);
-          }}
-        />
-      </TaskBoardPopup>
     </section>
-  );
-}
-
-function TaskGroupBrowser({
-  rows,
-  selectedTitle,
-  onSelect,
-}: {
-  rows: KpiDefinitionMaintenanceRecord[];
-  selectedTitle: string;
-  onSelect: (title: string) => void;
-}) {
-  const [browseQuery, setBrowseQuery] = useState("");
-  const [page, setPage] = useState(0);
-  const pageSize = 10;
-
-  const filtered = useMemo(() => {
-    // Dedupe to unique task groups (title). Each create binds only the group name —
-    // never a specific prior task row's fields/subtasks.
-    const byTitle = new Map<string, { title: string; taskCount: number; createdAt: string | null }>();
-    for (const r of rows) {
-      const title = r.title?.trim();
-      if (!title) continue;
-      const key = title.toLowerCase();
-      const prev = byTitle.get(key);
-      if (prev) {
-        prev.taskCount += 1;
-        if (r.createdAt && (!prev.createdAt || r.createdAt < prev.createdAt)) {
-          prev.createdAt = r.createdAt;
-        }
-      } else {
-        byTitle.set(key, { title, taskCount: 1, createdAt: r.createdAt ?? null });
-      }
-    }
-    const groups = Array.from(byTitle.values());
-    const q = browseQuery.toLowerCase();
-    return groups
-      .filter((g) => !q || g.title.toLowerCase().includes(q))
-      .sort((a, b) => a.title.localeCompare(b.title));
-  }, [rows, browseQuery]);
-
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageItems = useMemo(
-    () => filtered.slice(safePage * pageSize, (safePage + 1) * pageSize),
-    [filtered, safePage],
-  );
-
-  useEffect(() => {
-    setPage(0);
-  }, [browseQuery]);
-
-  return (
-    <div className="space-y-4">
-      <input
-        value={browseQuery}
-        onChange={(e) => setBrowseQuery(e.target.value)}
-        placeholder="Search task groups…"
-        className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-semibold tracking-tight text-zinc-900 outline-none ring-orange-500/30 placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-      />
-      {filtered.length === 0 ? (
-        <p className="py-8 text-center text-sm text-zinc-500">
-          {browseQuery ? "No task groups match your search." : "No task groups yet for this company."}
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {pageItems.map((group) => {
-            const created = group.createdAt
-              ? new Date(group.createdAt).toLocaleDateString("en-PH", {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                })
-              : "—";
-            return (
-              <button
-                key={group.title}
-                type="button"
-                onClick={() => onSelect(group.title)}
-                className={cn(
-                  "w-full rounded-xl border px-4 py-3 text-left transition",
-                  selectedTitle === group.title
-                    ? "border-orange-300 bg-orange-50 dark:border-orange-600/50 dark:bg-orange-500/10"
-                    : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-zinc-600 dark:hover:bg-zinc-800",
-                )}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      {group.title}{" "}
-                      <span className="font-normal text-zinc-500">
-                        ({group.taskCount} task{group.taskCount !== 1 ? "s" : ""})
-                      </span>
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-zinc-400 dark:text-zinc-500">Created: {created}</p>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {pageCount > 1 ? (
-        <div className="flex items-center justify-between gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={safePage === 0}
-            onClick={() => setPage((p) => p - 1)}
-            className="rounded-xl px-3 text-xs"
-          >
-            Previous
-          </Button>
-          <span className="text-xs text-zinc-500">
-            Page {safePage + 1} of {pageCount}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={safePage >= pageCount - 1}
-            onClick={() => setPage((p) => p + 1)}
-            className="rounded-xl px-3 text-xs"
-          >
-            Next
-          </Button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function TaskGroupSearch({
-  maintenanceTitle,
-  companyName,
-  onSelect,
-  onBlur,
-  onBrowseAll,
-  TASK_TITLE_INPUT_CLASS,
-}: {
-  maintenanceTitle: string;
-  titleSuggestions?: string[];
-  companyName: string | null;
-  onSelect: (title: string) => void;
-  onBlur: () => void;
-  onBrowseAll: () => void;
-  TASK_TITLE_INPUT_CLASS: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function onMousedown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onMousedown);
-    return () => document.removeEventListener("mousedown", onMousedown);
-  }, []);
-
-  function handleBlur() {
-    setOpen(false);
-    onBlur();
-  }
-
-  return (
-    <div className="relative" ref={ref}>
-      <input
-        value={open ? query : maintenanceTitle}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-          if (!e.target.value) onSelect("");
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={handleBlur}
-        placeholder="Select task group…"
-        className={TASK_TITLE_INPUT_CLASS + " w-full"}
-      />
-      {open && (
-        <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-          {companyName ? (
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onBrowseAll();
-              }}
-              className="w-full px-3 py-2.5 text-left text-sm font-bold text-orange-700 transition hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-500/10"
-            >
-              Browse ({companyName}) TASKS
-            </button>
-          ) : (
-            <p className="px-3 py-2.5 text-sm text-zinc-500">No company assigned — browse all available task groups.</p>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Plus, Trash2, X } from "lucide-react";
 import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import {
@@ -85,6 +85,7 @@ export function TravelOrderRequestModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
 
   const hierarchical = draft.approvalLevels.length > 0;
   /** Internal KPI mainTask — derived from purpose of travel (no separate name field). */
@@ -204,14 +205,16 @@ export function TravelOrderRequestModal({
   const creatorAgent = companyScopeAgentId ? findAgent(companyScopeAgentId) : null;
   const travelerOptionsForDriver = (() => {
     const byId = new Map<string, AgentOption>();
-    if (creatorAgent) {
-      byId.set(creatorAgent.id, creatorAgent);
-    } else if (companyScopeAgentId) {
-      byId.set(companyScopeAgentId, {
-        id: companyScopeAgentId,
-        name: "You (requester)",
-        email: null,
-      });
+    if (!draft.exemptRequesterFromTravelers) {
+      if (creatorAgent) {
+        byId.set(creatorAgent.id, creatorAgent);
+      } else if (companyScopeAgentId) {
+        byId.set(companyScopeAgentId, {
+          id: companyScopeAgentId,
+          name: "You (requester)",
+          email: null,
+        });
+      }
     }
     for (const agent of selectedTravelers) byId.set(agent.id, agent);
     return [...byId.values()];
@@ -242,14 +245,21 @@ export function TravelOrderRequestModal({
   }
 
   function toggleTraveler(agentId: string) {
-    if (companyScopeAgentId && agentId === companyScopeAgentId) return;
+    if (
+      companyScopeAgentId &&
+      agentId === companyScopeAgentId &&
+      !draft.exemptRequesterFromTravelers
+    ) {
+      return;
+    }
     setDraft((prev) => {
       const exists = prev.additionalTravelerAgentIds.includes(agentId);
       const additionalTravelerAgentIds = exists
         ? prev.additionalTravelerAgentIds.filter((id) => id !== agentId)
         : [...prev.additionalTravelerAgentIds, agentId];
       const stillTraveler =
-        agentId === companyScopeAgentId || additionalTravelerAgentIds.includes(agentId);
+        (!prev.exemptRequesterFromTravelers && agentId === companyScopeAgentId) ||
+        additionalTravelerAgentIds.includes(agentId);
       return {
         ...prev,
         additionalTravelerAgentIds,
@@ -441,6 +451,10 @@ export function TravelOrderRequestModal({
         "additionalTravelerAgentIds",
         JSON.stringify(draftForSubmit.additionalTravelerAgentIds),
       );
+      form.set(
+        "exemptRequesterFromTravelers",
+        draftForSubmit.exemptRequesterFromTravelers ? "1" : "0",
+      );
       form.set("vehicle", draftForSubmit.vehicle.trim());
       form.set("driverPresent", draftForSubmit.driverPresent ? "1" : "0");
       form.set(
@@ -470,13 +484,15 @@ export function TravelOrderRequestModal({
           included: gp.included && gatePassDraftHasAnyData(gp),
           estDepartureAt: gp.estDepartureAt.trim() || null,
           estArrivalAt: gp.estArrivalAt.trim() || null,
-          // Actual times are captured only after full approval.
+          // Actual times / guards are captured only after full approval.
           actualDepartureStartedAt: null,
           actualDepartureStartedLatitude: null,
           actualDepartureStartedLongitude: null,
           actualDepartureEndedAt: null,
           actualDepartureEndedLatitude: null,
           actualDepartureEndedLongitude: null,
+          startGuardOnDuty: "",
+          endGuardOnDuty: "",
         }),
       );
       for (const file of pendingAttachments) {
@@ -616,7 +632,47 @@ export function TravelOrderRequestModal({
                   ))}
                 </ul>
               ) : null}
-              <label
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                accept={INTAKE_ATTACHMENT_ACCEPT}
+                disabled={busy || pendingAttachments.length >= MAX_TRAVEL_ORDER_ATTACHMENTS}
+                className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+                tabIndex={-1}
+                aria-hidden
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []).filter((f) => f.size > 0);
+                  e.target.value = "";
+                  if (picked.length === 0) return;
+                  setPendingAttachments((prev) => {
+                    const remaining = MAX_TRAVEL_ORDER_ATTACHMENTS - prev.length;
+                    if (remaining <= 0) {
+                      setError(`You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.`);
+                      return prev;
+                    }
+                    const next = [...prev];
+                    for (const file of picked.slice(0, remaining)) {
+                      if (file.size > MAX_SCREENSHOT_BYTES) {
+                        setError("Each attachment must be at most 5MB.");
+                        continue;
+                      }
+                      if (!isAllowedIntakeAttachment(file.type || "", file.name)) {
+                        setError(
+                          "Attachments must be images or documents (PDF, Word, Excel, PowerPoint, CSV, TXT).",
+                        );
+                        continue;
+                      }
+                      next.push(file);
+                    }
+                    return next;
+                  });
+                }}
+              />
+              <button
+                type="button"
+                disabled={busy || pendingAttachments.length >= MAX_TRAVEL_ORDER_ATTACHMENTS}
+                onClick={() => attachmentInputRef.current?.click()}
                 className={cn(
                   "inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-dashed border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900",
                   (busy || pendingAttachments.length >= MAX_TRAVEL_ORDER_ATTACHMENTS) &&
@@ -625,41 +681,7 @@ export function TravelOrderRequestModal({
               >
                 <Plus className="size-3.5" aria-hidden />
                 Add files
-                <input
-                  type="file"
-                  multiple
-                  accept={INTAKE_ATTACHMENT_ACCEPT}
-                  disabled={busy || pendingAttachments.length >= MAX_TRAVEL_ORDER_ATTACHMENTS}
-                  className="sr-only"
-                  onChange={(e) => {
-                    const picked = Array.from(e.target.files ?? []).filter((f) => f.size > 0);
-                    e.target.value = "";
-                    if (picked.length === 0) return;
-                    setPendingAttachments((prev) => {
-                      const remaining = MAX_TRAVEL_ORDER_ATTACHMENTS - prev.length;
-                      if (remaining <= 0) {
-                        setError(`You can attach at most ${MAX_TRAVEL_ORDER_ATTACHMENTS} files.`);
-                        return prev;
-                      }
-                      const next = [...prev];
-                      for (const file of picked.slice(0, remaining)) {
-                        if (file.size > MAX_SCREENSHOT_BYTES) {
-                          setError("Each attachment must be at most 5MB.");
-                          continue;
-                        }
-                        if (!isAllowedIntakeAttachment(file.type || "", file.name)) {
-                          setError(
-                            "Attachments must be images or documents (PDF, Word, Excel, PowerPoint, CSV, TXT).",
-                          );
-                          continue;
-                        }
-                        next.push(file);
-                      }
-                      return next;
-                    });
-                  }}
-                />
-              </label>
+              </button>
             </div>
 
             <div className="space-y-2">
@@ -667,10 +689,38 @@ export function TravelOrderRequestModal({
                 Travelers
               </p>
               <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
-                You are automatically included as the requester. Optionally add co-travelers from any
-                company.
+                {draft.exemptRequesterFromTravelers
+                  ? "You are exempt from the travelers list. Add the people who will travel."
+                  : "You are automatically included as the requester. Optionally add co-travelers from any company."}
               </p>
-              {creatorAgent ? (
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={draft.exemptRequesterFromTravelers}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setDraft((prev) => {
+                      const requesterId = companyScopeAgentId?.trim() || "";
+                      const next = {
+                        ...prev,
+                        exemptRequesterFromTravelers: checked,
+                      };
+                      if (
+                        checked &&
+                        requesterId &&
+                        prev.driverAgentId === requesterId
+                      ) {
+                        next.driverAgentId = "";
+                      }
+                      return next;
+                    });
+                  }}
+                  className="size-4 accent-orange-600"
+                />
+                <span className="font-medium">Exempt Me from Travelers</span>
+              </label>
+              {creatorAgent && !draft.exemptRequesterFromTravelers ? (
                 <p className="text-xs text-zinc-700 dark:text-zinc-300">
                   Requester:{" "}
                   <span className="font-semibold text-zinc-900 dark:text-zinc-100">
@@ -678,9 +728,13 @@ export function TravelOrderRequestModal({
                   </span>
                   {creatorAgent.email ? ` · ${creatorAgent.email}` : ""}
                 </p>
-              ) : (
+              ) : creatorAgent && draft.exemptRequesterFromTravelers ? (
+                <p className="text-xs text-zinc-500">
+                  Requester {creatorAgent.name} is exempt and will not appear as a traveler.
+                </p>
+              ) : !draft.exemptRequesterFromTravelers ? (
                 <p className="text-xs text-zinc-500">You will be assigned as the requester on save.</p>
-              )}
+              ) : null}
               {selectedTravelers.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {selectedTravelers.map((agent) => (
@@ -772,7 +826,9 @@ export function TravelOrderRequestModal({
                       Driver
                     </p>
                     <p className="text-[11px] text-zinc-500">
-                      Choose from the travelers on this order (requester + co-travelers).
+                      {draft.exemptRequesterFromTravelers
+                        ? "Choose from the travelers on this order."
+                        : "Choose from the travelers on this order (requester + co-travelers)."}
                     </p>
                     {selectedDriver ? (
                       <div className="flex flex-wrap items-center gap-2">
@@ -804,8 +860,9 @@ export function TravelOrderRequestModal({
                     <div className="max-h-28 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
                       {travelerOptionsForDriver.length === 0 ? (
                         <p className="px-3 py-2 text-xs text-zinc-500">
-                          No travelers yet. You are included as requester once saved; add
-                          co-travelers above to choose among them.
+                          {draft.exemptRequesterFromTravelers
+                            ? "No travelers yet. Add travelers above to choose a driver."
+                            : "No travelers yet. You are included as requester once saved; add co-travelers above to choose among them."}
                         </p>
                       ) : filteredDriverAgents.length === 0 ? (
                         <p className="px-3 py-2 text-xs text-zinc-500">No matching traveler.</p>

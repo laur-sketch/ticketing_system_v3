@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
@@ -27,7 +29,7 @@ export function OrchestrationQueueNav() {
   const onAssignment = pathname === "/admin/manual-assignment";
   const onMyRequests = pathname === "/my-requests" || pathname.startsWith("/my-requests/");
 
-  const isAdmin = role === "SuperAdmin" || role === "Admin";
+  const isAdmin = isElevatedPlatformRole(role) || role === "Admin";
   const [fetchedAllow, setFetchedAllow] = useState<boolean | null>(null);
 
   useEffect(() => {

@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
@@ -37,13 +38,13 @@ export default async function AgentTasksPage({
 
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(session.user.email);
   const showKpiCompanyFilter =
-    session.user.role === "SuperAdmin" || companyCoordinator;
+    isElevatedUserRole(session.user.role) || companyCoordinator;
   const showKpiTaskFilters = showKpiCompanyFilter;
   const kpiCompanySelected = selectedCompany !== "ALL";
   const kpiAssignedFilterActive = showKpiTaskFilters && kpiCompanySelected;
 
   const adminScopedCompanyId =
-    session.user.role !== "SuperAdmin" &&
+    !isElevatedUserRole(session.user.role) &&
     (session.user.role === "Admin" || companyCoordinator)
       ? await resolveStaffCompanyTeamId(session.user.email)
       : null;
@@ -180,7 +181,7 @@ export default async function AgentTasksPage({
                 adminScopedCompanyId ?? (showKpiCompanyFilter ? selectedCompany : "ALL")
               }
               showAdminTaskManagement={
-                session.user.role === "SuperAdmin" || session.user.role === "Admin"
+                isElevatedUserRole(session.user.role) || session.user.role === "Admin"
               }
               focusTaskId={focusTaskId}
               fromJobOrderTicketId={fromJobOrderTicketId}

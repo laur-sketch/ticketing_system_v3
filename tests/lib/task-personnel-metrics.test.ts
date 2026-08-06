@@ -198,6 +198,7 @@ describe("combinedPersonnelEfficiency", () => {
         rfpFinance: null,
         irsCanvass: null,
         ftrPrepared: null,
+        acaSubmitted: null,
         tasks: { closed: 3, pending: 1, efficiency: 100, pillarsContributed: 1 },
       }),
     ).toBe(86);
@@ -215,6 +216,7 @@ describe("combinedPersonnelEfficiency", () => {
         rfpFinance: null,
         irsCanvass: null,
         ftrPrepared: null,
+        acaSubmitted: null,
         tasks: { closed: 0, pending: 5, efficiency: 0, pillarsContributed: 1 },
       }),
     ).toBe(50);
@@ -233,6 +235,7 @@ describe("combinedPersonnelEfficiency", () => {
         rfpFinance: null,
         irsCanvass: null,
         ftrPrepared: null,
+        acaSubmitted: null,
         tasks: { closed: 2, pending: 0, efficiency: 100, pillarsContributed: 1 },
       }),
     ).toBe(84);

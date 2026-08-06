@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 ﻿import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
@@ -56,20 +57,21 @@ export default async function Home() {
   }
 
   if (
-    session?.user?.role === "SuperAdmin" ||
+    isElevatedUserRole(session?.user?.role) ||
     session?.user?.role === "Admin" ||
     session?.user?.role === "Personnel"
   ) {
+    const user = session!.user;
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const isSuperAdmin = session.user.role === "SuperAdmin";
-    const isPersonnel = session.user.role === "Personnel";
+    const isSuperAdmin = isElevatedUserRole(user.role);
+    const isPersonnel = user.role === "Personnel";
     const scopedCompanyTeamId =
-      isSuperAdmin || isPersonnel ? null : await resolveStaffCompanyTeamId(session.user.email);
+      isSuperAdmin || isPersonnel ? null : await resolveStaffCompanyTeamId(user.email);
     const personnelAgent = isPersonnel
-      ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
+      ? await findSessionAgentId({ email: user.email, name: user.name })
       : null;
-    // SuperAdmin: all tickets. Admin: assigned company. Personnel: own assignments + current-step RFPs/ACAs.
+    // SuperAdmin / HighAdmin: all tickets. Admin: assigned company. Personnel: own assignments + current-step RFPs/ACAs.
     const ticketScope: Prisma.TicketWhereInput = isPersonnel
       ? await personnelRequestBoardWhere(personnelAgent?.id)
       : isSuperAdmin

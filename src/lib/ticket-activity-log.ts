@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import type { Prisma } from "@prisma/client/primary";
 import type { Session } from "next-auth";
 import { prisma } from "@/lib/prisma";
@@ -34,7 +35,7 @@ async function ticketScopeWhere(session: Session): Promise<Prisma.TicketWhereInp
 
   const rosterTicket: Prisma.TicketWhereInput = { teamId: { in: rosterIds } };
 
-  if (role === "SuperAdmin") {
+  if (isElevatedUserRole(role)) {
     return rosterTicket;
   }
   if (role === "Admin" || companyAdminPrivileges) {

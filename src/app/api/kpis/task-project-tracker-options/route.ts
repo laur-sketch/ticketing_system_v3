@@ -172,7 +172,7 @@ function completionHours(args: {
 }
 
 export async function GET() {
-  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "HighAdmin", "Admin", "Personnel"]);
   if (unauthorized) return unauthorized;
   const restrictToAssignedCompany =
     session.user.role === "Admin" || session.user.role === "Personnel";

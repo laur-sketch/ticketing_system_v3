@@ -18,6 +18,7 @@ export const DEFAULT_HRIS_ROLE_MAPPINGS: ReadonlyArray<{
   headPrivileges: boolean;
 }> = [
   { hrisRole: "super_admin", portalRole: "SuperAdmin", headPrivileges: false },
+  { hrisRole: "high_admin", portalRole: "HighAdmin", headPrivileges: false },
   // Staff roles resolve by head title; presets default to Personnel until elevated.
   { hrisRole: "admin", portalRole: "Personnel", headPrivileges: false },
   { hrisRole: "employee", portalRole: "Personnel", headPrivileges: false },
@@ -61,6 +62,9 @@ export function mapHrisToPortalRole(
 
   if (roleKey === "super_admin") {
     return { portalRole: "SuperAdmin", headPrivileges: false };
+  }
+  if (roleKey === "high_admin") {
+    return { portalRole: "HighAdmin", headPrivileges: false };
   }
 
   if (overrides?.portalRole) {

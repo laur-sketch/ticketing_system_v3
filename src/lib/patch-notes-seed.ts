@@ -81,7 +81,7 @@ export const PATCH_NOTE_SEEDS: PatchNoteSeed[] = [
         {
           title: "Request-type intake",
           description:
-            "Choose Issue/Concern Ticket, Request for Payment (R.F.P.), Item Requisition Slip (I.R.S.), Fund Transfer Request (F.T.R.), or Job Order (J.O.) before filling out the create form.",
+            "Choose Issue/Concern Ticket, Request for Payment (R.F.P.), Item Requisition Slip (R.S.), Fund Transfer Request (F.T.R.), or Job Order (J.O.) before filling out the create form.",
         },
         {
           title: "Request for Payment procedural routing",
@@ -91,7 +91,7 @@ export const PATCH_NOTE_SEEDS: PatchNoteSeed[] = [
         {
           title: "Item Requisition & Fund Transfer approvals",
           description:
-            "I.R.S. and F.T.R. requests follow their own approval steps so supply and fund-transfer work is tracked separately from tickets.",
+            "R.S. and F.T.R. requests follow their own approval steps so supply and fund-transfer work is tracked separately from tickets.",
         },
         {
           title: "Job Order ↔ Project linking",

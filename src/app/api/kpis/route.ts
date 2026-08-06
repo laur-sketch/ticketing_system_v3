@@ -1,3 +1,4 @@
+import { isElevatedUserRole } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
@@ -8,7 +9,7 @@ import { findSessionAgentId } from "@/lib/session-agent";
 
 export async function GET(req: Request) {
   const startedAt = Date.now();
-  const { session, unauthorized } = await requireRole(["SuperAdmin", "Admin", "Personnel"]);
+  const { session, unauthorized } = await requireRole(["SuperAdmin", "HighAdmin", "Admin", "Personnel"]);
   if (unauthorized) return unauthorized;
 
   const { searchParams } = new URL(req.url);
@@ -37,7 +38,7 @@ export async function GET(req: Request) {
     } else {
       teamId = scoped;
     }
-  } else if (session?.user?.role === "SuperAdmin") {
+  } else if (isElevatedUserRole(session?.user?.role)) {
     const requested = searchParams.get("companyId")?.trim() || null;
     if (requested && requested !== "ALL") {
       teamId = requested;

@@ -1,5 +1,7 @@
 "use client";
 
+import { isElevatedPlatformRole } from "@/lib/staff-role";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -37,12 +39,18 @@ import {
   formatJobOrderDurationLabel,
   validateJobOrderFields,
 } from "@/lib/job-order";
-import { MAX_SCREENSHOT_BYTES, MAX_SCREENSHOT_COUNT } from "@/lib/ticket-intake-screenshots-constants";
+import {
+  INTAKE_ATTACHMENT_ACCEPT,
+  isAllowedIntakeAttachment,
+  isIntakeImageMimeOrName,
+  MAX_SCREENSHOT_BYTES,
+  MAX_SCREENSHOT_COUNT,
+} from "@/lib/ticket-intake-screenshots-constants";
 import { isTicketRequestorRole } from "@/lib/ticket-requestor";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchField";
 import { AcaIntakeFields } from "@/components/tickets/AcaIntakeFields";
-import { Paperclip, Plus, Trash2 } from "lucide-react";
+import { FileText, Paperclip, Plus, Trash2 } from "lucide-react";
 import { acaRecommendedByUsesRequestorCompanyLock, resolveAcaAuthority } from "@/lib/aca-authority-matrix";
 import { parseAcaAmountNumber } from "@/lib/authority-to-conduct-activity";
 
@@ -52,35 +60,12 @@ function todayIsoDate() {
 }
 
 function pickImageFiles(list: File[]) {
-  return list.filter((f) => {
-    const t = (f.type || "").toLowerCase();
-    if (t.startsWith("image/")) return true;
-    return /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(f.name);
-  });
+  return list.filter((f) => isIntakeImageMimeOrName(f.type || "", f.name));
 }
 
 function pickAttachmentFiles(list: File[]) {
-  return list.filter((f) => {
-    const t = (f.type || "").toLowerCase();
-    if (t.startsWith("image/")) return true;
-    if (
-      t === "application/pdf" ||
-      t === "application/msword" ||
-      t === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-      t === "application/vnd.ms-excel" ||
-      t === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-      t === "text/plain" ||
-      t === "text/csv"
-    ) {
-      return true;
-    }
-    return /\.(png|jpe?g|gif|webp|bmp|heic|heif|pdf|docx?|xlsx?|csv|txt)$/i.test(f.name);
-  });
+  return list.filter((f) => isAllowedIntakeAttachment(f.type || "", f.name));
 }
-
-const ACA_ATTACHMENT_ACCEPT =
-  "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf";
-
 export default function NewTicketPage() {
   return (
     <Suspense
@@ -99,13 +84,14 @@ function NewTicketPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, status: sessionStatus } = useSession();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [screenshots, setScreenshots] = useState<File[]>([]);
   const [modeOfPayment, setModeOfPayment] = useState("");
   const [deliveryOfCheck, setDeliveryOfCheck] = useState("");
   const [letAccountingHandlePaymentMode, setLetAccountingHandlePaymentMode] = useState(false);
+  const [skipApprovedBy, setSkipApprovedBy] = useState(false);
   const [draftRequestType, setDraftRequestType] =
     useState<RequestTypeId>(DEFAULT_REQUEST_TYPE);
   const activeRequestType = useMemo(() => {
@@ -203,17 +189,22 @@ function NewTicketPageInner() {
 
   const screenshotPreviews = useMemo(
     () =>
-      screenshots.map((file, index) => ({
-        key: `${index}-${file.name}-${file.size}-${file.lastModified}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-      })),
+      screenshots.map((file, index) => {
+        const isImage = isIntakeImageMimeOrName(file.type || "", file.name);
+        return {
+          key: `${index}-${file.name}-${file.size}-${file.lastModified}`,
+          name: file.name,
+          url: isImage ? URL.createObjectURL(file) : "",
+        };
+      }),
     [screenshots],
   );
 
   useEffect(
     () => () => {
-      screenshotPreviews.forEach((s) => URL.revokeObjectURL(s.url));
+      screenshotPreviews.forEach((s) => {
+        if (s.url) URL.revokeObjectURL(s.url);
+      });
     },
     [screenshotPreviews],
   );
@@ -401,7 +392,7 @@ function NewTicketPageInner() {
   const isCustomer = session?.user?.role === "Customer";
   const isPersonnelIntake = session?.user?.role === "Personnel";
   const isAdminStaffIntake =
-    session?.user?.role === "SuperAdmin" || session?.user?.role === "Admin";
+    isElevatedPlatformRole(session?.user?.role) || session?.user?.role === "Admin";
   /** Admin/SuperAdmin use the same intake field layout as Personnel. */
   const isStaffRequestorIntake = isPersonnelIntake || isAdminStaffIntake;
   const canSetIntakeAssignees =
@@ -443,17 +434,19 @@ function NewTicketPageInner() {
 
     void (async () => {
       if (isPaymentRequest) {
-        const [requestorRows, sendToRows] = await Promise.all([
+        const [requestorRows, sendToRows, anyRows] = await Promise.all([
           loadCompanyAgents(staffDesignatedCompany?.id),
           loadCompanyAgents(selectedCompanyTeamId),
+          loadAnyCompanyAgents(),
         ]);
         if (cancelled) return;
         setRequestorApprovalAgents(requestorRows);
         setSendToApprovalAgents(sendToRows);
-        setApprovalAgents([]);
+        // Approved By is cross-company; Accounting/Finance stay on Send-to roster.
+        setApprovalAgents(anyRows);
         return;
       }
-      if (isJobOrderRequest) {
+      if (isJobOrderRequest || isFundTransferRequest) {
         const rows = await loadAnyCompanyAgents();
         if (cancelled) return;
         setApprovalAgents(rows);
@@ -480,21 +473,23 @@ function NewTicketPageInner() {
     canSetIntakeAssignees,
     isPaymentRequest,
     isJobOrderRequest,
+    isFundTransferRequest,
     selectedCompanyTeamId,
     staffDesignatedCompany?.id,
   ]);
 
-  // Drop payment assignees that no longer belong to the scoped company roster.
+  // Drop payment assignees that no longer belong to their roster scope.
   useEffect(() => {
     if (!isPaymentRequest) return;
     const requestorIds = new Set(requestorApprovalAgents.map((a) => a.id));
     const sendToIds = new Set(sendToApprovalAgents.map((a) => a.id));
+    const anyIds = new Set(approvalAgents.map((a) => a.id));
     setPaymentAssignees((prev) => {
       const next = {
         notedByAgentId:
           prev.notedByAgentId && requestorIds.has(prev.notedByAgentId) ? prev.notedByAgentId : "",
         approvedByAgentId:
-          prev.approvedByAgentId && sendToIds.has(prev.approvedByAgentId)
+          prev.approvedByAgentId && anyIds.has(prev.approvedByAgentId)
             ? prev.approvedByAgentId
             : "",
         accountingAgentId:
@@ -511,7 +506,7 @@ function NewTicketPageInner() {
         ? prev
         : next;
     });
-  }, [isPaymentRequest, requestorApprovalAgents, sendToApprovalAgents]);
+  }, [isPaymentRequest, requestorApprovalAgents, sendToApprovalAgents, approvalAgents]);
   /** Issue/Concern only — other request types stay creatable. */
   const issueConcernLocked =
     isRequestorIntakeLockRole && intakeGateReady && !intake.canCreateIssueConcern;
@@ -558,6 +553,8 @@ function NewTicketPageInner() {
     setError(null);
     setModeOfPayment("");
     setDeliveryOfCheck("");
+    setLetAccountingHandlePaymentMode(false);
+    setSkipApprovedBy(false);
     setRequisitionItems([emptyRequisitionLineItem(0)]);
     setPurposeOfRequest("");
     setScreenshots([]);
@@ -635,36 +632,36 @@ function NewTicketPageInner() {
   }, [mergeScreenshotFiles]);
 
   function renderOptionalFieldAttachments(inputId: string) {
-    const allowDocuments = inputId.includes("-aca");
-    const accept = allowDocuments ? ACA_ATTACHMENT_ACCEPT : "image/*";
-    const pick = allowDocuments ? pickAttachmentFiles : pickImageFiles;
     return (
       <div className="mt-2 space-y-2">
+        {/*
+          Do not use Tailwind `sr-only` (clip-path) on file inputs — Chromium/Windows
+          paints a large dark focus block when the native picker opens. Keep the input
+          off-layout and open it via button.click() from a user gesture instead.
+        */}
         <input
-          ref={fileInputRef}
+          ref={attachmentInputRef}
           id={inputId}
           type="file"
-          accept={accept}
+          accept={INTAKE_ATTACHMENT_ACCEPT}
           multiple
           onChange={(e) => {
-            mergeScreenshotFiles(pick(Array.from(e.target.files ?? [])));
+            mergeScreenshotFiles(pickAttachmentFiles(Array.from(e.target.files ?? [])));
             e.target.value = "";
           }}
-          className="sr-only"
-          aria-label={allowDocuments ? "Attach documents or images" : "Attach screenshots or images"}
+          className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+          tabIndex={-1}
+          aria-hidden
         />
         <div className="flex flex-wrap items-center gap-2">
-          <label
-            htmlFor={inputId}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-orange-500/60 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          <button
+            type="button"
+            onClick={() => attachmentInputRef.current?.click()}
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-800 shadow-sm transition hover:border-orange-500/60 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             <Paperclip className="size-3.5 shrink-0" aria-hidden />
-            {screenshots.length === 0
-              ? allowDocuments
-                ? "Attach documents / images"
-                : "Attach screenshots / files"
-              : "Add more attachments"}
-          </label>
+            {screenshots.length === 0 ? "Attach documents / images" : "Add more attachments"}
+          </button>
           {screenshots.length > 0 ? (
             <button
               type="button"
@@ -675,50 +672,50 @@ function NewTicketPageInner() {
             </button>
           ) : null}
           <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
-            Optional · up to {MAX_SCREENSHOT_COUNT} files, 5MB each
-            {allowDocuments ? " · PDF, Word, Excel, images" : " · images"}
-            {screenshots.length > 0
-              ? ` · ${screenshots.length} attached`
-              : ""}
+            Optional · up to {MAX_SCREENSHOT_COUNT} files, 5MB each · PDF, Word, Excel, images
+            {screenshots.length > 0 ? ` · ${screenshots.length} attached` : ""}
           </span>
         </div>
         {screenshotPreviews.length > 0 ? (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {screenshotPreviews.map((s, index) => {
               const file = screenshots[index];
-              const isImage = file ? pickImageFiles([file]).length > 0 : true;
+              const isImage = file ? pickImageFiles([file]).length > 0 : false;
               return (
-              <div
-                key={s.key}
-                className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900"
-              >
-                <div className="relative flex h-16 w-full items-center justify-center overflow-hidden rounded bg-zinc-100 dark:bg-zinc-950">
-                  {isImage ? (
-                    <Image
-                      src={s.url}
-                      alt={s.name}
-                      fill
-                      className="object-cover"
-                      sizes="(max-width: 640px) 100vw, 33vw"
-                      unoptimized
-                    />
-                  ) : (
-                    <span className="px-2 text-center text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">
-                      Document
-                    </span>
-                  )}
+                <div
+                  key={s.key}
+                  className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  <div className="relative flex h-16 w-full items-center justify-center overflow-hidden rounded bg-zinc-100 dark:bg-zinc-950">
+                    {isImage && s.url ? (
+                      <Image
+                        src={s.url}
+                        alt={s.name}
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 640px) 100vw, 33vw"
+                        unoptimized
+                      />
+                    ) : (
+                      <span className="flex flex-col items-center gap-1 text-orange-500 dark:text-orange-400">
+                        <FileText className="size-7" strokeWidth={1.5} aria-hidden />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                          File
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 flex items-start justify-between gap-2">
+                    <p className="min-w-0 truncate text-[11px] text-zinc-400">{s.name}</p>
+                    <button
+                      type="button"
+                      onClick={() => setScreenshots((prev) => prev.filter((_, i) => i !== index))}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 hover:underline dark:text-orange-400"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
-                <div className="mt-1 flex items-start justify-between gap-2">
-                  <p className="min-w-0 truncate text-[11px] text-zinc-400">{s.name}</p>
-                  <button
-                    type="button"
-                    onClick={() => setScreenshots((prev) => prev.filter((_, i) => i !== index))}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 hover:underline dark:text-orange-400"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
               );
             })}
           </div>
@@ -750,13 +747,8 @@ function NewTicketPageInner() {
         setError("Each attachment must be at most 5MB.");
         return;
       }
-      if (isAcaRequest) {
-        if (pickAttachmentFiles([f]).length === 0) {
-          setError("Attachments must be images or documents (PDF, Word, Excel, CSV, TXT).");
-          return;
-        }
-      } else if (pickImageFiles([f]).length === 0) {
-        setError("Only image files are allowed for screenshots.");
+      if (pickAttachmentFiles([f]).length === 0) {
+        setError("Attachments must be images or documents (PDF, Word, Excel, CSV, TXT).");
         return;
       }
     }
@@ -917,9 +909,21 @@ function NewTicketPageInner() {
         if (isPaymentRequest) {
           const { notedByAgentId, approvedByAgentId, accountingAgentId, financeAgentId } =
             paymentAssignees;
-          if (!notedByAgentId || !approvedByAgentId || !accountingAgentId || !financeAgentId) {
+          if (!notedByAgentId || (!skipApprovedBy && !approvedByAgentId)) {
             setError(
-              "Noted By, Approved By, Approved By (Accounting), and Approved By (Finance) are required.",
+              skipApprovedBy
+                ? "Noted By is required."
+                : "Noted By and Approved By are required.",
+            );
+            setLoading(false);
+            return;
+          }
+          if (
+            !letAccountingHandlePaymentMode &&
+            (!accountingAgentId || !financeAgentId)
+          ) {
+            setError(
+              "Approved By (Accounting) and Approved By (Finance) are required, or check Let Accounting and Finance Handle it.",
             );
             setLoading(false);
             return;
@@ -959,6 +963,7 @@ function NewTicketPageInner() {
             "deferPaymentModeToAccounting",
             letAccountingHandlePaymentMode ? "true" : "false",
           );
+          target.append("skipApprovedBy", skipApprovedBy ? "true" : "false");
           if (!letAccountingHandlePaymentMode) {
             target.append("modeOfPayment", modeOfPaymentValue);
             if (deliveryOfCheckValue) target.append("deliveryOfCheck", deliveryOfCheckValue);
@@ -970,6 +975,7 @@ function NewTicketPageInner() {
           target.accountTitle = accountTitle;
           target.amount = amount;
           target.deferPaymentModeToAccounting = letAccountingHandlePaymentMode;
+          target.skipApprovedBy = skipApprovedBy;
           if (!letAccountingHandlePaymentMode) {
             target.modeOfPayment = modeOfPaymentValue;
             if (deliveryOfCheckValue) target.deliveryOfCheck = deliveryOfCheckValue;
@@ -1042,7 +1048,17 @@ function NewTicketPageInner() {
             ? jobOrderAssignees
             : fundTransferAssignees;
         const cleaned = Object.fromEntries(
-          Object.entries(assignees).filter(([, v]) => typeof v === "string" && v.trim()),
+          Object.entries(assignees).filter(([key, v]) => {
+            if (typeof v !== "string" || !v.trim()) return false;
+            if (
+              isPaymentRequest &&
+              letAccountingHandlePaymentMode &&
+              (key === "accountingAgentId" || key === "financeAgentId")
+            ) {
+              return false;
+            }
+            return true;
+          }),
         );
         if (Object.keys(cleaned).length === 0) return;
         if (target instanceof FormData) {
@@ -1387,14 +1403,14 @@ function NewTicketPageInner() {
                       name="companyTeamId"
                       required
                       value={selectedCompanyTeamId}
-                      onChange={(e) => setSelectedCompanyTeamId(e.target.value)}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setSelectedCompanyTeamId(next);
+                        if (usesCompanyScopedApprovers) {
+                          setPaymentSendToCompanyId(next);
+                        }
+                      }}
                       disabled={companiesLoading}
-                      value={usesCompanyScopedApprovers ? paymentSendToCompanyId : undefined}
-                      onChange={
-                        usesCompanyScopedApprovers
-                          ? (e) => setPaymentSendToCompanyId(e.target.value)
-                          : undefined
-                      }
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     >
                       <option value="">
@@ -1621,6 +1637,11 @@ function NewTicketPageInner() {
                       if (checked) {
                         setModeOfPayment("");
                         setDeliveryOfCheck("");
+                        setPaymentAssignees((prev) => ({
+                          ...prev,
+                          accountingAgentId: "",
+                          financeAgentId: "",
+                        }));
                       }
                     }}
                     className="mt-0.5 size-4 shrink-0 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
@@ -1628,8 +1649,10 @@ function NewTicketPageInner() {
                   <span>
                     <span className="font-medium">Let Accounting and Finance Handle it</span>
                     <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                      When checked, Mode of payment is filled later on the ticket at APPROVED BY
-                      ACCOUNTING.
+                      Hides Mode of payment and Approved By (Accounting) / Approved By (Finance)
+                      assignees. After Noted By
+                      {skipApprovedBy ? "" : " and Approved By"} are done, the assignee sets mode of
+                      payment and those roles on the ticket.
                     </span>
                   </span>
                 </label>
@@ -2136,44 +2159,97 @@ function NewTicketPageInner() {
                   </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                     Required for Request for Payment, Fund Transfer, and Job Order. Assign
-                    procedural roles before creating this request. Job Order Noted By and Approvers
-                    can be chosen from any company. Item Requisition uses the Assignment Board for
+                    procedural roles before creating this request. RFP Approved By, Fund Transfer
+                    Recommending Approval / Approved By, and Job Order Noted By / Approvers can be
+                    chosen from any company. Item Requisition uses the Assignment Board for
                     Canvassed By instead.
                   </p>
                 </div>
                 {isPaymentRequest ? (
                   <>
+                    <label className="flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-200">
+                      <input
+                        type="checkbox"
+                        checked={skipApprovedBy}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSkipApprovedBy(checked);
+                          if (checked) {
+                            setPaymentAssignees((prev) => ({
+                              ...prev,
+                              approvedByAgentId: "",
+                            }));
+                          }
+                        }}
+                        className="mt-0.5 size-4 shrink-0 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                      />
+                      <span>
+                        <span className="font-medium">Skip Approved By</span>
+                        <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                          Hides the Approved By assignee. After Noted By is green-lit, the request
+                          goes straight to Approved By (Accounting).
+                        </span>
+                      </span>
+                    </label>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       Noted By uses your company roster
                       {staffDesignatedCompany?.name
                         ? ` (${staffDesignatedCompany.name})`
-                        : ""}. Approved By, Accounting, and Finance use the “Send request to”
-                      company.
+                        : ""}
+                      .
+                      {skipApprovedBy
+                        ? letAccountingHandlePaymentMode
+                          ? " Accounting and Finance are assigned later on the ticket."
+                          : " Accounting and Finance use the “Send request to” company."
+                        : letAccountingHandlePaymentMode
+                          ? " Approved By can be chosen from any company. Accounting and Finance are assigned later on the ticket."
+                          : " Approved By can be chosen from any company. Accounting and Finance use the “Send request to” company."}
                     </p>
                     {(
-                      [
-                        ["notedByAgentId", "Noted By", "requestor"],
-                        ["approvedByAgentId", "Approved By", "sendTo"],
-                        ["accountingAgentId", "Approved By (Accounting)", "sendTo"],
-                        ["financeAgentId", "Approved By (Finance)", "sendTo"],
-                      ] as const
+                      (
+                        [
+                          ["notedByAgentId", "Noted By", "requestor"],
+                          ["approvedByAgentId", "Approved By", "any"],
+                          ["accountingAgentId", "Approved By (Accounting)", "sendTo"],
+                          ["financeAgentId", "Approved By (Finance)", "sendTo"],
+                        ] as const
+                      ).filter(([key]) => {
+                        if (skipApprovedBy && key === "approvedByAgentId") return false;
+                        if (
+                          letAccountingHandlePaymentMode &&
+                          (key === "accountingAgentId" || key === "financeAgentId")
+                        ) {
+                          return false;
+                        }
+                        return true;
+                      })
                     ).map(([key, label, scope]) => {
                       const roster =
-                        scope === "requestor" ? requestorApprovalAgents : sendToApprovalAgents;
+                        scope === "requestor"
+                          ? requestorApprovalAgents
+                          : scope === "any"
+                            ? approvalAgents
+                            : sendToApprovalAgents;
                       const taken = new Set(
                         (
                           [
                             paymentAssignees.notedByAgentId,
-                            paymentAssignees.approvedByAgentId,
-                            paymentAssignees.accountingAgentId,
-                            paymentAssignees.financeAgentId,
+                            ...(skipApprovedBy ? [] : [paymentAssignees.approvedByAgentId]),
+                            ...(letAccountingHandlePaymentMode
+                              ? []
+                              : [
+                                  paymentAssignees.accountingAgentId,
+                                  paymentAssignees.financeAgentId,
+                                ]),
                           ] as string[]
                         ).filter((id) => id && id !== paymentAssignees[key]),
                       );
                       const scopeReady =
                         scope === "requestor"
                           ? Boolean(staffDesignatedCompany?.id)
-                          : Boolean(selectedCompanyTeamId);
+                          : scope === "any"
+                            ? true
+                            : Boolean(selectedCompanyTeamId);
                       return (
                         <CompanyUserSearchField
                           key={key}
@@ -2221,12 +2297,7 @@ function NewTicketPageInner() {
                           users={approvalAgents}
                           value={fundTransferAssignees[key]}
                           excludedIds={taken}
-                          disabled={!selectedCompanyTeamId}
-                          placeholder={
-                            !selectedCompanyTeamId
-                              ? "Select Send request to first"
-                              : "Search by name or email…"
-                          }
+                          placeholder="Search by name or email…"
                           onChange={(agentId) =>
                             setFundTransferAssignees((prev) => ({ ...prev, [key]: agentId }))
                           }
@@ -2267,16 +2338,23 @@ function NewTicketPageInner() {
                       );
                     })
                   : null}
-                {isJobOrderRequest && approvalAgents.length === 0 ? (
+                {(isJobOrderRequest || isFundTransferRequest) &&
+                approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     No assignees available yet.
                   </p>
                 ) : null}
-                {!isPaymentRequest && !isJobOrderRequest && !selectedCompanyTeamId ? (
+                {!isPaymentRequest &&
+                !isJobOrderRequest &&
+                !isFundTransferRequest &&
+                !selectedCompanyTeamId ? (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
                     Select “Send request to” first to load company assignees.
                   </p>
-                ) : !isPaymentRequest && !isJobOrderRequest && approvalAgents.length === 0 ? (
+                ) : !isPaymentRequest &&
+                  !isJobOrderRequest &&
+                  !isFundTransferRequest &&
+                  approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     No company assignees available for this roster yet.
                   </p>
@@ -2298,7 +2376,7 @@ function NewTicketPageInner() {
             >
               {loading
                 ? screenshots.length > 0
-                  ? `Submitting… (uploading ${screenshots.length} image${screenshots.length === 1 ? "" : "s"})`
+                  ? `Submitting… (uploading ${screenshots.length} file${screenshots.length === 1 ? "" : "s"})`
                   : "Submitting…"
                 : issueConcernSubmitLocked
                   ? !intakeGateReady
