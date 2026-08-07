@@ -11,6 +11,15 @@ import {
 import { TravelOrderGatePassFields } from "@/components/task-board/TravelOrderGatePassFields";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { TravelOrderOfflineBanner } from "@/components/offline/TravelOrderOfflineBanner";
+import {
+  cacheAgents,
+  listCachedAgents,
+  newTravelOrderOfflineId,
+  saveOfflineDraft,
+} from "@/lib/offline/travel-order-offline-db";
+import { isBrowserOnline, queueFieldAssignmentCreate } from "@/lib/offline/travel-order-sync";
 import {
   INTAKE_ATTACHMENT_ACCEPT,
   MAX_SCREENSHOT_BYTES,
@@ -51,7 +60,7 @@ type TravelOrderRequestModalProps = {
   /** Allow editing the travel order name inside the modal (standalone create). */
   allowEditDetails?: boolean;
   onClose: () => void;
-  onCreated: (payload: { kpiId: string }) => void;
+  onCreated: (payload: { kpiId: string; offlineQueued?: boolean }) => void;
 };
 
 /**
@@ -71,6 +80,8 @@ export function TravelOrderRequestModal({
   onCreated,
 }: TravelOrderRequestModalProps) {
   void _unusedTaskGroupTitle;
+  const online = useOnlineStatus();
+  const [localDraftId] = useState(() => newTravelOrderOfflineId("todraft"));
   const [draft, setDraft] = useState<TravelOrderDraft>(() => emptyTravelOrderDraft());
   const [allAgents, setAllAgents] = useState<AgentOption[]>([]);
   const [agentQuery, setAgentQuery] = useState("");
@@ -86,6 +97,7 @@ export function TravelOrderRequestModal({
   const [error, setError] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const [queuedOffline, setQueuedOffline] = useState(false);
 
   const hierarchical = draft.approvalLevels.length > 0;
   /** Internal KPI mainTask — derived from purpose of travel (no separate name field). */
@@ -119,6 +131,7 @@ export function TravelOrderRequestModal({
     if (!open) return;
     setDraft(emptyTravelOrderDraft());
     setPendingAttachments([]);
+    setQueuedOffline(false);
     setError(null);
     setFormPage(1);
     setAgentQuery("");
@@ -131,19 +144,62 @@ export function TravelOrderRequestModal({
     setLevelsCountInput("2");
     let cancelled = false;
     // Approvers, confirmer, and travelers are never company-locked.
-    void fetch("/api/agents?anyCompany=1", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((anyList) => {
+    void (async () => {
+      try {
+        if (!isBrowserOnline()) {
+          const cached = await listCachedAgents();
+          if (!cancelled) setAllAgents(cached.map((a) => ({ id: a.id, name: a.name, email: a.email })));
+          return;
+        }
+        const res = await fetch("/api/agents?anyCompany=1", { cache: "no-store" });
+        const anyList = res.ok ? await res.json() : [];
         if (cancelled) return;
-        setAllAgents(parseAgentList(anyList));
-      })
-      .catch(() => {
-        if (!cancelled) setAllAgents([]);
-      });
+        const parsed = parseAgentList(anyList);
+        setAllAgents(parsed);
+        void cacheAgents(
+          parsed.map((a) => ({
+            id: a.id,
+            name: a.name,
+            email: a.email ?? null,
+            cachedAt: new Date().toISOString(),
+          })),
+        );
+      } catch {
+        const cached = await listCachedAgents().catch(() => []);
+        if (!cancelled) {
+          setAllAgents(cached.map((a) => ({ id: a.id, name: a.name, email: a.email })));
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [open, companyScopeAgentId, scopedCompanyTeamId, mainTaskName]);
+
+  // Persist in-progress draft so offline edits survive reloads.
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => {
+      void saveOfflineDraft({
+        localId: localDraftId,
+        mainTaskName: effectiveMainTask,
+        scopedCompanyTeamId: scopedCompanyTeamId ?? null,
+        companyScopeAgentId,
+        draft,
+        attachmentNames: pendingAttachments.map((f) => f.name),
+        syncStatus: "draft",
+      }).catch(() => undefined);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    open,
+    localDraftId,
+    effectiveMainTask,
+    scopedCompanyTeamId,
+    companyScopeAgentId,
+    draft,
+    pendingAttachments,
+  ]);
 
   const filteredAgents = useMemo(() => {
     const q = agentQuery.trim().toLowerCase();
@@ -499,27 +555,83 @@ export function TravelOrderRequestModal({
         form.append("attachment", file);
       }
 
-      const res = await fetch("/api/kpi-maintenance/field-assignment", {
-        method: "POST",
-        body: form,
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        kpi?: { id?: string };
-      };
-      if (!res.ok) {
-        setError(body.error ?? "Could not create the travel order.");
+      const payloadEntries: Record<string, string> = {};
+      for (const [k, v] of form.entries()) {
+        if (typeof v === "string") payloadEntries[k] = v;
+      }
+
+      async function queueOfflineCreate() {
+        const attachments: Array<{ name: string; type: string; dataUrl: string }> = [];
+        for (const file of pendingAttachments) {
+          if (file.size > MAX_SCREENSHOT_BYTES) continue;
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result ?? ""));
+            reader.onerror = () => reject(new Error("Could not read attachment."));
+            reader.readAsDataURL(file);
+          });
+          if (dataUrl) {
+            attachments.push({
+              name: file.name,
+              type: file.type || "application/octet-stream",
+              dataUrl,
+            });
+          }
+        }
+        await queueFieldAssignmentCreate({
+          draftRow: {
+            localId: localDraftId,
+            mainTaskName: effectiveMainTask,
+            scopedCompanyTeamId: scopedCompanyTeamId ?? null,
+            companyScopeAgentId,
+            draft: draftForSubmit,
+            attachmentNames: pendingAttachments.map((f) => f.name),
+            syncStatus: "pending",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          payload: payloadEntries,
+          attachments,
+        });
+        setQueuedOffline(true);
+        onCreated({ kpiId: localDraftId, offlineQueued: true });
+        onClose();
+      }
+
+      if (!isBrowserOnline()) {
+        await queueOfflineCreate();
         return;
       }
-      const kpiId = body.kpi?.id;
-      if (!kpiId) {
-        setError("Travel order was created but the task id was missing.");
-        return;
+
+      try {
+        const res = await fetch("/api/kpi-maintenance/field-assignment", {
+          method: "POST",
+          body: form,
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          kpi?: { id?: string };
+        };
+        if (!res.ok) {
+          setError(body.error ?? "Could not create the travel order.");
+          return;
+        }
+        const kpiId = body.kpi?.id;
+        if (!kpiId) {
+          setError("Travel order was created but the task id was missing.");
+          return;
+        }
+        onCreated({ kpiId });
+        onClose();
+      } catch {
+        await queueOfflineCreate();
       }
-      onCreated({ kpiId });
-      onClose();
-    } catch {
-      setError("Could not create the travel order. Check your connection and try again.");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not create the travel order. Check your connection and try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -570,6 +682,18 @@ export function TravelOrderRequestModal({
       size="lg"
     >
       <div className="space-y-5 overflow-y-auto px-1 pb-2">
+        <TravelOrderOfflineBanner />
+        {!online ? (
+          <p className="rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-100">
+            You are offline. Approvers use the last cached user list. Submit will queue this Travel Order
+            and sync when you reconnect.
+          </p>
+        ) : null}
+        {queuedOffline ? (
+          <p className="rounded-lg border border-sky-400/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-950 dark:text-sky-100">
+            Travel Order saved offline and queued for sync.
+          </p>
+        ) : null}
         {error ? (
           <p className="rounded-lg border border-rose-400/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-800 dark:text-rose-200">
             {error}

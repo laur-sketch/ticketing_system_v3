@@ -4,6 +4,7 @@ import Script from "next/script";
 import { AuthProvider } from "@/components/AuthProvider";
 import { GlobalButtonParticles } from "@/components/GlobalButtonParticles";
 import { AppChrome } from "@/components/layout/AppChrome";
+import { ServiceWorkerRegister } from "@/components/offline/ServiceWorkerRegister";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { BRAND_TITLE } from "@/lib/brand";
 import { safeGetServerSession } from "@/lib/server-session";
@@ -46,6 +47,7 @@ export default async function RootLayout({
         </Script>
         <ThemeProvider>
           <AuthProvider session={session}>
+            <ServiceWorkerRegister />
             <GlobalButtonParticles />
             <AppChrome>{children}</AppChrome>
           </AuthProvider>

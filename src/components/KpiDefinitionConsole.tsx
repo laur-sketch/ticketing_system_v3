@@ -29,7 +29,12 @@ function normalizeTaskTitle(value: string) {
 const TASK_TITLE_INPUT_CLASS =
   "rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-semibold tracking-tight text-zinc-900 outline-none ring-orange-500/30 placeholder:font-normal placeholder:tracking-normal placeholder:text-zinc-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100";
 
-type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly" | "Quarterly";
+type MaintenanceFrequency = "Daily" | "Weekly" | "Monthly" | "Quarterly" | "SemiAnnual";
+
+function maintenanceFrequencyToCode(freq: MaintenanceFrequency): KpiFrequencyCode {
+  if (freq === "SemiAnnual") return "SEMI_ANNUAL";
+  return freq.toUpperCase() as KpiFrequencyCode;
+}
 type DraftSegmentRow = { id: string; label: string; items: SubKpi[]; dueDate?: string | null };
 
 export type KpiDefinitionMaintenanceRecord = {
@@ -413,9 +418,9 @@ export function KpiDefinitionConsole({
     if (isJoProjectCreate) {
       setMaintenanceTitle(title);
     }
-    const freqUpper = (
-      !effectiveIsRecurring ? "MONTHLY" : maintenanceFrequency.toUpperCase()
-    ) as KpiFrequencyCode;
+    const freqUpper = !effectiveIsRecurring
+      ? ("MONTHLY" as KpiFrequencyCode)
+      : maintenanceFrequencyToCode(maintenanceFrequency);
 
     if (draftUseSegments) {
       const ensured = ensureUnsegmentedSegment(draftSegments);
@@ -540,7 +545,7 @@ export function KpiDefinitionConsole({
     if (effectiveIsRecurring && freqUpper === "WEEKLY") {
       body.recurrenceWeekday = recurrenceWeekday;
     }
-    if (effectiveIsRecurring && (freqUpper === "MONTHLY" || freqUpper === "QUARTERLY")) {
+    if (effectiveIsRecurring && (freqUpper === "MONTHLY" || freqUpper === "QUARTERLY" || freqUpper === "SEMI_ANNUAL")) {
       body.recurrenceMonthDay = recurrenceMonthDay;
     }
     body.timeZone = recurrenceTz;
@@ -872,6 +877,7 @@ export function KpiDefinitionConsole({
               <option value="Weekly">Weekly</option>
               <option value="Monthly">Monthly</option>
               <option value="Quarterly">Quarterly</option>
+              <option value="SemiAnnual">Semi Annual</option>
             </select>
           </label>
         ) : null}
@@ -901,10 +907,16 @@ export function KpiDefinitionConsole({
         !isProjectMode &&
         !isFieldAssignmentMode &&
         maintenanceIsRecurring &&
-        (maintenanceFrequency === "Monthly" || maintenanceFrequency === "Quarterly") ? (
+        (maintenanceFrequency === "Monthly" ||
+          maintenanceFrequency === "Quarterly" ||
+          maintenanceFrequency === "SemiAnnual") ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-            {maintenanceFrequency === "Quarterly" ? "4-month cycle" : "Month cycle"} starts on day (1–31,{" "}
-            {recurrenceTz})
+            {maintenanceFrequency === "Quarterly"
+              ? "4-month cycle"
+              : maintenanceFrequency === "SemiAnnual"
+                ? "6-month cycle"
+                : "Month cycle"}{" "}
+            starts on day (1–31, {recurrenceTz})
             <select
               value={recurrenceMonthDay}
               onChange={(e) => setRecurrenceMonthDay(Number(e.target.value))}
@@ -1155,9 +1167,14 @@ export function KpiDefinitionConsole({
         scopedCompanyTeamId={scopedCompanyTeamId || adminDesignatedCompanyId}
         companyScopeAgentId={null}
         onClose={() => setTravelOrderModalOpen(false)}
-        onCreated={async () => {
-          setOk("Field Assignment and travel order created.");
+        onCreated={async ({ offlineQueued }) => {
+          setOk(
+            offlineQueued
+              ? "Travel order saved offline and will sync when you reconnect."
+              : "Field Assignment and travel order created.",
+          );
           setTravelOrderModalOpen(false);
+          if (offlineQueued) return;
           resetTaskDraftAfterCreate();
           setMaintenanceTitle("");
           setScopedCompanyTeamId("");

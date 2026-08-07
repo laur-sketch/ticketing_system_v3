@@ -473,7 +473,7 @@ async function computeMergedUserEfficiencies(
   byAgentId: Map<string, AgentEnrichment>,
 ): Promise<Map<string, EfficiencyByMergedUser>> {
   const range = parseKpiRangeFromQuery(null, null);
-  const metrics = await computeTaskMetrics(range, {}, "DAILY");
+  const metrics = await computeTaskMetrics(range, {}, "MONTHLY");
   const taskRows = applyDelayPenaltiesToPersonnelTasks(
     aggregatePersonnelTaskMetrics(metrics.taskChecklistPillars),
     metrics.personnelDelayPenalties,

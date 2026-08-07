@@ -1473,6 +1473,51 @@ export async function updateTravelOrderLocationRemarks(input: {
   `;
 }
 
+/** Append a location to an existing travel order (e.g. traveler adds a stop while running). */
+export async function addTravelOrderLocation(input: {
+  travelOrderId: string;
+  label: string;
+}): Promise<TravelOrderRow> {
+  const label = input.label.trim();
+  if (!label) {
+    throw new Error("Location name is required.");
+  }
+  const order = await findTravelOrderById(input.travelOrderId);
+  if (!order) {
+    throw new Error("Travel order not found.");
+  }
+  const maxSort = order.locations.reduce((m, loc) => Math.max(m, loc.sortOrder), -1);
+  const locId = newId();
+  const now = new Date();
+  await prisma.$executeRaw`
+    INSERT INTO travel_order_locations (
+      id, travel_order_id, label, latitude, longitude,
+      remarks, attachments, sort_order, created_at, updated_at
+    ) VALUES (
+      ${locId},
+      ${input.travelOrderId},
+      ${label.slice(0, 300)},
+      ${null},
+      ${null},
+      ${null},
+      ${JSON.stringify([])}::jsonb,
+      ${maxSort + 1},
+      ${now},
+      ${now}
+    )
+  `;
+  await prisma.$executeRaw`
+    UPDATE travel_orders
+    SET updated_at = ${now}
+    WHERE id = ${input.travelOrderId}
+  `;
+  const fresh = await findTravelOrderById(input.travelOrderId);
+  if (!fresh) {
+    throw new Error("Location was added but the travel order could not be reloaded.");
+  }
+  return fresh;
+}
+
 /** KPI ids that have at least one travel order (Field Assignment cards). */
 export async function kpiIdsWithTravelOrders(kpiIds: string[]): Promise<Set<string>> {
   if (kpiIds.length === 0) return new Set();

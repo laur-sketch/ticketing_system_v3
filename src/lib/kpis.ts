@@ -20,20 +20,21 @@ import {
   penaltyDeductionsForKpi,
 } from "@/lib/task-delay-penalty";
 import type { PersonnelDelayPenaltyRow } from "@/lib/task-personnel-metrics";
+import type { TaskMetricsTaskType } from "@/lib/task-metrics-task-type";
 import {
   combineHelpdeskCountsByBlend,
   loadHelpdeskCsvTaskMetricCounts,
   resolveHelpdeskMetricBlend,
   type HelpdeskTaskMetricCounts,
 } from "@/lib/helpdesk-csv";
-import { loadItSalfDisplayCsvRowsForTaskMetrics } from "@/lib/kpi-sheet-import-snapshots";
 import { loadAgentIdsForCompanyTeam } from "@/lib/staff-company-scope";
 import { prisma } from "./prisma";
 
 export type {
-  TaskChecklistIncludedTask,
   TaskChecklistPillarMetrics,
   TaskChecklistPillarMetric,
+  TaskChecklistIncludedTask,
+  TaskChecklistIncludedPhase,
 } from "@/lib/kpi-period-snapshots";
 
 export type KpiRange = { from: Date; to: Date };
@@ -78,13 +79,13 @@ export type KpiScope = {
   teamIds?: string[];
 };
 
-/** Matches KPI pillar cadence on Insights → Task metrics. */
-export type HelpdeskTaskCadence = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY";
+/** Matches Insights → Task metrics cadence (not task recurrence frequency). */
+export type HelpdeskTaskCadence = "MONTHLY" | "YEARLY";
 
 export function parseHelpdeskCadence(param: string | null): HelpdeskTaskCadence {
   const u = param?.trim().toUpperCase();
-  if (u === "WEEKLY" || u === "MONTHLY" || u === "QUARTERLY") return u;
-  return "DAILY";
+  if (u === "YEARLY" || u === "YEAR" || u === "ANNUAL") return "YEARLY";
+  return "MONTHLY";
 }
 
 export type TaskMetricsHelpdeskTickets = {
@@ -480,8 +481,8 @@ export type TaskMetricsPayload = {
 export async function computeTaskMetrics(
   range: KpiRange,
   scope: KpiScope = {},
-  helpdeskCadence: HelpdeskTaskCadence = "DAILY",
-  opts: { timeZone?: string; taskType?: string } = {},
+  helpdeskCadence: HelpdeskTaskCadence = "MONTHLY",
+  opts: { timeZone?: string; taskType?: TaskMetricsTaskType } = {},
 ): Promise<TaskMetricsPayload> {
   const scoped = scope.assignedAgentIds
     ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
@@ -550,7 +551,7 @@ export async function computeTaskMetrics(
           rangeFromYmd: fromYmd,
           rangeToYmd: toYmd,
         });
-  const [taskChecklistPillars, itSalfCsvRows] = await Promise.all([
+  const [taskChecklistPillars] = await Promise.all([
     computeTaskChecklistPillarMetrics({
       metricsCadence: helpdeskCadence,
       fromYmd,
@@ -559,21 +560,7 @@ export async function computeTaskMetrics(
       kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
       taskType,
     }),
-    scope.assignedAgentId || scope.assignedAgentIds || taskType
-      ? Promise.resolve({})
-      : loadItSalfDisplayCsvRowsForTaskMetrics({
-          fromYmd,
-          toYmd,
-          timeZone: helpdeskTz,
-        }),
   ]);
-
-  for (const [pillar, rows] of Object.entries(itSalfCsvRows) as Array<[keyof TaskChecklistPillarMetrics, string[][]]>) {
-    const key = pillar as keyof TaskChecklistPillarMetrics;
-    if (taskChecklistPillars[key]) {
-      taskChecklistPillars[key] = { ...taskChecklistPillars[key], csvRows: rows };
-    }
-  }
 
   const personnelTicketMetrics =
     workingDays.length > 0
@@ -741,7 +728,7 @@ export async function computeKpis(
   scope: KpiScope = {},
   opts: { helpdeskCadence?: HelpdeskTaskCadence } = {},
 ) {
-  const helpdeskCadence = opts.helpdeskCadence ?? "DAILY";
+  const helpdeskCadence = opts.helpdeskCadence ?? "MONTHLY";
   const agentScope = scope.assignedAgentIds
     ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
     : scope.assignedAgentId

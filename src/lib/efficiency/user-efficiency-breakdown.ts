@@ -1,6 +1,13 @@
 /**
  * User Efficiency Breakdown — period rollups + task drill-down.
  *
+ * ## Database roles
+ *
+ * - **Primary PostgreSQL** owns live task / KPI / ticket rows (source of truth).
+ * - **Merged MySQL** is dump/fetch only: this module reads primary, then upserts
+ *   `merged_user_efficiency_breakdowns` (+ task details) via DATABASE_URL_SECONDARY_SYNC.
+ * - Insights Personnel fetches the dump; it does not write overall KPI back to primary.
+ *
  * ## Overall efficiency calculation
  *
  * For each (merged user × periodKey × frequency):
@@ -25,6 +32,8 @@
  *    then floor at 50 (see `combinedPersonnelEfficiency` / `PERSONNEL_AVERAGE_EFFICIENCY_FLOOR`).
  *
  * Idempotent: unique (sourceUserId, periodKey, frequency); replace-in-place per period.
+ * Write path always runs `ensureUserEfficiencyBreakdownTables` before upserts so dump
+ * columns (tickets_*, delay_penalty_*) exist on older merged DBs.
  */
 import { randomUUID } from "node:crypto";
 import { DateTime } from "luxon";
@@ -70,7 +79,7 @@ import {
   normalizePersonnelTaskTotals,
 } from "@/lib/task-personnel-metrics";
 
-export type EfficiencyFrequency = KpiFrequencyCode;
+export type EfficiencyFrequency = KpiFrequencyCode | "YEARLY" | "LIFETIME";
 
 export type ComputeUserEfficiencyOptions = {
   dryRun?: boolean;
@@ -158,7 +167,7 @@ function resolveSecondaryWriteUrl(): string {
   return "mysql://root@localhost:3306/mergedatabase-demo";
 }
 
-/** Reporting period keys: 2026-07-14 | 2026-W28 | 2026-07 | 2026-Q3 */
+/** Reporting period keys: 2026-07-14 | 2026-W28 | 2026-07 | 2026-Q3 | 2026-H1 | 2026 */
 export function buildReportingPeriodKey(
   frequency: EfficiencyFrequency,
   at: DateTime,
@@ -174,6 +183,14 @@ export function buildReportingPeriodKey(
       return at.toFormat("yyyy-MM");
     case "QUARTERLY":
       return `${at.year}-Q${at.quarter}`;
+    case "SEMI_ANNUAL": {
+      const half = at.month <= 6 ? 1 : 2;
+      return `${at.year}-H${half}`;
+    }
+    case "YEARLY":
+      return String(at.year);
+    case "LIFETIME":
+      return "LIFETIME";
     default:
       return at.toFormat("yyyy-MM");
   }
@@ -202,6 +219,20 @@ export function periodWindowFor(
     case "QUARTERLY":
       start = at.startOf("quarter");
       end = start.plus({ months: 3 });
+      break;
+    case "SEMI_ANNUAL": {
+      const halfStartMonth = at.month <= 6 ? 1 : 7;
+      start = at.set({ month: halfStartMonth, day: 1 }).startOf("day");
+      end = start.plus({ months: 6 });
+      break;
+    }
+    case "YEARLY":
+      start = at.startOf("year");
+      end = start.plus({ years: 1 });
+      break;
+    case "LIFETIME":
+      start = DateTime.fromObject({ year: 2000, month: 1, day: 1 }, { zone: z });
+      end = at.endOf("day").plus({ days: 1 });
       break;
     default:
       start = at.startOf("month");
@@ -239,6 +270,14 @@ export function listRecentPeriods(
         break;
       case "QUARTERLY":
         cursor = cursor.minus({ months: 3 });
+        break;
+      case "SEMI_ANNUAL":
+        cursor = cursor.minus({ months: 6 });
+        break;
+      case "YEARLY":
+        cursor = cursor.minus({ years: 1 });
+        break;
+      case "LIFETIME":
         break;
     }
   }
@@ -807,8 +846,17 @@ export async function runComputeUserEfficiencyBreakdowns(
   };
 
   try {
+    // Ensure dump tables/columns on the write URL before Prisma upserts overall KPI.
     await prismaBootstrap.$connect();
-    await ensureUserEfficiencyBreakdownTables(prismaBootstrap, targetDb);
+    try {
+      await ensureUserEfficiencyBreakdownTables(prismaBootstrap, targetDb);
+    } catch (e) {
+      console.error(
+        "[user-efficiency] ensureUserEfficiencyBreakdownTables failed (write path)",
+        e,
+      );
+      throw e;
+    }
     await prismaBootstrap.$disconnect();
 
     await prismaWrite.$connect();

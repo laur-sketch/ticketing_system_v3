@@ -338,6 +338,7 @@ function deriveRollupBuckets(
     add("WEEKLY", at, day);
     add("MONTHLY", at, day);
     add("QUARTERLY", at, day);
+    add("SEMI_ANNUAL", at, day);
   }
   return [...groups.values()];
 }

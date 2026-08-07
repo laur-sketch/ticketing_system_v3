@@ -570,11 +570,11 @@ export async function POST(req: Request) {
     }
     recurrenceWeekday = wd;
   }
-  if (!isItProject && isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY")) {
+  if (!isItProject && isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL")) {
     const dom = body.recurrenceMonthDay;
     if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
       return NextResponse.json(
-        { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY (1–31)." },
+        { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY/SEMI_ANNUAL (1–31)." },
         { status: 400 },
       );
     }
@@ -2428,11 +2428,11 @@ export async function PATCH(req: Request) {
       }
       recurrenceWeekday = wd;
     }
-    if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY")) {
+    if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL")) {
       const dom = schedule.recurrenceMonthDay ?? kpiRow.recurrenceMonthDay ?? 1;
       if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
         return NextResponse.json(
-          { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY (1–31)." },
+          { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY/SEMI_ANNUAL (1–31)." },
           { status: 400 },
         );
       }
