@@ -19,7 +19,7 @@ import {
   newTravelOrderOfflineId,
   saveOfflineDraft,
 } from "@/lib/offline/travel-order-offline-db";
-import { isBrowserOnline, queueFieldAssignmentCreate } from "@/lib/offline/travel-order-sync";
+import { isBrowserOnline, queueFieldAssignmentCreate, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure } from "@/lib/offline/travel-order-sync";
 import {
   INTAKE_ATTACHMENT_ACCEPT,
   MAX_SCREENSHOT_BYTES,
@@ -151,7 +151,7 @@ export function TravelOrderRequestModal({
           if (!cancelled) setAllAgents(cached.map((a) => ({ id: a.id, name: a.name, email: a.email })));
           return;
         }
-        const res = await fetch("/api/agents?anyCompany=1", { cache: "no-store" });
+        const res = await fetchTravelOrderWithTimeout("/api/agents?anyCompany=1", { cache: "no-store" });
         const anyList = res.ok ? await res.json() : [];
         if (cancelled) return;
         const parsed = parseAgentList(anyList);
@@ -604,10 +604,14 @@ export function TravelOrderRequestModal({
       }
 
       try {
-        const res = await fetch("/api/kpi-maintenance/field-assignment", {
-          method: "POST",
-          body: form,
-        });
+        const res = await fetchTravelOrderWithTimeout(
+          "/api/kpi-maintenance/field-assignment",
+          {
+            method: "POST",
+            body: form,
+          },
+          8000,
+        );
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
           kpi?: { id?: string };
@@ -623,8 +627,12 @@ export function TravelOrderRequestModal({
         }
         onCreated({ kpiId });
         onClose();
-      } catch {
-        await queueOfflineCreate();
+      } catch (err) {
+        if (isTravelOrderNetworkFailure(err)) {
+          await queueOfflineCreate();
+          return;
+        }
+        throw err;
       }
     } catch (err: unknown) {
       setError(

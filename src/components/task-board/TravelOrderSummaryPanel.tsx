@@ -51,7 +51,9 @@ import {
   upsertCachedTravelOrder,
 } from "@/lib/offline/travel-order-offline-db";
 import {
+  fetchTravelOrderWithTimeout,
   isBrowserOnline,
+  isTravelOrderNetworkFailure,
   queueAddLocation,
   queueLocationPatch,
   queueTravelOrderPatch,
@@ -155,9 +157,10 @@ export function TravelOrderSummaryPanel({
         }
         return;
       }
-      const res = await fetch(`/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders`, {
-        cache: "no-store",
-      });
+      const res = await fetchTravelOrderWithTimeout(
+        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders`,
+        { cache: "no-store" },
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "Could not load travel orders.");
@@ -170,9 +173,19 @@ export function TravelOrderSummaryPanel({
       const cached = await getCachedTravelOrdersForTask(taskId).catch(() => []);
       if (cached.length > 0) {
         setOrders(cached);
-        setError("Showing cached travel orders (offline or network error).");
+        setError(
+          isTravelOrderNetworkFailure(err) || !isBrowserOnline()
+            ? "Showing cached travel orders (offline)."
+            : "Showing cached travel orders (network error).",
+        );
       } else {
-        setError(err instanceof Error ? err.message : "Could not load travel orders.");
+        setError(
+          isTravelOrderNetworkFailure(err)
+            ? "You are offline and no cached travel orders are available for this task."
+            : err instanceof Error
+              ? err.message
+              : "Could not load travel orders.",
+        );
         setOrders([]);
       }
     } finally {
@@ -195,77 +208,91 @@ export function TravelOrderSummaryPanel({
     };
   }, []);
 
+  async function patchGatePassOffline(
+    orderId: string,
+    body: Record<string, unknown>,
+  ): Promise<TravelOrderDto> {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) throw new Error("Travel order not found offline.");
+    const gp = (body.gatePass ?? {}) as Record<string, unknown>;
+    let overlay: Partial<TravelOrderDto> = {};
+    if (body.action === "gate-pass-visit") {
+      const visitAction = gp.visitAction === "end" ? "end" : "start";
+      const capturedAt =
+        typeof gp.capturedAt === "string" ? gp.capturedAt : new Date().toISOString();
+      const lat = typeof gp.latitude === "number" ? gp.latitude : null;
+      const lng = typeof gp.longitude === "number" ? gp.longitude : null;
+      overlay =
+        visitAction === "start"
+          ? {
+              actualDepartureStartedAt: capturedAt,
+              actualDepartureStartedLatitude: lat,
+              actualDepartureStartedLongitude: lng,
+              gatePassIncluded: true,
+            }
+          : {
+              actualDepartureEndedAt: capturedAt,
+              actualDepartureEndedLatitude: lat,
+              actualDepartureEndedLongitude: lng,
+              gatePassIncluded: true,
+            };
+    } else {
+      overlay = {
+        gatePassIncluded: true,
+        estDepartureAt:
+          typeof gp.estDepartureAt === "string" ? gp.estDepartureAt : order.estDepartureAt ?? null,
+        estArrivalAt:
+          typeof gp.estArrivalAt === "string" ? gp.estArrivalAt : order.estArrivalAt ?? null,
+      };
+    }
+    const merged = { ...order, ...overlay } as TravelOrderDto;
+    let next = await applyLocalTravelOrderOverlay(orderId, overlay);
+    if (!next) {
+      await upsertCachedTravelOrder(merged);
+      next = merged;
+    }
+    replaceOrder(next);
+    await queueTravelOrderPatch({
+      taskId,
+      travelOrderId: orderId,
+      body,
+      baseUpdatedAt: order.updatedAt,
+    });
+    return next;
+  }
+
   async function patchGatePass(
     orderId: string,
     body: Record<string, unknown>,
   ): Promise<TravelOrderDto> {
     if (!isBrowserOnline()) {
-      const order = orders.find((o) => o.id === orderId);
-      if (!order) throw new Error("Travel order not found offline.");
-      const gp = (body.gatePass ?? {}) as Record<string, unknown>;
-      let overlay: Partial<TravelOrderDto> = {};
-      if (body.action === "gate-pass-visit") {
-        const visitAction = gp.visitAction === "end" ? "end" : "start";
-        const capturedAt =
-          typeof gp.capturedAt === "string" ? gp.capturedAt : new Date().toISOString();
-        const lat = typeof gp.latitude === "number" ? gp.latitude : null;
-        const lng = typeof gp.longitude === "number" ? gp.longitude : null;
-        overlay =
-          visitAction === "start"
-            ? {
-                actualDepartureStartedAt: capturedAt,
-                actualDepartureStartedLatitude: lat,
-                actualDepartureStartedLongitude: lng,
-                gatePassIncluded: true,
-              }
-            : {
-                actualDepartureEndedAt: capturedAt,
-                actualDepartureEndedLatitude: lat,
-                actualDepartureEndedLongitude: lng,
-                gatePassIncluded: true,
-              };
-      } else {
-        overlay = {
-          gatePassIncluded: true,
-          estDepartureAt:
-            typeof gp.estDepartureAt === "string" ? gp.estDepartureAt : order.estDepartureAt ?? null,
-          estArrivalAt:
-            typeof gp.estArrivalAt === "string" ? gp.estArrivalAt : order.estArrivalAt ?? null,
-        };
-      }
-      const merged = { ...order, ...overlay } as TravelOrderDto;
-      let next = await applyLocalTravelOrderOverlay(orderId, overlay);
-      if (!next) {
-        await upsertCachedTravelOrder(merged);
-        next = merged;
-      }
-      replaceOrder(next);
-      await queueTravelOrderPatch({
-        taskId,
-        travelOrderId: orderId,
-        body,
-        baseUpdatedAt: order.updatedAt,
-      });
-      return next;
+      return patchGatePassOffline(orderId, body);
     }
-    const res = await fetch(
-      `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    );
-    const payload = (await res.json().catch(() => ({}))) as {
-      travelOrder?: TravelOrderDto;
-      error?: string;
-    };
-    if (!res.ok || !payload.travelOrder) {
-      throw new Error(payload.error ?? "Could not update Gate Pass.");
+    try {
+      const res = await fetchTravelOrderWithTimeout(
+        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const payload = (await res.json().catch(() => ({}))) as {
+        travelOrder?: TravelOrderDto;
+        error?: string;
+      };
+      if (!res.ok || !payload.travelOrder) {
+        throw new Error(payload.error ?? "Could not update Gate Pass.");
+      }
+      replaceOrder(payload.travelOrder);
+      void upsertCachedTravelOrder(payload.travelOrder);
+      return payload.travelOrder;
+    } catch (err) {
+      if (isTravelOrderNetworkFailure(err)) {
+        return patchGatePassOffline(orderId, body);
+      }
+      throw err;
     }
-    replaceOrder(payload.travelOrder);
-    void upsertCachedTravelOrder(payload.travelOrder);
-    return payload.travelOrder;
   }
 
   async function captureGatePassActual(order: TravelOrderDto, visitAction: "start" | "end") {
@@ -478,76 +505,91 @@ export function TravelOrderSummaryPanel({
     }
   }
 
+  async function patchLocationOffline(
+    orderId: string,
+    locationId: string,
+    body: Record<string, unknown>,
+  ): Promise<TravelOrderDto | null> {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) throw new Error("Travel order not found offline.");
+    const visitAction = body.visitAction === "end" ? "end" : body.visitAction === "start" ? "start" : null;
+    const capturedAt =
+      typeof body.capturedAt === "string" ? body.capturedAt : new Date().toISOString();
+    const lat = typeof body.latitude === "number" ? body.latitude : null;
+    const lng = typeof body.longitude === "number" ? body.longitude : null;
+    const locations = order.locations.map((loc) => {
+      if (loc.id !== locationId) return loc;
+      if (visitAction === "start") {
+        return {
+          ...loc,
+          startedAt: capturedAt,
+          startedLatitude: lat,
+          startedLongitude: lng,
+        };
+      }
+      if (visitAction === "end") {
+        return {
+          ...loc,
+          endedAt: capturedAt,
+          endedLatitude: lat,
+          endedLongitude: lng,
+          latitude: lat,
+          longitude: lng,
+          checkedAt: capturedAt,
+        };
+      }
+      if (typeof body.remarks === "string" || body.remarks === null) {
+        return { ...loc, remarks: (body.remarks as string | null) ?? null };
+      }
+      return loc;
+    });
+    const overlay: Partial<TravelOrderDto> = { locations };
+    const merged = { ...order, locations };
+    const next = (await applyLocalTravelOrderOverlay(orderId, overlay)) ?? merged;
+    await upsertCachedTravelOrder(next);
+    replaceOrder(next);
+    await queueLocationPatch({
+      taskId,
+      travelOrderId: orderId,
+      locationId,
+      body,
+    });
+    return next;
+  }
+
   async function patchLocation(
     orderId: string,
     locationId: string,
     body: Record<string, unknown>,
   ): Promise<TravelOrderDto | null> {
     if (!isBrowserOnline()) {
-      const order = orders.find((o) => o.id === orderId);
-      if (!order) throw new Error("Travel order not found offline.");
-      const visitAction = body.visitAction === "end" ? "end" : body.visitAction === "start" ? "start" : null;
-      const capturedAt =
-        typeof body.capturedAt === "string" ? body.capturedAt : new Date().toISOString();
-      const lat = typeof body.latitude === "number" ? body.latitude : null;
-      const lng = typeof body.longitude === "number" ? body.longitude : null;
-      const locations = order.locations.map((loc) => {
-        if (loc.id !== locationId) return loc;
-        if (visitAction === "start") {
-          return {
-            ...loc,
-            startedAt: capturedAt,
-            startedLatitude: lat,
-            startedLongitude: lng,
-          };
-        }
-        if (visitAction === "end") {
-          return {
-            ...loc,
-            endedAt: capturedAt,
-            endedLatitude: lat,
-            endedLongitude: lng,
-            latitude: lat,
-            longitude: lng,
-            checkedAt: capturedAt,
-          };
-        }
-        if (typeof body.remarks === "string" || body.remarks === null) {
-          return { ...loc, remarks: (body.remarks as string | null) ?? null };
-        }
-        return loc;
-      });
-      const overlay: Partial<TravelOrderDto> = { locations };
-      const merged = { ...order, locations };
-      const next = (await applyLocalTravelOrderOverlay(orderId, overlay)) ?? merged;
-      await upsertCachedTravelOrder(next);
-      replaceOrder(next);
-      await queueLocationPatch({
-        taskId,
-        travelOrderId: orderId,
-        locationId,
-        body,
-      });
-      return next;
+      return patchLocationOffline(orderId, locationId, body);
     }
-    const res = await fetch(
-      `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}/locations/${encodeURIComponent(locationId)}`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    );
-    const payload = (await res.json().catch(() => ({}))) as {
-      travelOrder?: TravelOrderDto;
-      error?: string;
-    };
-    if (!res.ok || !payload.travelOrder) {
-      throw new Error(payload.error ?? "Could not update location.");
+    try {
+      const res = await fetchTravelOrderWithTimeout(
+        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}/locations/${encodeURIComponent(locationId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const payload = (await res.json().catch(() => ({}))) as {
+        travelOrder?: TravelOrderDto;
+        error?: string;
+      };
+      if (!res.ok || !payload.travelOrder) {
+        throw new Error(payload.error ?? "Could not update location.");
+      }
+      replaceOrder(payload.travelOrder);
+      void upsertCachedTravelOrder(payload.travelOrder);
+      return payload.travelOrder;
+    } catch (err) {
+      if (isTravelOrderNetworkFailure(err)) {
+        return patchLocationOffline(orderId, locationId, body);
+      }
+      throw err;
     }
-    replaceOrder(payload.travelOrder);
-    void upsertCachedTravelOrder(payload.travelOrder);
-    return payload.travelOrder;
   }
 
   async function captureVisit(
@@ -583,6 +625,38 @@ export function TravelOrderSummaryPanel({
     }
   }
 
+  async function addLocationOffline(order: TravelOrderDto, label: string) {
+    const clientLocationId = newTravelOrderOfflineId("local_loc");
+    const nextLoc: TravelOrderLocationDto = {
+      id: clientLocationId,
+      label,
+      latitude: null,
+      longitude: null,
+      checkedAt: null,
+      startedAt: null,
+      startedLatitude: null,
+      startedLongitude: null,
+      endedAt: null,
+      endedLatitude: null,
+      endedLongitude: null,
+      remarks: null,
+      attachments: [],
+      sortOrder: order.locations.length,
+    };
+    const locations = [...order.locations, nextLoc];
+    const merged = { ...order, locations };
+    const next = (await applyLocalTravelOrderOverlay(order.id, { locations })) ?? merged;
+    await upsertCachedTravelOrder(next);
+    replaceOrder(next);
+    await queueAddLocation({
+      taskId,
+      travelOrderId: order.id,
+      label,
+      clientLocationId,
+    });
+    setNewLocationDrafts((prev) => ({ ...prev, [order.id]: "" }));
+  }
+
   async function addLocationWhileRunning(order: TravelOrderDto) {
     const label = (newLocationDrafts[order.id] ?? "").trim();
     if (!label) {
@@ -598,57 +672,36 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       if (!isBrowserOnline()) {
-        const clientLocationId = newTravelOrderOfflineId("local_loc");
-        const nextLoc: TravelOrderLocationDto = {
-          id: clientLocationId,
-          label,
-          latitude: null,
-          longitude: null,
-          checkedAt: null,
-          startedAt: null,
-          startedLatitude: null,
-          startedLongitude: null,
-          endedAt: null,
-          endedLatitude: null,
-          endedLongitude: null,
-          remarks: null,
-          attachments: [],
-          sortOrder: order.locations.length,
-        };
-        const locations = [...order.locations, nextLoc];
-        const merged = { ...order, locations };
-        const next =
-          (await applyLocalTravelOrderOverlay(order.id, { locations })) ?? merged;
-        await upsertCachedTravelOrder(next);
-        replaceOrder(next);
-        await queueAddLocation({
-          taskId,
-          travelOrderId: order.id,
-          label,
-          clientLocationId,
-        });
-        setNewLocationDrafts((prev) => ({ ...prev, [order.id]: "" }));
+        await addLocationOffline(order, label);
         return;
       }
 
-      const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/locations`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label }),
-        },
-      );
-      const payload = (await res.json().catch(() => ({}))) as {
-        travelOrder?: TravelOrderDto;
-        error?: string;
-      };
-      if (!res.ok || !payload.travelOrder) {
-        throw new Error(payload.error ?? "Could not add location.");
+      try {
+        const res = await fetchTravelOrderWithTimeout(
+          `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/locations`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ label }),
+          },
+        );
+        const payload = (await res.json().catch(() => ({}))) as {
+          travelOrder?: TravelOrderDto;
+          error?: string;
+        };
+        if (!res.ok || !payload.travelOrder) {
+          throw new Error(payload.error ?? "Could not add location.");
+        }
+        replaceOrder(payload.travelOrder);
+        void upsertCachedTravelOrder(payload.travelOrder);
+        setNewLocationDrafts((prev) => ({ ...prev, [order.id]: "" }));
+      } catch (err) {
+        if (isTravelOrderNetworkFailure(err)) {
+          await addLocationOffline(order, label);
+          return;
+        }
+        throw err;
       }
-      replaceOrder(payload.travelOrder);
-      void upsertCachedTravelOrder(payload.travelOrder);
-      setNewLocationDrafts((prev) => ({ ...prev, [order.id]: "" }));
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : "Could not add location.");
     } finally {

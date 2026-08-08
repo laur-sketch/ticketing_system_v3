@@ -10,6 +10,7 @@ import {
   flushTravelOrderPendingQueue,
   getTravelOrderSyncProgress,
   isBrowserOnline,
+  subscribeTravelOrderConnectivity,
   subscribeTravelOrderSync,
   type TravelOrderSyncProgress,
 } from "@/lib/offline/travel-order-sync";
@@ -25,16 +26,14 @@ export function TravelOrderOfflineBanner({ className }: { className?: string }) 
       setOnline(isBrowserOnline());
     }
     refreshOnline();
-    window.addEventListener("online", refreshOnline);
-    window.addEventListener("offline", refreshOnline);
+    const unsubConnectivity = subscribeTravelOrderConnectivity(refreshOnline);
     const unsub = subscribeTravelOrderSync(setSync);
     const tick = window.setInterval(() => {
       void countPendingTravelOrderWork().then(setPending);
     }, 2500);
     void countPendingTravelOrderWork().then(setPending);
     return () => {
-      window.removeEventListener("online", refreshOnline);
-      window.removeEventListener("offline", refreshOnline);
+      unsubConnectivity();
       unsub();
       window.clearInterval(tick);
     };
@@ -73,24 +72,34 @@ export function TravelOrderOfflineBanner({ className }: { className?: string }) 
                 : sync.lastError
                   ? sync.lastError
                   : "Travel Orders are synced"
-            : "Travel Orders can be created and GPS Start/End still work. Changes will sync when you reconnect."}
+            : "Create / GPS still work offline. If a reload fails, open the offline Travel Orders page."}
         </span>
       </div>
-      {online && pending > 0 ? (
-        <button
-          type="button"
-          disabled={sync.running}
-          onClick={() => void flushTravelOrderPendingQueue()}
-          className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-sky-900 hover:bg-white disabled:opacity-50 dark:bg-zinc-950/50 dark:text-sky-100"
-        >
-          {sync.running ? (
-            <Loader2 className="size-3 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="size-3" aria-hidden />
-          )}
-          Sync now
-        </button>
-      ) : null}
+      <div className="flex items-center gap-1.5">
+        {!online ? (
+          <a
+            href="/offline-travel-orders.html"
+            className="inline-flex items-center rounded-md border border-amber-500/40 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-amber-950 hover:bg-white dark:bg-zinc-950/50 dark:text-amber-100"
+          >
+            Offline page
+          </a>
+        ) : null}
+        {online && pending > 0 ? (
+          <button
+            type="button"
+            disabled={sync.running}
+            onClick={() => void flushTravelOrderPendingQueue()}
+            className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-sky-900 hover:bg-white disabled:opacity-50 dark:bg-zinc-950/50 dark:text-sky-100"
+          >
+            {sync.running ? (
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-3" aria-hidden />
+            )}
+            Sync now
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

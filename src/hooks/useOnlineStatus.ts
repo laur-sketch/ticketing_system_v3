@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isBrowserOnline } from "@/lib/offline/travel-order-sync";
+import {
+  isBrowserOnline,
+  subscribeTravelOrderConnectivity,
+} from "@/lib/offline/travel-order-sync";
 
 export function useOnlineStatus(): boolean {
   const [online, setOnline] = useState(true);
@@ -10,12 +13,7 @@ export function useOnlineStatus(): boolean {
       setOnline(isBrowserOnline());
     }
     refresh();
-    window.addEventListener("online", refresh);
-    window.addEventListener("offline", refresh);
-    return () => {
-      window.removeEventListener("online", refresh);
-      window.removeEventListener("offline", refresh);
-    };
+    return subscribeTravelOrderConnectivity(refresh);
   }, []);
   return online;
 }

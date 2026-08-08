@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>Travel Orders — Offline</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1220;
+        --panel: #111827;
+        --line: #1f2937;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --ok: #34d399;
+        --warn: #fbbf24;
+        --bad: #f87171;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: radial-gradient(1200px 600px at 10% -10%, #1e3a5f 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 0%, #0f766e33 0%, transparent 50%), var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
+      header {
+        padding: 1.25rem 1.25rem 0.75rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(8px);
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+      .sub {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+        font-size: 0.875rem;
+        line-height: 1.4;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.85rem;
+      }
+      button,
+      a.btn {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: #0f172a;
+        color: var(--text);
+        border-radius: 0.5rem;
+        padding: 0.45rem 0.75rem;
+        font-size: 0.85rem;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      button.primary,
+      a.btn.primary {
+        background: #0369a1;
+        border-color: #0284c7;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      main {
+        padding: 1rem 1.25rem 2.5rem;
+        max-width: 920px;
+        margin: 0 auto;
+      }
+      .banner {
+        border: 1px solid #854d0e;
+        background: #422006;
+        color: #fde68a;
+        border-radius: 0.65rem;
+        padding: 0.75rem 0.9rem;
+        font-size: 0.875rem;
+        margin-bottom: 1rem;
+      }
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .chip {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 999px;
+        padding: 0.3rem 0.7rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .chip strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      section {
+        margin-top: 1.25rem;
+      }
+      section h2 {
+        margin: 0 0 0.65rem;
+        font-size: 0.95rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .card {
+        border: 1px solid var(--line);
+        background: rgba(17, 24, 39, 0.9);
+        border-radius: 0.75rem;
+        padding: 0.85rem 0.95rem;
+        margin-bottom: 0.65rem;
+      }
+      .card h3 {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+      .meta {
+        margin-top: 0.35rem;
+        color: var(--muted);
+        font-size: 0.8rem;
+        line-height: 1.45;
+      }
+      .status {
+        display: inline-block;
+        margin-top: 0.45rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .status.ok {
+        color: var(--ok);
+      }
+      .status.warn {
+        color: var(--warn);
+      }
+      .status.bad {
+        color: var(--bad);
+      }
+      .empty {
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 0.75rem 0;
+      }
+      pre.detail {
+        margin: 0.65rem 0 0;
+        padding: 0.65rem;
+        border-radius: 0.5rem;
+        background: #020617;
+        border: 1px solid var(--line);
+        color: #cbd5e1;
+        font-size: 0.72rem;
+        overflow: auto;
+        max-height: 220px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Travel Orders (Offline)</h1>
+      <p class="sub">
+        You’re offline or the app shell could not load. Showing Travel Orders saved on this device.
+        Changes stay queued here until you’re back online.
+      </p>
+      <div class="actions">
+        <a class="btn primary" id="retryApp" href="/agent/tasks">Retry full app</a>
+        <button type="button" id="refreshLocal">Refresh local data</button>
+      </div>
+    </header>
+    <main>
+      <div class="banner" id="netBanner">Checking network…</div>
+      <div class="stats" id="stats"></div>
+      <section>
+        <h2>Cached Travel Orders</h2>
+        <div id="orders"></div>
+      </section>
+      <section>
+        <h2>Local drafts / pending sync</h2>
+        <div id="drafts"></div>
+      </section>
+      <section>
+        <h2>Pending operations</h2>
+        <div id="ops"></div>
+      </section>
+    </main>
+    <script>
+      (function () {
+        var DB_NAME = "ticketing_travel_order_offline_v1";
+        var DB_VERSION = 1;
+
+        function el(id) {
+          return document.getElementById(id);
+        }
+
+        function escapeHtml(value) {
+          return String(value == null ? "" : value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+        }
+
+        function openDb() {
+          return new Promise(function (resolve, reject) {
+            var req = indexedDB.open(DB_NAME, DB_VERSION);
+            req.onerror = function () {
+              reject(req.error || new Error("IndexedDB open failed"));
+            };
+            req.onsuccess = function () {
+              resolve(req.result);
+            };
+            req.onupgradeneeded = function () {
+              // Do not create schema here — only read what the app already wrote.
+            };
+          });
+        }
+
+        function getAll(db, storeName) {
+          return new Promise(function (resolve, reject) {
+            if (!db.objectStoreNames.contains(storeName)) {
+              resolve([]);
+              return;
+            }
+            var tx = db.transaction(storeName, "readonly");
+            var store = tx.objectStore(storeName);
+            var req = store.getAll();
+            req.onsuccess = function () {
+              resolve(req.result || []);
+            };
+            req.onerror = function () {
+              reject(req.error);
+            };
+          });
+        }
+
+        function statusClass(status) {
+          if (status === "synced" || status === "ok") return "ok";
+          if (status === "failed") return "bad";
+          return "warn";
+        }
+
+        function updateNetBanner() {
+          var online = typeof navigator !== "undefined" && navigator.onLine;
+          var banner = el("netBanner");
+          if (online) {
+            banner.textContent =
+              "Network looks available. Tap “Retry full app” to return to Agent Tasks / Travel Orders.";
+          } else {
+            banner.textContent =
+              "No network. Keep this page open to review cached Travel Orders. Avoid hard-refreshing until you’re online again.";
+          }
+        }
+
+        function renderOrders(rows) {
+          var root = el("orders");
+          if (!rows.length) {
+            root.innerHTML =
+              '<p class="empty">No Travel Orders cached yet. Open Travel Orders once while online to store them on this device.</p>';
+            return;
+          }
+          root.innerHTML = rows
+            .map(function (row) {
+              var order = row.order || {};
+              var title = order.taskName || order.mainTaskName || row.kpiMaintenanceId || row.id;
+              var locations = Array.isArray(order.locations) ? order.locations.length : 0;
+              var travelers = Array.isArray(order.travelers) ? order.travelers.length : 0;
+              var status = order.status || order.workflowStatus || "cached";
+              var detail = {
+                id: row.id,
+                kpiMaintenanceId: row.kpiMaintenanceId,
+                cachedAt: row.cachedAt,
+                status: status,
+                locations: order.locations || [],
+                travelers: order.travelers || [],
+                localOverlay: row.localOverlay || null,
+              };
+              return (
+                '<article class="card">' +
+                "<h3>" +
+                escapeHtml(title) +
+                "</h3>" +
+                '<div class="meta">KPI: ' +
+                escapeHtml(row.kpiMaintenanceId || "—") +
+                " · Locations: " +
+                locations +
+                " · Travelers: " +
+                travelers +
+                " · Cached: " +
+                escapeHtml(row.cachedAt || "—") +
+                "</div>" +
+                '<div class="status ' +
+                statusClass(status) +
+                '">' +
+                escapeHtml(status) +
+                "</div>" +
+                '<details><summary class="meta">View cached JSON</summary><pre class="detail">' +
+                escapeHtml(JSON.stringify(detail, null, 2)) +
+                "</pre></details>" +
+                "</article>"
+              );
+            })
+            .join("");
+        }
+
+        function renderDrafts(rows) {
+          var root = el("drafts");
+          if (!rows.length) {
+            root.innerHTML = '<p class="empty">No local drafts.</p>';
+            return;
+          }
+          root.innerHTML = rows
+            .map(function (d) {
+              return (
+                '<article class="card">' +
+                "<h3>" +
+                escapeHtml(d.mainTaskName || d.localId) +
+                "</h3>" +
+                '<div class="meta">Local id: ' +
+                escapeHtml(d.localId) +
+                (d.serverTravelOrderId ? " · Server: " + escapeHtml(d.serverTravelOrderId) : "") +
+                " · Updated: " +
+                escapeHtml(d.updatedAt || "—") +
+                "</div>" +
+                '<div class="status ' +
+                statusClass(d.syncStatus) +
+                '">' +
+                escapeHtml(d.syncStatus || "draft") +
+                (d.syncError ? " — " + escapeHtml(d.syncError) : "") +
+                "</div>" +
+                "</article>"
+              );
+            })
+            .join("");
+        }
+
+        function renderOps(rows) {
+          var root = el("ops");
+          if (!rows.length) {
+            root.innerHTML = '<p class="empty">No pending operations.</p>';
+            return;
+          }
+          root.innerHTML = rows
+            .map(function (op) {
+              return (
+                '<article class="card">' +
+                "<h3>" +
+                escapeHtml(op.kind || "op") +
+                "</h3>" +
+                '<div class="meta">Id: ' +
+                escapeHtml(op.id) +
+                (op.travelOrderId ? " · TO: " + escapeHtml(op.travelOrderId) : "") +
+                (op.taskId ? " · Task: " + escapeHtml(op.taskId) : "") +
+                " · Attempts: " +
+                escapeHtml(String(op.attempts != null ? op.attempts : 0)) +
+                "</div>" +
+                '<div class="status ' +
+                statusClass(op.syncStatus) +
+                '">' +
+                escapeHtml(op.syncStatus || "pending") +
+                (op.syncError ? " — " + escapeHtml(op.syncError) : "") +
+                "</div>" +
+                "</article>"
+              );
+            })
+            .join("");
+        }
+
+        function renderStats(orders, drafts, ops) {
+          var pendingOps = ops.filter(function (o) {
+            return o.syncStatus === "pending" || o.syncStatus === "failed" || o.syncStatus === "draft";
+          }).length;
+          el("stats").innerHTML =
+            '<span class="chip"><strong>' +
+            orders.length +
+            "</strong> cached orders</span>" +
+            '<span class="chip"><strong>' +
+            drafts.length +
+            "</strong> drafts</span>" +
+            '<span class="chip"><strong>' +
+            pendingOps +
+            "</strong> pending ops</span>";
+        }
+
+        async function load() {
+          updateNetBanner();
+          try {
+            var db = await openDb();
+            var orders = await getAll(db, "travelOrders");
+            var drafts = await getAll(db, "drafts");
+            var ops = await getAll(db, "pendingOps");
+            db.close();
+            orders.sort(function (a, b) {
+              return String(b.cachedAt || "").localeCompare(String(a.cachedAt || ""));
+            });
+            drafts.sort(function (a, b) {
+              return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+            });
+            ops.sort(function (a, b) {
+              return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+            });
+            renderStats(orders, drafts, ops);
+            renderOrders(orders);
+            renderDrafts(drafts);
+            renderOps(ops);
+          } catch (err) {
+            el("orders").innerHTML =
+              '<p class="empty">Could not read local Travel Order storage: ' +
+              escapeHtml(err && err.message ? err.message : String(err)) +
+              "</p>";
+            el("drafts").innerHTML = "";
+            el("ops").innerHTML = "";
+            el("stats").innerHTML = "";
+          }
+        }
+
+        el("refreshLocal").addEventListener("click", function () {
+          void load();
+        });
+        el("retryApp").addEventListener("click", function (e) {
+          if (!navigator.onLine) {
+            e.preventDefault();
+            alert("Still offline. Stay on this page until the connection returns, then retry.");
+          }
+        });
+        window.addEventListener("online", function () {
+          updateNetBanner();
+        });
+        window.addEventListener("offline", function () {
+          updateNetBanner();
+        });
+        void load();
+      })();
+    </script>
+  </body>
+</html>
