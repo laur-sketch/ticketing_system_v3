@@ -47,9 +47,88 @@ export function getTravelOrderSyncProgress(): TravelOrderSyncProgress {
   return { ...progress };
 }
 
+/** Brief forced-offline window after a real network failure (navigator.onLine is often stale). */
+let forcedOfflineUntilMs = 0;
+const CONNECTIVITY_EVENT = "travel-order-connectivity";
+
+export function noteTravelOrderConnectivityLoss(holdMs = 20_000): void {
+  forcedOfflineUntilMs = Date.now() + holdMs;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(CONNECTIVITY_EVENT));
+  }
+}
+
+export function noteTravelOrderConnectivityOk(): void {
+  if (forcedOfflineUntilMs === 0) return;
+  forcedOfflineUntilMs = 0;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(CONNECTIVITY_EVENT));
+  }
+}
+
 export function isBrowserOnline(): boolean {
   if (typeof navigator === "undefined") return true;
+  if (Date.now() < forcedOfflineUntilMs) return false;
   return navigator.onLine;
+}
+
+/** True for fetch/TypeError/abort failures that should fall back to Dexie queue. */
+export function isTravelOrderNetworkFailure(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+    if (err.name === "AbortError" || err.name === "TimeoutError" || err.name === "NetworkError") {
+      return true;
+    }
+  }
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /failed to fetch|networkerror|network request failed|load failed|aborted|timeout|offline|internet/i.test(
+    message,
+  );
+}
+
+/**
+ * Fetch with a short timeout so flaky/dead links fail into offline queue quickly
+ * instead of hanging or waiting for a long TCP failure.
+ */
+export async function fetchTravelOrderWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs = 3500,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const external = init?.signal;
+  const onExternalAbort = () => ctrl.abort();
+  if (external) {
+    if (external.aborted) ctrl.abort();
+    else external.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(input, { ...init, signal: ctrl.signal });
+    noteTravelOrderConnectivityOk();
+    return res;
+  } catch (err) {
+    if (isTravelOrderNetworkFailure(err)) {
+      noteTravelOrderConnectivityLoss();
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    if (external) external.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+export function subscribeTravelOrderConnectivity(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const onConnectivity = () => listener();
+  window.addEventListener("online", onConnectivity);
+  window.addEventListener("offline", onConnectivity);
+  window.addEventListener(CONNECTIVITY_EVENT, onConnectivity);
+  return () => {
+    window.removeEventListener("online", onConnectivity);
+    window.removeEventListener("offline", onConnectivity);
+    window.removeEventListener(CONNECTIVITY_EVENT, onConnectivity);
+  };
 }
 
 /** Ask Workbox / SW to schedule a background sync flush. */

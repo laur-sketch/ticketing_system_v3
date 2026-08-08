@@ -115,7 +115,7 @@ import {
   listOfflineDrafts,
   offlineDraftAsListItem,
 } from "@/lib/offline/travel-order-offline-db";
-import { isBrowserOnline } from "@/lib/offline/travel-order-sync";
+import { isBrowserOnline, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure } from "@/lib/offline/travel-order-sync";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
@@ -1605,7 +1605,7 @@ export function AgentKpiKanbanFlow({
         }
         return;
       }
-      const res = await fetch("/api/travel-orders", { cache: "no-store" });
+      const res = await fetchTravelOrderWithTimeout("/api/travel-orders", { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as {
         travelOrders?: TravelOrderDto[];
         error?: string;
@@ -1623,11 +1623,19 @@ export function AgentKpiKanbanFlow({
       const cached = await listAllCachedTravelOrders().catch(() => []);
       if (pendingDrafts.length > 0 || cached.length > 0) {
         setCompanyTravelOrders([...pendingDrafts, ...cached]);
-        setCompanyTravelOrdersError("Showing cached travel orders (offline or network error).");
+        setCompanyTravelOrdersError(
+          isTravelOrderNetworkFailure(err) || !isBrowserOnline()
+            ? "Showing cached travel orders (offline)."
+            : "Showing cached travel orders (network error).",
+        );
       } else {
         setCompanyTravelOrders([]);
         setCompanyTravelOrdersError(
-          err instanceof Error ? err.message : "Could not load travel orders.",
+          isTravelOrderNetworkFailure(err)
+            ? "You are offline and no cached travel orders are available yet."
+            : err instanceof Error
+              ? err.message
+              : "Could not load travel orders.",
         );
       }
     } finally {
@@ -1638,6 +1646,17 @@ export function AgentKpiKanbanFlow({
   useEffect(() => {
     if (!travelOrdersOpen) return;
     void reloadCompanyTravelOrders();
+    // Warm SW page/shell caches while online so a later offline reload can recover.
+    if (typeof navigator !== "undefined" && navigator.onLine) {
+      const worker = navigator.serviceWorker?.controller;
+      worker?.postMessage({
+        type: "WARM_TRAVEL_ORDER_SHELL",
+        urls: ["/offline-travel-orders.html", "/agent/tasks", window.location.pathname],
+      });
+      void fetch("/offline-travel-orders.html", { credentials: "same-origin", cache: "no-cache" }).catch(
+        () => null,
+      );
+    }
   }, [travelOrdersOpen, reloadCompanyTravelOrders]);
   const unassignedRows = useMemo(() => rows.filter((r) => !r.assignedAgent?.id), [rows]);
   const assignedCountByAgent = useMemo(
