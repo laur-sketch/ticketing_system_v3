@@ -441,7 +441,7 @@ export function PersonnelClient({
 
   function showStaffDesignatedCompany(role: string) {
     const n = normalizePortalRole(role) ?? role;
-    return n === "Admin" || n === "Personnel" || n === "Customer";
+    return n === "Admin" || n === "Personnel" || n === "Personnel-Guard" || n === "Customer";
   }
 
   const personnelRegistryPageCount = Math.max(

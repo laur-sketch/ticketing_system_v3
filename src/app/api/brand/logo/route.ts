@@ -22,7 +22,7 @@ function publicBrandDir() {
 }
 
 function bundledDefaultLogoPath() {
-  return join(publicBrandDir(), "agc-logo.svg");
+  return join(publicBrandDir(), "wpd-logo.png");
 }
 
 /** Drop-in files (no env): logo.png | logo.webp | logo.jpg in public/brand/ */

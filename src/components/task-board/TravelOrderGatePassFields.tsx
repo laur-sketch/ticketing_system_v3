@@ -71,14 +71,21 @@ export function TravelOrderGatePassFields({
         </p>
         <p className="text-[11px] font-normal normal-case tracking-normal text-zinc-500">
           {showActualTimes
-            ? "Update estimated times and capture actual departure / arrival GPS when ready."
-            : "Fill estimated departure and arrival times. Actual times unlock after the travel order is fully approved. You can skip this page entirely."}
+            ? allowActualCapture && disabled
+              ? "Estimates are view-only here. Use Start / End to capture actual departure and arrival GPS."
+              : "Update estimated times (optional) and capture actual departure / arrival GPS when ready."
+            : "Estimated departure and arrival are optional. Actual times unlock after the travel order is fully approved. You can skip this page entirely."}
         </p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          Est. Departure Date and Time
+          <span>
+            Est. Departure Date and Time{" "}
+            <span className="font-semibold normal-case tracking-normal text-zinc-500">
+              (optional)
+            </span>
+          </span>
           <input
             type="datetime-local"
             value={value.estDepartureAt}
@@ -88,7 +95,12 @@ export function TravelOrderGatePassFields({
           />
         </label>
         <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          Est. Arrival Date and Time
+          <span>
+            Est. Arrival Date and Time{" "}
+            <span className="font-semibold normal-case tracking-normal text-zinc-500">
+              (optional)
+            </span>
+          </span>
           <input
             type="datetime-local"
             value={value.estArrivalAt}
@@ -112,7 +124,7 @@ export function TravelOrderGatePassFields({
                 </p>
                 <button
                   type="button"
-                  disabled={disabled || !allowActualCapture || started || startBusy || ended}
+                  disabled={!allowActualCapture || started || startBusy || ended}
                   onClick={() => onCaptureActual?.("start")}
                   className="inline-flex items-center gap-1 rounded-lg bg-orange-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-45"
                 >
@@ -148,7 +160,7 @@ export function TravelOrderGatePassFields({
                 <input
                   type="text"
                   value={value.startGuardOnDuty}
-                  disabled={disabled || ended}
+                  disabled={(disabled && !allowActualCapture) || ended}
                   onChange={(e) => patch({ startGuardOnDuty: e.target.value })}
                   placeholder="Name of guard on duty…"
                   className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
@@ -163,7 +175,7 @@ export function TravelOrderGatePassFields({
                 </p>
                 <button
                   type="button"
-                  disabled={disabled || !allowActualCapture || !started || ended || endBusy}
+                  disabled={!allowActualCapture || !started || ended || endBusy}
                   onClick={() => onCaptureActual?.("end")}
                   className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-45 dark:text-emerald-200"
                 >
@@ -200,7 +212,7 @@ export function TravelOrderGatePassFields({
                 <input
                   type="text"
                   value={value.endGuardOnDuty}
-                  disabled={disabled || !started}
+                  disabled={(disabled && !allowActualCapture) || !started}
                   onChange={(e) => patch({ endGuardOnDuty: e.target.value })}
                   placeholder="Name of guard on duty…"
                   className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"

@@ -28,6 +28,8 @@ type DraftForm = {
   remarks: string;
   dueDate: string;
   useCustomDueDate: boolean;
+  /** Advance custom due date with each recurrence cycle (monthly → next month, etc.). */
+  dueDateRollsWithCycle: boolean;
   priority: string;
   segmentId: string;
 };
@@ -38,6 +40,7 @@ const EMPTY: DraftForm = {
   remarks: "",
   dueDate: "",
   useCustomDueDate: false,
+  dueDateRollsWithCycle: false,
   priority: "",
   segmentId: "",
 };
@@ -55,6 +58,8 @@ type DraftSubTasksPopupProps = {
   canMakePhases?: boolean;
   minimumSegmentItems: number;
   hideDueDate?: boolean;
+  /** Show “adjust with each cycle” for recurring (non-daily) tasks. */
+  allowDueDateRollWithCycle?: boolean;
   /** Main-task target date shown when a subtask inherits. */
   parentDueDate?: string;
   /** Optional Job Order ticket link shown as Check Reference in this form. */
@@ -77,6 +82,7 @@ export function DraftSubTasksPopup({
   canMakePhases = false,
   minimumSegmentItems: _minimumSegmentItems,
   hideDueDate = false,
+  allowDueDateRollWithCycle = false,
   parentDueDate = "",
   checkReferenceHref = null,
   onChange,
@@ -195,7 +201,12 @@ export function DraftSubTasksPopup({
       ...(addDraft.description.trim() ? { description: addDraft.description.trim() } : {}),
       ...(addDraft.remarks.trim() ? { remarks: addDraft.remarks.trim() } : {}),
       ...(!hideDueDate && !canMakePhases && addDraft.useCustomDueDate && addDraft.dueDate
-        ? { dueDate: addDraft.dueDate }
+        ? {
+            dueDate: addDraft.dueDate,
+            ...(allowDueDateRollWithCycle && addDraft.dueDateRollsWithCycle
+              ? { dueDateRollsWithCycle: true }
+              : {}),
+          }
         : {}),
       ...(addDraft.priority === "High" || addDraft.priority === "Medium" || addDraft.priority === "Low"
         ? { projectPriority: addDraft.priority }
@@ -248,6 +259,7 @@ export function DraftSubTasksPopup({
       remarks: item.remarks ?? "",
       dueDate: item.dueDate ?? "",
       useCustomDueDate: Boolean(item.dueDate?.trim()),
+      dueDateRollsWithCycle: item.dueDateRollsWithCycle === true && Boolean(item.dueDate?.trim()),
       priority: item.projectPriority ?? "",
       segmentId:
         segments.find((segment) => segment.items.some((candidate) => candidate.id === item.id))?.id ?? "",
@@ -278,8 +290,17 @@ export function DraftSubTasksPopup({
         if (canMakePhases) {
           delete (next as { dueDate?: string }).dueDate;
         } else if (!hideDueDate) {
-          if (editDraft.useCustomDueDate && editDraft.dueDate) next.dueDate = editDraft.dueDate;
-          else delete (next as { dueDate?: string }).dueDate;
+          if (editDraft.useCustomDueDate && editDraft.dueDate) {
+            next.dueDate = editDraft.dueDate;
+            if (allowDueDateRollWithCycle && editDraft.dueDateRollsWithCycle) {
+              next.dueDateRollsWithCycle = true;
+            } else {
+              delete (next as { dueDateRollsWithCycle?: boolean }).dueDateRollsWithCycle;
+            }
+          } else {
+            delete (next as { dueDate?: string }).dueDate;
+            delete (next as { dueDateRollsWithCycle?: boolean }).dueDateRollsWithCycle;
+          }
         }
         if (
           editDraft.priority === "High" ||
@@ -458,7 +479,7 @@ export function DraftSubTasksPopup({
                     })()
                   : !hideDueDate
                     ? s.dueDate
-                      ? `Target ${s.dueDate}`
+                      ? `Target ${s.dueDate}${s.dueDateRollsWithCycle ? " · rolls with cycle" : ""}`
                       : parentDueDate.trim()
                         ? `Target ${parentDueDate.trim()} (from main task)`
                         : "Uses main task target date"
@@ -547,7 +568,7 @@ export function DraftSubTasksPopup({
                 onChange={(e) =>
                   patch({
                     useCustomDueDate: e.target.checked,
-                    ...(e.target.checked ? {} : { dueDate: "" }),
+                    ...(e.target.checked ? {} : { dueDate: "", dueDateRollsWithCycle: false }),
                   })
                 }
                 className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
@@ -564,15 +585,33 @@ export function DraftSubTasksPopup({
               </span>
             </label>
             {draft.useCustomDueDate ? (
-              <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500 sm:max-w-xs">
-                Target date
-                <DatePickerField
-                  value={draft.dueDate}
-                  onChange={(e) => patch({ dueDate: e.target.value })}
-                  wrapperClassName="mt-1"
-                  aria-label={`${idPrefix} target date`}
-                />
-              </label>
+              <div className="flex flex-col gap-2 sm:max-w-xs">
+                <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                  Target date
+                  <DatePickerField
+                    value={draft.dueDate}
+                    onChange={(e) => patch({ dueDate: e.target.value })}
+                    wrapperClassName="mt-1"
+                    aria-label={`${idPrefix} target date`}
+                  />
+                </label>
+                {allowDueDateRollWithCycle ? (
+                  <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold normal-case tracking-normal text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={draft.dueDateRollsWithCycle}
+                      onChange={(e) => patch({ dueDateRollsWithCycle: e.target.checked })}
+                      className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                    />
+                    <span>
+                      Adjust with each recurring cycle
+                      <span className="mt-0.5 block text-[11px] font-medium text-zinc-500 dark:text-zinc-500">
+                        e.g. Aug 15 becomes Sep 15 on the next monthly cycle
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : canMakePhases ? (

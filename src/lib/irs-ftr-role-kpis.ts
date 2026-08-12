@@ -127,13 +127,14 @@ export async function loadIrsCanvassPersonnelMetrics(
       row.closedAt?.toISOString(),
       workingDayIntervals,
     );
+    // Credit only the explicit Canvassed By seat — never the board assignee.
     if (confirmedInRange && meta.completed.CANVASSED_BY) {
-      const creditId = meta.canvassedByAgentId ?? row.assignedAgentId;
+      const creditId = meta.canvassedByAgentId?.trim() || null;
       if (agentInScope(creditId, scopedAgentIds)) bump(counts, creditId, "closed");
     }
 
     if (meta.proceduralStep === "CANVASSED_BY") {
-      const pendingId = meta.canvassedByAgentId ?? row.assignedAgentId;
+      const pendingId = meta.canvassedByAgentId?.trim() || null;
       if (agentInScope(pendingId, scopedAgentIds)) bump(counts, pendingId, "pending");
     }
   }
@@ -178,13 +179,14 @@ export async function loadFtrPreparedPersonnelMetrics(
       row.closedAt?.toISOString(),
       workingDayIntervals,
     );
+    // Credit only the explicit Prepared By seat — never the board assignee.
     if (confirmedInRange && meta.completed.PREPARED_BY) {
-      const creditId = meta.preparedByAgentId ?? row.assignedAgentId;
+      const creditId = meta.preparedByAgentId?.trim() || null;
       if (agentInScope(creditId, scopedAgentIds)) bump(counts, creditId, "closed");
     }
 
     if (meta.proceduralStep === "PREPARED_BY") {
-      const pendingId = meta.preparedByAgentId ?? row.assignedAgentId;
+      const pendingId = meta.preparedByAgentId?.trim() || null;
       if (agentInScope(pendingId, scopedAgentIds)) bump(counts, pendingId, "pending");
     }
   }

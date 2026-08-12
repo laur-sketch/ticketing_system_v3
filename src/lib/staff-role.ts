@@ -2,7 +2,7 @@
  * Portal account roles stored on PortalAccount.role:
  * SuperAdmin (full platform access; not selectable as an approver — maps to HRIS super_admin),
  * HighAdmin (same platform access as SuperAdmin, but may be set as an approver),
- * Admin (company-scoped coordinator), Personnel, Customer.
+ * Admin (company-scoped coordinator), Personnel, Personnel-Guard (gate-pass kiosk), Customer.
  * Legacy "Head" strings in the DB are normalized to Admin on read.
  */
 
@@ -11,6 +11,7 @@ export const PORTAL_ROLES = [
   "HighAdmin",
   "Admin",
   "Personnel",
+  "Personnel-Guard",
   "Customer",
 ] as const;
 export type PortalRole = (typeof PORTAL_ROLES)[number];
@@ -46,7 +47,7 @@ export const STAFF_PORTAL_ROLES = ["HighAdmin", "Admin", "Personnel"] as const;
 export const STAFF_ROLE_OPTIONS = STAFF_PORTAL_ROLES;
 
 /**
- * Maps stored portal role to SuperAdmin | HighAdmin | Admin | Personnel | Customer.
+ * Maps stored portal role to SuperAdmin | HighAdmin | Admin | Personnel | Personnel-Guard | Customer.
  * Returns null if unknown.
  */
 export function normalizePortalRole(role: string | null | undefined): PortalRole | null {
@@ -55,6 +56,13 @@ export function normalizePortalRole(role: string | null | undefined): PortalRole
   if (raw === "superadmin" || raw === "super_admin" || raw === "super-admin") return "SuperAdmin";
   if (raw === "highadmin" || raw === "high_admin" || raw === "high-admin") return "HighAdmin";
   if (raw === "admin") return "Admin";
+  if (
+    raw === "personnel-guard" ||
+    raw === "personnel_guard" ||
+    raw === "personnelguard"
+  ) {
+    return "Personnel-Guard";
+  }
   if (raw === "personnel") return "Personnel";
   if (raw === "customer") return "Customer";
   if (LEGACY_HEAD.has(raw) || raw.endsWith(" head")) return "Admin";
@@ -81,6 +89,11 @@ export function isPlatformSuperAdminPortalRole(role: string | null | undefined):
 /** HighAdmin portal role. */
 export function isHighAdminPortalRole(role: string | null | undefined): boolean {
   return normalizePortalRole(role) === "HighAdmin";
+}
+
+/** Gate-pass kiosk role: travel-orders only, capture Start/End, no create/approve. */
+export function isPersonnelGuardPortalRole(role: string | null | undefined): boolean {
+  return normalizePortalRole(role) === "Personnel-Guard";
 }
 
 /**

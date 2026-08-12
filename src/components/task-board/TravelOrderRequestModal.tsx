@@ -15,8 +15,11 @@ import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { TravelOrderOfflineBanner } from "@/components/offline/TravelOrderOfflineBanner";
 import {
   cacheAgents,
+  deleteOfflineDraft,
+  getOfflineDraft,
   listCachedAgents,
   newTravelOrderOfflineId,
+  offlineDraftHasContent,
   saveOfflineDraft,
 } from "@/lib/offline/travel-order-offline-db";
 import { isBrowserOnline, queueFieldAssignmentCreate, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure } from "@/lib/offline/travel-order-sync";
@@ -32,7 +35,6 @@ import {
   emptyGatePassDraft,
   emptyTravelLocation,
   emptyTravelOrderDraft,
-  gatePassDraftHasAnyData,
   travelOrderApprovedByLabel,
   TRAVEL_ORDER_VEHICLE_OPTIONS,
   validateTravelOrderDraft,
@@ -59,8 +61,12 @@ type TravelOrderRequestModalProps = {
   companyScopeAgentId?: string | null;
   /** Allow editing the travel order name inside the modal (standalone create). */
   allowEditDetails?: boolean;
+  /** Resume a previously saved local draft (IndexedDB localId). */
+  resumeLocalId?: string | null;
   onClose: () => void;
   onCreated: (payload: { kpiId: string; offlineQueued?: boolean }) => void;
+  /** Called after an explicit Save draft (modal closes). */
+  onDraftSaved?: () => void;
 };
 
 /**
@@ -76,12 +82,14 @@ export function TravelOrderRequestModal({
   scopedCompanyTeamId,
   companyScopeAgentId = null,
   allowEditDetails: _allowEditDetails = false,
+  resumeLocalId = null,
   onClose,
   onCreated,
+  onDraftSaved,
 }: TravelOrderRequestModalProps) {
   void _unusedTaskGroupTitle;
   const online = useOnlineStatus();
-  const [localDraftId] = useState(() => newTravelOrderOfflineId("todraft"));
+  const [localDraftId, setLocalDraftId] = useState(() => newTravelOrderOfflineId("todraft"));
   const [draft, setDraft] = useState<TravelOrderDraft>(() => emptyTravelOrderDraft());
   const [allAgents, setAllAgents] = useState<AgentOption[]>([]);
   const [agentQuery, setAgentQuery] = useState("");
@@ -94,7 +102,9 @@ export function TravelOrderRequestModal({
   const [levelsCountInput, setLevelsCountInput] = useState("2");
   const [formPage, setFormPage] = useState<TravelOrderFormPage>(1);
   const [busy, setBusy] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const [queuedOffline, setQueuedOffline] = useState(false);
@@ -129,11 +139,10 @@ export function TravelOrderRequestModal({
 
   useEffect(() => {
     if (!open) return;
-    setDraft(emptyTravelOrderDraft());
     setPendingAttachments([]);
     setQueuedOffline(false);
     setError(null);
-    setFormPage(1);
+    setDraftNotice(null);
     setAgentQuery("");
     setConfirmQuery("");
     setTravelerQuery("");
@@ -143,8 +152,26 @@ export function TravelOrderRequestModal({
     setLevelsPromptOpen(false);
     setLevelsCountInput("2");
     let cancelled = false;
-    // Approvers, confirmer, and travelers are never company-locked.
     void (async () => {
+      const resumeId = resumeLocalId?.trim() || null;
+      if (resumeId) {
+        const saved = await getOfflineDraft(resumeId).catch(() => undefined);
+        if (!cancelled && saved?.syncStatus === "draft") {
+          setLocalDraftId(saved.localId);
+          setDraft(saved.draft);
+          setFormPage(1);
+        } else if (!cancelled) {
+          setLocalDraftId(newTravelOrderOfflineId("todraft"));
+          setDraft(emptyTravelOrderDraft());
+          setFormPage(1);
+        }
+      } else if (!cancelled) {
+        setLocalDraftId(newTravelOrderOfflineId("todraft"));
+        setDraft(emptyTravelOrderDraft());
+        setFormPage(1);
+      }
+
+      // Approvers, confirmer, and travelers are never company-locked.
       try {
         if (!isBrowserOnline()) {
           const cached = await listCachedAgents();
@@ -174,7 +201,7 @@ export function TravelOrderRequestModal({
     return () => {
       cancelled = true;
     };
-  }, [open, companyScopeAgentId, scopedCompanyTeamId, mainTaskName]);
+  }, [open, companyScopeAgentId, scopedCompanyTeamId, mainTaskName, resumeLocalId]);
 
   // Persist in-progress draft so offline edits survive reloads.
   useEffect(() => {
@@ -422,6 +449,35 @@ export function TravelOrderRequestModal({
     });
   }
 
+  async function saveDraftAndClose() {
+    const row = {
+      localId: localDraftId,
+      mainTaskName: effectiveMainTask,
+      scopedCompanyTeamId: scopedCompanyTeamId ?? null,
+      companyScopeAgentId,
+      draft,
+      attachmentNames: pendingAttachments.map((f) => f.name),
+      syncStatus: "draft" as const,
+    };
+    if (!offlineDraftHasContent(row)) {
+      setError("Add a purpose, traveler, vehicle, location, or approver before saving a draft.");
+      setFormPage(1);
+      return;
+    }
+    setDraftSaving(true);
+    setError(null);
+    try {
+      await saveOfflineDraft(row);
+      setDraftNotice("Draft saved. You can resume it from Travel Orders.");
+      onDraftSaved?.();
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save draft.");
+    } finally {
+      setDraftSaving(false);
+    }
+  }
+
   async function submit(opts?: { skipGatePass?: boolean }) {
     const draftForSubmit: TravelOrderDraft = opts?.skipGatePass
       ? { ...draft, gatePass: emptyGatePassDraft() }
@@ -429,8 +485,9 @@ export function TravelOrderRequestModal({
           ...draft,
           gatePass: {
             ...draft.gatePass,
-            included:
-              draft.gatePass.included || gatePassDraftHasAnyData(draft.gatePass),
+            // Submitting from the Gate Pass page includes Gate Pass even when
+            // Est. Departure / Arrival are left blank (optional).
+            included: true,
           },
         };
 
@@ -537,7 +594,8 @@ export function TravelOrderRequestModal({
       form.set(
         "gatePassJson",
         JSON.stringify({
-          included: gp.included && gatePassDraftHasAnyData(gp),
+          // Est. times are optional — include Gate Pass even when both are blank.
+          included: gp.included === true,
           estDepartureAt: gp.estDepartureAt.trim() || null,
           estArrivalAt: gp.estArrivalAt.trim() || null,
           // Actual times / guards are captured only after full approval.
@@ -625,6 +683,7 @@ export function TravelOrderRequestModal({
           setError("Travel order was created but the task id was missing.");
           return;
         }
+        void deleteOfflineDraft(localDraftId).catch(() => undefined);
         onCreated({ kpiId });
         onClose();
       } catch (err) {
@@ -861,9 +920,22 @@ export function TravelOrderRequestModal({
                   {creatorAgent.email ? ` · ${creatorAgent.email}` : ""}
                 </p>
               ) : creatorAgent && draft.exemptRequesterFromTravelers ? (
-                <p className="text-xs text-zinc-500">
-                  Requester {creatorAgent.name} is exempt and will not appear as a traveler.
-                </p>
+                <div className="space-y-1 rounded-lg border border-orange-400/40 bg-orange-500/[0.06] px-2.5 py-2 dark:border-orange-500/30 dark:bg-orange-500/[0.08]">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">
+                    Prepared By:
+                  </p>
+                  <p className="text-xs text-zinc-800 dark:text-zinc-200">
+                    <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                      {creatorAgent.name}
+                    </span>
+                    {creatorAgent.email ? (
+                      <span className="text-zinc-500"> · {creatorAgent.email}</span>
+                    ) : null}
+                  </p>
+                  <p className="text-[11px] text-zinc-500">
+                    You are registered as Prepared By and will not appear in the travelers list.
+                  </p>
+                </div>
               ) : !draft.exemptRequesterFromTravelers ? (
                 <p className="text-xs text-zinc-500">You will be assigned as the requester on save.</p>
               ) : null}
@@ -1027,12 +1099,17 @@ export function TravelOrderRequestModal({
                   </div>
 
                   <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                    License No.
+                    <span>
+                      License No.{" "}
+                      <span className="font-semibold normal-case tracking-normal text-zinc-500">
+                        (optional)
+                      </span>
+                    </span>
                     <input
                       type="text"
                       value={draft.driverLicenseNo}
                       disabled={busy}
-                      placeholder="Driver license number"
+                      placeholder="Driver license number (optional)"
                       onChange={(e) =>
                         setDraft((prev) => ({ ...prev, driverLicenseNo: e.target.value }))
                       }
@@ -1517,9 +1594,36 @@ export function TravelOrderRequestModal({
           />
         )}
 
+        {draftNotice ? (
+          <p className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-800 dark:text-emerald-200">
+            {draftNotice}
+          </p>
+        ) : null}
+
         <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || draftSaving}
+            onClick={onClose}
+          >
             Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || draftSaving}
+            onClick={() => void saveDraftAndClose()}
+            title="Save this travel order locally and finish it later"
+          >
+            {draftSaving ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                Saving draft…
+              </>
+            ) : (
+              "Save draft"
+            )}
           </Button>
           {formPage === 1 ? (
             <Button

@@ -155,6 +155,15 @@ describe("RFP deferred mode of payment when Accounting/Finance unset", () => {
       }),
       true,
     );
+    // Seats can also be filled when mode of payment was already set at intake.
+    meta = { ...meta, deferPaymentModeToAccounting: false };
+    assert.equal(
+      canAssignDeferredPaymentAccountingFinance({
+        meta,
+        modeOfPayment: "Check",
+      }),
+      true,
+    );
   });
 
   it("releases the prior-signee lock when the current Accounting seat is unset", () => {

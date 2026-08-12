@@ -9,6 +9,8 @@ export type TravelOrderFormPage = 1 | 2 | 3;
 type TravelOrderPageNavProps = {
   page: TravelOrderFormPage;
   onPageChange: (page: TravelOrderFormPage) => void;
+  /** When false, hide the Gate Pass tab (Details + Approvals only). Default true. */
+  showGatePass?: boolean;
   /** When false, omit Back/Next (tabs only). Default true. */
   showStepButtons?: boolean;
   /** Disable Next (e.g. while busy). */
@@ -24,6 +26,7 @@ type TravelOrderPageNavProps = {
 export function TravelOrderPageNav({
   page,
   onPageChange,
+  showGatePass = true,
   showStepButtons = true,
   nextDisabled = false,
   backDisabled = false,
@@ -31,6 +34,7 @@ export function TravelOrderPageNav({
   className,
 }: TravelOrderPageNavProps) {
   const showActions = showStepButtons || stepActions;
+  const lastPage: TravelOrderFormPage = showGatePass ? 3 : 2;
   return (
     <div
       className={cn(
@@ -71,20 +75,22 @@ export function TravelOrderPageNav({
         >
           2 · Approvals
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={page === 3}
-          onClick={() => onPageChange(3)}
-          className={cn(
-            "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-            page === 3
-              ? "bg-orange-600 text-white shadow-sm"
-              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-          )}
-        >
-          3 · Gate Pass
-        </button>
+        {showGatePass ? (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={page === 3}
+            onClick={() => onPageChange(3)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+              page === 3
+                ? "bg-orange-600 text-white shadow-sm"
+                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+            )}
+          >
+            3 · Gate Pass
+          </button>
+        ) : null}
       </div>
 
       {showActions ? (
@@ -101,7 +107,7 @@ export function TravelOrderPageNav({
             </button>
           ) : null}
           {stepActions}
-          {showStepButtons && page < 3 ? (
+          {showStepButtons && page < lastPage ? (
             <button
               type="button"
               disabled={nextDisabled}

@@ -54,6 +54,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     remarks?: string | null;
     segmentId?: string | null;
     dueDate?: string | null;
+    dueDateRollsWithCycle?: boolean | null;
     priority?: string | null;
   };
   const title = String(body.title ?? "").trim();
@@ -67,6 +68,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     remarks: body.remarks,
     segmentId: normalized.segmented ? body.segmentId : null,
     dueDate: body.dueDate,
+    dueDateRollsWithCycle: body.dueDateRollsWithCycle,
     projectPriority: body.priority,
   });
   if (!result.ok) {

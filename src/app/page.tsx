@@ -1,7 +1,9 @@
 import { isElevatedUserRole } from "@/lib/auth";
-﻿import Link from "next/link";
+import { isPersonnelGuardPortalRole } from "@/lib/staff-role";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
+import { BrandLogo } from "@/components/BrandLogo";
 import { CustomerHomeDashboard } from "@/components/portal/CustomerHomeDashboard";
 import { RecentActivityPanel } from "@/components/dashboard/RecentActivityPanel";
 import {
@@ -39,6 +41,10 @@ function priorityTone(priority: TicketPriority) {
 
 export default async function Home() {
   const session = await safeGetServerSession();
+
+  if (isPersonnelGuardPortalRole(session?.user?.role)) {
+    redirect("/travel-orders");
+  }
 
   if (session?.user?.role === "Customer") {
     const email = session.user.email ?? "";
@@ -189,6 +195,7 @@ export default async function Home() {
       <main className="min-h-full bg-zinc-50 px-3 py-3 text-zinc-900 sm:px-5 sm:py-4 dark:bg-zinc-950 dark:text-zinc-100">
         <div className="w-full max-w-none space-y-5">
           <header className="min-w-0">
+            <BrandLogo width={96} className="mb-3 h-auto w-24" />
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-700 sm:text-[11px] dark:text-orange-400/95">
               {BRAND_TITLE} · Dashboard
             </p>

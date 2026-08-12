@@ -1085,17 +1085,31 @@ function TaskMetricsPanel({
           : Math.round(row.taskEfficiency ?? 0);
 
       const live = liveRequestsByName.get(normalizePersonName(row.name));
-      const closed = live?.closed ?? Number(row.ticketsClosed ?? 0);
-      const pending = live?.pending ?? Number(row.ticketsPending ?? 0);
+      // When live Task Metrics has loaded, assignee ticket counts are authoritative.
+      // Do not fall back to merged ticketsClosed/Pending — those can still credit
+      // Approvers who are board assignees on procedural RFPs.
+      const liveTicketsAuthoritative = !loading && !error;
+      const closed = live != null
+        ? live.closed
+        : liveTicketsAuthoritative
+          ? 0
+          : Number(row.ticketsClosed ?? 0);
+      const pending = live != null
+        ? live.pending
+        : liveTicketsAuthoritative
+          ? 0
+          : Number(row.ticketsPending ?? 0);
       const requestTotal = closed + pending;
       const requestEfficiency =
         live != null
           ? Math.round(live.efficiency)
-          : row.ticketEfficiency != null
-            ? Math.round(Number(row.ticketEfficiency))
-            : requestTotal > 0
-              ? Math.round((closed / requestTotal) * 100)
-              : null;
+          : liveTicketsAuthoritative
+            ? null
+            : row.ticketEfficiency != null
+              ? Math.round(Number(row.ticketEfficiency))
+              : requestTotal > 0
+                ? Math.round((closed / requestTotal) * 100)
+                : null;
 
       const rfpAccounting = liveRfpAccountingByName.get(normalizePersonName(row.name)) ?? null;
       const rfpFinance = liveRfpFinanceByName.get(normalizePersonName(row.name)) ?? null;
@@ -1108,7 +1122,7 @@ function TaskMetricsPanel({
         name: row.name,
         role: "Assignee",
         tickets:
-          live != null || requestEfficiency != null || requestTotal > 0
+          live != null || (!liveTicketsAuthoritative && (requestEfficiency != null || requestTotal > 0))
             ? {
                 closed,
                 pending,
@@ -1257,6 +1271,8 @@ function TaskMetricsPanel({
     personnelIrsCanvassMetrics,
     personnelFtrPreparedMetrics,
     personnelAcaSubmittedMetrics,
+    loading,
+    error,
   ]);
 
   return (

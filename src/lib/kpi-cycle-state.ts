@@ -1,3 +1,9 @@
+import {
+  getPeriodEndExclusiveFromCycleStart,
+  getRolloverEligibleAfterCompletion,
+  normalizeTimeZone,
+} from "@/lib/kpi-recurrence";
+import { DateTime } from "luxon";
 import type { KpiFrequencyCode } from "@/lib/kpi-recurrence";
 import {
   itProjectHasAnyDelay,
@@ -10,15 +16,10 @@ import {
   collectChecklistProgressItems,
   getTaskTargetDueDate,
   resolveEffectiveSubKpiDueDate,
+  subKpiHasCustomDueDate,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import { subKpiRequirementsMet } from "@/lib/sub-kpi-completion-mode";
-import {
-  getPeriodEndExclusiveFromCycleStart,
-  getRolloverEligibleAfterCompletion,
-  normalizeTimeZone,
-} from "@/lib/kpi-recurrence";
-import { DateTime } from "luxon";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -224,6 +225,9 @@ export function taskKanbanDerivedStatus(
   if (record.isRecurring === false && nonRecurringTaskHasDelay(record.subKpis, nowMs, timeZone)) {
     return "DELAYED";
   }
+  if (record.isRecurring !== false && recurringTaskHasDelay(record, nowMs, timeZone)) {
+    return "DELAYED";
+  }
   return done === total ? "DONE" : "CURRENT";
 }
 
@@ -235,4 +239,62 @@ export function nextRolloverEligibleAtUtc(
 ): Date | null {
   if (!lastFullCompletionAt || !Number.isFinite(lastFullCompletionAt.getTime())) return null;
   return getRolloverEligibleAfterCompletion(lastFullCompletionAt, timeZone, frequency);
+}
+
+/**
+ * Incomplete recurring checklists stay on the board (Delayed) for this many calendar days
+ * after the cycle deadline before they may roll into the next period.
+ */
+export const RECURRING_INCOMPLETE_ROLLOVER_HOLD_DAYS = 10;
+
+/**
+ * The incomplete-cycle rollover hold applies only to MONTHLY / QUARTERLY / SEMI_ANNUAL
+ * cadences. DAILY and WEEKLY cycles roll into the next period immediately once stale.
+ */
+export function recurringIncompleteRolloverHoldDays(
+  frequency: KpiFrequencyCode | null | undefined,
+): number {
+  return frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL"
+    ? RECURRING_INCOMPLETE_ROLLOVER_HOLD_DAYS
+    : 0;
+}
+
+/** Earliest instant an incomplete recurring cycle may reset after its period deadline. */
+export function recurringIncompleteRolloverEligibleAt(
+  cycleDeadlineExclusive: Date,
+  timeZone: string,
+  holdDays: number = RECURRING_INCOMPLETE_ROLLOVER_HOLD_DAYS,
+): Date {
+  const zone = normalizeTimeZone(timeZone);
+  const deadline = DateTime.fromMillis(cycleDeadlineExclusive.getTime(), { zone }).startOf("day");
+  const days = Math.max(0, Math.floor(holdDays));
+  return deadline.plus({ days }).toJSDate();
+}
+
+/**
+ * Recurring work is delayed when incomplete past a custom sub-task target, or past the
+ * cycle deadline (when no custom due / still incomplete at period end).
+ */
+export function recurringTaskHasDelay(
+  record: KpiMaintenanceLike & { subKpis?: unknown },
+  nowMs: number,
+  timeZone: string,
+): boolean {
+  if (record.isRecurring === false) return false;
+  const zone = normalizeTimeZone(timeZone);
+  const parentDue = getTaskTargetDueDate(record.subKpis);
+  const items = collectChecklistProgressItems(record.subKpis);
+  for (const item of items) {
+    if (subKpiRequirementsMet(item)) continue;
+    if (subKpiHasCustomDueDate(item) && isNonRecurringSubKpiDelayed(item, nowMs, zone, parentDue)) {
+      return true;
+    }
+  }
+  // DAILY / WEEKLY stale cycles roll into the next period immediately (no incomplete hold),
+  // so a not-yet-rolled cycle must never sit in the Delayed column — it resets on next load.
+  if (recurringIncompleteRolloverHoldDays(record.frequency) === 0) return false;
+  const deadline = recurringDeadlineExclusive(record, timeZone);
+  if (!deadline) return false;
+  if (nowMs < deadline.getTime()) return false;
+  return items.some((item) => !subKpiRequirementsMet(item));
 }

@@ -11,7 +11,12 @@ import {
   type TaskScreenshotMetaItem,
   type TaskScreenshotSlot,
 } from "@/lib/task-screenshot-meta";
-import { normalizeTimeZone } from "./kpi-recurrence";
+import {
+  advanceDueDateYmdForFrequency,
+  countRecurrencePeriodsBetween,
+  normalizeTimeZone,
+  type KpiFrequencyCode,
+} from "./kpi-recurrence";
 import {
   applySubKpiCompletionMode,
   applySubKpiCompletionRequirements,
@@ -58,6 +63,11 @@ export type SubKpiItem = {
   startDate?: string | null;
   /** End date (stored as dueDate for backward compatibility). */
   dueDate?: string | null;
+  /**
+   * When true with a custom `dueDate`, advance that date by one recurrence period
+   * on each cycle rollover (e.g. monthly Aug 15 → Sep 15).
+   */
+  dueDateRollsWithCycle?: boolean;
   actualDate?: string | null;
   /** ISO timestamp when Start was pressed (GPS lifecycle). */
   startedAt?: string | null;
@@ -168,6 +178,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     r?.screenshotsEnabled === true || subKpiRequiresScreenshotsFromMode(completionMode);
   const startDate = normalizeOptionalSubKpiYmd(r?.startDate);
   const dueDate = normalizeOptionalSubKpiYmd(r?.dueDate);
+  const dueDateRollsWithCycle = r?.dueDateRollsWithCycle === true && Boolean(dueDate);
   const actualDate = normalizeOptionalSubKpiYmd(r?.actualDate);
   const numericalRaw = r?.numericalValue;
   const numericalValue =
@@ -208,6 +219,7 @@ function itemFromRaw(r: Record<string, unknown>): SubKpiItem {
     ...(uploadScreenshot.length > 0 ? { uploadScreenshot } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
+    ...(dueDateRollsWithCycle ? { dueDateRollsWithCycle: true } : {}),
     ...(actualDate ? { actualDate } : {}),
     ...(numericalValue != null ? { numericalValue } : {}),
     ...(numericalTarget != null ? { numericalTarget } : {}),
@@ -644,6 +656,12 @@ export function subKpiHasCustomDueDate(item: Pick<SubKpiItem, "dueDate">): boole
   return Boolean(due && YMD.test(due));
 }
 
+export function subKpiDueDateRollsWithCycle(
+  item: Pick<SubKpiItem, "dueDate" | "dueDateRollsWithCycle">,
+): boolean {
+  return item.dueDateRollsWithCycle === true && subKpiHasCustomDueDate(item);
+}
+
 /**
  * Effective target date for a sub-task:
  * - custom `dueDate` when set
@@ -1009,16 +1027,16 @@ export function hasRecurredNumericalCycle(raw: unknown, _subKpiId?: string): boo
 }
 
 /**
- * Whether the numerical target may be changed after create.
- * Locked by default; unlocked only for recurring tasks that have already rolled over once.
- * Edits apply to the current period only (prior periods stay in archives).
+ * Whether the numerical target may be set or changed for the active period
+ * while the task is running. Edits apply to the current period only; prior
+ * periods stay in archives after rollover.
  */
-export function canAdjustNumericalTarget(opts: {
+export function canAdjustNumericalTarget(_opts: {
   isRecurring: boolean;
   subKpisRaw: unknown;
   subKpiId?: string;
 }): boolean {
-  return opts.isRecurring === true && hasRecurredNumericalCycle(opts.subKpisRaw, opts.subKpiId);
+  return true;
 }
 
 export function setPillarScreenshots(
@@ -1260,8 +1278,15 @@ function clearPillarForReset(meta: ReturnType<typeof rawEnvelopeMeta>): ReturnTy
   return meta;
 }
 
-function clearActiveSubKpiForReset(it: SubKpiItem): SubKpiItem {
-  const next = { ...it, done: false };
+function clearActiveSubKpiForReset(
+  it: SubKpiItem,
+  opts?: {
+    frequency?: KpiFrequencyCode | null;
+    timeZone?: string;
+    advanceSteps?: number;
+  },
+): SubKpiItem {
+  let next = { ...it, done: false };
   delete next.beforeScreenshot;
   delete next.afterScreenshot;
   delete next.uploadScreenshot;
@@ -1270,10 +1295,63 @@ function clearActiveSubKpiForReset(it: SubKpiItem): SubKpiItem {
     // Clear actual only; target carries into the next period (adjustable after ≥1 recurrence).
     delete next.numericalValue;
   }
+  if (
+    subKpiDueDateRollsWithCycle(next) &&
+    opts?.frequency &&
+    typeof opts.advanceSteps === "number" &&
+    opts.advanceSteps > 0
+  ) {
+    const zone = normalizeTimeZone(opts.timeZone);
+    let due = (next.dueDate ?? "").trim();
+    for (let i = 0; i < opts.advanceSteps; i += 1) {
+      const advanced = advanceDueDateYmdForFrequency(due, opts.frequency, zone);
+      if (!advanced) break;
+      due = advanced;
+    }
+    next = { ...next, dueDate: due, dueDateRollsWithCycle: true };
+  }
   return next;
 }
 
-export function resetAllSubKpiDone(raw: unknown): Prisma.InputJsonValue {
+export type ResetSubKpiDoneOptions = {
+  frequency?: KpiFrequencyCode | null;
+  recurrenceWeekday?: number | null;
+  recurrenceMonthDay?: number | null;
+  timeZone?: string;
+  /** Previous cycle start — used with `toCycleStart` to advance rolling due dates by N periods. */
+  fromCycleStart?: Date | null;
+  /** New cycle start after rollover. */
+  toCycleStart?: Date | null;
+};
+
+export function resetAllSubKpiDone(
+  raw: unknown,
+  opts?: ResetSubKpiDoneOptions,
+): Prisma.InputJsonValue {
+  const frequency = opts?.frequency ?? null;
+  const zone = normalizeTimeZone(opts?.timeZone);
+  let advanceSteps = 0;
+  if (
+    frequency &&
+    opts?.fromCycleStart &&
+    opts?.toCycleStart &&
+    Number.isFinite(opts.fromCycleStart.getTime()) &&
+    Number.isFinite(opts.toCycleStart.getTime())
+  ) {
+    advanceSteps = countRecurrencePeriodsBetween(
+      opts.fromCycleStart,
+      opts.toCycleStart,
+      frequency,
+      opts.recurrenceWeekday,
+      opts.recurrenceMonthDay,
+      zone,
+    );
+  }
+  const clearOpts =
+    advanceSteps > 0 && frequency
+      ? { frequency, timeZone: zone, advanceSteps }
+      : undefined;
+
   const n = normalizeSubKpis(raw);
   let meta = archiveScreenshotsForReset(raw, n);
   meta = archiveNumericalRecordsForReset(meta, n);
@@ -1281,11 +1359,11 @@ export function resetAllSubKpiDone(raw: unknown): Prisma.InputJsonValue {
   if (n.segmented) {
     const segments = n.segments.map((seg) => ({
       ...seg,
-      items: seg.items.map(clearActiveSubKpiForReset),
+      items: seg.items.map((it) => clearActiveSubKpiForReset(it, clearOpts)),
     }));
     return withEnvelopeMeta(wrapForPersist({ segmented: true, segments }), meta);
   }
-  const flat = n.flat.map(clearActiveSubKpiForReset);
+  const flat = n.flat.map((it) => clearActiveSubKpiForReset(it, clearOpts));
   return withEnvelopeMeta(wrapForPersist({ segmented: false, flat }), meta);
 }
 
@@ -1788,6 +1866,7 @@ type SubKpiCreateDraft = string | {
   remarks?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  dueDateRollsWithCycle?: boolean | null;
   endDate?: string | null;
   actualDate?: string | null;
   projectPriority?: string | null;
@@ -1808,6 +1887,8 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
     typeof input === "string" ? null : normalizeSubKpiPriority(input.projectPriority);
   const startDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.startDate);
   const dueDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.dueDate ?? input.endDate);
+  const dueDateRollsWithCycle =
+    typeof input !== "string" && input.dueDateRollsWithCycle === true && Boolean(dueDate);
   const actualDate = typeof input === "string" ? null : normalizeOptionalSubKpiYmd(input.actualDate);
   const numericalTarget =
     typeof input !== "string" &&
@@ -1824,6 +1905,7 @@ function subKpiFromCreateDraft(input: SubKpiCreateDraft): SubKpiItem | null {
     ...(projectPriority ? { projectPriority } : {}),
     ...(startDate ? { startDate } : {}),
     ...(dueDate ? { dueDate } : {}),
+    ...(dueDateRollsWithCycle ? { dueDateRollsWithCycle: true } : {}),
     ...(actualDate ? { actualDate } : {}),
   };
   if (typeof input !== "string" && input.completionRequirements) {
@@ -2000,6 +2082,7 @@ export type AppendSubKpiInput = {
   segmentId?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  dueDateRollsWithCycle?: boolean | null;
   projectPriority?: string | null;
   screenshotsEnabled?: boolean;
 };
@@ -2015,6 +2098,7 @@ export function appendSubKpiItem(
     remarks: input.remarks,
     startDate: input.startDate,
     dueDate: input.dueDate,
+    dueDateRollsWithCycle: input.dueDateRollsWithCycle,
     projectPriority: input.projectPriority,
     screenshotsEnabled: input.screenshotsEnabled,
   });
@@ -2065,6 +2149,9 @@ function cloneSubKpiItemForCopy(
   if (options.keepDueDate) {
     if (source.startDate) clone.startDate = source.startDate;
     if (source.dueDate) clone.dueDate = source.dueDate;
+    if (source.dueDateRollsWithCycle === true && source.dueDate) {
+      clone.dueDateRollsWithCycle = true;
+    }
   }
   if (options.keepAssignee && source.assignedAgentId?.trim()) {
     clone.assignedAgentId = source.assignedAgentId.trim();
@@ -2238,8 +2325,10 @@ export type UpdateSubKpiItemInput = {
   remarks?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  dueDateRollsWithCycle?: boolean | null;
   projectPriority?: string | null;
   completionMode?: SubKpiCompletionMode;
+  completionRequirements?: SubKpiCompletionRequirements | null;
   numericalTarget?: number | null;
   dailyPenaltyAmount?: number | null;
   delayPenaltyFrequency?: DelayPenaltyFrequency | null;
@@ -2276,12 +2365,26 @@ export function updateSubKpiItem(
     input.startDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.startDate) ?? null;
   const dueDate =
     input.dueDate === undefined ? undefined : normalizeOptionalSubKpiYmd(input.dueDate) ?? null;
+  const dueDateRollsWithCycle =
+    input.dueDateRollsWithCycle === undefined ? undefined : input.dueDateRollsWithCycle === true;
   const completionMode =
     input.completionMode === undefined
       ? undefined
       : isSubKpiCompletionMode(input.completionMode)
         ? input.completionMode
         : undefined;
+  let completionRequirements: SubKpiCompletionRequirements | null | undefined = undefined;
+  if (input.completionRequirements !== undefined) {
+    if (input.completionRequirements == null) {
+      completionRequirements = null;
+    } else {
+      const normalized = normalizeCompletionRequirements(input.completionRequirements);
+      if (!normalized) {
+        return { ok: false, error: "Select at least one completion condition." };
+      }
+      completionRequirements = normalized;
+    }
+  }
   const numericalTarget =
     input.numericalTarget === undefined
       ? undefined
@@ -2323,9 +2426,32 @@ export function updateSubKpiItem(
     }
     if (dueDate !== undefined) {
       if (dueDate) next = { ...next, dueDate };
-      else delete (next as { dueDate?: string }).dueDate;
+      else {
+        delete (next as { dueDate?: string }).dueDate;
+        delete (next as { dueDateRollsWithCycle?: boolean }).dueDateRollsWithCycle;
+      }
     }
-    if (completionMode !== undefined) {
+    if (dueDateRollsWithCycle !== undefined) {
+      const hasDue = Boolean(
+        dueDate !== undefined ? dueDate : normalizeOptionalSubKpiYmd(next.dueDate),
+      );
+      if (dueDateRollsWithCycle && hasDue) next = { ...next, dueDateRollsWithCycle: true };
+      else delete (next as { dueDateRollsWithCycle?: boolean }).dueDateRollsWithCycle;
+    }
+    if (completionRequirements !== undefined) {
+      if (completionRequirements) {
+        next = applySubKpiCompletionRequirements(next, completionRequirements);
+        delete (next as { completionMode?: SubKpiCompletionMode }).completionMode;
+      } else {
+        next = applySubKpiCompletionRequirements(next, {
+          checkbox: true,
+          screenshots: false,
+          screenshotUpload: false,
+          numerical: false,
+        });
+        delete (next as { completionMode?: SubKpiCompletionMode }).completionMode;
+      }
+    } else if (completionMode !== undefined) {
       next = applySubKpiCompletionMode(next, completionMode);
     }
     if (numericalTarget !== undefined) {

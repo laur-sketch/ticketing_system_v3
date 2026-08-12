@@ -22,7 +22,13 @@ import {
   computeSessionExpiresAt,
 } from "@/lib/session-expiry-policy";
 
-export type UserRole = "SuperAdmin" | "HighAdmin" | "Admin" | "Personnel" | "Customer";
+export type UserRole =
+  | "SuperAdmin"
+  | "HighAdmin"
+  | "Admin"
+  | "Personnel"
+  | "Personnel-Guard"
+  | "Customer";
 
 /** SuperAdmin or HighAdmin — prefer for privilege checks. */
 export function isElevatedUserRole(role: UserRole | string | null | undefined): boolean {
@@ -37,11 +43,15 @@ function normalizeRole(role: string | undefined | null): UserRole | null {
   if (v === "admin") return "Admin";
   if (v === "agent") return "Personnel";
   if (v === "head") return "Admin";
+  if (v === "personnel-guard" || v === "personnel_guard" || v === "personnelguard") {
+    return "Personnel-Guard";
+  }
   const portal = normalizePortalRole(role);
   if (portal === "SuperAdmin") return "SuperAdmin";
   if (portal === "HighAdmin") return "HighAdmin";
   if (portal === "Admin") return "Admin";
   if (portal === "Personnel") return "Personnel";
+  if (portal === "Personnel-Guard") return "Personnel-Guard";
   if (portal === "Customer") return "Customer";
   return null;
 }

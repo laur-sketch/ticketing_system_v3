@@ -103,8 +103,8 @@ const APPROVAL_LANES = [
     title: "Request for Payment",
     acronym: "R.F.P.",
     tone: "from-sky-500/20 to-transparent",
-    steps: ["Noted By", "Approved By", "Accounting", "Finance", "Green-lit"],
-    note: "Procedural chain must finish before For confirmation. Mode of payment can defer to Accounting.",
+    steps: ["Noted By", "Approved By", "Prepared by Bookkeeper", "Approved By Accounting", "Green-lit"],
+    note: "Procedural chain must finish before For confirmation. Mode of payment can defer to Bookkeeper / Accounting.",
   },
   {
     title: "Item Requisition",

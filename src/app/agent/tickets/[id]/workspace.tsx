@@ -2372,14 +2372,18 @@ export function AgentWorkspace({
                   Set Accounting & Finance assignees
                 </p>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Mode of payment is to be set by Accounting. Noted By
+                  Prepared by Bookkeeper and Approved By Accounting are set on the ticket after
+                  Noted By
                   {paymentApprovalMeta?.skipApprovedBy ? "" : " and Approved By"}{" "}
-                  {paymentApprovalMeta?.skipApprovedBy ? "is" : "are"} complete — assign these
-                  roles (different people), then hand off. Set mode of payment in the request details
-                  above if it is still pending.
+                  {paymentApprovalMeta?.skipApprovedBy ? "is" : "are"} complete. Assign different
+                  people for each role
+                  {paymentApprovalMeta?.deferPaymentModeToAccounting
+                    ? ", and set mode of payment in the request details above if it is still pending"
+                    : ""}
+                  .
                 </p>
                 <CompanyUserSearchField
-                  label="Approved By (Accounting)"
+                  label="Prepared by Bookkeeper:"
                   users={deferredAccountingFinanceRoster}
                   value={approvalDraft.accountingAgentId || ""}
                   excludedIds={
@@ -2400,7 +2404,7 @@ export function AgentWorkspace({
                   }
                 />
                 <CompanyUserSearchField
-                  label="Approved By (Finance)"
+                  label="Approved By Accounting"
                   users={deferredAccountingFinanceRoster}
                   value={approvalDraft.financeAgentId || ""}
                   excludedIds={
@@ -2455,8 +2459,10 @@ export function AgentWorkspace({
                     </p>
                   ) : null}
                   <p className="mt-1 text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                    Assignees are set when the request is created. Complete the current step to hand
-                    off to the next role
+                    Noted By
+                    {paymentApprovalMeta?.skipApprovedBy ? "" : " / Approved By"} are set at create.
+                    Prepared by Bookkeeper and Approved By Accounting are assigned on this ticket
+                    after those steps. Complete the current step to hand off to the next role
                     {showPaymentSubmitForNextApproval
                       ? ", or submit for the next approval below"
                       : ""}

@@ -482,7 +482,7 @@ export function Nav() {
             <BrandLockup
               variant="staff-header-compact"
               href="/"
-              className="inline-flex min-w-0 shrink max-w-[9rem] sm:max-w-[14rem] lg:max-w-none"
+              className="inline-flex shrink-0"
             />
             <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:max-w-xl sm:gap-2">
               <PhilippineTimeClock compact className="hidden shrink-0 md:inline-flex" />

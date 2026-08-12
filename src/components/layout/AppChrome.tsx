@@ -94,7 +94,10 @@ export function AppChrome({ children }: Props) {
     pathname === "/signin" ||
     pathname === "/signup" ||
     pathname === "/customer/signin" ||
-    pathname === "/customer/signup"
+    pathname === "/customer/signup" ||
+    pathname === "/process" ||
+    pathname === "/travel-orders" ||
+    pathname.startsWith("/travel-orders/")
   ) {
     return <>{children}</>;
   }

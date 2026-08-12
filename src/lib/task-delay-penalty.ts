@@ -13,6 +13,7 @@ import {
 import {
   isNonRecurringSubKpiDelayed,
   nonRecurringDelayStartExclusive,
+  recurringDeadlineExclusive,
 } from "@/lib/kpi-cycle-state";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import {
@@ -49,6 +50,11 @@ export type SubKpiPenaltyContext = {
   phaseDueDate?: string | null;
   /** Main-task target date used when a subtask inherits (non-IT). */
   taskDueDate?: string | null;
+  /**
+   * Recurring cycle deadline (exclusive). Used when a sub-task has no custom due date —
+   * delay / penalty starts at this instant.
+   */
+  recurringDeadlineMs?: number | null;
 };
 
 function parseSubKpiYmd(value: unknown, timeZone: string): DateTime | null {
@@ -86,8 +92,23 @@ export function subKpiPenaltyDelayStartMs(
   ctx: SubKpiPenaltyContext,
 ): number | null {
   const isTimeline = usesTimelinePenalty(ctx);
-  if (!isTimeline && ctx.isRecurring !== false) return null;
   const zone = normalizeTimeZone(ctx.timeZone);
+  if (isTimeline) {
+    const dueYmd = effectiveDueYmd(item, ctx);
+    if (!dueYmd) return null;
+    return nonRecurringDelayStartExclusive(dueYmd, zone)?.getTime() ?? null;
+  }
+  if (ctx.isRecurring !== false) {
+    const customDue = item.dueDate?.trim();
+    if (customDue && YMD.test(customDue)) {
+      return nonRecurringDelayStartExclusive(customDue, zone)?.getTime() ?? null;
+    }
+    const deadlineMs = ctx.recurringDeadlineMs;
+    if (typeof deadlineMs === "number" && Number.isFinite(deadlineMs)) {
+      return deadlineMs;
+    }
+    return null;
+  }
   const dueYmd = effectiveDueYmd(item, ctx);
   if (!dueYmd) return null;
   return nonRecurringDelayStartExclusive(dueYmd, zone)?.getTime() ?? null;
@@ -101,7 +122,12 @@ export function isSubKpiInDelayPenaltyScope(item: SubKpiItem, ctx: SubKpiPenalty
     const withDue = { ...item, dueDate: due };
     return isItProjectSubTaskDelayed(withDue, ctx.nowMs, ctx.timeZone);
   }
-  if (ctx.isRecurring !== false) return false;
+  if (ctx.isRecurring !== false) {
+    if (subKpiRequirementsMet(item)) return false;
+    const delayStartMs = subKpiPenaltyDelayStartMs(item, ctx);
+    if (delayStartMs == null) return false;
+    return ctx.nowMs >= delayStartMs;
+  }
   const zone = normalizeTimeZone(ctx.timeZone);
   return isNonRecurringSubKpiDelayed(item, ctx.nowMs, zone, ctx.taskDueDate);
 }
@@ -154,8 +180,6 @@ export function resolveSubKpiDelayPenaltyFrequency(
 }
 
 export function subKpiAccruedPenalty(item: SubKpiItem, ctx: SubKpiPenaltyContext): number {
-  // Timeline / IT projects are non-recurring for penalty purposes even if row flags differ.
-  if (!usesTimelinePenalty(ctx) && ctx.isRecurring !== false) return 0;
   const rate = resolveSubKpiDailyPenaltyAmount(item, ctx);
   if (rate <= 0) return 0;
   const days = subKpiPenaltyDays(item, ctx);
@@ -172,6 +196,10 @@ export type KpiPenaltySource = {
   title: string;
   mainTask?: string | null;
   assignedAgent?: { id: string; name: string } | null;
+  recurrenceWeekday?: number | null;
+  recurrenceMonthDay?: number | null;
+  periodCycleStartAt?: Date | string | null;
+  nonRecurringEndAt?: Date | string | null;
 };
 
 export function penaltyDeductionsForKpi(
@@ -179,7 +207,6 @@ export function penaltyDeductionsForKpi(
   ctx: { nowMs: number; timeZone: string },
 ): Map<string, { id: string; name: string; deduction: number }> {
   const isIt = isItProjectImplementationPillar(kpi.title);
-  if (!isIt && kpi.isRecurring !== false) return new Map();
 
   const taskDailyPenaltyAmount = taskDailyPenaltyAmountFromSubKpis(kpi.subKpis);
   const taskDelayPenaltyFrequency = taskDelayPenaltyFrequencyFromSubKpis(kpi.subKpis);
@@ -216,6 +243,20 @@ export function penaltyDeductionsForKpi(
     return byPerson;
   }
 
+  const recurringDeadlineMs =
+    kpi.isRecurring !== false
+      ? recurringDeadlineExclusive(
+          {
+            isRecurring: kpi.isRecurring,
+            frequency: kpi.frequency,
+            recurrenceWeekday: kpi.recurrenceWeekday,
+            recurrenceMonthDay: kpi.recurrenceMonthDay,
+            periodCycleStartAt: kpi.periodCycleStartAt,
+          },
+          ctx.timeZone,
+        )?.getTime() ?? null
+      : null;
+
   const penaltyCtx: SubKpiPenaltyContext = {
     nowMs: ctx.nowMs,
     timeZone: ctx.timeZone,
@@ -224,6 +265,8 @@ export function penaltyDeductionsForKpi(
     title: kpi.title,
     taskDailyPenaltyAmount,
     taskDelayPenaltyFrequency,
+    taskDueDate: getTaskTargetDueDate(kpi.subKpis),
+    recurringDeadlineMs,
   };
 
   const items = collectChecklistProgressItems(kpi.subKpis, kpiMainTaskLabel(kpi));

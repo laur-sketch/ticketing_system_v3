@@ -15,6 +15,7 @@ import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import { withSecondaryWriteClient } from "@/lib/prisma-secondary-write";
 import { Prisma } from "@prisma/client/secondary";
 import {
+  isPersonnelGuardPortalRole,
   isPlatformSuperAdminPortalRole,
   isStaffPortalRole,
   normalizePortalRole,
@@ -230,7 +231,10 @@ export async function PATCH(req: Request) {
       }
     }
 
-    if (portal.staffDesignatedCompanyId && isStaffPortalRole(portalRole)) {
+    if (
+      portal.staffDesignatedCompanyId &&
+      (isStaffPortalRole(portalRole) || isPersonnelGuardPortalRole(portalRole))
+    ) {
       try {
         await ensureAgentRowForPortalStaff(
           { email: portal.email, name: portal.name },

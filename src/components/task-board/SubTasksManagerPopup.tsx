@@ -27,6 +27,7 @@ type SubTaskFormDraft = {
   dueDate: string;
   /** When false, due date is not stored and the subtask inherits the main task target. */
   useCustomDueDate: boolean;
+  dueDateRollsWithCycle: boolean;
   priority: string;
   segmentId: string;
 };
@@ -37,6 +38,7 @@ const EMPTY_DRAFT: SubTaskFormDraft = {
   remarks: "",
   dueDate: "",
   useCustomDueDate: false,
+  dueDateRollsWithCycle: false,
   priority: "",
   segmentId: "",
 };
@@ -50,6 +52,8 @@ type SubTasksManagerPopupProps = {
   canManage: boolean;
   /** Hide due-date inputs (daily recurring tasks don't use sub-task dates). */
   hideDueDate?: boolean;
+  /** Show “adjust with each cycle” for recurring (non-daily) tasks. */
+  allowDueDateRollWithCycle?: boolean;
   tz: string;
   onClose: () => void;
   /** Called after any successful mutation so the board can refresh its rows. */
@@ -62,6 +66,7 @@ export function SubTasksManagerPopup({
   taskLabel,
   canManage,
   hideDueDate = false,
+  allowDueDateRollWithCycle = false,
   tz,
   onClose,
   onChanged,
@@ -127,7 +132,7 @@ export function SubTasksManagerPopup({
         dueLabel: s.effectiveDueDate
           ? s.inheritsDueDate
             ? `${s.effectiveDueDate} (main)`
-            : s.effectiveDueDate
+            : `${s.effectiveDueDate}${s.dueDateRollsWithCycle ? " · rolls" : ""}`
           : null,
         segmentId: segId,
       });
@@ -267,6 +272,10 @@ export function SubTasksManagerPopup({
             remarks: addDraft.remarks.trim() || null,
             dueDate:
               hideDueDate || !addDraft.useCustomDueDate ? null : addDraft.dueDate || null,
+            dueDateRollsWithCycle:
+              hideDueDate || !addDraft.useCustomDueDate
+                ? false
+                : Boolean(allowDueDateRollWithCycle && addDraft.dueDateRollsWithCycle),
             priority: addDraft.priority || null,
             segmentId,
           }),
@@ -314,6 +323,7 @@ export function SubTasksManagerPopup({
       remarks: s.remarks ?? "",
       dueDate: s.dueDate ?? "",
       useCustomDueDate: !s.inheritsDueDate && Boolean(s.dueDate),
+      dueDateRollsWithCycle: s.dueDateRollsWithCycle === true,
       priority: s.priority ?? "",
       segmentId: s.segmentId ?? "",
     });
@@ -346,6 +356,9 @@ export function SubTasksManagerPopup({
                 ? {}
                 : {
                     dueDate: editDraft.useCustomDueDate ? editDraft.dueDate || null : null,
+                    dueDateRollsWithCycle: editDraft.useCustomDueDate
+                      ? Boolean(allowDueDateRollWithCycle && editDraft.dueDateRollsWithCycle)
+                      : false,
                   }),
               priority: editDraft.priority || null,
             }),
@@ -466,7 +479,7 @@ export function SubTasksManagerPopup({
                 onChange={(e) =>
                   patch({
                     useCustomDueDate: e.target.checked,
-                    ...(e.target.checked ? {} : { dueDate: "" }),
+                    ...(e.target.checked ? {} : { dueDate: "", dueDateRollsWithCycle: false }),
                   })
                 }
                 className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
@@ -483,16 +496,35 @@ export function SubTasksManagerPopup({
               </span>
             </label>
             {draft.useCustomDueDate ? (
-              <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500 sm:max-w-xs">
-                Target date
-                <DatePickerField
-                  value={draft.dueDate}
-                  disabled={busy}
-                  onChange={(e) => patch({ dueDate: e.target.value })}
-                  wrapperClassName="mt-1"
-                  aria-label={`${idPrefix} target date`}
-                />
-              </label>
+              <div className="flex flex-col gap-2 sm:max-w-xs">
+                <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                  Target date
+                  <DatePickerField
+                    value={draft.dueDate}
+                    disabled={busy}
+                    onChange={(e) => patch({ dueDate: e.target.value })}
+                    wrapperClassName="mt-1"
+                    aria-label={`${idPrefix} target date`}
+                  />
+                </label>
+                {allowDueDateRollWithCycle ? (
+                  <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold normal-case tracking-normal text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={draft.dueDateRollsWithCycle}
+                      disabled={busy}
+                      onChange={(e) => patch({ dueDateRollsWithCycle: e.target.checked })}
+                      className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                    />
+                    <span>
+                      Adjust with each recurring cycle
+                      <span className="mt-0.5 block text-[11px] font-medium text-zinc-500 dark:text-zinc-500">
+                        e.g. Aug 15 becomes Sep 15 on the next monthly cycle
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -626,7 +658,7 @@ export function SubTasksManagerPopup({
                 {s.effectiveDueDate
                   ? s.inheritsDueDate
                     ? ` · Target ${s.effectiveDueDate} (from main task)`
-                    : ` · Target ${s.effectiveDueDate}`
+                    : ` · Target ${s.effectiveDueDate}${s.dueDateRollsWithCycle ? " · rolls with cycle" : ""}`
                   : s.inheritsDueDate
                     ? " · Uses main task target date"
                     : ""}

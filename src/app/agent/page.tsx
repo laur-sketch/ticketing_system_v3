@@ -118,7 +118,7 @@ export default async function AgentHome({
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Personnel", "Admin"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Personnel", "Admin"].includes(session.user.role)) redirect("/");
 
   const params = await searchParams;
   const rawBoard = firstQuery(params.board);
@@ -1234,6 +1234,7 @@ export default async function AgentHome({
                   showAdminTaskManagement={
                     isElevatedUserRole(session.user.role) || session.user.role === "Admin"
                   }
+                  sessionRole={session.user.role}
                   focusTaskId={focusTaskId}
                 />
               </>

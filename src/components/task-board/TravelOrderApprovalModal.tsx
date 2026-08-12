@@ -9,46 +9,59 @@ type TravelOrderApprovalModalProps = {
   taskId: string | null;
   travelOrderId: string | null;
   title?: string;
+  description?: string;
+  /** Prefer the board operator id when already known. */
+  operatorAgentId?: string | null;
+  canAssignWork?: boolean;
+  canCheckIn?: boolean;
   onClose: () => void;
   onUpdated?: () => void;
 };
 
 /**
- * Popup for reviewing / approving a travel order from notifications
- * (works for approvers outside the creator's company board).
+ * Popup for reviewing a travel order without requiring the KPI card on the
+ * current Task Board (company list, notifications, cross-company approvers).
  */
 export function TravelOrderApprovalModal({
   open,
   taskId,
   travelOrderId,
   title,
+  description,
+  operatorAgentId: operatorAgentIdProp = null,
+  canAssignWork = false,
+  canCheckIn = false,
   onClose,
   onUpdated,
 }: TravelOrderApprovalModalProps) {
-  const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
+  const [fetchedOperatorAgentId, setFetchedOperatorAgentId] = useState<string | null>(null);
+  const operatorAgentId = operatorAgentIdProp ?? fetchedOperatorAgentId;
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || operatorAgentIdProp) return;
     let ignore = false;
     void fetch("/api/me/permissions", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((body: { operatorAgentId?: string | null } | null) => {
         if (ignore) return;
-        setOperatorAgentId(body?.operatorAgentId ?? null);
+        setFetchedOperatorAgentId(body?.operatorAgentId ?? null);
       })
       .catch(() => {
-        if (!ignore) setOperatorAgentId(null);
+        if (!ignore) setFetchedOperatorAgentId(null);
       });
     return () => {
       ignore = true;
     };
-  }, [open]);
+  }, [open, operatorAgentIdProp]);
 
   return (
     <TaskBoardPopup
       open={open && Boolean(taskId)}
-      title="Travel order"
-      description={title?.trim() || "Review and approve this travel order."}
+      title={title?.trim() || "Travel order"}
+      description={
+        description?.trim() ||
+        "View details, approvals, and check-ins for this travel order."
+      }
       onClose={onClose}
       size="lg"
     >
@@ -57,8 +70,8 @@ export function TravelOrderApprovalModal({
           taskId={taskId}
           focusTravelOrderId={travelOrderId}
           operatorAgentId={operatorAgentId}
-          canAssignWork={false}
-          canCheckIn={false}
+          canAssignWork={canAssignWork}
+          canCheckIn={canCheckIn}
           onKpiSubmitted={onUpdated}
         />
       ) : null}

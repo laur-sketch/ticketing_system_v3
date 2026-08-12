@@ -65,17 +65,36 @@ describe("subKpiAccruedPenalty", () => {
     ).toBe(6);
   });
 
-  it("returns zero for recurring tasks", () => {
+  it("accrues for recurring tasks after custom target date", () => {
     const nowMs = new Date("2026-06-03T12:00:00+08:00").getTime();
     expect(
       subKpiAccruedPenalty(item, {
         nowMs,
         timeZone: TZ,
-        frequency: "DAILY",
+        frequency: "MONTHLY",
         isRecurring: true,
-        title: "SYSTEM MAINTENANCE",
+        title: "PAYROLL",
       }),
-    ).toBe(0);
+    ).toBe(10);
+  });
+
+  it("accrues for recurring tasks from cycle deadline when no custom due", () => {
+    const nowMs = new Date("2026-09-03T12:00:00+08:00").getTime();
+    const deadlineMs = new Date("2026-09-01T00:00:00+08:00").getTime();
+    expect(
+      subKpiAccruedPenalty(
+        { id: "s1", title: "Check backups", done: false },
+        {
+          nowMs,
+          timeZone: TZ,
+          frequency: "MONTHLY",
+          isRecurring: true,
+          title: "PAYROLL",
+          recurringDeadlineMs: deadlineMs,
+          taskDailyPenaltyAmount: 5,
+        },
+      ),
+    ).toBe(15);
   });
 
   it("returns zero before delay boundary", () => {

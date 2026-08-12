@@ -188,7 +188,7 @@ function SignInForm() {
 
   if (redirecting) {
     return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-[#050505] px-4 text-[#e0e0e0]">
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-zinc-50 px-4 text-zinc-900 dark:bg-[#050505] dark:text-[#e0e0e0]">
         <RedirectLoadingIndicator />
         <p className="text-sm font-medium">Redirecting…</p>
       </div>
@@ -198,14 +198,14 @@ function SignInForm() {
   return (
     <SignInLaunchPadShell>
       <div className="mb-8 text-center">
-        <h2 className="mb-2 text-2xl font-semibold text-white">Sign in</h2>
-        <p className="text-sm text-[#888888]">
+        <h2 className="mb-2 text-2xl font-semibold text-zinc-900 dark:text-white">Sign in</h2>
+        <p className="text-sm text-zinc-500 dark:text-[#888888]">
           Use your HRIS username and password from the employee directory, or continue with Google.
         </p>
       </div>
 
       {banner ? (
-        <p className="mb-5 rounded-xl border border-[#ff6b00]/25 bg-[#ff6b00]/10 px-3 py-2 text-xs leading-snug text-orange-100">
+        <p className="mb-5 rounded-xl border border-[#ff6b00]/30 bg-[#ff6b00]/10 px-3 py-2 text-xs leading-snug text-orange-900 dark:border-[#ff6b00]/25 dark:text-orange-100">
           {banner}
         </p>
       ) : null}
@@ -258,7 +258,7 @@ function SignInForm() {
               onPointerCancel={() => setShowPassword(false)}
               onBlur={() => setShowPassword(false)}
               tabIndex={-1}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 transition hover:text-white"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-zinc-400 transition hover:text-zinc-800 dark:hover:text-white"
             >
               {showPassword ? (
                 <EyeOff className="size-5" aria-hidden />
@@ -270,7 +270,7 @@ function SignInForm() {
         </div>
 
         {error ? (
-          <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+          <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
             {error}
           </p>
         ) : null}
@@ -300,26 +300,26 @@ function SignInForm() {
       </form>
 
       {resetOpen ? (
-        <section className="mt-5 rounded-2xl border border-white/10 bg-black/40 p-4">
+        <section className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-white/10 dark:bg-black/40">
           <div className="flex items-start justify-between gap-3">
-            <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-300">
+            <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-600 dark:text-gray-300">
               Request password reset
             </h3>
             <button
               type="button"
               onClick={() => setResetOpen(false)}
-              className="shrink-0 rounded-md border border-white/10 px-2 py-0.5 text-[11px] text-gray-400 transition hover:bg-white/5 hover:text-white"
+              className="shrink-0 rounded-md border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:border-white/10 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white"
             >
               Close
             </button>
           </div>
           {resetMessage ? (
-            <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-[12px] text-emerald-100">
+            <p className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-[12px] text-emerald-800 dark:text-emerald-100">
               {resetMessage}
             </p>
           ) : null}
           {resetError ? (
-            <p className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-[12px] text-red-200">
+            <p className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-[12px] text-red-700 dark:text-red-200">
               {resetError}
             </p>
           ) : null}
@@ -362,7 +362,7 @@ function SignInForm() {
             type="button"
             aria-label="Continue with Google"
             title="Continue with Google"
-            className="inline-flex appearance-none items-center justify-center border-0 bg-transparent p-0 shadow-none outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#ff6b00]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#050505]"
+            className="inline-flex appearance-none items-center justify-center border-0 bg-transparent p-0 shadow-none outline-none transition hover:opacity-80 focus-visible:ring-2 focus-visible:ring-[#ff6b00]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-[#050505]"
             onClick={() => void signIn("google", { callbackUrl })}
             data-no-particles="true"
           >
@@ -379,7 +379,7 @@ export default function SignInPage() {
     <Suspense
       fallback={
         <SignInLaunchPadShell>
-          <p className="text-center text-sm text-gray-400">Loading…</p>
+          <p className="text-center text-sm text-zinc-500 dark:text-gray-400">Loading…</p>
         </SignInLaunchPadShell>
       }
     >

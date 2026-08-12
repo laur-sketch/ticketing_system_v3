@@ -175,7 +175,7 @@ async function effectiveCompanyIdForEmail(email: string): Promise<string | null>
 export async function resolveAgentDesignatedCompanyId(agentId: string): Promise<string | null> {
   const agent = await prisma.agent.findUnique({
     where: { id: agentId },
-    select: { id: true, email: true, name: true },
+    select: { id: true, email: true, name: true, teamId: true },
   });
   if (!agent) return null;
 
@@ -186,23 +186,25 @@ export async function resolveAgentDesignatedCompanyId(agentId: string): Promise<
   }
 
   const name = agent.name.trim();
-  if (!name) return null;
-
-  const peers = await prisma.agent.findMany({
-    where: {
-      name: { equals: name, mode: "insensitive" },
-      NOT: { id: agent.id },
-    },
-    select: { email: true },
-    take: 10,
-  });
-  for (const peer of peers) {
-    const peerEmail = peer.email.trim().toLowerCase();
-    if (!peerEmail) continue;
-    const companyId = await effectiveCompanyIdForEmail(peerEmail);
-    if (companyId) return companyId;
+  if (name) {
+    const peers = await prisma.agent.findMany({
+      where: {
+        name: { equals: name, mode: "insensitive" },
+        NOT: { id: agent.id },
+      },
+      select: { email: true },
+      take: 10,
+    });
+    for (const peer of peers) {
+      const peerEmail = peer.email.trim().toLowerCase();
+      if (!peerEmail) continue;
+      const companyId = await effectiveCompanyIdForEmail(peerEmail);
+      if (companyId) return companyId;
+    }
   }
-  return null;
+
+  // Last resort: primary agent roster team (same fallback as resolveStaffCompanyTeamId).
+  return agent.teamId ?? null;
 }
 
 /**

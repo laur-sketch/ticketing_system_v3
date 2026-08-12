@@ -7,7 +7,7 @@ import {
   wrapForPersist,
 } from "@/lib/kpi-subkpis";
 
-describe("numerical target lock after create", () => {
+describe("numerical target while task is running", () => {
   const flatWithTarget = wrapForPersist({
     segmented: false as const,
     flat: [
@@ -27,25 +27,25 @@ describe("numerical target lock after create", () => {
     ],
   });
 
-  it("locks target before any recurrence (one-off and recurring)", () => {
+  it("allows setting or changing the target while the task is running", () => {
     expect(
       canAdjustNumericalTarget({
         isRecurring: false,
         subKpisRaw: flatWithTarget,
         subKpiId: "n1",
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canAdjustNumericalTarget({
         isRecurring: true,
         subKpisRaw: flatWithTarget,
         subKpiId: "n1",
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(hasRecurredNumericalCycle(flatWithTarget)).toBe(false);
   });
 
-  it("unlocks target after at least one archived cycle on a recurring task", () => {
+  it("still detects archived cycles after rollover", () => {
     const withArchive = {
       ...(flatWithTarget as Record<string, unknown>),
       archivedNumericalRecords: [
@@ -63,13 +63,6 @@ describe("numerical target lock after create", () => {
         subKpiId: "n1",
       }),
     ).toBe(true);
-    expect(
-      canAdjustNumericalTarget({
-        isRecurring: false,
-        subKpisRaw: withArchive,
-        subKpiId: "n1",
-      }),
-    ).toBe(false);
   });
 
   it("preserves numericalTarget across cycle reset while clearing actual", () => {

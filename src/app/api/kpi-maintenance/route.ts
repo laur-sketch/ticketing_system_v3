@@ -2,7 +2,11 @@ import { isElevatedUserRole } from "@/lib/auth";
 import { KpiFrequency, Prisma } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
-import { nextRolloverEligibleAtUtc } from "@/lib/kpi-cycle-state";
+import {
+  nextRolloverEligibleAtUtc,
+  recurringIncompleteRolloverEligibleAt,
+  recurringIncompleteRolloverHoldDays,
+} from "@/lib/kpi-cycle-state";
 import { getPeriodStartInclusive } from "@/lib/kpi-period-window";
 import {
   computePeriodKey,
@@ -41,7 +45,6 @@ import {
   syncScreenshotOnlySubKpiDone,
   syncSubKpiDoneFromRequirements,
   syncPillarDoneFromRequirements,
-  subKpiAssignedAgentId,
   subKpiAssignedToOperator,
   appendSubKpiItem,
   removeSubKpiItem,
@@ -272,6 +275,26 @@ export async function GET(req: Request) {
     const complete = checklistFullyComplete(row.subKpis, kpiMainTaskLabel(row));
     const staleCycle = currentCycleStart.getTime() > anchor.getTime();
     if (staleCycle) {
+      // Incomplete work stays Delayed after the cycle deadline before resetting — the 10-day
+      // hold applies only to MONTHLY / QUARTERLY / SEMI_ANNUAL; DAILY / WEEKLY roll over at once.
+      if (!complete) {
+        const cycleDeadline = getPeriodEndExclusiveFromCycleStart(
+          anchor,
+          freq,
+          row.recurrenceWeekday,
+          row.recurrenceMonthDay,
+          timeZone,
+        );
+        const holdUntil = recurringIncompleteRolloverEligibleAt(
+          cycleDeadline,
+          timeZone,
+          recurringIncompleteRolloverHoldDays(freq),
+        );
+        if (now.getTime() < holdUntil.getTime()) {
+          // Keep the open cycle on Delayed; do not advance periodKey / reset checklist yet.
+          continue;
+        }
+      }
       const snapshotPeriodKey =
         row.periodKey && !isLegacyPeriodKey(row.periodKey)
           ? row.periodKey
@@ -295,7 +318,14 @@ export async function GET(req: Request) {
         anchor,
         snapshotPeriodKey,
       );
-      patch.subKpis = resetAllSubKpiDone(row.subKpis);
+      patch.subKpis = resetAllSubKpiDone(row.subKpis, {
+        frequency: freq,
+        recurrenceWeekday: row.recurrenceWeekday,
+        recurrenceMonthDay: row.recurrenceMonthDay,
+        timeZone,
+        fromCycleStart: anchor,
+        toCycleStart: currentCycleStart,
+      });
       patch.periodCycleStartAt = currentCycleStart;
       patch.periodKey = expectedKey;
       patch.lastFullCompletionAt = null;
@@ -333,7 +363,14 @@ export async function GET(req: Request) {
           row.recurrenceMonthDay,
           timeZone,
         );
-        patch.subKpis = resetAllSubKpiDone(row.subKpis);
+        patch.subKpis = resetAllSubKpiDone(row.subKpis, {
+          frequency: freq,
+          recurrenceWeekday: row.recurrenceWeekday,
+          recurrenceMonthDay: row.recurrenceMonthDay,
+          timeZone,
+          fromCycleStart: anchor,
+          toCycleStart: nextCycleStart,
+        });
         patch.periodCycleStartAt = nextCycleStart;
         patch.lastFullCompletionAt = null;
         patch.rolledOverIncomplete = false;
@@ -454,6 +491,7 @@ export async function GET(req: Request) {
     canUnassignWork: isElevatedUserRole(session.user.role),
     canCompleteUnassignedWork: isElevatedUserRole(session.user.role),
     canAssignOffline: isElevatedUserRole(session.user.role),
+    canDeleteTask: session.user.role === "SuperAdmin",
     operatorAgentId: perms.operator?.id ?? null,
     operatorAgentName: perms.operator?.name ?? null,
     rosterCompanies: perms.canAssignWork
@@ -485,6 +523,7 @@ export async function POST(req: Request) {
       startDate?: string;
       endDate?: string;
       dueDate?: string;
+      dueDateRollsWithCycle?: boolean | null;
       projectPriority?: string | null;
       screenshotsEnabled?: boolean;
     }>;
@@ -499,6 +538,7 @@ export async function POST(req: Request) {
         startDate?: string;
         endDate?: string;
         dueDate?: string;
+        dueDateRollsWithCycle?: boolean | null;
         projectPriority?: string | null;
         screenshotsEnabled?: boolean;
       }>;
@@ -673,22 +713,32 @@ export async function POST(req: Request) {
       remarks?: string | null;
       startDate?: string;
       dueDate?: string;
+      dueDateRollsWithCycle?: boolean | null;
       endDate?: string;
       actualDate?: string;
       projectPriority?: string | null;
       screenshotsEnabled?: boolean;
-    }) => ({
-      title: (s.title ?? "").trim(),
-      description: typeof s.description === "string" ? s.description : "",
-      remarks: typeof s.remarks === "string" ? s.remarks : "",
-      startDate: "",
-      dueDate: isRecurring ? "" : (s.dueDate ?? s.endDate ?? "").trim(),
-      actualDate: isRecurring ? "" : (s.actualDate ?? "").trim(),
-      projectPriority: s.projectPriority ?? null,
-      completionRequirements: subTaskCompletionRequirements,
-      screenshotsEnabled: subTaskScreenshots,
-      ...(numericalTarget != null ? { numericalTarget } : {}),
-    });
+    }) => {
+      const dueDate =
+        isRecurring && frequency === "DAILY" ? "" : (s.dueDate ?? s.endDate ?? "").trim();
+      return {
+        title: (s.title ?? "").trim(),
+        description: typeof s.description === "string" ? s.description : "",
+        remarks: typeof s.remarks === "string" ? s.remarks : "",
+        startDate: "",
+        dueDate,
+        dueDateRollsWithCycle:
+          isRecurring &&
+          frequency !== "DAILY" &&
+          Boolean(dueDate) &&
+          s.dueDateRollsWithCycle === true,
+        actualDate: isRecurring ? "" : (s.actualDate ?? "").trim(),
+        projectPriority: s.projectPriority ?? null,
+        completionRequirements: subTaskCompletionRequirements,
+        screenshotsEnabled: subTaskScreenshots,
+        ...(numericalTarget != null ? { numericalTarget } : {}),
+      };
+    };
     const flatItems =
       Array.isArray(body.subKpis) && !body.subKpisSegmented
         ? body.subKpis.map(mapDraftItem).filter((s) => s.title.length > 0)
@@ -1086,6 +1136,7 @@ export async function PATCH(req: Request) {
       segmentId?: string | null;
       startDate?: string | null;
       dueDate?: string | null;
+      dueDateRollsWithCycle?: boolean | null;
       projectPriority?: string | null;
     };
     updateSubKpi?: {
@@ -1095,8 +1146,10 @@ export async function PATCH(req: Request) {
       remarks?: string | null;
       startDate?: string | null;
       dueDate?: string | null;
+      dueDateRollsWithCycle?: boolean | null;
       projectPriority?: string | null;
       completionMode?: SubKpiCompletionMode;
+      completionRequirements?: SubKpiCompletionRequirements | null;
       numericalTarget?: number | null;
       dailyPenaltyAmount?: number | null;
       delayPenaltyFrequency?: string | null;
@@ -1192,8 +1245,11 @@ export async function PATCH(req: Request) {
 
 
   if (body.deleteTask === true) {
-    if (!perms.isAdminRole) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (session.user.role !== "SuperAdmin") {
+      return NextResponse.json(
+        { error: "Only SuperAdmin can remove tasks." },
+        { status: 403 },
+      );
     }
     await prisma.kpiMaintenance.delete({ where: { id } });
     await deleteTaskScreenshotsDir(id);
@@ -1305,8 +1361,9 @@ export async function PATCH(req: Request) {
     ) {
       return true;
     }
-    const subAssigneeId = subKpiAssignedAgentId(item);
-    return isElevatedUserRole(session.user.role) && !kpiRow.assignedAgentId && !subAssigneeId;
+    // SuperAdmin / HighAdmin may edit sub-task work on any running task,
+    // including tasks assigned to other personnel.
+    return isElevatedUserRole(session.user.role);
   };
   const canCompleteSubKpi = (subKpiId: string) => {
     const item = subKpiItems.find((it) => it.id === subKpiId);
@@ -1327,7 +1384,7 @@ export async function PATCH(req: Request) {
   };
 
   if (body.itProjectName !== undefined || body.itProjectPhase !== undefined) {
-    if (!isAssignee) {
+    if (!isAssignee && !isElevatedUserRole(session.user.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     if (!isItProjectImplementationPillar(kpiRow.title)) {
@@ -1347,7 +1404,7 @@ export async function PATCH(req: Request) {
   }
 
   if (body.itProjectState != null && typeof body.itProjectState === "object") {
-    if (!isAssignee) {
+    if (!isAssignee && !isElevatedUserRole(session.user.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     if (!usesProjectTimelineTracker(kpiRow.subKpis) && !isItProjectImplementationPillar(kpiRow.title)) {
@@ -1469,8 +1526,7 @@ export async function PATCH(req: Request) {
       if (!subKpiRequiresNumerical(req)) {
         return NextResponse.json({ error: "This sub-task does not use numerical records." }, { status: 400 });
       }
-      // Target is locked after create; unlock only after the task has recurred once.
-      // The new value applies to the current period only (prior periods remain archived).
+      // Target may be set/adjusted for the active period while the task is running.
       if (
         !canAdjustNumericalTarget({
           isRecurring: recurring,
@@ -1479,11 +1535,7 @@ export async function PATCH(req: Request) {
         })
       ) {
         return NextResponse.json(
-          {
-            error: recurring
-              ? "Target number is locked until this recurring task has completed at least one prior cycle."
-              : "Target number is locked for one-off tasks after creation.",
-          },
+          { error: "Target number cannot be changed for this task." },
           { status: 403 },
         );
       }
@@ -2174,6 +2226,7 @@ export async function PATCH(req: Request) {
       segmentId: body.addSubKpi.segmentId,
       startDate: body.addSubKpi.startDate,
       dueDate: body.addSubKpi.dueDate,
+      dueDateRollsWithCycle: body.addSubKpi.dueDateRollsWithCycle,
       projectPriority: body.addSubKpi.projectPriority,
     });
     if (!result.ok) {
@@ -2210,8 +2263,10 @@ export async function PATCH(req: Request) {
     const hasRemarks = body.updateSubKpi.remarks !== undefined;
     const hasStartDate = body.updateSubKpi.startDate !== undefined;
     const hasDueDate = body.updateSubKpi.dueDate !== undefined;
+    const hasDueDateRollsWithCycle = body.updateSubKpi.dueDateRollsWithCycle !== undefined;
     const hasPriority = body.updateSubKpi.projectPriority !== undefined;
     const hasCompletionMode = body.updateSubKpi.completionMode !== undefined;
+    const hasCompletionRequirements = body.updateSubKpi.completionRequirements !== undefined;
     const hasNumericalTarget = body.updateSubKpi.numericalTarget !== undefined;
     const hasDailyPenalty = body.updateSubKpi.dailyPenaltyAmount !== undefined;
     const hasDelayFrequency = body.updateSubKpi.delayPenaltyFrequency !== undefined;
@@ -2225,6 +2280,7 @@ export async function PATCH(req: Request) {
         hasDueDate ||
         hasPriority ||
         hasCompletionMode ||
+        hasCompletionRequirements ||
         hasNumericalTarget
       ) {
         return NextResponse.json(
@@ -2263,8 +2319,10 @@ export async function PATCH(req: Request) {
       !hasRemarks &&
       !hasStartDate &&
       !hasDueDate &&
+      !hasDueDateRollsWithCycle &&
       !hasPriority &&
       !hasCompletionMode &&
+      !hasCompletionRequirements &&
       !hasNumericalTarget &&
       !hasDailyPenalty &&
       !hasDelayFrequency
@@ -2272,17 +2330,12 @@ export async function PATCH(req: Request) {
       return NextResponse.json(
         {
           error:
-            "Provide title, description, remarks, startDate, dueDate, projectPriority, completionMode, numericalTarget, dailyPenaltyAmount, and/or delayPenaltyFrequency to update a Sub Task.",
+            "Provide title, description, remarks, startDate, dueDate, dueDateRollsWithCycle, projectPriority, completionMode, completionRequirements, numericalTarget, dailyPenaltyAmount, and/or delayPenaltyFrequency to update a Sub Task.",
         },
         { status: 400 },
       );
     }
-    if ((hasDailyPenalty || hasDelayFrequency) && kpiRow.isRecurring) {
-      return NextResponse.json(
-        { error: "Daily delay penalty applies only to one-off (non-recurring) tasks." },
-        { status: 400 },
-      );
-    }
+    // Per-subtask delay penalties apply to one-off and recurring tasks (custom due / cycle end).
     if (hasStartDate) {
       return NextResponse.json(
         { error: "Sub-task schedule dates are not used for maintenance tasks." },
@@ -2295,7 +2348,7 @@ export async function PATCH(req: Request) {
     ) {
       return NextResponse.json({ error: "Invalid completionMode." }, { status: 400 });
     }
-    // Numerical target: locked after create; current-period edits only after ≥1 recurrence.
+    // Numerical target: editable for the active period while the task is running.
     if (hasNumericalTarget) {
       if (
         !canAdjustNumericalTarget({
@@ -2305,12 +2358,7 @@ export async function PATCH(req: Request) {
         })
       ) {
         return NextResponse.json(
-          {
-            error:
-              kpiRow.isRecurring !== false
-                ? "Target number is locked until this recurring task has completed at least one prior cycle."
-                : "Target number is locked for one-off tasks after creation.",
-          },
+          { error: "Target number cannot be changed for this task." },
           { status: 403 },
         );
       }
@@ -2325,8 +2373,16 @@ export async function PATCH(req: Request) {
       ...(hasRemarks ? { remarks: body.updateSubKpi.remarks ?? null } : {}),
       ...(hasStartDate ? { startDate: body.updateSubKpi.startDate } : {}),
       ...(hasDueDate ? { dueDate: body.updateSubKpi.dueDate } : {}),
+      ...(hasDueDateRollsWithCycle
+        ? { dueDateRollsWithCycle: body.updateSubKpi.dueDateRollsWithCycle === true }
+        : {}),
       ...(hasPriority ? { projectPriority: body.updateSubKpi.projectPriority ?? null } : {}),
-      ...(hasCompletionMode ? { completionMode: body.updateSubKpi.completionMode as SubKpiCompletionMode } : {}),
+      ...(hasCompletionMode && !hasCompletionRequirements
+        ? { completionMode: body.updateSubKpi.completionMode as SubKpiCompletionMode }
+        : {}),
+      ...(hasCompletionRequirements
+        ? { completionRequirements: body.updateSubKpi.completionRequirements ?? null }
+        : {}),
       ...(hasNumericalTarget ? { numericalTarget: body.updateSubKpi.numericalTarget ?? null } : {}),
       ...(hasDailyPenalty ? { dailyPenaltyAmount: body.updateSubKpi.dailyPenaltyAmount ?? null } : {}),
       ...(hasDelayFrequency
@@ -2545,7 +2601,7 @@ export async function PATCH(req: Request) {
   if (subKpiId && !canCompleteSubKpi(subKpiId)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!subKpiId && !isAssignee) {
+  if (!subKpiId && !isAssignee && !isElevatedUserRole(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

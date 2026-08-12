@@ -49,4 +49,26 @@ describe("RFP role KPI attribution inputs", () => {
     assert.equal(accountingPending?.proceduralStep, "APPROVED_BY_ACCOUNTING");
     assert.equal(financePending?.proceduralStep, "APPROVED_BY_FINANCE");
   });
+
+  it("does not treat Approved By / empty Bookkeeper seats as accounting credit targets", () => {
+    // Intake sets Approved By; Bookkeeper / Accounting are assigned later on the ticket.
+    // Until those seats are filled, nobody should receive RFP Accounting / Finance KPI.
+    const meta = parsePaymentApprovalMeta({
+      approvedByAgentId: "approver-1",
+      accountingAgentId: null,
+      financeAgentId: null,
+      proceduralStep: "APPROVED_BY_ACCOUNTING",
+      completed: { APPROVED_BY: "2026-08-01T00:00:00.000Z" },
+    });
+    assert.ok(meta);
+    assert.equal(meta!.proceduralStep, "APPROVED_BY_ACCOUNTING");
+    assert.equal(meta!.approvedByAgentId, "approver-1");
+    assert.equal(meta!.accountingAgentId, null);
+    assert.equal(meta!.financeAgentId, null);
+    // Credit helpers must use the role seat only (no board-assignee fallback).
+    const accountingCredit = meta!.accountingAgentId?.trim() || null;
+    const financeCredit = meta!.financeAgentId?.trim() || null;
+    assert.equal(accountingCredit, null);
+    assert.equal(financeCredit, null);
+  });
 });

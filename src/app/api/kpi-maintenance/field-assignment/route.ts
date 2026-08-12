@@ -177,9 +177,6 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    if (!driverLicenseNo) {
-      return NextResponse.json({ error: "Enter the driver license number." }, { status: 400 });
-    }
   }
 
   let gatePassDraft: TravelOrderGatePassDraft = emptyGatePassDraft();

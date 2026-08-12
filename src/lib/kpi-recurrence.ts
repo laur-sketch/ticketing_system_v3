@@ -299,3 +299,70 @@ export function getRolloverEligibleAfterCompletion(
   const completedDay = DateTime.fromMillis(completedAtUtc.getTime(), { zone }).startOf("day");
   return getNextDailyPeriodStartDt(completedDay).toJSDate();
 }
+
+/**
+ * Advance a calendar target date by one recurrence period.
+ * Monthly / quarterly / semi-annual preserve day-of-month (clamped to month length).
+ */
+export function advanceDueDateYmdForFrequency(
+  dueYmd: string,
+  frequency: KpiFrequencyCode,
+  timeZone: string,
+): string | null {
+  const zone = normalizeTimeZone(timeZone);
+  const dt = DateTime.fromISO(dueYmd.trim(), { zone }).startOf("day");
+  if (!dt.isValid) return null;
+
+  const withClampedDay = (base: DateTime, day: number): string | null => {
+    const dim = base.daysInMonth ?? 28;
+    const dom = Math.min(Math.max(1, day), dim);
+    return DateTime.fromObject(
+      { year: base.year, month: base.month, day: dom },
+      { zone },
+    )
+      .startOf("day")
+      .toISODate();
+  };
+
+  switch (frequency) {
+    case "DAILY":
+      return getNextDailyPeriodStartDt(dt).toISODate();
+    case "WEEKLY":
+      return dt.plus({ weeks: 1 }).toISODate();
+    case "MONTHLY":
+      return withClampedDay(dt.plus({ months: 1 }), dt.day);
+    case "QUARTERLY":
+      return withClampedDay(dt.plus({ months: 4 }), dt.day);
+    case "SEMI_ANNUAL":
+      return withClampedDay(dt.plus({ months: 6 }), dt.day);
+    default:
+      return dt.plus({ days: 1 }).toISODate();
+  }
+}
+
+/** How many full periods lie strictly between `fromCycleStart` and `toCycleStart`. */
+export function countRecurrencePeriodsBetween(
+  fromCycleStart: Date,
+  toCycleStart: Date,
+  frequency: KpiFrequencyCode,
+  recurrenceWeekday: number | null | undefined,
+  recurrenceMonthDay: number | null | undefined,
+  timeZone: string,
+): number {
+  const fromMs = fromCycleStart.getTime();
+  const toMs = toCycleStart.getTime();
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return 0;
+  let count = 0;
+  let cursor = fromCycleStart;
+  while (cursor.getTime() < toMs && count < 240) {
+    cursor = getPeriodEndExclusiveFromCycleStart(
+      cursor,
+      frequency,
+      recurrenceWeekday,
+      recurrenceMonthDay,
+      timeZone,
+    );
+    count += 1;
+  }
+  return count;
+}

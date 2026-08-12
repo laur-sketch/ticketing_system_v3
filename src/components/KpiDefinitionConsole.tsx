@@ -523,7 +523,17 @@ export function KpiDefinitionConsole({
           description: it.description ?? null,
           remarks: it.remarks ?? null,
           // Project phases own the target date — omit per-subtask dues.
-          dueDate: isProjectMode || effectiveIsRecurring ? "" : it.dueDate ?? "",
+          // Daily recurring also omits sub-task target dates.
+          dueDate:
+            isProjectMode || (effectiveIsRecurring && freqUpper === "DAILY")
+              ? ""
+              : it.dueDate ?? "",
+          dueDateRollsWithCycle:
+            !isProjectMode &&
+            effectiveIsRecurring &&
+            freqUpper !== "DAILY" &&
+            Boolean(it.dueDate?.trim()) &&
+            it.dueDateRollsWithCycle === true,
           projectPriority: it.projectPriority ?? null,
           projectStatus: it.projectStatus ?? null,
           done: it.done === true,
@@ -534,7 +544,12 @@ export function KpiDefinitionConsole({
         title: s.title,
         description: s.description ?? null,
         remarks: s.remarks ?? null,
-        dueDate: effectiveIsRecurring ? "" : s.dueDate ?? "",
+        dueDate: effectiveIsRecurring && freqUpper === "DAILY" ? "" : s.dueDate ?? "",
+        dueDateRollsWithCycle:
+          effectiveIsRecurring &&
+          freqUpper !== "DAILY" &&
+          Boolean(s.dueDate?.trim()) &&
+          s.dueDateRollsWithCycle === true,
         projectPriority: s.projectPriority ?? null,
       }));
     }
@@ -629,7 +644,7 @@ export function KpiDefinitionConsole({
     >
       {!embedded ? (
         <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-          Task management
+          Add Task
         </h2>
       ) : null}
       {localError ? (
@@ -809,8 +824,11 @@ export function KpiDefinitionConsole({
                     setSubKpisDraft((prev) =>
                       prev.map((item) => {
                         const next = { ...item };
-                        if (recurringDaily) delete next.startDate;
-                        delete next.dueDate;
+                        if (recurringDaily) {
+                          delete next.startDate;
+                          delete next.dueDate;
+                          delete next.dueDateRollsWithCycle;
+                        }
                         return next;
                       }),
                     );
@@ -819,8 +837,11 @@ export function KpiDefinitionConsole({
                         ...seg,
                         items: seg.items.map((item) => {
                           const next = { ...item };
-                          if (recurringDaily) delete next.startDate;
-                          delete next.dueDate;
+                          if (recurringDaily) {
+                            delete next.startDate;
+                            delete next.dueDate;
+                            delete next.dueDateRollsWithCycle;
+                          }
                           return next;
                         }),
                       })),
@@ -856,6 +877,8 @@ export function KpiDefinitionConsole({
                     prev.map((item) => {
                       const next = { ...item };
                       delete next.startDate;
+                      delete next.dueDate;
+                      delete next.dueDateRollsWithCycle;
                       return next;
                     }),
                   );
@@ -865,6 +888,8 @@ export function KpiDefinitionConsole({
                       items: seg.items.map((item) => {
                         const next = { ...item };
                         delete next.startDate;
+                        delete next.dueDate;
+                        delete next.dueDateRollsWithCycle;
                         return next;
                       }),
                     })),
@@ -1132,7 +1157,7 @@ export function KpiDefinitionConsole({
             >
               {s.title}
               {s.projectPriority ? ` · ${s.projectPriority}` : ""}
-              {s.dueDate ? ` · Target ${s.dueDate}` : ""} ×
+              {s.dueDate ? ` · Target ${s.dueDate}${s.dueDateRollsWithCycle ? " · rolls" : ""}` : ""} ×
             </button>
           ))}
         </div>
@@ -1148,6 +1173,9 @@ export function KpiDefinitionConsole({
         canMakePhases={showSegmentedCreateOption && isProjectMode}
         minimumSegmentItems={MIN_SEGMENTED_SUBKPIS_FOR_CREATE}
         hideDueDate={effectiveIsRecurring && maintenanceFrequency === "Daily"}
+        allowDueDateRollWithCycle={
+          effectiveIsRecurring && maintenanceFrequency !== "Daily"
+        }
         parentDueDate={mainTaskTargetDateDraft}
         checkReferenceHref={
           (linkedJobOrderTicketId || fromJobOrderTicketId)?.trim()

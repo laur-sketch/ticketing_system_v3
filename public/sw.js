@@ -14,8 +14,10 @@ importScripts("https://storage.googleapis.com/workbox-cdn/releases/7.1.0/workbox
 
 const WB = self.workbox;
 const TRAVEL_ORDER_SYNC_TAG = "travel-order-sync";
-const SHELL_CACHE = "travel-order-shell-v1";
-const PAGES_CACHE = "travel-order-pages";
+const SHELL_CACHE = "travel-order-shell-v2";
+const PAGES_CACHE = "travel-order-pages-v2";
+const API_CACHE = "travel-order-api-v3";
+const STATIC_CACHE = "travel-order-static-v2";
 const OFFLINE_FALLBACK_URL = "/offline-travel-orders.html";
 const SHELL_URLS = [OFFLINE_FALLBACK_URL, "/agent/tasks"];
 
@@ -98,20 +100,37 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       await self.clients.claim();
+      // Drop superseded caches so the new build is fetched fresh after deploy.
+      const stale = [
+        "travel-order-shell-v1",
+        "travel-order-pages",
+        "travel-order-api-v2",
+        "travel-order-static",
+        "travel-order-api",
+      ];
+      await Promise.all(stale.map((name) => caches.delete(name).catch(() => undefined)));
       // Refresh shell when we can; ignore failures.
       await precacheShell();
     })(),
   );
 });
 
+// Role-scoped lists must never be shared via SW cache (Personnel-Guard vs travelers
+// get different /api/travel-orders payloads for the same URL).
 WB.routing.registerRoute(
   ({ url, request }) =>
     request.method === "GET" &&
-    (url.pathname.startsWith("/api/travel-orders") ||
-      url.pathname.includes("/travel-orders") ||
-      url.pathname.startsWith("/api/agents")),
+    (url.pathname === "/api/travel-orders" ||
+      url.pathname.startsWith("/api/travel-orders/")),
+  new WB.strategies.NetworkOnly(),
+);
+
+WB.routing.registerRoute(
+  ({ url, request }) =>
+    request.method === "GET" &&
+    (url.pathname.includes("/travel-orders") || url.pathname.startsWith("/api/agents")),
   new WB.strategies.NetworkFirst({
-    cacheName: "travel-order-api",
+    cacheName: API_CACHE,
     // Fail over to cache quickly when the link is dead but navigator.onLine is still true.
     networkTimeoutSeconds: 2,
     plugins: [
@@ -126,7 +145,7 @@ WB.routing.registerRoute(
     request.destination === "style" ||
     url.pathname.startsWith("/_next/static/"),
   new WB.strategies.StaleWhileRevalidate({
-    cacheName: "travel-order-static",
+    cacheName: STATIC_CACHE,
     plugins: [
       new WB.expiration.ExpirationPlugin({ maxEntries: 160, maxAgeSeconds: 60 * 60 * 24 * 30 }),
     ],

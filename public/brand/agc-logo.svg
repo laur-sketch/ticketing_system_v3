@@ -1,19 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="320" height="96" viewBox="0 0 320 96" role="img" aria-label="AGCTEK Help Desk logo">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0b1220" />
-      <stop offset="100%" stop-color="#182742" />
-    </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#f97316" />
-      <stop offset="100%" stop-color="#fb923c" />
-    </linearGradient>
-  </defs>
-  <rect x="2" y="2" width="316" height="92" rx="18" fill="url(#bg)" stroke="#23324f" stroke-width="2" />
-  <g transform="translate(22, 20)">
-    <rect x="0" y="0" width="56" height="56" rx="14" fill="#0f172a" stroke="url(#accent)" stroke-width="2.5" />
-    <path d="M15 30l10 10 18-18" fill="none" stroke="url(#accent)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 240" fill="none" role="img" aria-label="Workforce Productivity Dashboard">
+  <g id="Data-WPD_Monogram_Icon">
+    <path d="M50 40 L100 160 L150 40 L200 160 L250 40 L200 40 L160 120 L120 40 L80 120 L40 40 Z" fill="#FFFFFF"/>
+    <rect x="70" y="70" width="15" height="60" fill="#FFFFFF"/>
+    <rect x="110" y="50" width="15" height="100" fill="#FFFFFF"/>
+    <rect x="150" y="30" width="15" height="130" fill="#FFFFFF"/>
+    <rect x="190" y="60" width="15" height="80" fill="#FFFFFF"/>
+    <path d="M250 40 C350 40, 420 80, 420 120 C420 160, 350 200, 250 200 L250 160 C320 160, 380 140, 380 120 C380 100, 320 80, 250 80 Z" fill="#FF6B00"/>
+    <path d="M420 120 L420 30 L450 60" stroke="#FF6B00" stroke-width="15" fill="none" stroke-linecap="round"/>
+    <polygon points="450 60, 430 40, 410 40" fill="#FF6B00"/>
   </g>
-  <text x="94" y="40" fill="#f97316" font-size="26" font-weight="800" font-family="Segoe UI, Arial, sans-serif">AGCTEK</text>
-  <text x="94" y="63" fill="#e2e8f0" font-size="14" font-weight="600" font-family="Segoe UI, Arial, sans-serif">Help Desk</text>
+  <g id="Workforce_Text" transform="translate(250, 215)" text-anchor="middle">
+    <text fill="#FFFFFF" font-size="38px" font-weight="bold" font-family="Arial, sans-serif" letter-spacing="2px">WORKFORCE</text>
+    <text fill="#FFFFFF" font-size="16px" font-weight="normal" font-family="Arial, sans-serif" dy="18px" letter-spacing="1px">PRODUCTIVITY DASHBOARD</text>
+  </g>
 </svg>

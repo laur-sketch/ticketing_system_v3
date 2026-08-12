@@ -3,6 +3,7 @@ import {
   getTaskTargetDueDate,
   normalizeSubKpis,
   resolveEffectiveSubKpiDueDate,
+  subKpiDueDateRollsWithCycle,
   subKpiHasCustomDueDate,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
@@ -22,6 +23,8 @@ export type SubTaskDto = {
   startDate: string | null;
   /** Stored custom due date only (null when inheriting the main task target). */
   dueDate: string | null;
+  /** When true, custom due date advances with each recurrence cycle. */
+  dueDateRollsWithCycle: boolean;
   /** Effective date used for display/delay (custom or inherited). */
   effectiveDueDate: string | null;
   /** True when the subtask has no custom due date and uses the main task target. */
@@ -63,6 +66,7 @@ export function subTaskToDto(
         : null,
     startDate: item.startDate ?? null,
     dueDate: subKpiHasCustomDueDate(item) ? (item.dueDate ?? null) : null,
+    dueDateRollsWithCycle: subKpiDueDateRollsWithCycle(item),
     effectiveDueDate: resolved.dueDate,
     inheritsDueDate: resolved.inherits,
     priority: item.projectPriority ?? null,

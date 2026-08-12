@@ -762,16 +762,26 @@ function boardTaskPenalty(t: TaskRow, nowMs: number): number {
   return Math.max(0, Math.round(rate * units));
 }
 
+/** Procedural RFPs / IRS / FTR / ACA use role-seat KPIs — never board-assignee credit. */
+const PROCEDURAL_REQUEST_TYPES = [
+  "REQUEST_FOR_PAYMENT",
+  "ITEM_REQUISITION_SLIP",
+  "FUND_TRANSFER_REQUEST",
+  "AUTHORITY_TO_CONDUCT_ACTIVITY",
+] as const;
+
 async function loadTicketCountsByAgent(
   start: Date,
   end: Date,
 ): Promise<Map<string, { closed: number; pending: number }>> {
-  // Same helpdesk pending rules as Issue/Concern — all request types, no requestType filter.
+  // Match Insights assignee ticket KPI: Issue/Concern / Job Order / etc. only.
+  // Approvers who are board assignees on procedural RFPs must not get Requests credit here.
   const [closedByAgent, pendingByAgent] = await Promise.all([
     prismaPrimary.ticket.groupBy({
       by: ["assignedAgentId"],
       where: {
         assignedAgentId: { not: null },
+        NOT: { requestType: { in: [...PROCEDURAL_REQUEST_TYPES] } },
         closedAt: { gte: start, lt: end },
       },
       _count: true,
@@ -780,6 +790,7 @@ async function loadTicketCountsByAgent(
       by: ["assignedAgentId"],
       where: {
         assignedAgentId: { not: null },
+        NOT: { requestType: { in: [...PROCEDURAL_REQUEST_TYPES] } },
         status: { in: OPEN_PIPELINE_STATUSES },
       },
       _count: true,
@@ -877,6 +888,7 @@ export async function runComputeUserEfficiencyBreakdowns(
     );
 
     for (const period of periods) {
+      const upsertedSourceUserIds = new Set<string>();
       const nowMs = Math.min(Date.now(), period.end.getTime() - 1);
       const tasks = await loadTasksInWindow(period.start, period.end);
       const ticketCounts = await loadTicketCountsByAgent(period.start, period.end);
@@ -1163,6 +1175,7 @@ export async function runComputeUserEfficiencyBreakdowns(
         );
 
         if (dryRun) {
+          upsertedSourceUserIds.add(group.mergedSourceUserId.toString());
           result.upsertedBreakdowns++;
           result.upsertedDetails += details.length;
           continue;
@@ -1254,8 +1267,33 @@ export async function runComputeUserEfficiencyBreakdowns(
           });
         }
 
+        upsertedSourceUserIds.add(group.mergedSourceUserId.toString());
         result.upsertedBreakdowns++;
         result.upsertedDetails += details.length;
+      }
+
+      // Drop stale period rows (e.g. Approvers who only had procedural-RFP
+      // board-assignee ticket credit before role-seat rules). Otherwise they
+      // linger with pending>0 when the person is no longer in this period's groups.
+      if (!dryRun) {
+        const stale = await prismaWrite.mergedUserEfficiencyBreakdown.findMany({
+          where: {
+            periodKey: period.periodKey,
+            frequency: period.frequency,
+          },
+          select: { id: true, sourceUserId: true },
+        });
+        const staleIds = stale
+          .filter((row) => !upsertedSourceUserIds.has(row.sourceUserId.toString()))
+          .map((row) => row.id);
+        if (staleIds.length > 0) {
+          await prismaWrite.mergedUserEfficiencyTaskDetail.deleteMany({
+            where: { breakdownId: { in: staleIds } },
+          });
+          await prismaWrite.mergedUserEfficiencyBreakdown.deleteMany({
+            where: { id: { in: staleIds } },
+          });
+        }
       }
     }
   } finally {

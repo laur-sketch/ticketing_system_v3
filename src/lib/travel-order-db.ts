@@ -205,11 +205,27 @@ type RawLocation = {
 
 function asDate(value: Date | string | null | undefined): Date | null {
   if (value == null) return null;
-  if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? value : null;
-  }
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
   const d = new Date(value);
   return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/** Prisma `$queryRaw` may return float8 as number, string, or Decimal-like. */
+function asCoord(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (value && typeof value === "object" && "toNumber" in value) {
+    try {
+      const n = (value as { toNumber: () => number }).toNumber();
+      return typeof n === "number" && Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function mapAgent(
@@ -273,32 +289,16 @@ function mapOrderBase(
     estDepartureAt: asDate(order.est_departure_at),
     estArrivalAt: asDate(order.est_arrival_at),
     actualDepartureStartedAt: asDate(order.actual_departure_started_at),
-    actualDepartureStartedLatitude:
-      typeof order.actual_departure_started_latitude === "number" &&
-      Number.isFinite(order.actual_departure_started_latitude)
-        ? order.actual_departure_started_latitude
-        : null,
-    actualDepartureStartedLongitude:
-      typeof order.actual_departure_started_longitude === "number" &&
-      Number.isFinite(order.actual_departure_started_longitude)
-        ? order.actual_departure_started_longitude
-        : null,
+    actualDepartureStartedLatitude: asCoord(order.actual_departure_started_latitude),
+    actualDepartureStartedLongitude: asCoord(order.actual_departure_started_longitude),
     gatePassStartGuardOnDuty:
       typeof order.gate_pass_start_guard_on_duty === "string" &&
       order.gate_pass_start_guard_on_duty.trim()
         ? order.gate_pass_start_guard_on_duty.trim()
         : null,
     actualDepartureEndedAt: asDate(order.actual_departure_ended_at),
-    actualDepartureEndedLatitude:
-      typeof order.actual_departure_ended_latitude === "number" &&
-      Number.isFinite(order.actual_departure_ended_latitude)
-        ? order.actual_departure_ended_latitude
-        : null,
-    actualDepartureEndedLongitude:
-      typeof order.actual_departure_ended_longitude === "number" &&
-      Number.isFinite(order.actual_departure_ended_longitude)
-        ? order.actual_departure_ended_longitude
-        : null,
+    actualDepartureEndedLatitude: asCoord(order.actual_departure_ended_latitude),
+    actualDepartureEndedLongitude: asCoord(order.actual_departure_ended_longitude),
     gatePassEndGuardOnDuty:
       typeof order.gate_pass_end_guard_on_duty === "string" &&
       order.gate_pass_end_guard_on_duty.trim()
@@ -349,22 +349,10 @@ function mapOrderBase(
       .map((loc) => {
         const startedAt = asDate(loc.started_at ?? null);
         const endedAt = asDate(loc.ended_at ?? null) ?? asDate(loc.checked_at);
-        const startedLatitude =
-          typeof loc.started_latitude === "number" && Number.isFinite(loc.started_latitude)
-            ? loc.started_latitude
-            : null;
-        const startedLongitude =
-          typeof loc.started_longitude === "number" && Number.isFinite(loc.started_longitude)
-            ? loc.started_longitude
-            : null;
-        const endedLatitude =
-          (typeof loc.ended_latitude === "number" && Number.isFinite(loc.ended_latitude)
-            ? loc.ended_latitude
-            : null) ?? loc.latitude;
-        const endedLongitude =
-          (typeof loc.ended_longitude === "number" && Number.isFinite(loc.ended_longitude)
-            ? loc.ended_longitude
-            : null) ?? loc.longitude;
+        const startedLatitude = asCoord(loc.started_latitude);
+        const startedLongitude = asCoord(loc.started_longitude);
+        const endedLatitude = asCoord(loc.ended_latitude) ?? asCoord(loc.latitude);
+        const endedLongitude = asCoord(loc.ended_longitude) ?? asCoord(loc.longitude);
         return {
           id: loc.id,
           travelOrderId: loc.travel_order_id,
@@ -517,9 +505,6 @@ export async function createTravelOrderWithLocations(input: {
     }
     if (!travelerAgentIds.includes(driverAgentId)) {
       throw new Error("Driver must be one of the selected travelers.");
-    }
-    if (!driverLicenseNo) {
-      throw new Error("Enter the driver license number.");
     }
   }
   const gp = input.gatePass ?? null;
@@ -796,14 +781,28 @@ export async function findTravelOrdersByCompanyTeamId(
 /**
  * Travel orders visible to an agent: same-company orders, plus any where they
  * are creator, traveler, designated approver, or confirmer (cross-company OK).
+ *
+ * Personnel-Guard (`gatePassOnly`): site-wide kiosk list of running (APPROVED)
+ * trips. Guards are often not travelers and may lack a merged company match, so
+ * company/personal visibility is not applied.
  */
 export async function findTravelOrdersVisibleToAgent(input: {
   companyTeamId: string | null;
   agentId: string | null;
+  /**
+   * When true (Personnel-Guard), list all APPROVED (running) travel orders for
+   * Gate Pass capture — not limited to gate_pass_included or company membership.
+   */
+  gatePassOnly?: boolean;
+  /**
+   * When true, bypass company/agent scoping entirely (platform-wide list for
+   * elevated admins such as SuperAdmin who may have no agent or company row).
+   */
+  allVisible?: boolean;
 }): Promise<TravelOrderRow[]> {
   const companyTeamId = input.companyTeamId?.trim() || null;
   const agentId = input.agentId?.trim() || null;
-  if (!companyTeamId && !agentId) return [];
+  if (!input.gatePassOnly && !input.allVisible && !companyTeamId && !agentId) return [];
 
   const selectSql = Prisma.sql`
     SELECT
@@ -869,30 +868,39 @@ export async function findTravelOrdersVisibleToAgent(input: {
     LEFT JOIN kpi_maintenance k ON k.id = t.kpi_maintenance_id
   `;
 
-  const whereParts: Prisma.Sql[] = [];
-  if (companyTeamId) {
-    whereParts.push(Prisma.sql`t.company_team_id = ${companyTeamId}`);
+  let whereSql: Prisma.Sql;
+  if (input.gatePassOnly) {
+    // Gate kiosk: every running trip is eligible for Gate Pass Start/End.
+    whereSql = Prisma.sql`t.status = ${TRAVEL_ORDER_STATUS.APPROVED}`;
+  } else if (input.allVisible) {
+    // Platform-wide view (SuperAdmin / elevated admin without company scope).
+    whereSql = Prisma.sql`TRUE`;
+  } else {
+    const whereParts: Prisma.Sql[] = [];
+    if (companyTeamId) {
+      whereParts.push(Prisma.sql`t.company_team_id = ${companyTeamId}`);
+    }
+    if (agentId) {
+      whereParts.push(
+        Prisma.sql`(
+          t.created_by_agent_id = ${agentId}
+          OR t.approved_by_agent_id = ${agentId}
+          OR t.confirmation_by_agent_id = ${agentId}
+          OR t.traveler_agent_ids @> ${JSON.stringify([agentId])}::jsonb
+          OR t.approved_by_agent_ids @> ${JSON.stringify([agentId])}::jsonb
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(t.approval_levels, '[]'::jsonb)) AS lvl
+            WHERE COALESCE(lvl->>'agentId', '') = ${agentId}
+          )
+        )`,
+      );
+    }
+    whereSql =
+      whereParts.length === 1
+        ? whereParts[0]!
+        : Prisma.sql`(${Prisma.join(whereParts, " OR ")})`;
   }
-  if (agentId) {
-    whereParts.push(
-      Prisma.sql`(
-        t.created_by_agent_id = ${agentId}
-        OR t.approved_by_agent_id = ${agentId}
-        OR t.confirmation_by_agent_id = ${agentId}
-        OR t.traveler_agent_ids @> ${JSON.stringify([agentId])}::jsonb
-        OR t.approved_by_agent_ids @> ${JSON.stringify([agentId])}::jsonb
-        OR EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements(COALESCE(t.approval_levels, '[]'::jsonb)) AS lvl
-          WHERE COALESCE(lvl->>'agentId', '') = ${agentId}
-        )
-      )`,
-    );
-  }
-  const whereSql =
-    whereParts.length === 1
-      ? whereParts[0]!
-      : Prisma.sql`(${Prisma.join(whereParts, " OR ")})`;
 
   const orders = await prisma.$queryRaw<RawTravelOrder[]>`
     ${selectSql}
@@ -1163,17 +1171,17 @@ export async function updateTravelOrderGatePass(input: {
       est_departure_at = ${input.estDepartureAt ?? null},
       est_arrival_at = ${input.estArrivalAt ?? null},
       actual_departure_started_at = ${
-        input.actualDepartureStartedAt !== undefined
+        input.actualDepartureStartedAt != null
           ? input.actualDepartureStartedAt
           : order.actualDepartureStartedAt
       },
       actual_departure_started_latitude = ${
-        input.actualDepartureStartedLatitude !== undefined
+        input.actualDepartureStartedLatitude != null
           ? input.actualDepartureStartedLatitude
           : order.actualDepartureStartedLatitude
       },
       actual_departure_started_longitude = ${
-        input.actualDepartureStartedLongitude !== undefined
+        input.actualDepartureStartedLongitude != null
           ? input.actualDepartureStartedLongitude
           : order.actualDepartureStartedLongitude
       },
@@ -1183,17 +1191,17 @@ export async function updateTravelOrderGatePass(input: {
           : order.gatePassStartGuardOnDuty
       },
       actual_departure_ended_at = ${
-        input.actualDepartureEndedAt !== undefined
+        input.actualDepartureEndedAt != null
           ? input.actualDepartureEndedAt
           : order.actualDepartureEndedAt
       },
       actual_departure_ended_latitude = ${
-        input.actualDepartureEndedLatitude !== undefined
+        input.actualDepartureEndedLatitude != null
           ? input.actualDepartureEndedLatitude
           : order.actualDepartureEndedLatitude
       },
       actual_departure_ended_longitude = ${
-        input.actualDepartureEndedLongitude !== undefined
+        input.actualDepartureEndedLongitude != null
           ? input.actualDepartureEndedLongitude
           : order.actualDepartureEndedLongitude
       },

@@ -7,7 +7,7 @@ import {
 } from "@/lib/merged-database-sources";
 import { prismaPrimary, prismaSecondary } from "@/lib/prisma";
 import { withSecondaryWriteClient } from "@/lib/prisma-secondary-write";
-import { isStaffPortalRole } from "@/lib/staff-role";
+import { isPersonnelGuardPortalRole, isStaffPortalRole } from "@/lib/staff-role";
 import { Prisma } from "@prisma/client/secondary";
 
 /**
@@ -106,7 +106,10 @@ export async function PATCH(req: Request) {
       });
     }
 
-    if (teamId && isStaffPortalRole(portal.role)) {
+    if (
+      teamId &&
+      (isStaffPortalRole(portal.role) || isPersonnelGuardPortalRole(portal.role))
+    ) {
       try {
         await ensureAgentRowForPortalStaff(
           { email: portal.email, name: portal.name },

@@ -107,6 +107,7 @@
     "class-variance-authority": "^0.7.1",
     "dexie": "^4.4.4",
     "framer-motion": "^12.40.0",
+    "freebuff": "^0.0.142",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.8.0",
     "luxon": "^3.7.2",

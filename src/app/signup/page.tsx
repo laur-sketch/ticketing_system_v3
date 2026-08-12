@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import {
-  AuthShell,
-  authInputClass,
-  authLabelClass,
-  authPrimaryButtonClass,
-} from "@/components/auth/AuthShell";
-import { AuthDivider, GoogleAuthButton } from "@/components/auth/GoogleAuthButton";
+  SignInLaunchPadShell,
+  launchPadInputClass,
+  launchPadLabelClass,
+  launchPadOutlineButtonClass,
+  launchPadPrimaryButtonClass,
+} from "@/components/auth/SignInLaunchPadShell";
+import { GoogleMark } from "@/components/auth/GoogleAuthButton";
 
 type CompanyOption = { id: string; name: string };
 
@@ -23,6 +24,18 @@ async function fetchPublicCompanies(): Promise<CompanyOption[] | null> {
   } catch {
     return null;
   }
+}
+
+function LaunchPadDivider() {
+  return (
+    <div className="my-5 flex items-center gap-3">
+      <span className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
+      <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-400 dark:text-gray-500">
+        or
+      </span>
+      <span className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
+    </div>
+  );
 }
 
 function SignUpForm() {
@@ -86,10 +99,10 @@ function SignUpForm() {
     };
   }, [applyCompanyList]);
 
-  const retryLoadCompanies = useCallback(async () => {
+  async function retryLoadCompanies() {
     setCompaniesStatus("loading");
     applyCompanyList(await fetchPublicCompanies());
-  }, [applyCompanyList]);
+  }
 
   const selectedCompanyId =
     companyId && companies.some((c) => c.id === companyId) ? companyId : "";
@@ -104,33 +117,6 @@ function SignUpForm() {
       customerOrgRole,
     }),
     [username, displayName, email, companyId, customerOrgRole],
-  );
-
-  const bottomBanner = useMemo(
-    () => (
-      <div className="mt-6 space-y-3 border-t border-zinc-200 pt-6 dark:border-zinc-800/60">
-        <div className="flex items-center gap-3">
-          <div className="flex -space-x-2">
-            {["AR", "SK", "JL"].map((initials, i) => (
-              <span
-                key={initials}
-                className="flex size-8 items-center justify-center rounded-full border-2 border-zinc-200 bg-gradient-to-br from-zinc-100 to-zinc-300 text-[9px] font-bold text-zinc-800 shadow-md dark:border-zinc-950 dark:from-zinc-600 dark:to-zinc-800 dark:text-zinc-100"
-                style={{ zIndex: 3 - i }}
-              >
-                {initials}
-              </span>
-            ))}
-          </div>
-          <p className="text-[9px] font-bold uppercase leading-snug tracking-[0.18em] text-zinc-600 dark:text-zinc-600">
-            Trusted by 2k+ ops leads
-          </p>
-        </div>
-        <p className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-500">
-          Your company and org role are stored on your account and used for routing and visibility.
-        </p>
-      </div>
-    ),
-    [],
   );
 
   function validateCompanySelection(): boolean {
@@ -153,7 +139,6 @@ function SignUpForm() {
       setError("Enter a password.");
       return;
     }
-
     setBusy(true);
     try {
       const res = await fetch("/api/auth/signup", {
@@ -181,7 +166,6 @@ function SignUpForm() {
       return;
     }
     if (!validateCompanySelection()) return;
-
     setGoogleBusy(true);
     try {
       const res = await fetch("/api/auth/signup", {
@@ -203,121 +187,131 @@ function SignUpForm() {
   }
 
   return (
-    <AuthShell mode="signup" bottomBanner={bottomBanner}>
-      <h1 className="text-[1.5rem] font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-[1.65rem]">
-        Create company account
-      </h1>
-      <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-        Register with a username and password, or continue with Google.
-      </p>
+    <SignInLaunchPadShell wide>
+      <div className="mb-6 text-center">
+        <h2 className="mb-2 text-2xl font-semibold text-zinc-900 dark:text-white">Create company account</h2>
+        <p className="text-sm text-zinc-500 dark:text-[#888888]">
+          Register with a username and password, or continue with Google.
+        </p>
+      </div>
 
-      <form onSubmit={onSubmit} className="mt-6 space-y-4">
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Username</span>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="signup-username" className={launchPadLabelClass}>
+            Username
+          </label>
           <input
+            id="signup-username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
             autoComplete="username"
             placeholder="your_username"
-            className={authInputClass}
+            className={`${launchPadInputClass} mt-2`}
           />
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Display name</span>
+        <div>
+          <label htmlFor="signup-display-name" className={launchPadLabelClass}>
+            Display name
+          </label>
           <input
+            id="signup-display-name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             required
             autoComplete="name"
             placeholder="How you appear when signed in"
-            className={authInputClass}
+            className={`${launchPadInputClass} mt-2`}
           />
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Company</span>
+        <div>
+          <label htmlFor="signup-company" className={launchPadLabelClass}>
+            Company
+          </label>
           {companiesStatus === "loading" ? (
-            <p className={`${authInputClass} flex items-center text-xs text-zinc-500`}>
+            <p className={`${launchPadInputClass} mt-2 flex items-center text-xs text-zinc-500 dark:text-[#888]`}>
               Loading companies…
             </p>
           ) : companiesStatus === "error" ? (
-            <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] p-3 text-xs text-amber-900 dark:text-amber-100/90">
+            <div className="mt-2 space-y-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100">
               <p>Could not load the company list.</p>
               <button
                 type="button"
                 onClick={() => void retryLoadCompanies()}
-                className="rounded-md border border-amber-600/50 bg-white px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-50 dark:border-amber-500/40 dark:bg-zinc-900 dark:text-amber-200 dark:hover:bg-zinc-800"
+                className="rounded-lg border border-amber-500/40 bg-white/80 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-white dark:bg-black/40 dark:text-amber-100 dark:hover:bg-black/60"
               >
                 Retry
               </button>
             </div>
           ) : (
             <select
+              id="signup-company"
               value={selectedCompanyId}
               onChange={(e) => setCompanyId(e.target.value)}
               required
-              className={`${authInputClass} cursor-pointer`}
+              className={`${launchPadInputClass} mt-2 cursor-pointer`}
             >
               <option value="">Select company…</option>
               {companies.map((c) => (
-                <option
-                  key={c.id}
-                  value={c.id}
-                  className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100"
-                >
+                <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
             </select>
           )}
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Your role in the organization</span>
+        <div>
+          <label htmlFor="signup-org-role" className={launchPadLabelClass}>
+            Your role in the organization
+          </label>
           <select
+            id="signup-org-role"
             value={customerOrgRole}
             onChange={(e) => setCustomerOrgRole(e.target.value as "Admin" | "Personnel")}
-            className={`${authInputClass} cursor-pointer`}
+            className={`${launchPadInputClass} mt-2 cursor-pointer`}
           >
-            <option value="Admin" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-              Admin
-            </option>
-            <option value="Personnel" className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100">
-              Personnel
-            </option>
+            <option value="Admin">Admin</option>
+            <option value="Personnel">Personnel</option>
           </select>
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Work email</span>
+        <div>
+          <label htmlFor="signup-email" className={launchPadLabelClass}>
+            Work email
+          </label>
           <input
+            id="signup-email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
             placeholder="you@company.com"
-            className={authInputClass}
+            className={`${launchPadInputClass} mt-2`}
           />
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1.5">
-          <span className={authLabelClass}>Password</span>
+        <div>
+          <label htmlFor="signup-password" className={launchPadLabelClass}>
+            Password
+          </label>
           <input
+            id="signup-password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="new-password"
             placeholder="••••••••"
-            className={authInputClass}
+            className={`${launchPadInputClass} mt-2`}
           />
-        </label>
+        </div>
 
         {error ? (
-          <p className="rounded-lg border border-red-500/30 bg-red-500/[0.07] px-2.5 py-2 text-xs text-red-700 dark:text-red-200/90 sm:text-[13px]">
+          <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
             {error}
           </p>
         ) : null}
@@ -325,34 +319,45 @@ function SignUpForm() {
         <button
           type="submit"
           disabled={busy || companiesStatus !== "ready" || companies.length === 0}
-          className={authPrimaryButtonClass}
+          className={`${launchPadPrimaryButtonClass} mt-2`}
         >
           {busy ? "Creating account…" : "Create company account"}
         </button>
 
         {googleEnabled ? (
           <>
-            <AuthDivider />
-            <GoogleAuthButton
-              variant="secondary"
+            <LaunchPadDivider />
+            <button
+              type="button"
               disabled={googleBusy || companiesStatus !== "ready" || companies.length === 0}
-              label={googleBusy ? "Redirecting to Google…" : "Continue with Google"}
               onClick={() => void onGoogleSignup()}
-            />
-            <p className="text-center text-[11px] text-zinc-500">
+              className={launchPadOutlineButtonClass}
+            >
+              <span className="inline-flex items-center justify-center gap-2">
+                <GoogleMark />
+                {googleBusy ? "Redirecting to Google…" : "Continue with Google"}
+              </span>
+            </button>
+            <p className="text-center text-[11px] text-zinc-500 dark:text-gray-500">
               For Google signup, your work email must match your Google account.
             </p>
           </>
         ) : null}
       </form>
 
-      <p className="mt-6 text-center text-xs text-zinc-600 dark:text-zinc-500 sm:text-[13px]">
+      <p className="mt-6 text-center text-xs text-zinc-500 dark:text-gray-500">
         Already have an account?{" "}
-        <Link href="/signin" className="font-semibold text-[#f97316] hover:text-[#fb923c]">
+        <Link href="/signin" className="font-medium text-[#ff6b00] transition-colors hover:text-orange-400">
           Sign in
         </Link>
       </p>
-    </AuthShell>
+
+      <div className="mt-6 space-y-2 border-t border-zinc-200 pt-5 dark:border-white/10">
+        <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-gray-500">
+          Your company and org role are stored on your account and used for routing and visibility.
+        </p>
+      </div>
+    </SignInLaunchPadShell>
   );
 }
 
@@ -360,9 +365,9 @@ export default function SignUpPage() {
   return (
     <Suspense
       fallback={
-        <AuthShell mode="signup">
-          <p className="text-sm text-zinc-500">Loading…</p>
-        </AuthShell>
+        <SignInLaunchPadShell wide>
+          <p className="text-center text-sm text-zinc-500 dark:text-gray-400">Loading…</p>
+        </SignInLaunchPadShell>
       }
     >
       <SignUpForm />

@@ -11,6 +11,8 @@ import {
   nonRecurringDeadline,
   nonRecurringTaskDelayDeadline,
   recurringDeadlineExclusive,
+  recurringIncompleteRolloverEligibleAt,
+  recurringIncompleteRolloverHoldDays,
   taskKanbanDerivedStatus,
 } from "@/lib/kpi-cycle-state";
 import { DEFAULT_TIME_ZONE, type KpiFrequencyCode } from "@/lib/kpi-recurrence";
@@ -56,6 +58,7 @@ import {
   subKpiAssignedAgentId,
   subKpiAssignedToOperator,
   subKpiHasCustomDueDate,
+  subKpiDueDateRollsWithCycle,
   subKpiProgressMismatchWarning,
   taskDailyPenaltyAmountFromSubKpis,
   taskDelayPenaltyFrequencyFromSubKpis,
@@ -65,6 +68,8 @@ import {
   isSubKpiAssigneeUnlocked,
   PILLAR_ONLY_VIRTUAL_SUBKPI_ID,
   UNSEGMENTED_SEGMENT_ID,
+  UNSEGMENTED_SEGMENT_LABEL,
+  isUnsegmentedSegmentId,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
 import {
@@ -84,15 +89,14 @@ import {
   hasNumericalRecord,
   hasScreenshotUpload,
   numericalRecordProgressPercent,
-  resolveSubKpiCompletionMode,
   resolveSubKpiCompletionRequirements,
-  SUB_KPI_COMPLETION_MODE_OPTIONS,
   subKpiRequiresCheckbox,
   subKpiRequiresNumerical,
   subKpiRequiresScreenshots,
   subKpiRequiresScreenshotUpload,
   subKpiRequirementsMet,
   type SubKpiCompletionMode,
+  type SubKpiCompletionRequirements,
 } from "@/lib/sub-kpi-completion-mode";
 import { hasValidActualDate } from "@/lib/us-date-format";
 import {
@@ -106,16 +110,19 @@ import { SeekAssistanceModal } from "@/components/task-board/SeekAssistanceModal
 import { SubTasksManagerPopup } from "@/components/task-board/SubTasksManagerPopup";
 import { TravelOrderSummaryPanel } from "@/components/task-board/TravelOrderSummaryPanel";
 import { TravelOrderRequestModal } from "@/components/task-board/TravelOrderRequestModal";
+import { TravelOrderApprovalModal } from "@/components/task-board/TravelOrderApprovalModal";
 import { TravelOrderOfflineBanner } from "@/components/offline/TravelOrderOfflineBanner";
 import { TaskBoardPopup } from "@/components/task-board/TaskBoardPopup";
 import type { TravelOrderDto } from "@/lib/travel-order";
 import { travelOrderVehicleLabel } from "@/lib/travel-order";
 import {
   cacheTravelOrders,
+  deleteOfflineDraft,
   listAllCachedTravelOrders,
   listOfflineDrafts,
   offlineDraftAsListItem,
 } from "@/lib/offline/travel-order-offline-db";
+import { isPlatformSuperAdminPortalRole } from "@/lib/staff-role";
 import { isBrowserOnline, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure } from "@/lib/offline/travel-order-sync";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
@@ -132,19 +139,78 @@ function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): str
   return "Pending";
 }
 
-function ChecklistProgressBar({
+/** Thin-line icon: travel ticket + map pin (matches board outline iconography). */
+function TravelOrdersIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M3.75 8.25a1.75 1.75 0 0 1 1.75-1.75h8.5a1.75 1.75 0 0 1 1.75 1.75v1.1a1.15 1.15 0 1 0 0 2.3v1.1a1.75 1.75 0 0 1-1.75 1.75h-8.5a1.75 1.75 0 0 1-1.75-1.75v-1.1a1.15 1.15 0 1 0 0-2.3v-1.1Z" />
+      <path d="M7 9.25h4.25M7 12h3" />
+      <path d="M18.25 6.75c0 2.35-2.75 5.25-2.75 5.25S12.75 9.1 12.75 6.75a2.75 2.75 0 1 1 5.5 0Z" />
+      <circle cx="15.5" cy="6.75" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function ChecklistProgressRing({
   percent,
-  barClassName,
+  strokeClassName,
+  size = 52,
 }: {
   percent: number;
-  barClassName: string;
+  strokeClassName: string;
+  size?: number;
 }) {
   const clamped = Math.min(100, Math.max(0, percent));
+  const stroke = 3.25;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - (clamped / 100) * c;
   return (
-    <div className="h-2 rounded-full bg-zinc-200/70 dark:bg-zinc-800/60">
-      <div className={cn("h-full rounded-full transition-[width]", barClassName)} style={{ width: `${clamped}%` }} />
+    <div className="relative shrink-0" style={{ width: size, height: size }} aria-hidden>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          className="stroke-zinc-200 dark:stroke-zinc-700/90"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          className={cn("transition-[stroke-dashoffset] duration-300", strokeClassName)}
+          style={{ strokeDasharray: c, strokeDashoffset: offset }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[11px] font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50">
+          {Math.round(clamped)}%
+        </span>
+      </div>
     </div>
   );
+}
+
+function laneProgressStrokeClass(col: KpiBoardStatus, itProject: boolean): string {
+  if (col === "DONE") return "stroke-emerald-500 dark:stroke-emerald-400";
+  if (col === "DELAYED") return "stroke-rose-500 dark:stroke-rose-400";
+  if (itProject) return "stroke-orange-500 dark:stroke-orange-400";
+  return "stroke-blue-500 dark:stroke-blue-400";
 }
 
 type KpiRecord = {
@@ -394,6 +460,7 @@ export function AgentKpiKanbanFlow({
   showAdminTaskManagement = false,
   focusTaskId = null,
   fromJobOrderTicketId = null,
+  sessionRole = null,
 }: {
   /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
   companyFilterTeamId?: string | null;
@@ -409,7 +476,10 @@ export function AgentKpiKanbanFlow({
   focusTaskId?: string | null;
   /** Open Task management prefilled from a Job Order. */
   fromJobOrderTicketId?: string | null;
+  /** Portal role of the signed-in user (SSR). SuperAdmin-only gates use this. */
+  sessionRole?: string | null;
 } = {}) {
+  const isSuperAdmin = isPlatformSuperAdminPortalRole(sessionRole);
   const [rows, setRows] = useState<KpiRecord[]>([]);
   const [agents, setAgents] = useState<AssignableAgent[]>([]);
   const [allAssignableAgents, setAllAssignableAgents] = useState<AssignableAgent[]>([]);
@@ -417,6 +487,7 @@ export function AgentKpiKanbanFlow({
   const [canUnassignWork, setCanUnassignWork] = useState(false);
   const [canCompleteUnassignedWork, setCanCompleteUnassignedWork] = useState(false);
   const [canAssignOffline, setCanAssignOffline] = useState(false);
+  const [canDeleteTask, setCanDeleteTask] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [operatorAgentName, setOperatorAgentName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -429,6 +500,8 @@ export function AgentKpiKanbanFlow({
   const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  /** Segment filter in Full Task Details (`ALL` = every segment). */
+  const [detailSegmentFilter, setDetailSegmentFilter] = useState<string>("ALL");
   const [taskAuditLog, setTaskAuditLog] = useState<
     Array<{ id: string; author: string; summary: string; detail: string | null; createdAt: string }>
   >([]);
@@ -447,18 +520,68 @@ export function AgentKpiKanbanFlow({
   const [assignmentBoardOpen, setAssignmentBoardOpen] = useState(false);
   const [travelOrdersOpen, setTravelOrdersOpen] = useState(false);
   const [createTravelOrderOpen, setCreateTravelOrderOpen] = useState(false);
+  const [resumeTravelOrderDraftId, setResumeTravelOrderDraftId] = useState<string | null>(null);
   const [companyTravelOrders, setCompanyTravelOrders] = useState<TravelOrderDto[]>([]);
   const [companyTravelOrdersLoading, setCompanyTravelOrdersLoading] = useState(false);
   const [companyTravelOrdersError, setCompanyTravelOrdersError] = useState<string | null>(null);
+  /** Draft id awaiting a second tap to confirm removal (SuperAdmin only). */
+  const [confirmRemoveDraftId, setConfirmRemoveDraftId] = useState<string | null>(null);
+  const [viewTravelOrder, setViewTravelOrder] = useState<{
+    taskId: string;
+    travelOrderId: string;
+    title: string;
+  } | null>(null);
   const [taskCategoryFilter, setTaskCategoryFilter] = useState<TaskBoardCategory>("all");
   const [mobileLane, setMobileLane] = useState<KpiBoardStatus>("CURRENT");
   const [laneRegisterKey, setLaneRegisterKey] = useState(0);
   const [subAssigneePeersByMainId, setSubAssigneePeersByMainId] = useState<Record<string, AssignableAgent[]>>({});
   const subAssigneePeersFetchedRef = useRef(new Set<string>());
   const [addSubTaskById, setAddSubTaskById] = useState<
-    Record<string, { title: string; dueDate: string; useCustomDueDate: boolean }>
+    Record<
+      string,
+      { title: string; dueDate: string; useCustomDueDate: boolean; dueDateRollsWithCycle: boolean }
+    >
   >({});
   const [scheduleDraft, setScheduleDraft] = useState<TaskScheduleDraft | null>(null);
+  /** Local text while typing numerical target/actual — commit on blur (avoids one-digit-per-save). */
+  const [numericalDraftByKey, setNumericalDraftByKey] = useState<Record<string, string>>({});
+
+  function numericalFieldKey(recordId: string, subKpiId: string, field: "target" | "value") {
+    return `${recordId}:${subKpiId}:${field}`;
+  }
+
+  function numericalFieldDisplay(
+    recordId: string,
+    subKpiId: string,
+    field: "target" | "value",
+    stored: number | null | undefined,
+  ) {
+    const key = numericalFieldKey(recordId, subKpiId, field);
+    if (Object.prototype.hasOwnProperty.call(numericalDraftByKey, key)) {
+      return numericalDraftByKey[key] ?? "";
+    }
+    return stored == null ? "" : String(stored);
+  }
+
+  function setNumericalFieldDraft(
+    recordId: string,
+    subKpiId: string,
+    field: "target" | "value",
+    text: string,
+  ) {
+    const key = numericalFieldKey(recordId, subKpiId, field);
+    setNumericalDraftByKey((prev) => ({ ...prev, [key]: text }));
+  }
+
+  function clearNumericalFieldDraft(recordId: string, subKpiId: string, field: "target" | "value") {
+    const key = numericalFieldKey(recordId, subKpiId, field);
+    setNumericalDraftByKey((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -502,6 +625,7 @@ export function AgentKpiKanbanFlow({
       canUnassignWork?: boolean;
       canCompleteUnassignedWork?: boolean;
       canAssignOffline?: boolean;
+      canDeleteTask?: boolean;
       operatorAgentId?: string | null;
       operatorAgentName?: string | null;
     };
@@ -510,6 +634,7 @@ export function AgentKpiKanbanFlow({
     setCanUnassignWork(Boolean(payload.canUnassignWork));
     setCanCompleteUnassignedWork(Boolean(payload.canCompleteUnassignedWork));
     setCanAssignOffline(Boolean(payload.canAssignOffline));
+    setCanDeleteTask(Boolean(payload.canDeleteTask));
     if (typeof payload.operatorAgentId === "string" && payload.operatorAgentId.trim()) {
       setOperatorAgentId(payload.operatorAgentId);
     }
@@ -597,6 +722,7 @@ export function AgentKpiKanbanFlow({
     if (!rows.some((row) => row.id === id)) return;
     focusedTaskOpenedRef.current = id;
     setActiveTaskId(id);
+    setDetailSegmentFilter("ALL");
     if (showAdminTaskManagement) {
       const task = rows.find((row) => row.id === id);
       setScheduleDraft(task ? taskToScheduleDraft(task) : null);
@@ -615,6 +741,7 @@ export function AgentKpiKanbanFlow({
 
   function openActiveTask(taskId: string) {
     setActiveTaskId(taskId);
+    setDetailSegmentFilter("ALL");
     if (!showAdminTaskManagement) {
       setScheduleDraft(null);
       return;
@@ -625,6 +752,7 @@ export function AgentKpiKanbanFlow({
 
   function closeActiveTask() {
     setActiveTaskId(null);
+    setDetailSegmentFilter("ALL");
     setScheduleDraft(null);
     setTaskAuditLog([]);
   }
@@ -747,6 +875,9 @@ export function AgentKpiKanbanFlow({
   }
 
   function canEditChecklist(r: KpiRecord) {
+    // SuperAdmin / HighAdmin may edit any running task, even when
+    // the card is assigned to other personnel.
+    if (canCompleteUnassignedWork) return true;
     const main = r.assignedAgent;
     if (!main) return false;
     if (operatorAgentId && main.id === operatorAgentId) return true;
@@ -767,8 +898,8 @@ export function AgentKpiKanbanFlow({
     ) {
       return true;
     }
-    const subAssigneeId = subKpiAssignedAgentId(s);
-    return canCompleteUnassignedWork && !r.assignedAgent?.id && !subAssigneeId;
+    // SuperAdmin / HighAdmin may update sub-task work on any running task.
+    return canCompleteUnassignedWork;
   }
 
   function canCompleteSubKpi(r: KpiRecord, s: SubKpiItem) {
@@ -1344,15 +1475,17 @@ export function AgentKpiKanbanFlow({
   }
 
   function penaltyContextForRecord(r: KpiRecord): SubKpiPenaltyContext {
+    const recurring = r.isRecurring !== false;
     return {
       nowMs: Date.now(),
       timeZone: tz,
       frequency: r.frequency,
-      isRecurring: r.isRecurring !== false,
+      isRecurring: recurring,
       title: r.title,
       taskDailyPenaltyAmount: taskDailyPenaltyAmountFromSubKpis(r.subKpis),
       taskDelayPenaltyFrequency: taskDelayPenaltyFrequencyFromSubKpis(r.subKpis),
       taskDueDate: getTaskTargetDueDate(r.subKpis),
+      recurringDeadlineMs: recurring ? periodEnd(r)?.getTime() ?? null : null,
     };
   }
 
@@ -1396,13 +1529,19 @@ export function AgentKpiKanbanFlow({
         title: "",
         dueDate: "",
         useCustomDueDate: false,
+        dueDateRollsWithCycle: false,
       }
     );
   }
 
   function patchAddSubTaskDraft(
     r: KpiRecord,
-    patch: Partial<{ title: string; dueDate: string; useCustomDueDate: boolean }>,
+    patch: Partial<{
+      title: string;
+      dueDate: string;
+      useCustomDueDate: boolean;
+      dueDateRollsWithCycle: boolean;
+    }>,
   ) {
     setAddSubTaskById((prev) => ({
       ...prev,
@@ -1412,6 +1551,10 @@ export function AgentKpiKanbanFlow({
 
   function hideAddSubTaskScheduleDate(r: KpiRecord) {
     return Boolean(r.isRecurring && r.frequency === "DAILY");
+  }
+
+  function allowAddSubTaskDueDateRoll(r: KpiRecord) {
+    return Boolean(r.isRecurring && r.frequency !== "DAILY");
   }
 
   async function addSubTaskToRecord(r: KpiRecord) {
@@ -1429,6 +1572,9 @@ export function AgentKpiKanbanFlow({
     }
     const dueDate =
       hideAddSubTaskScheduleDate(r) || !draft.useCustomDueDate ? null : draft.dueDate.trim() || null;
+    const dueDateRollsWithCycle = Boolean(
+      dueDate && allowAddSubTaskDueDateRoll(r) && draft.dueDateRollsWithCycle,
+    );
     setBusyId(r.id);
     setError(null);
     try {
@@ -1442,6 +1588,7 @@ export function AgentKpiKanbanFlow({
             // Segmented checklists: always land on Unassigned (drag into a segment afterward).
             segmentId: normalized.segmented ? UNSEGMENTED_SEGMENT_ID : null,
             dueDate,
+            dueDateRollsWithCycle,
           },
         }),
       });
@@ -1470,7 +1617,9 @@ export function AgentKpiKanbanFlow({
       title?: string;
       startDate?: string | null;
       dueDate?: string | null;
+      dueDateRollsWithCycle?: boolean | null;
       completionMode?: SubKpiCompletionMode;
+      completionRequirements?: SubKpiCompletionRequirements | null;
       numericalTarget?: number | null;
       dailyPenaltyAmount?: number | null;
       delayPenaltyFrequency?: DelayPenaltyFrequency | null;
@@ -1609,18 +1758,52 @@ export function AgentKpiKanbanFlow({
     return counts;
   }, [boardRows, nowMs, tz]);
 
+  const loadLocalTravelOrderListItems = useCallback(async () => {
+    // Only queued offline creates are listed — local "saved draft" rows are intentionally
+    // excluded from the Travel Orders list so drafts don't clutter the modal.
+    const pendingRows = await listOfflineDrafts("pending");
+    return pendingRows
+      .filter((d) => !d.serverTravelOrderId)
+      .map(offlineDraftAsListItem);
+  }, []);
+
+  const loadSavedTravelOrderDraftItems = useCallback(async () => {
+    // Saved drafts (syncStatus "draft") are appended last so they stay resumable
+    // and removable without cluttering the active list.
+    const draftRows = await listOfflineDrafts("draft");
+    return draftRows
+      .filter((d) => !d.serverTravelOrderId)
+      .map(offlineDraftAsListItem);
+  }, []);
+
+  async function removeDraftTravelOrder(localId: string) {
+    if (confirmRemoveDraftId !== localId) {
+      setConfirmRemoveDraftId(localId);
+      window.setTimeout(() => {
+        setConfirmRemoveDraftId((prev) => (prev === localId ? null : prev));
+      }, 4000);
+      return;
+    }
+    setConfirmRemoveDraftId(null);
+    try {
+      await deleteOfflineDraft(localId);
+    } catch {
+      // Draft already gone — treat as removed.
+    }
+    void reloadCompanyTravelOrders();
+  }
+
   const reloadCompanyTravelOrders = useCallback(async () => {
     setCompanyTravelOrdersLoading(true);
     setCompanyTravelOrdersError(null);
     try {
-      const pendingDrafts = (await listOfflineDrafts("pending"))
-        .filter((d) => !d.serverTravelOrderId)
-        .map(offlineDraftAsListItem);
+      const localItems = await loadLocalTravelOrderListItems();
+      const savedDrafts = await loadSavedTravelOrderDraftItems();
 
       if (!isBrowserOnline()) {
         const cached = await listAllCachedTravelOrders();
-        setCompanyTravelOrders([...pendingDrafts, ...cached]);
-        if (pendingDrafts.length === 0 && cached.length === 0) {
+        setCompanyTravelOrders([...localItems, ...cached, ...savedDrafts]);
+        if (localItems.length === 0 && cached.length === 0) {
           setCompanyTravelOrdersError(
             "You are offline and no cached travel orders are available yet.",
           );
@@ -1636,15 +1819,14 @@ export function AgentKpiKanbanFlow({
         throw new Error(body.error ?? "Could not load travel orders.");
       }
       const list = Array.isArray(body.travelOrders) ? body.travelOrders : [];
-      setCompanyTravelOrders([...pendingDrafts, ...list]);
+      setCompanyTravelOrders([...localItems, ...list, ...savedDrafts]);
       void cacheTravelOrders(list);
     } catch (err: unknown) {
-      const pendingDrafts = (await listOfflineDrafts("pending").catch(() => []))
-        .filter((d) => !d.serverTravelOrderId)
-        .map(offlineDraftAsListItem);
+      const localItems = await loadLocalTravelOrderListItems().catch(() => []);
+      const savedDrafts = await loadSavedTravelOrderDraftItems().catch(() => []);
       const cached = await listAllCachedTravelOrders().catch(() => []);
-      if (pendingDrafts.length > 0 || cached.length > 0) {
-        setCompanyTravelOrders([...pendingDrafts, ...cached]);
+      if (localItems.length > 0 || cached.length > 0 || savedDrafts.length > 0) {
+        setCompanyTravelOrders([...localItems, ...cached, ...savedDrafts]);
         setCompanyTravelOrdersError(
           isTravelOrderNetworkFailure(err) || !isBrowserOnline()
             ? "Showing cached travel orders (offline)."
@@ -1663,7 +1845,7 @@ export function AgentKpiKanbanFlow({
     } finally {
       setCompanyTravelOrdersLoading(false);
     }
-  }, []);
+  }, [loadLocalTravelOrderListItems]);
 
   useEffect(() => {
     if (!travelOrdersOpen) return;
@@ -2144,12 +2326,14 @@ export function AgentKpiKanbanFlow({
         {recurring ? (
           <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
             {canEditTarget
-              ? "Target applies to this cycle only. Prior cycles stay in the archive below."
-              : "Target is locked after creation. Admins can adjust it for the current cycle only after this recurring task has rolled over at least once."}
+              ? "You can set or change the target while this cycle is running. Prior cycles stay in the archive below."
+              : "Ask an admin to set the target number for this cycle."}
           </p>
         ) : (
           <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
-            Target was set at creation and is locked for one-off tasks.
+            {canEditTarget
+              ? "You can set or change the target while this task is running."
+              : "Ask an admin to set the target number."}
           </p>
         )}
         {archivedEntries.length > 0 ? (
@@ -2175,16 +2359,38 @@ export function AgentKpiKanbanFlow({
                 type="number"
                 step="any"
                 min={0}
-                value={target ?? ""}
+                value={numericalFieldDisplay(r.id, s.id, "target", target)}
                 disabled={busyId === r.id}
-                onChange={(e) => {
-                  const raw = e.target.value.trim();
-                  const nextTarget = raw === "" ? null : Number(raw);
+                onChange={(e) => setNumericalFieldDraft(r.id, s.id, "target", e.target.value)}
+                onBlur={() => {
+                  const raw = numericalFieldDisplay(r.id, s.id, "target", target).trim();
+                  clearNumericalFieldDraft(r.id, s.id, "target");
+                  if (raw === "") {
+                    if (target == null) return;
+                    if (canManageSubTasks && !pillarOnlyMode) {
+                      void updateSubTask(r.id, s.id, { numericalTarget: null });
+                      return;
+                    }
+                    void patchSubKpiWorkMeta(r.id, s.id, { numericalTarget: null });
+                    return;
+                  }
+                  const nextTarget = Number(raw);
+                  if (!Number.isFinite(nextTarget) || nextTarget <= 0) {
+                    setError("Target number must be a positive number.");
+                    return;
+                  }
+                  if (target != null && nextTarget === target) return;
                   if (canManageSubTasks && !pillarOnlyMode) {
                     void updateSubTask(r.id, s.id, { numericalTarget: nextTarget });
                     return;
                   }
                   void patchSubKpiWorkMeta(r.id, s.id, { numericalTarget: nextTarget });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    (e.target as HTMLInputElement).blur();
+                  }
                 }}
                 className="mt-1 rounded-lg border border-zinc-300 bg-white px-2 py-2 text-xs font-semibold text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                 aria-label={`Target number for ${s.title}`}
@@ -2210,13 +2416,34 @@ export function AgentKpiKanbanFlow({
             <input
               type="number"
               step="any"
-              value={actual ?? ""}
-              disabled={!editable || busyId === r.id || target == null}
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                void patchSubKpiWorkMeta(r.id, s.id, {
-                  numericalValue: raw === "" ? null : Number(raw),
-                });
+              value={numericalFieldDisplay(r.id, s.id, "value", actual)}
+              disabled={!editable || target == null}
+              onChange={(e) => setNumericalFieldDraft(r.id, s.id, "value", e.target.value)}
+              onBlur={() => {
+                if (target == null) {
+                  clearNumericalFieldDraft(r.id, s.id, "value");
+                  return;
+                }
+                const raw = numericalFieldDisplay(r.id, s.id, "value", actual).trim();
+                clearNumericalFieldDraft(r.id, s.id, "value");
+                if (raw === "") {
+                  if (actual == null) return;
+                  void patchSubKpiWorkMeta(r.id, s.id, { numericalValue: null });
+                  return;
+                }
+                const nextValue = Number(raw);
+                if (!Number.isFinite(nextValue)) {
+                  setError("Actual record must be a valid number.");
+                  return;
+                }
+                if (actual != null && nextValue === actual) return;
+                void patchSubKpiWorkMeta(r.id, s.id, { numericalValue: nextValue });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLInputElement).blur();
+                }
               }}
               className={cn(
                 "mt-1 rounded-lg border px-2 py-2 text-xs font-semibold tabular-nums dark:bg-zinc-900 dark:text-zinc-100",
@@ -2239,7 +2466,7 @@ export function AgentKpiKanbanFlow({
     s: SubKpiItem,
     canManageSubTasks: boolean,
   ) {
-    if (!canManageSubTasks || r.isRecurring !== false) return null;
+    if (!canManageSubTasks) return null;
     const ctx = penaltyContextForRecord(r);
     const accrued = subKpiAccruedPenalty(s, ctx);
     const freq = resolveSubKpiDelayPenaltyFrequency(s, ctx);
@@ -2363,7 +2590,6 @@ export function AgentKpiKanbanFlow({
     const subEditable = canEditSubKpi(r, s);
     const subCompletable = canCompleteSubKpi(r, s);
     const canManageSubTasks = showAdminTaskManagement;
-    const completionMode = resolveSubKpiCompletionMode(s);
     const completionRequirements = resolveSubKpiCompletionRequirements(s);
     const needsScreenshotsForCheckbox =
       completionRequirements.screenshots && !hasBeforeAndAfterScreenshots(s);
@@ -2374,6 +2600,7 @@ export function AgentKpiKanbanFlow({
       (numericalRecordProgressPercent(s.numericalValue, s.numericalTarget) ?? 0) < 100;
     const canEditWorkDetails = subEditable || canAssignWork || canManageSubTasks;
     const recurring = r.isRecurring !== false;
+    const showDueDateFields = !hideAddSubTaskScheduleDate(r);
     const finished = subKpiRequirementsMet(s);
     const showCheckbox =
       subEditable && busyId !== r.id && subKpiRequiresCheckbox(completionRequirements);
@@ -2554,29 +2781,72 @@ export function AgentKpiKanbanFlow({
         ) : null}
         {pillarOnlyMode ? null : renderSubKpiAssignmentControl(r, s)}
         {canManageSubTasks && !pillarOnlyMode ? (
-          <label className="mt-2 flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-            Assignee completion
-            <select
-              value={completionMode}
-              disabled={busyId === r.id}
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              onChange={(e) => {
-                void updateSubTask(r.id, s.id, {
-                  completionMode: e.target.value as SubKpiCompletionMode,
-                });
-              }}
-              className="mt-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            >
-              {SUB_KPI_COMPLETION_MODE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="mt-2 space-y-2 rounded-lg border border-zinc-200/80 bg-zinc-50/70 p-2.5 dark:border-zinc-700 dark:bg-zinc-950/50">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              Completion conditions
+            </p>
+            <p className="text-[10px] font-medium normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
+              Select one or more ways this sub-task can be completed.
+            </p>
+            {(
+              [
+                {
+                  key: "checkbox" as const,
+                  label: "Checklist checkbox",
+                  checked: completionRequirements.checkbox,
+                },
+                {
+                  key: "screenshots" as const,
+                  label: "Before/after screenshot uploads",
+                  checked: completionRequirements.screenshots,
+                },
+                {
+                  key: "screenshotUpload" as const,
+                  label: "Screenshot upload",
+                  checked: completionRequirements.screenshotUpload,
+                },
+                {
+                  key: "numerical" as const,
+                  label: "Numerical record",
+                  checked: completionRequirements.numerical,
+                },
+              ] as const
+            ).map((option) => (
+              <label
+                key={option.key}
+                className="flex cursor-pointer items-start gap-2 text-[11px] font-semibold text-zinc-700 dark:text-zinc-300"
+              >
+                <input
+                  type="checkbox"
+                  checked={option.checked}
+                  disabled={busyId === r.id}
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const next: SubKpiCompletionRequirements = {
+                      ...completionRequirements,
+                      [option.key]: e.target.checked,
+                    };
+                    if (
+                      !next.checkbox &&
+                      !next.screenshots &&
+                      !next.screenshotUpload &&
+                      !next.numerical
+                    ) {
+                      setError("Select at least one completion condition.");
+                      return;
+                    }
+                    setError(null);
+                    void updateSubTask(r.id, s.id, { completionRequirements: next });
+                  }}
+                  className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
         ) : null}
-        {showPriority || !recurring ? (
+        {showPriority || showDueDateFields || !recurring ? (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {showPriority ? (
             <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
@@ -2599,8 +2869,8 @@ export function AgentKpiKanbanFlow({
               </select>
             </label>
           ) : null}
-          {!recurring ? (
-            <div className="flex flex-col gap-1.5">
+          {showDueDateFields ? (
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
               {!pillarOnlyMode ? (
                 <label className="flex cursor-pointer items-start gap-2 text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
                   <input
@@ -2610,13 +2880,17 @@ export function AgentKpiKanbanFlow({
                     onChange={(e) => {
                       if (!e.target.checked) {
                         if (canManageSubTasks) {
-                          void updateSubTask(r.id, s.id, { dueDate: null });
+                          void updateSubTask(r.id, s.id, {
+                            dueDate: null,
+                            dueDateRollsWithCycle: false,
+                          });
                           return;
                         }
                         void patchSubKpiWorkMeta(r.id, s.id, { dueDate: null });
                         return;
                       }
-                      const seed = getTaskTargetDueDate(r.subKpis) || new Date().toISOString().slice(0, 10);
+                      const seed =
+                        getTaskTargetDueDate(r.subKpis) || new Date().toISOString().slice(0, 10);
                       if (canManageSubTasks) {
                         void updateSubTask(r.id, s.id, { dueDate: seed });
                         return;
@@ -2631,34 +2905,67 @@ export function AgentKpiKanbanFlow({
                       <span className="mt-0.5 block text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
                         {getTaskTargetDueDate(r.subKpis)
                           ? `Uses main task target (${getTaskTargetDueDate(r.subKpis)})`
-                          : "Will use main task target date"}
+                          : recurring
+                            ? "Uses the recurring cycle deadline when unset"
+                            : "Will use main task target date"}
                       </span>
                     ) : null}
                   </span>
                 </label>
               ) : null}
               {pillarOnlyMode || subKpiHasCustomDueDate(s) ? (
-                <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  Target date
-                  <DatePickerField
-                    value={
-                      pillarOnlyMode
-                        ? (s.dueDate ?? "")
-                        : (s.dueDate ?? "")
-                    }
-                    disabled={!canEditWorkDetails || busyId === r.id}
-                    onChange={(e) => {
-                      const value = e.target.value || null;
-                      if (canManageSubTasks && !pillarOnlyMode) {
-                        void updateSubTask(r.id, s.id, { dueDate: value });
-                        return;
-                      }
-                      void patchSubKpiWorkMeta(r.id, s.id, { dueDate: value });
-                    }}
-                    wrapperClassName="mt-1"
-                    aria-label={`Target date for ${s.title}`}
-                  />
-                </label>
+                <div className="flex flex-col gap-2 sm:max-w-xs">
+                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    Target date
+                    <DatePickerField
+                      value={s.dueDate ?? ""}
+                      disabled={!canEditWorkDetails || busyId === r.id}
+                      onChange={(e) => {
+                        const value = e.target.value || null;
+                        if (canManageSubTasks && !pillarOnlyMode) {
+                          void updateSubTask(r.id, s.id, {
+                            dueDate: value,
+                            ...(value ? {} : { dueDateRollsWithCycle: false }),
+                          });
+                          return;
+                        }
+                        void patchSubKpiWorkMeta(r.id, s.id, { dueDate: value });
+                      }}
+                      wrapperClassName="mt-1"
+                      aria-label={`Target date for ${s.title}`}
+                    />
+                  </label>
+                  {allowAddSubTaskDueDateRoll(r) &&
+                  !pillarOnlyMode &&
+                  subKpiHasCustomDueDate(s) &&
+                  canManageSubTasks ? (
+                    <label className="flex cursor-pointer items-start gap-2 text-[11px] font-semibold normal-case tracking-normal text-zinc-700 dark:text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={subKpiDueDateRollsWithCycle(s)}
+                        disabled={busyId === r.id}
+                        onChange={(e) =>
+                          void updateSubTask(r.id, s.id, {
+                            dueDateRollsWithCycle: e.target.checked,
+                          })
+                        }
+                        className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                      />
+                      <span>
+                        Adjust with each recurring cycle
+                        <span className="mt-0.5 block text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
+                          e.g. Aug 15 becomes Sep 15 on the next monthly cycle
+                        </span>
+                      </span>
+                    </label>
+                  ) : allowAddSubTaskDueDateRoll(r) &&
+                    !pillarOnlyMode &&
+                    subKpiDueDateRollsWithCycle(s) ? (
+                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500">
+                      Rolls with each recurring cycle
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -2995,7 +3302,7 @@ export function AgentKpiKanbanFlow({
                   onChange={(e) =>
                     patchAddSubTaskDraft(r, {
                       useCustomDueDate: e.target.checked,
-                      ...(e.target.checked ? {} : { dueDate: "" }),
+                      ...(e.target.checked ? {} : { dueDate: "", dueDateRollsWithCycle: false }),
                     })
                   }
                   className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
@@ -3012,16 +3319,37 @@ export function AgentKpiKanbanFlow({
                 </span>
               </label>
               {draft.useCustomDueDate ? (
-                <label className="flex max-w-xs flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                  Target date
-                  <DatePickerField
-                    value={draft.dueDate}
-                    disabled={busyId === r.id}
-                    onChange={(e) => patchAddSubTaskDraft(r, { dueDate: e.target.value })}
-                    wrapperClassName="mt-1"
-                    aria-label="Target date for new Sub Task"
-                  />
-                </label>
+                <div className="flex max-w-xs flex-col gap-2">
+                  <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+                    Target date
+                    <DatePickerField
+                      value={draft.dueDate}
+                      disabled={busyId === r.id}
+                      onChange={(e) => patchAddSubTaskDraft(r, { dueDate: e.target.value })}
+                      wrapperClassName="mt-1"
+                      aria-label="Target date for new Sub Task"
+                    />
+                  </label>
+                  {allowAddSubTaskDueDateRoll(r) ? (
+                    <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold normal-case tracking-normal text-zinc-700 dark:text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={draft.dueDateRollsWithCycle}
+                        disabled={busyId === r.id}
+                        onChange={(e) =>
+                          patchAddSubTaskDraft(r, { dueDateRollsWithCycle: e.target.checked })
+                        }
+                        className="mt-0.5 size-3.5 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
+                      />
+                      <span>
+                        Adjust with each recurring cycle
+                        <span className="mt-0.5 block text-[11px] font-medium text-zinc-500 dark:text-zinc-500">
+                          e.g. Aug 15 becomes Sep 15 on the next monthly cycle
+                        </span>
+                      </span>
+                    </label>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -3040,7 +3368,8 @@ export function AgentKpiKanbanFlow({
     );
   }
 
-  function renderTaskSubtaskContent(r: KpiRecord) {
+  function renderTaskSubtaskContent(r: KpiRecord, opts?: { segmentFilter?: string }) {
+    const segmentFilter = opts?.segmentFilter?.trim() || "ALL";
     const itProject = isTimelineProjectRecord(r);
     const normalized = normalizeSubKpis(r.subKpis);
     const itProjectData = itProject ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase) : null;
@@ -3060,14 +3389,28 @@ export function AgentKpiKanbanFlow({
     const showSubtaskPriority = itProject || checklistItems.length <= 1;
 
     if (!itProject && normalized.segmented) {
-      return normalized.segments.map((seg) => (
+      const visibleSegments =
+        segmentFilter === "ALL"
+          ? normalized.segments
+          : normalized.segments.filter((seg) => seg.id === segmentFilter);
+      if (visibleSegments.length === 0) {
+        return (
+          <p className="rounded-md border border-dashed border-zinc-300 bg-zinc-50/80 px-3 py-4 text-center text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-400">
+            No sub-tasks in this segment.
+          </p>
+        );
+      }
+      return visibleSegments.map((seg) => (
         <div
           key={seg.id}
           className="rounded-md border border-zinc-200/80 bg-white/60 p-2 dark:border-zinc-700 dark:bg-zinc-900/50"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-400">
-              {seg.label}
+              {isUnsegmentedSegmentId(seg.id) ? UNSEGMENTED_SEGMENT_LABEL : seg.label}
+              <span className="ml-1.5 font-semibold normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
+                ({seg.items.length})
+              </span>
             </p>
             {renderTaskSeekAssistanceButton(r, seg.items, {
               segmentLabel: seg.label,
@@ -3075,7 +3418,11 @@ export function AgentKpiKanbanFlow({
             })}
           </div>
           <div className="mt-1 space-y-2">
-            {seg.items.map((s) => renderNonItSubKpiCard(r, s, showSubtaskPriority))}
+            {seg.items.length === 0 ? (
+              <p className="px-1 py-2 text-[11px] text-zinc-500 dark:text-zinc-400">No sub-tasks yet.</p>
+            ) : (
+              seg.items.map((s) => renderNonItSubKpiCard(r, s, showSubtaskPriority))
+            )}
           </div>
         </div>
       ));
@@ -3573,7 +3920,8 @@ export function AgentKpiKanbanFlow({
       ? itProjectAggregatedProgressFromRaw(activeTask.subKpis, activeTask.itProjectPhase)
       : null;
     const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
-    const mainBarClass = itProject ? "bg-orange-500" : statusOf(activeTask) === "DONE" ? "bg-emerald-500" : "bg-blue-500";
+    const activeLane = statusOf(activeTask);
+    const mainRingStroke = laneProgressStrokeClass(activeLane, itProject);
 
     return createPortal(
       <div
@@ -3636,7 +3984,7 @@ export function AgentKpiKanbanFlow({
               ) : null}
             </div>
             <div className="flex shrink-0 items-start gap-2">
-              {showAdminTaskManagement ? (
+              {canDeleteTask ? (
                 <button
                   type="button"
                   disabled={busyId === activeTask.id}
@@ -3660,12 +4008,13 @@ export function AgentKpiKanbanFlow({
           <div className="mt-4 grid gap-4 lg:grid-cols-[0.9fr_1.6fr]">
             <aside className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
               {!fieldAssignment ? (
-              <div>
-                <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <ChecklistProgressRing percent={mainBarPct} strokeClassName={mainRingStroke} size={56} />
+                <div className="min-w-0">
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                     {itProjectProgress ? "Project progress" : "Progress"}
                   </p>
-                  <p className="text-xs font-bold text-zinc-950 dark:text-zinc-50">
+                  <p className="mt-0.5 text-xs font-bold text-zinc-950 dark:text-zinc-50">
                     {itProjectProgress
                       ? `${itProjectProgress.averagePercent}% avg · ${itProjectProgress.totalDone}/${itProjectProgress.totalItems}`
                       : p.inverted
@@ -3673,7 +4022,6 @@ export function AgentKpiKanbanFlow({
                         : `${p.done}/${p.total} finished`}
                   </p>
                 </div>
-                <ChecklistProgressBar percent={mainBarPct} barClassName={mainBarClass} />
               </div>
               ) : null}
               <dl className="space-y-2 text-xs">
@@ -3699,7 +4047,19 @@ export function AgentKpiKanbanFlow({
                           ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
                           : nonRecurringCycleHint(activeTask)
                         : end
-                          ? `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}`
+                          ? (() => {
+                              const progressNow = progress(activeTask);
+                              const incomplete = progressNow.done < progressNow.total;
+                              const pastDeadline = Date.now() >= end.getTime();
+                              if (incomplete && pastDeadline) {
+                                const holdDays = recurringIncompleteRolloverHoldDays(activeTask.frequency);
+                                const holdUntil = recurringIncompleteRolloverEligibleAt(end, tz, holdDays);
+                                return holdDays > 0
+                                  ? `Delayed — next cycle can start after ${holdUntil.toLocaleString(undefined, { timeZone: tz })} (${holdDays}-day hold).`
+                                  : `Delayed — next cycle can start after ${end.toLocaleString(undefined, { timeZone: tz })}.`;
+                              }
+                              return `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}`;
+                            })()
                           : ""}
                   </dd>
                 </div>
@@ -3761,9 +4121,7 @@ export function AgentKpiKanbanFlow({
                   </ul>
                 )}
               </div>
-              {showAdminTaskManagement &&
-              !fieldAssignment &&
-              (itProject || activeTask.isRecurring === false) ? (
+              {showAdminTaskManagement && !fieldAssignment ? (
                 <div className="block space-y-2 rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950/70">
                   <div className="grid items-end gap-2 sm:grid-cols-2">
                     <label className="flex min-w-0 flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
@@ -3857,18 +4215,59 @@ export function AgentKpiKanbanFlow({
               ) : null}
               {!fieldAssignment ? (
                 <>
-                  <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
                     <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
                       {pillarOnly ? "Main task completion" : "Sub Tasks"}
                     </h4>
-                    <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                      {(() => {
-                        const total = itProjectProgress?.totalItems ?? p.total;
-                        return `${total} item${total === 1 ? "" : "s"}`;
-                      })()}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!itProject && normalized.segmented ? (
+                        <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500">
+                          <span className="shrink-0">Segment</span>
+                          <select
+                            value={
+                              detailSegmentFilter !== "ALL" &&
+                              normalized.segments.some(
+                                (seg) =>
+                                  seg.id === detailSegmentFilter && !isUnsegmentedSegmentId(seg.id),
+                              )
+                                ? detailSegmentFilter
+                                : "ALL"
+                            }
+                            onChange={(e) => setDetailSegmentFilter(e.target.value)}
+                            className="min-w-[9rem] rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                            aria-label="Filter sub-tasks by segment"
+                          >
+                            <option value="ALL">
+                              All segments ({collectAllSubKpiItems(normalized).length})
+                            </option>
+                            {normalized.segments
+                              .filter((seg) => !isUnsegmentedSegmentId(seg.id))
+                              .map((seg) => (
+                                <option key={seg.id} value={seg.id}>
+                                  {seg.label} ({seg.items.length})
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                        {(() => {
+                          if (!itProject && normalized.segmented && detailSegmentFilter !== "ALL") {
+                            const seg = normalized.segments.find((s) => s.id === detailSegmentFilter);
+                            const count = seg?.items.length ?? 0;
+                            return `${count} item${count === 1 ? "" : "s"}`;
+                          }
+                          const total = itProjectProgress?.totalItems ?? p.total;
+                          return `${total} item${total === 1 ? "" : "s"}`;
+                        })()}
+                      </span>
+                    </div>
                   </div>
-                  <div className="space-y-2">{renderTaskSubtaskContent(activeTask)}</div>
+                  <div className="space-y-2">
+                    {renderTaskSubtaskContent(activeTask, {
+                      segmentFilter: detailSegmentFilter,
+                    })}
+                  </div>
                   {renderAddSubTaskPanel(activeTask)}
                 </>
               ) : null}
@@ -3892,7 +4291,7 @@ export function AgentKpiKanbanFlow({
               onClick={() => setTaskManagementOpen(true)}
               className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
             >
-              Task management
+              Add Task
             </button>
           ) : null}
           {canAssignWork ? (
@@ -3907,8 +4306,9 @@ export function AgentKpiKanbanFlow({
           <button
             type="button"
             onClick={() => setTravelOrdersOpen(true)}
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
           >
+            <TravelOrdersIcon className="size-4 shrink-0" />
             Travel Orders
           </button>
         </div>
@@ -4049,29 +4449,46 @@ export function AgentKpiKanbanFlow({
             const label = col === "CURRENT" ? "Current" : col === "DONE" ? "Done" : "Delayed";
             const colClass =
               col === "CURRENT"
-                ? "border-blue-200/90 bg-blue-50/60 dark:border-blue-500/25 dark:bg-blue-950/25"
+                ? "border-blue-300/80 bg-blue-50/40 dark:border-blue-500/35 dark:bg-[#0c1220]"
                 : col === "DONE"
-                  ? "border-emerald-200/90 bg-emerald-50/60 dark:border-emerald-500/25 dark:bg-emerald-950/25"
-                  : "border-rose-200/90 bg-rose-50/60 dark:border-rose-500/25 dark:bg-rose-950/25";
+                  ? "border-emerald-300/80 bg-emerald-50/40 dark:border-emerald-500/35 dark:bg-[#0c1612]"
+                  : "border-rose-300/80 bg-rose-50/40 dark:border-rose-500/35 dark:bg-[#160c10]";
+            const headerClass =
+              col === "CURRENT"
+                ? "bg-blue-600 text-white shadow-[0_0_24px_-8px_rgba(37,99,235,0.85)]"
+                : col === "DONE"
+                  ? "bg-emerald-600 text-white shadow-[0_0_24px_-8px_rgba(5,150,105,0.85)]"
+                  : "bg-rose-600 text-white shadow-[0_0_24px_-8px_rgba(225,29,72,0.85)]";
+            const countBadgeClass =
+              col === "CURRENT"
+                ? "bg-blue-950/35 text-white"
+                : col === "DONE"
+                  ? "bg-emerald-950/35 text-white"
+                  : "bg-rose-950/35 text-white";
 
             return (
               <article
                 key={`${col}-${laneRegisterKey}`}
                 ref={kpiStatusDrag.registerColumn(col)}
                 className={cn(
-                  "min-w-0 overflow-hidden rounded-xl border p-3 transition md:min-h-[300px]",
+                  "min-w-0 overflow-hidden rounded-xl border transition md:min-h-[300px]",
                   col !== mobileLane && "hidden md:block",
                   colClass,
                   kpiStatusDrag.hoverColumn === col && "ring-2 ring-inset ring-orange-500/60",
                 )}
               >
-                <div className="mb-2 hidden items-center justify-between gap-3 px-1 md:flex">
-                  <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{label}</h4>
-                  <span className="rounded-full bg-white/60 px-2 py-0.5 text-xs font-semibold text-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-200">
+                <div
+                  className={cn(
+                    "mb-3 hidden items-center justify-between gap-3 px-3 py-2.5 md:flex",
+                    headerClass,
+                  )}
+                >
+                  <h4 className="text-sm font-bold tracking-wide">{label}</h4>
+                  <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold tabular-nums", countBadgeClass)}>
                     {list.length}
                   </span>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-3 px-3 pb-3 pt-3 md:pt-0">
                   {list.length === 0 ? (
                     <p className="px-2 py-8 text-center text-sm text-zinc-600 dark:text-zinc-400">No tasks here.</p>
                   ) : (
@@ -4105,14 +4522,7 @@ export function AgentKpiKanbanFlow({
                       const pillarOnly = !itProject && isPillarOnlyTask(r.subKpis);
                       const fieldAssignment = isFieldAssignmentRecord(r);
                       const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
-                      const mainBarClass =
-                        col === "DONE"
-                          ? "bg-emerald-500"
-                          : col === "DELAYED"
-                            ? "bg-rose-500"
-                            : itProject
-                              ? "bg-orange-500"
-                              : "bg-blue-500";
+                      const mainRingStroke = laneProgressStrokeClass(col, itProject);
                       const drawerAllowed = canOpenSubtaskDrawer(r, checklistItems);
                       const showSubtaskDrawerToggle = drawerAllowed && !pillarOnly;
                       const drawerOpen = openSubtaskDrawers.has(r.id);
@@ -4123,7 +4533,7 @@ export function AgentKpiKanbanFlow({
                             ? kpiStatusDrag.getCardPointerProps(r.id, { getLabel: () => taskLabel(r) })
                             : {})}
                           className={cn(
-                            "min-w-0 rounded-lg border border-zinc-200/80 bg-white/75 p-2.5 shadow-sm transition hover:border-orange-300 hover:bg-white dark:border-zinc-700/80 dark:bg-zinc-950/40 dark:hover:border-orange-800/80 dark:hover:bg-zinc-950/60 md:p-3",
+                            "min-w-0 rounded-xl border border-zinc-200/90 bg-white p-2.5 shadow-sm transition hover:border-orange-300 hover:bg-white dark:border-zinc-700/90 dark:bg-[#1a1a1a] dark:hover:border-orange-700/70 dark:hover:bg-[#1f1f1f] md:p-3",
                             busyId === r.id && "opacity-50",
                             editable && kpiStatusDrag.draggingItemId === r.id && "ring-1 ring-orange-400/40",
                           )}
@@ -4165,7 +4575,7 @@ export function AgentKpiKanbanFlow({
                                 </>
                               ) : (
                                 <>
-                                  <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                  <p className="truncate text-sm font-bold uppercase tracking-wide text-zinc-900 dark:text-zinc-50">
                                     {taskLabel(r)}
                                   </p>
                                   <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
@@ -4180,7 +4590,7 @@ export function AgentKpiKanbanFlow({
                                 </p>
                               ) : null}
                             </div>
-                            <span className="rounded-full border border-zinc-200 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-200">
+                            <span className="shrink-0 rounded-full border border-zinc-200 bg-zinc-100/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300">
                               {taskTypeBadgeLabel(r, itProject)}
                             </span>
                           </div>
@@ -4218,83 +4628,86 @@ export function AgentKpiKanbanFlow({
                             </p>
                           ) : (
                           <div className="mt-2 md:mt-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-xs text-zinc-700 dark:text-zinc-200">
-                                <span className="md:hidden">Progress</span>
-                                <span className="hidden md:inline">
-                                  {itProjectProgress ? "Project progress (phase average)" : "Progress"}
-                                </span>
-                              </p>
-                              <p className="shrink-0 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                                {itProjectProgress
-                                  ? itProjectProgress.totalItems > 0
-                                    ? (
-                                        <>
-                                          <span className="md:hidden">
-                                            {itProjectProgress.averagePercent}% · {itProjectProgress.totalDone}/
-                                            {itProjectProgress.totalItems}
-                                          </span>
-                                          <span className="hidden md:inline">
-                                            {itProjectProgress.averagePercent}% avg · {itProjectProgress.totalDone}/
-                                            {itProjectProgress.totalItems} sub-tasks
-                                          </span>
-                                        </>
-                                      )
-                                    : "0%"
-                                  : p.total > 0
-                                    ? p.inverted
+                            <div className="flex items-center gap-3">
+                              <ChecklistProgressRing
+                                percent={mainBarPct}
+                                strokeClassName={mainRingStroke}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                                  <span className="md:hidden">Progress</span>
+                                  <span className="hidden md:inline">
+                                    {itProjectProgress ? "Project progress (phase average)" : "Progress"}
+                                  </span>
+                                </p>
+                                <p className="mt-0.5 text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                                  {itProjectProgress
+                                    ? itProjectProgress.totalItems > 0
                                       ? (
                                           <>
                                             <span className="md:hidden">
-                                              {p.pct}% · {p.negative} flagged
+                                              {itProjectProgress.totalDone}/{itProjectProgress.totalItems} sub-tasks
                                             </span>
                                             <span className="hidden md:inline">
-                                              {p.positive}/{p.total} clear · {p.negative} flagged · {p.pct}%
+                                              {itProjectProgress.totalDone}/{itProjectProgress.totalItems} sub-tasks
                                             </span>
                                           </>
                                         )
-                                      : (
-                                          <>
-                                            <span className="md:hidden">
-                                              {p.done}/{p.total} · {p.pct}%
-                                            </span>
-                                            <span className="hidden md:inline">
-                                              {p.done}/{p.total} finished · {p.missing} pending · {p.pct}%
-                                            </span>
-                                          </>
-                                        )
-                                    : `${p.done}/${p.total} · ${p.pct}%`}
-                              </p>
+                                      : "0 sub-tasks"
+                                    : p.total > 0
+                                      ? p.inverted
+                                        ? (
+                                            <>
+                                              <span className="md:hidden">
+                                                {p.positive}/{p.total} clear · {p.negative} flagged
+                                              </span>
+                                              <span className="hidden md:inline">
+                                                {p.positive}/{p.total} clear · {p.negative} flagged
+                                              </span>
+                                            </>
+                                          )
+                                        : (
+                                            <>
+                                              <span className="md:hidden">
+                                                {p.done}/{p.total} finished · {p.missing} pending
+                                              </span>
+                                              <span className="hidden md:inline">
+                                                {p.done}/{p.total} finished · {p.missing} pending
+                                              </span>
+                                            </>
+                                          )
+                                      : `${p.done}/${p.total}`}
+                                </p>
+                                {itProjectProgress && itProjectProgress.phases.filter((ph) => ph.total > 0).length > 1 ? (
+                                  <p className="mt-1 hidden text-[10px] text-zinc-500 dark:text-zinc-400 md:block">
+                                    Average of{" "}
+                                    {itProjectProgress.phases
+                                      .filter((ph) => ph.total > 0)
+                                      .map((ph) => `${ph.phaseName} ${ph.percent}%`)
+                                      .join(" · ")}
+                                  </p>
+                                ) : null}
+                                <p className="mt-1 hidden text-[11px] leading-snug text-zinc-600 dark:text-zinc-400 md:block">
+                                  {itProject
+                                    ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
+                                    : pillarOnly
+                                      ? r.isRecurring !== false
+                                        ? end
+                                          ? `Complete the main task this cycle. Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz}).`
+                                          : "Complete the main task for this recurring cycle."
+                                        : end
+                                          ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
+                                          : nonRecurringCycleHint(r)
+                                      : r.isRecurring === false
+                                        ? end
+                                          ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
+                                          : nonRecurringCycleHint(r)
+                                        : end
+                                          ? `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`
+                                          : ""}
+                                </p>
+                              </div>
                             </div>
-                            <ChecklistProgressBar percent={mainBarPct} barClassName={mainBarClass} />
-                            {itProjectProgress && itProjectProgress.phases.filter((ph) => ph.total > 0).length > 1 ? (
-                              <p className="mt-1.5 hidden text-[10px] text-zinc-500 dark:text-zinc-400 md:block">
-                                Average of{" "}
-                                {itProjectProgress.phases
-                                  .filter((ph) => ph.total > 0)
-                                  .map((ph) => `${ph.phaseName} ${ph.percent}%`)
-                                  .join(" · ")}
-                              </p>
-                            ) : null}
-                            <p className="mt-2 hidden text-xs text-zinc-600 dark:text-zinc-400 md:block">
-                              {itProject
-                                ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
-                                : pillarOnly
-                                  ? r.isRecurring !== false
-                                    ? end
-                                      ? `Complete the main task this cycle. Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz}).`
-                                      : "Complete the main task for this recurring cycle."
-                                    : end
-                                      ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
-                                      : nonRecurringCycleHint(r)
-                                  : r.isRecurring === false
-                                    ? end
-                                      ? `Delayed after ${end.toLocaleString(undefined, { timeZone: tz })} if incomplete (day after target date).`
-                                      : nonRecurringCycleHint(r)
-                                    : end
-                                      ? `Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz})`
-                                      : ""}
-                            </p>
                             {itProject && incLate > 0 ? (
                               <p className="mt-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
                                 {p.done === p.total
@@ -4373,7 +4786,7 @@ export function AgentKpiKanbanFlow({
                                 </span>
                               </button>
                             ) : null}
-                            {showAdminTaskManagement ? (
+                            {canDeleteTask ? (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -4422,7 +4835,7 @@ export function AgentKpiKanbanFlow({
       )}
       <TaskBoardPopup
         open={taskManagementOpen}
-        title="Task management"
+        title="Add Task"
         description="Create recurring tasks, pillars, and sub-task checklists for the Task Board."
         onClose={() => setTaskManagementOpen(false)}
         size="xl"
@@ -4459,7 +4872,10 @@ export function AgentKpiKanbanFlow({
           </p>
           <button
             type="button"
-            onClick={() => setCreateTravelOrderOpen(true)}
+            onClick={() => {
+              setResumeTravelOrderDraftId(null);
+              setCreateTravelOrderOpen(true);
+            }}
             className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500"
           >
             New Travel Order
@@ -4482,40 +4898,92 @@ export function AgentKpiKanbanFlow({
         ) : (
           <ul className="space-y-2">
             {companyTravelOrders.map((order) => {
-              const pendingSync = order.status === "PENDING_SYNC" || !order.kpiMaintenanceId;
+              const isDraft = order.status === "DRAFT";
+              const pendingSync = order.status === "PENDING_SYNC";
+              const creatorId = order.createdByAgentId?.trim() || "";
+              const travelerList = order.travelers ?? [];
+              const creatorIsTraveler =
+                Boolean(creatorId) && travelerList.some((t) => t.id === creatorId);
+              const preparedBy =
+                order.createdByAgent?.name && creatorId && !creatorIsTraveler
+                  ? order.createdByAgent.name
+                  : null;
               const travelers =
-                (order.travelers?.length ?? 0) > 0
-                  ? (order.travelers ?? []).map((t) => t.name).join(", ")
-                  : order.createdByAgent?.name ?? "—";
+                travelerList.length > 0
+                  ? travelerList.map((t) => t.name).join(", ")
+                  : preparedBy
+                    ? "—"
+                    : order.createdByAgent?.name ?? "—";
               return (
-                <li key={order.id}>
+                <li key={order.id} className="flex items-stretch gap-1.5">
                   <button
                     type="button"
                     disabled={pendingSync}
                     onClick={() => {
-                      if (pendingSync || !order.kpiMaintenanceId) return;
+                      if (pendingSync) return;
+                      if (isDraft) {
+                        setTravelOrdersOpen(false);
+                        setResumeTravelOrderDraftId(order.id);
+                        setCreateTravelOrderOpen(true);
+                        return;
+                      }
+                      if (!order.kpiMaintenanceId) return;
+                      const taskId = order.kpiMaintenanceId;
+                      const onBoard = rows.some((row) => row.id === taskId);
                       setTravelOrdersOpen(false);
-                      openActiveTask(order.kpiMaintenanceId);
+                      if (onBoard) {
+                        openActiveTask(taskId);
+                        return;
+                      }
+                      // Company list includes peers' orders that are not on this board —
+                      // open a dedicated viewer so APPROVED/CONFIRMED rows are still viewable.
+                      setViewTravelOrder({
+                        taskId,
+                        travelOrderId: order.id,
+                        title:
+                          order.orderRequest?.trim() ||
+                          order.kpiMainTask ||
+                          order.kpiTitle ||
+                          "Travel order",
+                      });
                     }}
                     className="flex w-full items-start justify-between gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 text-left transition hover:border-orange-400/60 hover:bg-orange-50/50 disabled:cursor-default disabled:opacity-90 dark:border-zinc-700 dark:bg-zinc-950/50 dark:hover:border-orange-500/40 dark:hover:bg-orange-950/20"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
-                        {order.kpiTitle ?? "Travel Orders"}
+                        Travel Orders
                       </p>
                       <p className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                         {order.orderRequest?.trim() || order.kpiMainTask || "Field Assignment"}
                       </p>
                       <p className="mt-1 text-xs text-zinc-500">
-                        Travelers: {travelers}
-                        {order.vehicle ? ` · Vehicle: ${travelOrderVehicleLabel(order.vehicle)}` : ""}
-                        {pendingSync ? " · Saved offline — will sync when online" : ""}
+                        {isDraft
+                          ? "Saved draft — open to continue editing"
+                          : `${preparedBy ? `Prepared By: ${preparedBy} · ` : ""}Travelers: ${travelers}${
+                              order.vehicle
+                                ? ` · Vehicle: ${travelOrderVehicleLabel(order.vehicle)}`
+                                : ""
+                            }${pendingSync ? " · Saved offline — will sync when online" : ""}`}
                       </p>
                     </div>
                     <span className="shrink-0 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      {pendingSync ? "PENDING SYNC" : order.status}
+                      {isDraft ? "DRAFT" : pendingSync ? "PENDING SYNC" : order.status}
                     </span>
                   </button>
+                  {isDraft && isSuperAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => void removeDraftTravelOrder(order.id)}
+                      className={
+                        confirmRemoveDraftId === order.id
+                          ? "shrink-0 self-center rounded-xl border border-rose-400 bg-rose-600 px-2.5 py-3 text-[11px] font-bold text-white hover:bg-rose-500"
+                          : "shrink-0 self-center rounded-xl border border-rose-300 bg-white px-2.5 py-3 text-[11px] font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/40 dark:bg-zinc-950 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                      }
+                      title="Remove this draft travel order (stored on this device)"
+                    >
+                      {confirmRemoveDraftId === order.id ? "Confirm remove?" : "Remove draft"}
+                    </button>
+                  ) : null}
                 </li>
               );
             })}
@@ -4527,15 +4995,40 @@ export function AgentKpiKanbanFlow({
         mainTaskName=""
         allowEditDetails
         companyScopeAgentId={operatorAgentId}
-        onClose={() => setCreateTravelOrderOpen(false)}
+        resumeLocalId={resumeTravelOrderDraftId}
+        onClose={() => {
+          setCreateTravelOrderOpen(false);
+          setResumeTravelOrderDraftId(null);
+        }}
+        onDraftSaved={() => {
+          setCreateTravelOrderOpen(false);
+          setResumeTravelOrderDraftId(null);
+          void reloadCompanyTravelOrders();
+        }}
         onCreated={({ kpiId, offlineQueued }) => {
           setCreateTravelOrderOpen(false);
+          setResumeTravelOrderDraftId(null);
           void reloadCompanyTravelOrders();
           if (offlineQueued) {
             return;
           }
           void load();
           openActiveTask(kpiId);
+        }}
+      />
+      <TravelOrderApprovalModal
+        open={Boolean(viewTravelOrder)}
+        taskId={viewTravelOrder?.taskId ?? null}
+        travelOrderId={viewTravelOrder?.travelOrderId ?? null}
+        title={viewTravelOrder?.title}
+        description="View details, approvals, and check-ins for this travel order."
+        operatorAgentId={operatorAgentId}
+        canAssignWork={canAssignWork}
+        canCheckIn
+        onClose={() => setViewTravelOrder(null)}
+        onUpdated={() => {
+          void reloadCompanyTravelOrders();
+          void load();
         }}
       />
       {(() => {
@@ -4557,6 +5050,16 @@ export function AgentKpiKanbanFlow({
                 ? (() => {
                     const managerRecord = rows.find((r) => r.id === subTasksManagerTaskId);
                     return managerRecord ? hideAddSubTaskScheduleDate(managerRecord) : false;
+                  })()
+                : false
+            }
+            allowDueDateRollWithCycle={
+              subTasksManagerTaskId
+                ? (() => {
+                    const managerRecord = rows.find((r) => r.id === subTasksManagerTaskId);
+                    return Boolean(
+                      managerRecord?.isRecurring && managerRecord.frequency !== "DAILY",
+                    );
                   })()
                 : false
             }

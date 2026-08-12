@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 280" fill="none" role="img" aria-label="Workforce Productivity Dashboard">
+  <path d="M48 52 L98 188 L148 52 L198 188 L248 52 L210 52 L175 148 L140 52 L105 148 L70 52 Z" fill="#FFFFFF"/>
+  <rect x="78" y="78" width="16" height="72" rx="2" fill="#FFFFFF"/>
+  <rect x="118" y="58" width="16" height="112" rx="2" fill="#FFFFFF"/>
+  <rect x="158" y="38" width="16" height="148" rx="2" fill="#FFFFFF"/>
+  <path d="M248 52 C348 52 418 92 418 132 C418 172 348 212 248 212 L248 172 C318 172 378 152 378 132 C378 112 318 92 248 92 Z" fill="#FF6B00"/>
+  <path d="M418 132 L418 42" stroke="#FF6B00" stroke-width="16" stroke-linecap="round"/>
+  <path d="M402 58 L418 36 L434 58 Z" fill="#FF6B00"/>
+  <text x="250" y="248" text-anchor="middle" fill="#FF6B00" font-size="36" font-weight="700" font-family="Arial, Helvetica, sans-serif" letter-spacing="0.12em">WORKFORCE</text>
+  <text x="250" y="275" text-anchor="middle" fill="#D0D0D0" font-size="18" font-weight="700" font-family="Arial, Helvetica, sans-serif" letter-spacing="0.12em">PRODUCTIVITY DASHBOARD</text>
+</svg>

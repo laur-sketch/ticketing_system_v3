@@ -103,6 +103,20 @@ export async function proxy(req: NextRequest) {
     }
   }
 
+  if (pathname.startsWith("/travel-orders")) {
+    const denied = requireAuth(req, token, sessionInvalid);
+    if (denied) return denied;
+    if (
+      !isAllowed(token!.role as string | undefined, [
+        "Admin",
+        "Personnel",
+        "Personnel-Guard",
+      ])
+    ) {
+      return NextResponse.redirect(new URL("/", req.url));
+    }
+  }
+
   if (pathname.startsWith("/my-tickets")) {
     if (sessionInvalid) {
       return redirectSessionExpired(req);
@@ -123,6 +137,8 @@ export const config = {
     "/my-tickets",
     "/my-tickets/:path*",
     "/my-requests/:path*",
+    "/travel-orders",
+    "/travel-orders/:path*",
     "/customer/:path*",
   ],
 };

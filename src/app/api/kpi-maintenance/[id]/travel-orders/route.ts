@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
+import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import { prisma } from "@/lib/prisma";
 import {
   agentIdsFromApprovalLevels,
@@ -44,11 +45,22 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
         (order) =>
           isDesignatedApprover(operatorId, order) ||
           order.confirmationByAgentId === operatorId ||
+          order.createdByAgentId === operatorId ||
           isTravelOrderTraveler(operatorId, order),
       ),
   );
+  const companyTeamId = operatorId
+    ? await resolveAgentDesignatedCompanyId(operatorId)
+    : null;
+  const sameCompany = Boolean(
+    companyTeamId &&
+      rows.some((order) => order.companyTeamId && order.companyTeamId === companyTeamId),
+  );
   const canAccess =
-    perms.canAssignWork || kpi.assignedAgentId === operatorId || isStakeholder;
+    perms.canAssignWork ||
+    kpi.assignedAgentId === operatorId ||
+    isStakeholder ||
+    sameCompany;
   if (!canAccess) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   return NextResponse.json({ travelOrders: rows.map(serializeTravelOrder) });

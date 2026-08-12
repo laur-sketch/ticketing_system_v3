@@ -97,6 +97,9 @@ function linksForRole(role: string | undefined): NavItem[] {
       { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
     ];
   }
+  if (role === "Personnel-Guard") {
+    return [{ kind: "link", href: "/travel-orders", label: "Travel Orders" }];
+  }
   return [{ kind: "link", href: "/", label: "Home" }];
 }
 
@@ -124,6 +127,7 @@ function iconForLink(label: string) {
   if (key.includes("queue metrics")) return Gauge;
   if (key.includes("create request")) return PlusSquare;
   if (key.includes("requests")) return Ticket;
+  if (key.includes("travel")) return Ticket;
   return Home;
 }
 

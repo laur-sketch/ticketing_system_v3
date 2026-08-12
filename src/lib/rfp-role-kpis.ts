@@ -1,6 +1,6 @@
 /**
  * Request for Payment personnel KPIs — helpdesk-style metrics for
- * Approved By (Accounting) and Approved By (Finance).
+ * Prepared by Bookkeeper and Approved By Accounting.
  * Requestors are not credited (submitting an RFP is not a KPI).
  */
 
@@ -89,10 +89,13 @@ async function metricsFromCounts(counts: RoleCounts): Promise<RfpRolePersonnelMe
 
 /**
  * Build Accounting / Finance personnel KPIs from RFP tickets.
- * Requestor is intentionally omitted from KPI credit.
+ * Requestor and Approved By are not credited — only Prepared by Bookkeeper
+ * (`accountingAgentId`) and Approved By Accounting (`financeAgentId`).
  * Closed = request confirmed (`closedAt`) on a Mon–Sat day in range
  *   and the role step completed.
- * Pending = awaiting that role step.
+ * Pending = awaiting that role step, and only when that seat is assigned.
+ * Never fall back to the board assignee (often the Approver while Bookkeeper
+ * / Accounting seats are still empty).
  */
 export async function loadRfpRolePersonnelMetrics(
   scoped: Record<string, unknown>,
@@ -117,7 +120,6 @@ export async function loadRfpRolePersonnelMetrics(
     },
     select: {
       id: true,
-      assignedAgentId: true,
       closedAt: true,
       paymentApprovalMeta: true,
     },
@@ -135,22 +137,22 @@ export async function loadRfpRolePersonnelMetrics(
 
     // Closed credit only after requestor confirmation (closedAt), still attributed to the role.
     if (confirmedInRange && meta.completed.APPROVED_BY_ACCOUNTING) {
-      const creditId = meta.accountingAgentId ?? row.assignedAgentId;
+      const creditId = meta.accountingAgentId?.trim() || null;
       if (agentInScope(creditId, scopedAgentIds)) bump(accountingCounts, creditId, "closed");
     }
 
     if (confirmedInRange && meta.completed.APPROVED_BY_FINANCE) {
-      const creditId = meta.financeAgentId ?? row.assignedAgentId;
+      const creditId = meta.financeAgentId?.trim() || null;
       if (agentInScope(creditId, scopedAgentIds)) bump(financeCounts, creditId, "closed");
     }
 
     if (meta.proceduralStep === "APPROVED_BY_ACCOUNTING") {
-      const pendingId = meta.accountingAgentId ?? row.assignedAgentId;
+      const pendingId = meta.accountingAgentId?.trim() || null;
       if (agentInScope(pendingId, scopedAgentIds)) bump(accountingCounts, pendingId, "pending");
     }
 
     if (meta.proceduralStep === "APPROVED_BY_FINANCE") {
-      const pendingId = meta.financeAgentId ?? row.assignedAgentId;
+      const pendingId = meta.financeAgentId?.trim() || null;
       if (agentInScope(pendingId, scopedAgentIds)) bump(financeCounts, pendingId, "pending");
     }
   }

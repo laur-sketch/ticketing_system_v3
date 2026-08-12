@@ -475,8 +475,8 @@ export async function PATCH(
               {
                 error:
                   meta.skipApprovedBy
-                    ? "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY ACCOUNTING, and APPROVED BY FINANCE before proceeding."
-                    : "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY, APPROVED BY ACCOUNTING, and APPROVED BY FINANCE before proceeding.",
+                    ? "This Request for Payment is not green-lit yet. Complete NOTED BY, PREPARED BY BOOKKEEPER, and APPROVED BY ACCOUNTING before proceeding."
+                    : "This Request for Payment is not green-lit yet. Complete NOTED BY, APPROVED BY, PREPARED BY BOOKKEEPER, and APPROVED BY ACCOUNTING before proceeding.",
               },
               { status: 400 },
             );
@@ -1311,19 +1311,19 @@ export async function PATCH(
         const keys = Object.keys(nextAssignees);
         if (keys.some((k) => k !== "accountingAgentId" && k !== "financeAgentId")) {
           return NextResponse.json(
-            { error: "You can only set Approved By (Accounting) and Approved By (Finance) on this step." },
+            { error: "You can only set Prepared by Bookkeeper and Approved By Accounting on this step." },
             { status: 403 },
           );
         }
         if (!nextAssignees.accountingAgentId && !meta.accountingAgentId) {
           return NextResponse.json(
-            { error: "Select Approved By (Accounting)." },
+            { error: "Select Prepared by Bookkeeper." },
             { status: 400 },
           );
         }
         if (!nextAssignees.financeAgentId && !meta.financeAgentId) {
           return NextResponse.json(
-            { error: "Select Approved By (Finance)." },
+            { error: "Select Approved By Accounting." },
             { status: 400 },
           );
         }
@@ -1370,12 +1370,12 @@ export async function PATCH(
         await assertAgentCompany(
           nextAssignees.accountingAgentId,
           sendToCompanyId,
-          "Approved By (Accounting)",
+          "Prepared by Bookkeeper:",
         ),
         await assertAgentCompany(
           nextAssignees.financeAgentId,
           sendToCompanyId,
-          "Approved By (Finance)",
+          "Approved By Accounting",
         ),
       ]) {
         if (check) return check;
@@ -1681,7 +1681,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              "Mode of payment can be set or edited on APPROVED BY ACCOUNTING after Noted By and Approved By are complete (or on APPROVED BY when Accounting/Finance were left unset).",
+              "Mode of payment can be set or edited on PREPARED BY BOOKKEEPER after Noted By and Approved By are complete (or on APPROVED BY when Bookkeeper / Accounting seats were left unset).",
           },
           { status: 400 },
         );

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { DateTime } from "luxon";
-import { FileText, ImagePlus, Loader2, MapPin, Paperclip, Plus, X } from "lucide-react";
+import { Camera, FileText, Loader2, MapPin, Paperclip, Plus, X } from "lucide-react";
 import { INTAKE_ATTACHMENT_ACCEPT } from "@/lib/ticket-intake-screenshots-constants";
 import { MapLocationPicker } from "@/components/task-board/MapLocationPicker";
 import {
@@ -47,6 +48,7 @@ import {
   applyLocalTravelOrderOverlay,
   cacheTravelOrders,
   getCachedTravelOrdersForTask,
+  listAllCachedTravelOrders,
   newTravelOrderOfflineId,
   upsertCachedTravelOrder,
 } from "@/lib/offline/travel-order-offline-db";
@@ -60,7 +62,18 @@ import {
 } from "@/lib/offline/travel-order-sync";
 
 type TravelOrderSummaryPanelProps = {
-  taskId: string;
+  /** KPI / Field Assignment task id. Required when `source` is `"task"` (default). */
+  taskId?: string;
+  /**
+   * `task` — load orders for one KPI card.
+   * `visible` — load all travel orders visible to the signed-in staff member.
+   */
+  source?: "task" | "visible";
+  /**
+   * `full` — normal task-board interactions.
+   * `gatePassOnly` — details + approvals are read-only; only Gate Pass Start/End are actionable.
+   */
+  interactionMode?: "full" | "gatePassOnly";
   /** When set, only this travel order is shown (e.g. notification deep link). */
   focusTravelOrderId?: string | null;
   /** Current operator agent id (for designated approver checks). */
@@ -69,6 +82,8 @@ type TravelOrderSummaryPanelProps = {
   canAssignWork?: boolean;
   /** Whether the viewer can mark locations / edit remarks. */
   canCheckIn?: boolean;
+  /** Personnel-Guard: gate-pass Start/End + Guard on Duty only. */
+  personnelGuard?: boolean;
   /** Refresh board after KPI is recorded. */
   onKpiSubmitted?: () => void;
 };
@@ -90,30 +105,93 @@ function readDeviceGps(): Promise<{ latitude: number; longitude: number }> {
       reject(new Error("Geolocation is not available on this device."));
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+
+    let settled = false;
+    let best: { latitude: number; longitude: number; accuracy: number } | null = null;
+    const finish = (result: { latitude: number; longitude: number }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      try {
+        navigator.geolocation.clearWatch(watchId);
+      } catch {
+        /* ignore */
+      }
+      resolve(result);
+    };
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      try {
+        navigator.geolocation.clearWatch(watchId);
+      } catch {
+        /* ignore */
+      }
+      reject(new Error(message));
+    };
+
+    // Prefer a watched high-accuracy fix so Location Start does not reuse a cached Gate Pass reading.
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        resolve({
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-        });
+        const latitude = pos.coords.latitude;
+        const longitude = pos.coords.longitude;
+        const accuracy =
+          typeof pos.coords.accuracy === "number" && Number.isFinite(pos.coords.accuracy)
+            ? pos.coords.accuracy
+            : Number.POSITIVE_INFINITY;
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+        if (!best || accuracy <= best.accuracy) {
+          best = { latitude, longitude, accuracy };
+        }
+        // Good enough for street-level travel check-in.
+        if (accuracy <= 35) {
+          finish({ latitude, longitude });
+        }
       },
       (err) => {
-        reject(new Error(err.message || "Could not read GPS position."));
+        if (best) {
+          finish({ latitude: best.latitude, longitude: best.longitude });
+          return;
+        }
+        fail(err.message || "Could not read GPS position.");
       },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
     );
+
+    const timeoutId = setTimeout(() => {
+      if (best) {
+        finish({ latitude: best.latitude, longitude: best.longitude });
+        return;
+      }
+      // Last resort: one-shot read (still request a fresh sample).
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          finish({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          }),
+        (err) => fail(err.message || "Could not read GPS position."),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
+      );
+    }, 8000);
   });
 }
 
 /** Compact Travel Order summary shown inside task details for Field Assignment cards. */
 export function TravelOrderSummaryPanel({
   taskId,
+  source = "task",
+  interactionMode = "full",
   focusTravelOrderId = null,
   operatorAgentId = null,
   canAssignWork = false,
   canCheckIn = true,
+  personnelGuard = false,
   onKpiSubmitted,
 }: TravelOrderSummaryPanelProps) {
+  const { data: session } = useSession();
+  const gatePassOnly = interactionMode === "gatePassOnly";
   const [orders, setOrders] = useState<TravelOrderDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,16 +219,66 @@ export function TravelOrderSummaryPanel({
     setOrderPages((prev) => ({ ...prev, [orderId]: page }));
   }
 
+  function resolveTaskId(orderId: string): string {
+    const fromOrder = orders.find((o) => o.id === orderId)?.kpiMaintenanceId?.trim();
+    if (fromOrder) return fromOrder;
+    return (taskId ?? "").trim();
+  }
+
   function gatePassValue(order: TravelOrderDto): TravelOrderGatePassDraft {
-    return gatePassEdits[order.id] ?? gatePassDraftFromOrder(order);
+    const base = gatePassDraftFromOrder(order);
+    const edits = gatePassEdits[order.id];
+    if (!edits) return base;
+    // Local edits (estimates / guard names) must not hide already-captured Actual GPS.
+    return {
+      ...base,
+      ...edits,
+      actualDepartureStartedAt: base.actualDepartureStartedAt ?? edits.actualDepartureStartedAt,
+      actualDepartureStartedLatitude:
+        base.actualDepartureStartedLatitude ?? edits.actualDepartureStartedLatitude,
+      actualDepartureStartedLongitude:
+        base.actualDepartureStartedLongitude ?? edits.actualDepartureStartedLongitude,
+      actualDepartureEndedAt: base.actualDepartureEndedAt ?? edits.actualDepartureEndedAt,
+      actualDepartureEndedLatitude:
+        base.actualDepartureEndedLatitude ?? edits.actualDepartureEndedLatitude,
+      actualDepartureEndedLongitude:
+        base.actualDepartureEndedLongitude ?? edits.actualDepartureEndedLongitude,
+    };
   }
 
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      if (source === "visible") {
+        if (!isBrowserOnline()) {
+          const cached = await listAllCachedTravelOrders();
+          setOrders(cached);
+          if (cached.length === 0) {
+            setError("You are offline and no cached travel orders are available.");
+          }
+          return;
+        }
+        const res = await fetch("/api/travel-orders", { cache: "no-store" });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "Could not load travel orders.");
+        }
+        const body = (await res.json()) as { travelOrders?: TravelOrderDto[] };
+        const rows = Array.isArray(body.travelOrders) ? body.travelOrders : [];
+        setOrders(rows);
+        await cacheTravelOrders(rows);
+        return;
+      }
+
+      const scopedTaskId = (taskId ?? "").trim();
+      if (!scopedTaskId) {
+        setOrders([]);
+        setError("Missing task id for travel orders.");
+        return;
+      }
       if (!isBrowserOnline()) {
-        const cached = await getCachedTravelOrdersForTask(taskId);
+        const cached = await getCachedTravelOrdersForTask(scopedTaskId);
         setOrders(cached);
         if (cached.length === 0) {
           setError("You are offline and no cached travel orders are available for this task.");
@@ -158,19 +286,19 @@ export function TravelOrderSummaryPanel({
         return;
       }
       const res = await fetchTravelOrderWithTimeout(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders`,
+        `/api/kpi-maintenance/${encodeURIComponent(scopedTaskId)}/travel-orders`,
         { cache: "no-store" },
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "Could not load travel orders.");
       }
-      const payload = (await res.json()) as { travelOrders?: TravelOrderDto[] };
-      const list = Array.isArray(payload.travelOrders) ? payload.travelOrders : [];
-      setOrders(list);
-      void cacheTravelOrders(list);
+      const body = (await res.json()) as { travelOrders?: TravelOrderDto[] };
+      const rows = Array.isArray(body.travelOrders) ? body.travelOrders : [];
+      setOrders(rows);
+      await cacheTravelOrders(rows);
     } catch (err: unknown) {
-      const cached = await getCachedTravelOrdersForTask(taskId).catch(() => []);
+      const cached = await getCachedTravelOrdersForTask((taskId ?? "").trim()).catch(() => []);
       if (cached.length > 0) {
         setOrders(cached);
         setError(
@@ -191,7 +319,7 @@ export function TravelOrderSummaryPanel({
     } finally {
       setLoading(false);
     }
-  }, [taskId]);
+  }, [source, taskId]);
 
   useEffect(() => {
     void reload();
@@ -253,7 +381,7 @@ export function TravelOrderSummaryPanel({
     }
     replaceOrder(next);
     await queueTravelOrderPatch({
-      taskId,
+      taskId: resolveTaskId(orderId),
       travelOrderId: orderId,
       body,
       baseUpdatedAt: order.updatedAt,
@@ -270,7 +398,7 @@ export function TravelOrderSummaryPanel({
     }
     try {
       const res = await fetchTravelOrderWithTimeout(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(orderId))}/travel-orders/${encodeURIComponent(orderId)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -300,6 +428,36 @@ export function TravelOrderSummaryPanel({
     setBusyKey(key);
     setActionError(null);
     const draft = gatePassValue(order);
+    // Personnel-Guard Start/End stamps the signed-in guard into Guard on Duty.
+    const signedInGuard = (session?.user?.name ?? "").trim();
+    const startGuardOnDuty =
+      visitAction === "start" && (personnelGuard || gatePassOnly) && signedInGuard
+        ? signedInGuard
+        : draft.startGuardOnDuty;
+    const endGuardOnDuty =
+      visitAction === "end" && (personnelGuard || gatePassOnly) && signedInGuard
+        ? signedInGuard
+        : draft.endGuardOnDuty;
+    if (
+      (visitAction === "start" && startGuardOnDuty !== draft.startGuardOnDuty) ||
+      (visitAction === "end" && endGuardOnDuty !== draft.endGuardOnDuty)
+    ) {
+      setGatePassEdits((prev) => ({
+        ...prev,
+        [order.id]: {
+          ...draft,
+          included: true,
+          startGuardOnDuty,
+          endGuardOnDuty,
+        },
+      }));
+    }
+    // Cancel pending estimate saves so they cannot race and wipe freshly captured GPS.
+    const pendingTimer = gatePassTimers.current.get(order.id);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      gatePassTimers.current.delete(order.id);
+    }
     try {
       const gps = await readDeviceGps();
       await patchGatePass(order.id, {
@@ -309,8 +467,8 @@ export function TravelOrderSummaryPanel({
           latitude: gps.latitude,
           longitude: gps.longitude,
           capturedAt: new Date().toISOString(),
-          startGuardOnDuty: draft.startGuardOnDuty,
-          endGuardOnDuty: draft.endGuardOnDuty,
+          startGuardOnDuty,
+          endGuardOnDuty,
         },
       });
     } catch (err: unknown) {
@@ -337,8 +495,9 @@ export function TravelOrderSummaryPanel({
           await patchGatePass(orderId, {
             action: "gate-pass",
             gatePass: {
-              ...draft,
               included: true,
+              estDepartureAt: draft.estDepartureAt,
+              estArrivalAt: draft.estArrivalAt,
               startGuardOnDuty: draft.startGuardOnDuty,
               endGuardOnDuty: draft.endGuardOnDuty,
             },
@@ -367,7 +526,7 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -394,7 +553,7 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -426,7 +585,7 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -458,7 +617,7 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -485,7 +644,7 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/submit-done`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/submit-done`,
         { method: "POST" },
       );
       const body = (await res.json().catch(() => ({}))) as {
@@ -549,7 +708,7 @@ export function TravelOrderSummaryPanel({
     await upsertCachedTravelOrder(next);
     replaceOrder(next);
     await queueLocationPatch({
-      taskId,
+      taskId: resolveTaskId(orderId),
       travelOrderId: orderId,
       locationId,
       body,
@@ -567,7 +726,7 @@ export function TravelOrderSummaryPanel({
     }
     try {
       const res = await fetchTravelOrderWithTimeout(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(orderId)}/locations/${encodeURIComponent(locationId)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(orderId))}/travel-orders/${encodeURIComponent(orderId)}/locations/${encodeURIComponent(locationId)}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -649,7 +808,7 @@ export function TravelOrderSummaryPanel({
     await upsertCachedTravelOrder(next);
     replaceOrder(next);
     await queueAddLocation({
-      taskId,
+      taskId: resolveTaskId(order.id),
       travelOrderId: order.id,
       label,
       clientLocationId,
@@ -678,7 +837,7 @@ export function TravelOrderSummaryPanel({
 
       try {
         const res = await fetchTravelOrderWithTimeout(
-          `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/locations`,
+          `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/locations`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -745,7 +904,7 @@ export function TravelOrderSummaryPanel({
       const form = new FormData();
       for (const file of files) form.append("attachment", file);
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/attachments`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/attachments`,
         { method: "POST", body: form },
       );
       const payload = (await res.json().catch(() => ({}))) as {
@@ -769,7 +928,7 @@ export function TravelOrderSummaryPanel({
     setActionError(null);
     try {
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/attachments`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/attachments`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -806,7 +965,7 @@ export function TravelOrderSummaryPanel({
       const form = new FormData();
       for (const file of files) form.append("images", file);
       const res = await fetch(
-        `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/locations/${encodeURIComponent(loc.id)}`,
+        `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/locations/${encodeURIComponent(loc.id)}`,
         { method: "POST", body: form },
       );
       const payload = (await res.json().catch(() => ({}))) as {
@@ -902,14 +1061,28 @@ export function TravelOrderSummaryPanel({
   if (error) {
     return <p className="text-xs text-rose-600 dark:text-rose-300">{error}</p>;
   }
-  if (orders.length === 0) return null;
+  if (orders.length === 0) {
+    return (
+      <p className="rounded-xl border border-dashed border-zinc-300 px-3 py-4 text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+        {source === "visible"
+          ? personnelGuard
+            ? "No approved (running) travel orders to process for Gate Pass right now."
+            : "No travel orders are visible to your account yet."
+          : "No travel orders on this task yet."}
+      </p>
+    );
+  }
 
   const focusId = focusTravelOrderId?.trim() || null;
-  const visibleOrders = focusId ? orders.filter((o) => o.id === focusId) : orders;
+  const visibleOrders = (focusId ? orders.filter((o) => o.id === focusId) : orders).filter(
+    (o) => !personnelGuard || isTravelOrderRunning(o.status),
+  );
   if (visibleOrders.length === 0) {
     return (
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
-        This travel order is no longer available.
+        {personnelGuard
+          ? "No approved (running) travel orders to process for Gate Pass right now."
+          : "This travel order is no longer available."}
       </p>
     );
   }
@@ -918,6 +1091,13 @@ export function TravelOrderSummaryPanel({
     <>
       <div className="space-y-3 rounded-xl border border-orange-400/40 bg-orange-500/[0.06] p-3 dark:border-orange-500/30 dark:bg-orange-500/[0.08]">
         <TravelOrderOfflineBanner />
+        {gatePassOnly ? (
+          <p className="rounded-lg border border-zinc-200 bg-white/70 px-2.5 py-2 text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-300">
+            {personnelGuard
+              ? "Gate Pass kiosk: details and approvals are view-only. Record Guard on Duty and Start / End on the Gate Pass page."
+              : "View-only mode: details and approvals cannot be changed here. Gate Pass is visible only to Personnel-Guard while the trip is running."}
+          </p>
+        ) : null}
         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-200">
           Travel order{visibleOrders.length === 1 ? "" : "s"}
         </p>
@@ -937,40 +1117,63 @@ export function TravelOrderSummaryPanel({
             : null;
           const unlockedLevels = hierarchical ? getUnlockedIncompleteLevels(levels) : [];
           const hierarchyDone = hierarchical && isApprovalHierarchySatisfied(levels);
-          const canApproveThis = canApproveTravelOrderNow(
-            operatorAgentId,
-            { ...order, approvalLevels: levels },
-            { canAssignWork },
-          );
-          const canConfirmThis = canConfirmTravelOrderNow(
-            operatorAgentId,
-            order,
-            { canAssignWork },
-          );
+          const canApproveThis =
+            !gatePassOnly &&
+            canApproveTravelOrderNow(
+              operatorAgentId,
+              { ...order, approvalLevels: levels },
+              { canAssignWork },
+            );
+          const canConfirmThis =
+            !gatePassOnly &&
+            canConfirmTravelOrderNow(
+              operatorAgentId,
+              order,
+              { canAssignWork },
+            );
           const confirmReady = isTravelOrderConfirmReady(order);
           const locationsUnlocked = travelOrderLocationsUnlocked(order);
           const hasGatePass = travelOrderHasGatePass(order);
           const rejected = order.status === TRAVEL_ORDER_STATUS.REJECTED;
           const cancelled = order.status === TRAVEL_ORDER_STATUS.CANCELLED;
-          const canCancelThis = canCancelTravelOrderNow(operatorAgentId, order);
+          const canCancelThis =
+            !gatePassOnly && canCancelTravelOrderNow(operatorAgentId, order);
           const checkedCount = order.locations.filter((l) => l.endedAt || l.checkedAt).length;
           const totalCount = order.locations.length;
           const liveKpiPercent =
             totalCount > 0 ? Math.round((checkedCount / totalCount) * 100) : 0;
           const kpiAlreadySubmitted = order.kpiSubmittedAt != null;
           const isAssignedTraveler = isTravelOrderTraveler(operatorAgentId, order);
-          const allowCheckIn = canCheckIn || isAssignedTraveler;
-          const canSubmitDone = running && allowCheckIn && !kpiAlreadySubmitted;
+          const allowCheckIn = !gatePassOnly && (canCheckIn || isAssignedTraveler);
+          const canSubmitDone = !gatePassOnly && running && allowCheckIn && !kpiAlreadySubmitted;
           const canAddLocationWhileRunning =
+            !gatePassOnly &&
             approved &&
             isAssignedTraveler &&
             !kpiAlreadySubmitted &&
             !rejected &&
             !cancelled;
+          /**
+           * While running (APPROVED), Gate Pass is Personnel-Guard only.
+           * Before approval, everyone who can open the order still sees Gate Pass setup.
+           */
+          const showGatePassPage = !running || personnelGuard;
+          /** Only Personnel-Guard captures Gate Pass Start/End / Guard on Duty. */
+          const allowGatePassActualCapture =
+            personnelGuard &&
+            approved &&
+            !rejected &&
+            !cancelled;
 
           const defaultPage: TravelOrderFormPage =
-            canApproveThis || canConfirmThis ? 2 : 1;
-          const formPage = orderPages[order.id] ?? defaultPage;
+            personnelGuard && showGatePassPage
+              ? 3
+              : canApproveThis || canConfirmThis
+                ? 2
+                : 1;
+          const rawFormPage = orderPages[order.id] ?? defaultPage;
+          const formPage: TravelOrderFormPage =
+            !showGatePassPage && rawFormPage === 3 ? 1 : rawFormPage;
           const flatApprovers =
             order.approvedByAgents?.length
               ? order.approvedByAgents
@@ -1031,6 +1234,7 @@ export function TravelOrderSummaryPanel({
               <TravelOrderPageNav
                 page={formPage}
                 onPageChange={(page) => setOrderPage(order.id, page)}
+                showGatePass={showGatePassPage}
                 stepActions={
                   canCancelThis && formPage === 1 ? (
                     <button
@@ -1062,7 +1266,8 @@ export function TravelOrderSummaryPanel({
 
                   {(() => {
                     const attachments = order.attachments ?? [];
-                    const canManageAttachments = approved && allowCheckIn && !rejected && !cancelled;
+                    const canManageAttachments =
+                      !gatePassOnly && approved && allowCheckIn && !rejected && !cancelled;
                     const remainingSlots = MAX_TRAVEL_ORDER_ATTACHMENTS - attachments.length;
                     const uploadBusy = busyKey === `order-att-${order.id}`;
                     if (!canManageAttachments && attachments.length === 0) return null;
@@ -1074,7 +1279,7 @@ export function TravelOrderSummaryPanel({
                         {attachments.length > 0 ? (
                           <ul className="flex flex-wrap gap-2">
                             {attachments.map((att) => {
-                              const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
+                              const href = `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
                               const isImage = isTravelOrderFileImage(att);
                               const removing = busyKey === `rm-order-${order.id}-${att.storedFileName}`;
                               return (
@@ -1170,16 +1375,46 @@ export function TravelOrderSummaryPanel({
                     );
                   })()}
 
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
-                      Travelers
-                    </p>
-                    <p className="text-sm text-zinc-700 dark:text-zinc-300">
-                      {(order.travelers?.length
-                        ? order.travelers.map((t) => t.name).join(", ")
-                        : order.createdByAgent?.name) ?? "—"}
-                    </p>
-                  </div>
+                  {(() => {
+                    const creatorId = order.createdByAgentId?.trim() || "";
+                    const travelerList = order.travelers ?? [];
+                    const creatorIsTraveler =
+                      Boolean(creatorId) &&
+                      travelerList.some((t) => t.id === creatorId);
+                    const showPreparedBy =
+                      Boolean(order.createdByAgent?.name) &&
+                      Boolean(creatorId) &&
+                      !creatorIsTraveler;
+                    return (
+                      <>
+                        {showPreparedBy ? (
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                              Prepared By
+                            </p>
+                            <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                              {order.createdByAgent?.name}
+                              {order.createdByAgent?.email
+                                ? ` · ${order.createdByAgent.email}`
+                                : ""}
+                            </p>
+                          </div>
+                        ) : null}
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
+                            Travelers
+                          </p>
+                          <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                            {(travelerList.length
+                              ? travelerList.map((t) => t.name).join(", ")
+                              : showPreparedBy
+                                ? "—"
+                                : order.createdByAgent?.name) ?? "—"}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   {order.driverPresent ? (
                     <div className="space-y-1">
@@ -1227,7 +1462,8 @@ export function TravelOrderSummaryPanel({
                         const hasEndGps =
                           (loc.endedLatitude ?? loc.latitude) != null &&
                           (loc.endedLongitude ?? loc.longitude) != null;
-                        const locActionsEnabled = allowCheckIn && locationsUnlocked;
+                        const locActionsEnabled =
+                          !gatePassOnly && allowCheckIn && locationsUnlocked;
 
                         if (!approved) {
                           return (
@@ -1396,7 +1632,7 @@ export function TravelOrderSummaryPanel({
                               </div>
                             </div>
 
-                            <div className="space-y-2">
+                              <div className="space-y-2">
                               <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-500">
                                 Remarks
                                 <textarea
@@ -1410,103 +1646,108 @@ export function TravelOrderSummaryPanel({
                                   className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 placeholder:text-zinc-400 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                                 />
                               </label>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <input
-                                  id={`travel-loc-img-${loc.id}`}
-                                  type="file"
-                                  accept="image/jpeg,image/png,image/jpg"
-                                  multiple
-                                  className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
-                                  tabIndex={-1}
-                                  aria-hidden
-                                  disabled={
-                                    !locActionsEnabled ||
-                                    loc.attachments.length >= MAX_LOCATION_IMAGES ||
-                                    busyKey === `img-${loc.id}`
-                                  }
-                                  onChange={(e) => {
-                                    void uploadLocationImages(order, loc, e.target.files);
-                                    e.target.value = "";
-                                  }}
-                                />
-                                <button
-                                  type="button"
-                                  disabled={
-                                    !locActionsEnabled ||
-                                    loc.attachments.length >= MAX_LOCATION_IMAGES ||
-                                    busyKey === `img-${loc.id}`
-                                  }
-                                  onClick={() =>
-                                    document.getElementById(`travel-loc-img-${loc.id}`)?.click()
-                                  }
-                                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900 ${
-                                    !locActionsEnabled ||
-                                    loc.attachments.length >= MAX_LOCATION_IMAGES ||
-                                    busyKey === `img-${loc.id}`
-                                      ? "pointer-events-none opacity-50"
-                                      : ""
-                                  }`}
-                                >
-                                  {busyKey === `img-${loc.id}` ? (
-                                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                                  ) : (
-                                    <ImagePlus className="size-3.5 text-orange-600" aria-hidden />
-                                  )}
-                                  Upload image
-                                </button>
-                                <span className="text-[10px] text-zinc-500">
-                                  {loc.attachments.length}/{MAX_LOCATION_IMAGES} · JPG/PNG
-                                </span>
-                              </div>
-                              {loc.attachments.length > 0 ? (
-                                <div className="flex flex-wrap gap-2">
-                                  {loc.attachments.map((att) => {
-                                    const href = `/api/kpi-maintenance/${encodeURIComponent(taskId)}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
-                                    const removing =
-                                      busyKey === `rm-${loc.id}-${att.storedFileName}`;
-                                    return (
-                                      <div
-                                        key={att.storedFileName}
-                                        className="relative overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
-                                      >
-                                        <a
-                                          href={href}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="block"
-                                        >
-                                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                                          <img
-                                            src={href}
-                                            alt={att.originalName}
-                                            className="h-16 w-16 object-cover"
-                                          />
-                                        </a>
-                                        {locActionsEnabled ? (
-                                          <button
-                                            type="button"
-                                            disabled={removing}
-                                            onClick={() =>
-                                              void removeLocationImage(
-                                                order,
-                                                loc,
-                                                att.storedFileName,
-                                              )
-                                            }
-                                            className="absolute right-0.5 top-0.5 inline-flex size-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50"
-                                            aria-label={`Remove ${att.originalName}`}
+                              {!personnelGuard ? (
+                                <>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <input
+                                      id={`travel-loc-img-${loc.id}`}
+                                      type="file"
+                                      accept="image/*"
+                                      capture="environment"
+                                      className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+                                      tabIndex={-1}
+                                      aria-hidden
+                                      disabled={
+                                        !locActionsEnabled ||
+                                        loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                        busyKey === `img-${loc.id}`
+                                      }
+                                      onChange={(e) => {
+                                        void uploadLocationImages(order, loc, e.target.files);
+                                        e.target.value = "";
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        !locActionsEnabled ||
+                                        loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                        busyKey === `img-${loc.id}`
+                                      }
+                                      onClick={() =>
+                                        document.getElementById(`travel-loc-img-${loc.id}`)?.click()
+                                      }
+                                      title="Take photo"
+                                      aria-label="Take photo"
+                                      className={`inline-flex size-9 cursor-pointer items-center justify-center rounded-lg border border-orange-500/50 bg-orange-500/10 text-orange-800 hover:bg-orange-500/20 dark:border-orange-500/40 dark:text-orange-200 dark:hover:bg-orange-950/40 ${
+                                        !locActionsEnabled ||
+                                        loc.attachments.length >= MAX_LOCATION_IMAGES ||
+                                        busyKey === `img-${loc.id}`
+                                          ? "pointer-events-none opacity-50"
+                                          : ""
+                                      }`}
+                                    >
+                                      {busyKey === `img-${loc.id}` ? (
+                                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                                      ) : (
+                                        <Camera className="size-4" aria-hidden />
+                                      )}
+                                    </button>
+                                    <span className="text-[10px] text-zinc-500">
+                                      {loc.attachments.length}/{MAX_LOCATION_IMAGES} · camera
+                                    </span>
+                                  </div>
+                                  {loc.attachments.length > 0 ? (
+                                    <div className="flex flex-wrap gap-2">
+                                      {loc.attachments.map((att) => {
+                                        const href = `/api/kpi-maintenance/${encodeURIComponent(resolveTaskId(order.id))}/travel-orders/${encodeURIComponent(order.id)}/files/${encodeURIComponent(att.storedFileName)}`;
+                                        const removing =
+                                          busyKey === `rm-${loc.id}-${att.storedFileName}`;
+                                        return (
+                                          <div
+                                            key={att.storedFileName}
+                                            className="relative overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700"
                                           >
-                                            {removing ? (
-                                              <Loader2 className="size-3 animate-spin" aria-hidden />
-                                            ) : (
-                                              <X className="size-3" aria-hidden />
-                                            )}
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
+                                            <a
+                                              href={href}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="block"
+                                            >
+                                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                                              <img
+                                                src={href}
+                                                alt={att.originalName}
+                                                className="h-16 w-16 object-cover"
+                                              />
+                                            </a>
+                                            {locActionsEnabled ? (
+                                              <button
+                                                type="button"
+                                                disabled={removing}
+                                                onClick={() =>
+                                                  void removeLocationImage(
+                                                    order,
+                                                    loc,
+                                                    att.storedFileName,
+                                                  )
+                                                }
+                                                className="absolute right-0.5 top-0.5 inline-flex size-5 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/85 disabled:opacity-50"
+                                                aria-label={`Remove ${att.originalName}`}
+                                              >
+                                                {removing ? (
+                                                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                                                ) : (
+                                                  <X className="size-3" aria-hidden />
+                                                )}
+                                              </button>
+                                            ) : null}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null}
+                                </>
                               ) : null}
                             </div>
                           </li>
@@ -2004,14 +2245,21 @@ export function TravelOrderSummaryPanel({
                   ) : null}
                   <TravelOrderGatePassFields
                     value={gatePassValue(order)}
-                    disabled={rejected || cancelled || !allowCheckIn}
+                    disabled={
+                      gatePassOnly ||
+                      rejected ||
+                      cancelled ||
+                      !(canCheckIn || isAssignedTraveler || personnelGuard)
+                    }
                     showActualTimes={approved}
-                    allowActualCapture={approved && allowCheckIn && !rejected && !cancelled}
+                    allowActualCapture={allowGatePassActualCapture}
                     startBusy={busyKey === `gp-start-${order.id}`}
                     endBusy={busyKey === `gp-end-${order.id}`}
                     formatCapturedAt={formatCheckedAt}
                     onChange={(next) => {
                       setGatePassEdits((prev) => ({ ...prev, [order.id]: next }));
+                      // gatePassOnly / Guard: local Guard-on-Duty only; do not persist estimates.
+                      if (gatePassOnly || personnelGuard) return;
                       scheduleGatePassEstimateSave(order.id, next);
                     }}
                     onCaptureActual={(action) => void captureGatePassActual(order, action)}
@@ -2060,6 +2308,7 @@ export function TravelOrderSummaryPanel({
               </button>
             </div>
             <MapLocationPicker
+              key={`${mapLoc.kind}-${mapLoc.label}-${mapLoc.latitude}-${mapLoc.longitude}`}
               latitude={mapLoc.latitude}
               longitude={mapLoc.longitude}
               readOnly

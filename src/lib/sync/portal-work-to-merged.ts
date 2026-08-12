@@ -27,8 +27,10 @@ import {
 import {
   aggregatePersonnelTaskMetrics,
   applyDelayPenaltiesToPersonnelTasks,
+  attachPersonnelRequestRoleMetrics,
   combinedPersonnelEfficiency,
   mergePersonnelMetricCards,
+  mergePersonnelRequestMetrics,
 } from "@/lib/task-personnel-metrics";
 
 const BATCH_SIZE = 500;
@@ -473,12 +475,25 @@ async function computeMergedUserEfficiencies(
   byAgentId: Map<string, AgentEnrichment>,
 ): Promise<Map<string, EfficiencyByMergedUser>> {
   const range = parseKpiRangeFromQuery(null, null);
+  // Full task metrics (checklist pillars + request role seats). Do not pass taskType=requests
+  // or task checklist progress is skipped.
   const metrics = await computeTaskMetrics(range, {}, "MONTHLY");
   const taskRows = applyDelayPenaltiesToPersonnelTasks(
     aggregatePersonnelTaskMetrics(metrics.taskChecklistPillars),
     metrics.personnelDelayPenalties,
   );
-  const cards = mergePersonnelMetricCards(taskRows, metrics.personnelTicketMetrics as PersonnelTicketMetric[]);
+  const baseCards = mergePersonnelMetricCards(
+    taskRows,
+    metrics.personnelTicketMetrics as PersonnelTicketMetric[],
+  );
+  // Insights parity: Requests = assignee tickets + RFP/IRS/FTR/ACA role seats (no Approver fallback).
+  const cards = attachPersonnelRequestRoleMetrics(baseCards, {
+    rfpAccounting: metrics.personnelRfpAccountingMetrics,
+    rfpFinance: metrics.personnelRfpFinanceMetrics,
+    irsCanvass: metrics.personnelIrsCanvassMetrics,
+    ftrPrepared: metrics.personnelFtrPreparedMetrics,
+    acaSubmitted: metrics.personnelAcaSubmittedMetrics,
+  });
 
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const agentByName = new Map<string, (typeof agents)[number]>();
@@ -512,6 +527,7 @@ async function computeMergedUserEfficiencies(
     if (enriched?.mergedSourceUserId == null) continue;
 
     const key = enriched.mergedSourceUserId.toString();
+    const requests = mergePersonnelRequestMetrics(card);
     const combined = combinedPersonnelEfficiency(card);
     out.set(key, {
       sourceUserId: enriched.mergedSourceUserId,
@@ -519,7 +535,7 @@ async function computeMergedUserEfficiencies(
       agentEmail: agent.email,
       displayName: agent.name || card.name,
       taskEfficiency: card.tasks?.efficiency ?? null,
-      ticketEfficiency: card.tickets?.efficiency ?? null,
+      ticketEfficiency: requests?.efficiency ?? null,
       overallEfficiency: combined,
     });
   }

@@ -79,25 +79,26 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "auth-header":
       return (
-        <div className="inline-flex items-center gap-3">
-          <BrandLogo className="h-14 w-auto max-w-[220px]" />
-          <span className="hidden text-xs font-semibold tracking-[0.08em] text-zinc-900 dark:text-zinc-100 sm:inline sm:text-sm">
+        <div className="inline-flex items-center gap-2.5">
+          <BrandLogo width={52} className="h-auto max-h-9 w-[52px]" />
+          <span className="hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 sm:inline">
             {BRAND_TITLE}
           </span>
         </div>
       );
     case "auth-mobile":
       return (
-        <div className="flex items-center gap-3">
-          <BrandLogo className="h-[3.75rem] w-auto max-w-[240px]" />
-          <span className="text-xs font-semibold tracking-[0.08em] text-zinc-900 dark:text-zinc-100">{BRAND_TITLE}</span>
+        <div className="flex items-center gap-2.5">
+          <BrandLogo width={52} className="h-auto max-h-9 w-[52px]" />
+          <span className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+            {BRAND_TITLE}
+          </span>
         </div>
       );
     case "staff-header-compact":
       return (
-        <div className="flex h-10 max-w-full items-center gap-2.5 overflow-hidden sm:h-11">
-          <BrandLogo className="h-full w-auto max-w-[min(140px,38vw)] shrink-0 object-contain object-left sm:max-w-[160px]" />
-          <div className="hidden min-w-0 lg:block">
+        <div className="flex h-10 max-w-full items-center overflow-hidden sm:h-11">
+          <div className="min-w-0">
             <p className="truncate text-sm font-bold leading-tight tracking-wide text-zinc-900 dark:text-zinc-100">
               {BRAND_TITLE}
             </p>

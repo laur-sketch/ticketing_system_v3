@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { prisma } from "@/lib/prisma";
+import { isPersonnelGuardPortalRole } from "@/lib/staff-role";
 import {
   TRAVEL_ORDER_STATUS,
   canApproveTravelOrderNow,
@@ -37,10 +38,15 @@ export async function PATCH(
   req: Request,
   ctx: { params: Promise<{ id: string; travelOrderId: string }> },
 ) {
-  const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
+  const { session, unauthorized } = await requireRole([
+    "Admin",
+    "Personnel",
+    "Personnel-Guard",
+  ]);
   if (unauthorized || !session) return unauthorized;
   const perms = await resolveOpsPermissions(session);
   const { id, travelOrderId } = await ctx.params;
+  const isGuard = isPersonnelGuardPortalRole(session.user.role);
 
   const kpi = await prisma.kpiMaintenance.findUnique({
     where: { id },
@@ -69,9 +75,23 @@ export async function PATCH(
   const operatorId = perms.operator?.id ?? null;
   const canAssignWork = Boolean(perms.canAssignWork);
 
+  if (isGuard && action !== "gate-pass-visit") {
+    return NextResponse.json(
+      { error: "Personnel-Guard can only record Gate Pass Start/End." },
+      { status: 403 },
+    );
+  }
+
   if (action === "gate-pass" || action === "gate-pass-visit") {
     const isTraveler = isTravelOrderTraveler(operatorId, order);
-    if (!canAssignWork && !isTraveler) {
+    if (action === "gate-pass-visit" && isGuard) {
+      if (!travelOrderHasGatePass(order)) {
+        return NextResponse.json(
+          { error: "Gate Pass Start/End is only available on orders with a Gate Pass." },
+          { status: 403 },
+        );
+      }
+    } else if (!canAssignWork && !isTraveler) {
       return NextResponse.json(
         { error: "Only travelers (or an admin) can update Gate Pass details." },
         { status: 403 },
@@ -188,13 +208,8 @@ export async function PATCH(
         included: draft.included,
         estDepartureAt: parseOptionalDateTimeInput(draft.estDepartureAt),
         estArrivalAt: parseOptionalDateTimeInput(draft.estArrivalAt),
-        actualDepartureStartedAt: parseOptionalDateTimeInput(draft.actualDepartureStartedAt),
-        actualDepartureStartedLatitude: draft.actualDepartureStartedLatitude,
-        actualDepartureStartedLongitude: draft.actualDepartureStartedLongitude,
+        // Estimates / Guard edits must never overwrite captured Actual Departure GPS.
         gatePassStartGuardOnDuty: draft.startGuardOnDuty,
-        actualDepartureEndedAt: parseOptionalDateTimeInput(draft.actualDepartureEndedAt),
-        actualDepartureEndedLatitude: draft.actualDepartureEndedLatitude,
-        actualDepartureEndedLongitude: draft.actualDepartureEndedLongitude,
         gatePassEndGuardOnDuty: draft.endGuardOnDuty,
       });
       if (!updated) {

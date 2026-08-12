@@ -588,11 +588,6 @@ export async function POST(req: Request) {
         requestType === "FUND_TRANSFER_REQUEST" ||
         requestType === "JOB_ORDER")
     ) {
-      const deferPaymentModeToAccountingEarly =
-        deferPaymentModeToAccountingRaw === true ||
-        deferPaymentModeToAccountingRaw === "true" ||
-        deferPaymentModeToAccountingRaw === "1" ||
-        deferPaymentModeToAccountingRaw === "on";
       const skipApprovedByEarly =
         skipApprovedByRaw === true ||
         skipApprovedByRaw === "true" ||
@@ -602,12 +597,6 @@ export async function POST(req: Request) {
         REQUEST_FOR_PAYMENT: [
           { key: "notedByAgentId", label: "Noted By" },
           ...(skipApprovedByEarly ? [] : [{ key: "approvedByAgentId", label: "Approved By" }]),
-          ...(deferPaymentModeToAccountingEarly
-            ? []
-            : [
-                { key: "accountingAgentId", label: "Approved By (Accounting)" },
-                { key: "financeAgentId", label: "Approved By (Finance)" },
-              ]),
         ],
         FUND_TRANSFER_REQUEST: [
           { key: "recommendingApprovalAgentId", label: "Recommending Approval" },
@@ -1150,12 +1139,6 @@ export async function POST(req: Request) {
               ...(skipApprovedBy
                 ? []
                 : [pickAgentId(intakeApprovalAssignees.approvedByAgentId)]),
-              ...(deferPaymentModeToAccounting
-                ? []
-                : [
-                    pickAgentId(intakeApprovalAssignees.accountingAgentId),
-                    pickAgentId(intakeApprovalAssignees.financeAgentId),
-                  ]),
             ].filter((v): v is string => Boolean(v))
           : candidateIds;
       const idsToValidate =
@@ -1174,7 +1157,6 @@ export async function POST(req: Request) {
       }
       if (requestType === "REQUEST_FOR_PAYMENT") {
         const requestorCompanyId = await resolveStaffCompanyTeamId(session.user.email);
-        const sendToCompanyId = team?.id ?? null;
         async function assertCompany(
           agentId: string | null,
           expectedCompanyId: string | null,
@@ -1204,20 +1186,6 @@ export async function POST(req: Request) {
             requestorCompanyId,
             "Noted By",
           ),
-          ...(deferPaymentModeToAccounting
-            ? []
-            : [
-                await assertCompany(
-                  pickAgentId(intakeApprovalAssignees.accountingAgentId),
-                  sendToCompanyId,
-                  "Approved By (Accounting)",
-                ),
-                await assertCompany(
-                  pickAgentId(intakeApprovalAssignees.financeAgentId),
-                  sendToCompanyId,
-                  "Approved By (Finance)",
-                ),
-              ]),
         ]) {
           if (check) return check;
         }
@@ -1227,15 +1195,6 @@ export async function POST(req: Request) {
             ? []
             : ([
                 ["APPROVED_BY", pickAgentId(intakeApprovalAssignees.approvedByAgentId)],
-              ] as Array<[PaymentApprovalStep, string | null]>)),
-          ...(deferPaymentModeToAccounting
-            ? []
-            : ([
-                [
-                  "APPROVED_BY_ACCOUNTING",
-                  pickAgentId(intakeApprovalAssignees.accountingAgentId),
-                ],
-                ["APPROVED_BY_FINANCE", pickAgentId(intakeApprovalAssignees.financeAgentId)],
               ] as Array<[PaymentApprovalStep, string | null]>)),
         ];
         const seen = new Map<string, PaymentApprovalStep>();
@@ -1321,7 +1280,7 @@ export async function POST(req: Request) {
           ticket.id,
           "USER",
           "Approved By skipped",
-          "After Noted By, this request continues at Approved By (Accounting).",
+          "After Noted By, this request continues at Prepared by Bookkeeper.",
         );
       }
       if (intakeApprovalAssignees) {
@@ -1330,12 +1289,9 @@ export async function POST(req: Request) {
           approvedByAgentId: skipApprovedBy
             ? null
             : pickAgentId(intakeApprovalAssignees.approvedByAgentId),
-          accountingAgentId: deferPaymentModeToAccounting
-            ? null
-            : pickAgentId(intakeApprovalAssignees.accountingAgentId),
-          financeAgentId: deferPaymentModeToAccounting
-            ? null
-            : pickAgentId(intakeApprovalAssignees.financeAgentId),
+          // Bookkeeper / Accounting seats are never set at intake — assigned on the ticket later.
+          accountingAgentId: null,
+          financeAgentId: null,
         };
         meta = applyPaymentApprovalAssignees(meta, nextAssignees);
         if (deferPaymentModeToAccounting) {

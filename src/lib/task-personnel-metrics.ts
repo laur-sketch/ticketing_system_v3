@@ -27,13 +27,13 @@ export type PersonnelCombinedMetricCard = {
     pending: number;
     efficiency: number;
   } | null;
-  /** RFP Approved By (Accounting) role KPI. */
+  /** RFP Prepared by Bookkeeper role KPI. */
   rfpAccounting: {
     closed: number;
     pending: number;
     efficiency: number;
   } | null;
-  /** RFP Approved By (Finance) role KPI. */
+  /** RFP Approved By Accounting role KPI. */
   rfpFinance: {
     closed: number;
     pending: number;
@@ -303,6 +303,79 @@ export function applyDelayPenaltiesToPersonnelTasks(
   });
 }
 
+function emptyPersonnelCard(id: string, name: string, role = "Assignee"): PersonnelCombinedMetricCard {
+  return {
+    id,
+    name: name.trim(),
+    role,
+    tickets: null,
+    rfpRequestor: null,
+    rfpAccounting: null,
+    rfpFinance: null,
+    irsCanvass: null,
+    ftrPrepared: null,
+    acaSubmitted: null,
+    tasks: null,
+  };
+}
+
+function accumulateRoleBucket(
+  current: { closed: number; pending: number; efficiency: number } | null,
+  incoming: PersonnelTicketMetric,
+): { closed: number; pending: number; efficiency: number } {
+  const closed = (current?.closed ?? 0) + incoming.closed;
+  const pending = (current?.pending ?? 0) + incoming.pending;
+  const total = closed + pending;
+  return {
+    closed,
+    pending,
+    efficiency: total > 0 ? Math.round((closed / total) * 100) : Math.round(incoming.efficiency),
+  };
+}
+
+/** Attach RFP / IRS / FTR / ACA role KPIs onto personnel cards (Insights parity). */
+export function attachPersonnelRequestRoleMetrics(
+  cards: PersonnelCombinedMetricCard[],
+  roles: {
+    rfpAccounting?: PersonnelTicketMetric[];
+    rfpFinance?: PersonnelTicketMetric[];
+    irsCanvass?: PersonnelTicketMetric[];
+    ftrPrepared?: PersonnelTicketMetric[];
+    acaSubmitted?: PersonnelTicketMetric[];
+  },
+): PersonnelCombinedMetricCard[] {
+  const byName = new Map(cards.map((card) => [normalizePersonName(card.name), card] as const));
+
+  const apply = (
+    rows: PersonnelTicketMetric[] | undefined,
+    field: keyof Pick<
+      PersonnelCombinedMetricCard,
+      "rfpAccounting" | "rfpFinance" | "irsCanvass" | "ftrPrepared" | "acaSubmitted"
+    >,
+  ) => {
+    for (const row of rows ?? []) {
+      const key = normalizePersonName(row.name);
+      if (!key) continue;
+      const card = byName.get(key) ?? emptyPersonnelCard(row.id, row.name);
+      card[field] = accumulateRoleBucket(card[field], row);
+      if (row.id) card.id = row.id;
+      byName.set(key, card);
+    }
+  };
+
+  apply(roles.rfpAccounting, "rfpAccounting");
+  apply(roles.rfpFinance, "rfpFinance");
+  apply(roles.irsCanvass, "irsCanvass");
+  apply(roles.ftrPrepared, "ftrPrepared");
+  apply(roles.acaSubmitted, "acaSubmitted");
+
+  return [...byName.values()].sort((a, b) => {
+    const aReq = mergePersonnelRequestMetrics(a)?.efficiency ?? -1;
+    const bReq = mergePersonnelRequestMetrics(b)?.efficiency ?? -1;
+    return bReq - aReq || a.name.localeCompare(b.name);
+  });
+}
+
 export function mergePersonnelMetricCards(
   tasks: PersonnelAccumulatedTaskMetric[],
   tickets: PersonnelTicketMetric[],
@@ -312,19 +385,7 @@ export function mergePersonnelMetricCards(
   for (const ticket of tickets) {
     const key = normalizePersonName(ticket.name);
     if (!key) continue;
-    const current = byName.get(key) ?? {
-      id: ticket.id,
-      name: ticket.name.trim(),
-      role: "Assignee",
-      tickets: null,
-      rfpRequestor: null,
-      rfpAccounting: null,
-      rfpFinance: null,
-      irsCanvass: null,
-      ftrPrepared: null,
-      acaSubmitted: null,
-      tasks: null,
-    };
+    const current = byName.get(key) ?? emptyPersonnelCard(ticket.id, ticket.name);
     // The same person can own several agent rows (legacy emails, duplicate
     // accounts) — accumulate their counts instead of overwriting the card.
     const closed = (current.tickets?.closed ?? 0) + ticket.closed;

@@ -125,9 +125,6 @@ function NewTicketPageInner() {
   const [requestorApprovalAgents, setRequestorApprovalAgents] = useState<
     Array<{ id: string; name: string; email: string }>
   >([]);
-  const [sendToApprovalAgents, setSendToApprovalAgents] = useState<
-    Array<{ id: string; name: string; email: string }>
-  >([]);
   const [approvalAgents, setApprovalAgents] = useState<
     Array<{ id: string; name: string; email: string }>
   >([]);
@@ -408,7 +405,6 @@ function NewTicketPageInner() {
   useEffect(() => {
     if (!canSetIntakeAssignees) {
       setRequestorApprovalAgents([]);
-      setSendToApprovalAgents([]);
       setApprovalAgents([]);
       return;
     }
@@ -434,15 +430,13 @@ function NewTicketPageInner() {
 
     void (async () => {
       if (isPaymentRequest) {
-        const [requestorRows, sendToRows, anyRows] = await Promise.all([
+        const [requestorRows, anyRows] = await Promise.all([
           loadCompanyAgents(staffDesignatedCompany?.id),
-          loadCompanyAgents(selectedCompanyTeamId),
           loadAnyCompanyAgents(),
         ]);
         if (cancelled) return;
         setRequestorApprovalAgents(requestorRows);
-        setSendToApprovalAgents(sendToRows);
-        // Approved By is cross-company; Accounting/Finance stay on Send-to roster.
+        // Approved By is cross-company; Bookkeeper / Accounting are assigned later on the ticket.
         setApprovalAgents(anyRows);
         return;
       }
@@ -451,18 +445,15 @@ function NewTicketPageInner() {
         if (cancelled) return;
         setApprovalAgents(rows);
         setRequestorApprovalAgents([]);
-        setSendToApprovalAgents([]);
         return;
       }
       const rows = await loadCompanyAgents(selectedCompanyTeamId);
       if (cancelled) return;
       setApprovalAgents(rows);
       setRequestorApprovalAgents([]);
-      setSendToApprovalAgents([]);
     })().catch(() => {
       if (cancelled) return;
       setRequestorApprovalAgents([]);
-      setSendToApprovalAgents([]);
       setApprovalAgents([]);
     });
 
@@ -482,31 +473,25 @@ function NewTicketPageInner() {
   useEffect(() => {
     if (!isPaymentRequest) return;
     const requestorIds = new Set(requestorApprovalAgents.map((a) => a.id));
-    const sendToIds = new Set(sendToApprovalAgents.map((a) => a.id));
     const anyIds = new Set(approvalAgents.map((a) => a.id));
     setPaymentAssignees((prev) => {
       const next = {
+        ...prev,
         notedByAgentId:
           prev.notedByAgentId && requestorIds.has(prev.notedByAgentId) ? prev.notedByAgentId : "",
         approvedByAgentId:
           prev.approvedByAgentId && anyIds.has(prev.approvedByAgentId)
             ? prev.approvedByAgentId
             : "",
-        accountingAgentId:
-          prev.accountingAgentId && sendToIds.has(prev.accountingAgentId)
-            ? prev.accountingAgentId
-            : "",
-        financeAgentId:
-          prev.financeAgentId && sendToIds.has(prev.financeAgentId) ? prev.financeAgentId : "",
+        accountingAgentId: "",
+        financeAgentId: "",
       };
       return next.notedByAgentId === prev.notedByAgentId &&
-        next.approvedByAgentId === prev.approvedByAgentId &&
-        next.accountingAgentId === prev.accountingAgentId &&
-        next.financeAgentId === prev.financeAgentId
+        next.approvedByAgentId === prev.approvedByAgentId
         ? prev
         : next;
     });
-  }, [isPaymentRequest, requestorApprovalAgents, sendToApprovalAgents, approvalAgents]);
+  }, [isPaymentRequest, requestorApprovalAgents, approvalAgents]);
   /** Issue/Concern only — other request types stay creatable. */
   const issueConcernLocked =
     isRequestorIntakeLockRole && intakeGateReady && !intake.canCreateIssueConcern;
@@ -907,23 +892,12 @@ function NewTicketPageInner() {
 
       if (canSetIntakeAssignees) {
         if (isPaymentRequest) {
-          const { notedByAgentId, approvedByAgentId, accountingAgentId, financeAgentId } =
-            paymentAssignees;
+          const { notedByAgentId, approvedByAgentId } = paymentAssignees;
           if (!notedByAgentId || (!skipApprovedBy && !approvedByAgentId)) {
             setError(
               skipApprovedBy
                 ? "Noted By is required."
                 : "Noted By and Approved By are required.",
-            );
-            setLoading(false);
-            return;
-          }
-          if (
-            !letAccountingHandlePaymentMode &&
-            (!accountingAgentId || !financeAgentId)
-          ) {
-            setError(
-              "Approved By (Accounting) and Approved By (Finance) are required, or check Let Accounting and Finance Handle it.",
             );
             setLoading(false);
             return;
@@ -1050,9 +1024,9 @@ function NewTicketPageInner() {
         const cleaned = Object.fromEntries(
           Object.entries(assignees).filter(([key, v]) => {
             if (typeof v !== "string" || !v.trim()) return false;
+            // Bookkeeper / Accounting seats are assigned later on the ticket, not at intake.
             if (
               isPaymentRequest &&
-              letAccountingHandlePaymentMode &&
               (key === "accountingAgentId" || key === "financeAgentId")
             ) {
               return false;
@@ -1637,11 +1611,6 @@ function NewTicketPageInner() {
                       if (checked) {
                         setModeOfPayment("");
                         setDeliveryOfCheck("");
-                        setPaymentAssignees((prev) => ({
-                          ...prev,
-                          accountingAgentId: "",
-                          financeAgentId: "",
-                        }));
                       }
                     }}
                     className="mt-0.5 size-4 shrink-0 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
@@ -1649,10 +1618,10 @@ function NewTicketPageInner() {
                   <span>
                     <span className="font-medium">Let Accounting and Finance Handle it</span>
                     <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                      Hides Mode of payment and Approved By (Accounting) / Approved By (Finance)
-                      assignees. After Noted By
-                      {skipApprovedBy ? "" : " and Approved By"} are done, the assignee sets mode of
-                      payment and those roles on the ticket.
+                      Hides Mode of payment. After Noted By
+                      {skipApprovedBy ? "" : " and Approved By"} are done, Accounting sets mode of
+                      payment on the ticket. Prepared by Bookkeeper and Approved By Accounting are
+                      assigned on the ticket as well.
                     </span>
                   </span>
                 </label>
@@ -2187,7 +2156,7 @@ function NewTicketPageInner() {
                         <span className="font-medium">Skip Approved By</span>
                         <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
                           Hides the Approved By assignee. After Noted By is green-lit, the request
-                          goes straight to Approved By (Accounting).
+                          continues to Prepared by Bookkeeper (assigned on the ticket).
                         </span>
                       </span>
                     </label>
@@ -2198,58 +2167,36 @@ function NewTicketPageInner() {
                         : ""}
                       .
                       {skipApprovedBy
-                        ? letAccountingHandlePaymentMode
-                          ? " Accounting and Finance are assigned later on the ticket."
-                          : " Accounting and Finance use the “Send request to” company."
-                        : letAccountingHandlePaymentMode
-                          ? " Approved By can be chosen from any company. Accounting and Finance are assigned later on the ticket."
-                          : " Approved By can be chosen from any company. Accounting and Finance use the “Send request to” company."}
+                        ? " Prepared by Bookkeeper and Approved By Accounting are assigned later on the ticket."
+                        : " Approved By can be chosen from any company. Prepared by Bookkeeper and Approved By Accounting are assigned later on the ticket."}
                     </p>
                     {(
                       (
                         [
                           ["notedByAgentId", "Noted By", "requestor"],
                           ["approvedByAgentId", "Approved By", "any"],
-                          ["accountingAgentId", "Approved By (Accounting)", "sendTo"],
-                          ["financeAgentId", "Approved By (Finance)", "sendTo"],
                         ] as const
                       ).filter(([key]) => {
                         if (skipApprovedBy && key === "approvedByAgentId") return false;
-                        if (
-                          letAccountingHandlePaymentMode &&
-                          (key === "accountingAgentId" || key === "financeAgentId")
-                        ) {
-                          return false;
-                        }
                         return true;
                       })
                     ).map(([key, label, scope]) => {
                       const roster =
                         scope === "requestor"
                           ? requestorApprovalAgents
-                          : scope === "any"
-                            ? approvalAgents
-                            : sendToApprovalAgents;
+                          : approvalAgents;
                       const taken = new Set(
                         (
                           [
                             paymentAssignees.notedByAgentId,
                             ...(skipApprovedBy ? [] : [paymentAssignees.approvedByAgentId]),
-                            ...(letAccountingHandlePaymentMode
-                              ? []
-                              : [
-                                  paymentAssignees.accountingAgentId,
-                                  paymentAssignees.financeAgentId,
-                                ]),
                           ] as string[]
                         ).filter((id) => id && id !== paymentAssignees[key]),
                       );
                       const scopeReady =
                         scope === "requestor"
                           ? Boolean(staffDesignatedCompany?.id)
-                          : scope === "any"
-                            ? true
-                            : Boolean(selectedCompanyTeamId);
+                          : true;
                       return (
                         <CompanyUserSearchField
                           key={key}
@@ -2263,7 +2210,7 @@ function NewTicketPageInner() {
                             !scopeReady
                               ? scope === "requestor"
                                 ? "Requestor company not assigned"
-                                : "Select Send request to first"
+                                : "Loading company users…"
                               : "Search by name or email…"
                           }
                           onChange={(agentId) =>

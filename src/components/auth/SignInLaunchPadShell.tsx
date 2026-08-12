@@ -12,8 +12,9 @@ export const launchPadLabelClass =
   "block text-[10px] font-bold uppercase tracking-[0.2em] text-[#ff6b00]";
 
 export const launchPadInputClass =
-  "w-full rounded-xl border border-[#333] bg-[rgba(10,10,10,0.6)] px-4 py-3 text-sm text-white placeholder:text-[#666] outline-none transition " +
-  "focus:border-[#ff6b00] focus:shadow-[0_0_0_1px_#ff6b00]";
+  "w-full rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none transition " +
+  "focus:border-[#ff6b00] focus:shadow-[0_0_0_1px_#ff6b00] " +
+  "dark:border-[#333] dark:bg-[rgba(10,10,10,0.6)] dark:text-white dark:placeholder:text-[#666]";
 
 export const launchPadPrimaryButtonClass =
   "relative z-0 inline-flex w-full items-center justify-center rounded-xl bg-gradient-to-r from-[#e66000] to-[#ff7a1a] py-3 text-sm font-semibold text-white transition " +
@@ -21,8 +22,10 @@ export const launchPadPrimaryButtonClass =
   "disabled:pointer-events-none disabled:opacity-55";
 
 export const launchPadOutlineButtonClass =
-  "w-full rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-sm font-medium text-white transition " +
-  "hover:border-white/20 hover:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-55";
+  "w-full rounded-xl border border-zinc-300 bg-zinc-50 px-4 py-3 text-sm font-medium text-zinc-900 transition " +
+  "hover:border-zinc-400 hover:bg-zinc-100 " +
+  "dark:border-white/10 dark:bg-white/[0.02] dark:text-white dark:hover:border-white/20 dark:hover:bg-white/[0.05] " +
+  "disabled:pointer-events-none disabled:opacity-55";
 
 function LaunchPadClock({ className }: { className?: string }) {
   const epochMs = usePhilippineTimeSync();
@@ -36,11 +39,12 @@ function LaunchPadClock({ className }: { className?: string }) {
       aria-live="polite"
       aria-label={parts?.ariaLabel ?? "Loading Philippine time"}
     >
-      <div aria-hidden className="absolute inset-0 rounded-full bg-[#ff6b00]/20 blur-3xl" />
+      <div aria-hidden className="absolute inset-0 rounded-full bg-[#ff6b00]/15 blur-3xl dark:bg-[#ff6b00]/20" />
       <div
         className={cn(
-          "relative flex animate-[launchpad-glow_3s_ease-in-out_infinite_alternate] items-center justify-center gap-6",
-          "rounded-2xl border border-white/10 bg-black/60 p-6 backdrop-blur-md",
+          "relative flex items-center justify-center gap-6",
+          "rounded-2xl border border-zinc-200 bg-white/80 p-6 shadow-[0_8px_30px_rgba(255,107,0,0.12)] backdrop-blur-md",
+          "dark:animate-[launchpad-glow_3s_ease-in-out_infinite_alternate] dark:border-white/10 dark:bg-black/60 dark:shadow-none",
         )}
       >
         <div
@@ -54,7 +58,7 @@ function LaunchPadClock({ className }: { className?: string }) {
         <div
           className={cn(
             "font-mono text-5xl font-bold tabular-nums tracking-[0.1em] text-[#ff6b00] sm:text-7xl",
-            "[text-shadow:0_0_10px_rgba(255,107,0,0.5)]",
+            "[text-shadow:0_0_10px_rgba(255,107,0,0.35)] dark:[text-shadow:0_0_10px_rgba(255,107,0,0.5)]",
           )}
         >
           {time}
@@ -72,24 +76,34 @@ function LaunchPadClock({ className }: { className?: string }) {
   );
 }
 
-export function SignInLaunchPadShell({ children }: { children: React.ReactNode }) {
+export function SignInLaunchPadShell({
+  children,
+  wide = false,
+}: {
+  children: React.ReactNode;
+  /** Wider card for multi-field forms (e.g. signup). */
+  wide?: boolean;
+}) {
   return (
-    <div className="relative flex min-h-dvh flex-col bg-[#050505] text-[#e0e0e0] selection:bg-[#ff6b00] selection:text-white">
+    <div className="relative flex min-h-dvh flex-col bg-zinc-50 text-zinc-900 antialiased selection:bg-[#ff6b00] selection:text-white dark:bg-[#050505] dark:text-[#e0e0e0]">
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_15%_50%,rgba(255,107,0,0.05),transparent_40%),radial-gradient(circle_at_85%_30%,rgba(255,107,0,0.03),transparent_40%)]"
+        className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_15%_50%,rgba(255,107,0,0.08),transparent_40%),radial-gradient(circle_at_85%_30%,rgba(255,107,0,0.04),transparent_40%)] dark:bg-[radial-gradient(circle_at_15%_50%,rgba(255,107,0,0.05),transparent_40%),radial-gradient(circle_at_85%_30%,rgba(255,107,0,0.03),transparent_40%)]"
       />
 
-      <header className="relative z-20 flex w-full shrink-0 items-center justify-between border-b border-white/5 bg-[#050505]/95 px-6 py-4 backdrop-blur-sm">
-        <Link href="/signin" className="inline-flex items-center gap-3">
-          <BrandLogo className="h-8 w-auto max-w-[180px]" />
-          <span className="hidden text-base font-semibold tracking-tight text-white sm:inline">
+      <header className="relative z-20 flex w-full shrink-0 items-center justify-between border-b border-zinc-200/80 bg-white/90 px-5 py-2.5 backdrop-blur-sm dark:border-white/5 dark:bg-[#050505]/95">
+        <Link href="/signin" className="inline-flex items-center gap-2.5">
+          <BrandLogo width={52} className="h-auto max-h-9 w-[52px]" />
+          <span className="hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-white sm:inline">
             {BRAND_TITLE}
           </span>
         </Link>
-        <nav className="flex items-center gap-4 text-sm font-medium sm:gap-6">
+        <nav className="flex items-center gap-3 text-sm font-medium sm:gap-6">
           <ThemeToggle />
-          <Link href="/process" className="hidden text-gray-300 transition-colors hover:text-white sm:inline">
+          <Link
+            href="/process"
+            className="hidden text-zinc-600 transition-colors hover:text-zinc-950 dark:text-gray-300 dark:hover:text-white sm:inline"
+          >
             Support
           </Link>
         </nav>
@@ -100,33 +114,41 @@ export function SignInLaunchPadShell({ children }: { children: React.ReactNode }
           <div className="inline-block animate-[launchpad-float_6s_ease-in-out_infinite]">
             <LaunchPadClock />
           </div>
-          <h1 className="mx-auto mt-8 max-w-2xl text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+          <h1 className="mx-auto mt-8 max-w-2xl text-3xl font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-4xl">
             The command center for
             <br />
             modern support.
           </h1>
         </div>
 
-        <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-white/5 bg-[rgba(26,26,26,0.4)] p-8 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] backdrop-blur-[12px] sm:p-10">
+        <div
+          className={cn(
+            "relative w-full overflow-hidden rounded-3xl border border-zinc-200 bg-white/90 p-8 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.12)] backdrop-blur-[12px] sm:p-10",
+            "dark:border-white/5 dark:bg-[rgba(26,26,26,0.4)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)]",
+            wide ? "max-w-lg" : "max-w-md",
+          )}
+        >
           <div
             aria-hidden
-            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-zinc-300 to-transparent dark:via-white/20"
           />
           {children}
         </div>
       </main>
 
-      <footer className="relative z-10 flex w-full shrink-0 flex-col items-center justify-between gap-4 border-t border-white/5 bg-[#050505]/95 px-6 py-4 text-xs text-gray-500 backdrop-blur-sm sm:flex-row sm:gap-0">
+      <footer className="relative z-10 flex w-full shrink-0 flex-col items-center justify-between gap-4 border-t border-zinc-200/80 bg-white/90 px-6 py-4 text-xs text-zinc-500 backdrop-blur-sm dark:border-white/5 dark:bg-[#050505]/95 dark:text-gray-500 sm:flex-row sm:gap-0">
         <div>
           © {new Date().getFullYear()} AGC Technologies &amp; Business Solutions. All rights
           reserved.
         </div>
         <div className="flex flex-wrap justify-center gap-4">
-          <span className="cursor-default transition-colors hover:text-gray-300">Privacy Policy</span>
-          <span className="cursor-default transition-colors hover:text-gray-300">
+          <span className="cursor-default transition-colors hover:text-zinc-800 dark:hover:text-gray-300">
+            Privacy Policy
+          </span>
+          <span className="cursor-default transition-colors hover:text-zinc-800 dark:hover:text-gray-300">
             Terms of Service
           </span>
-          <span className="cursor-default transition-colors hover:text-gray-300">
+          <span className="cursor-default transition-colors hover:text-zinc-800 dark:hover:text-gray-300">
             Security Architecture
           </span>
         </div>

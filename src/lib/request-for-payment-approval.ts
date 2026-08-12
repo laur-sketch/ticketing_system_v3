@@ -50,7 +50,7 @@ export type PaymentApprovalMeta = PaymentApprovalAssignees & {
   deferPaymentModeToAccounting?: boolean;
   /**
    * Intake skipped the Approved By seat — after Noted By is green-lit, the chain
-   * continues at Approved By (Accounting).
+   * continues at Prepared by Bookkeeper.
    */
   skipApprovedBy?: boolean;
 };
@@ -58,16 +58,16 @@ export type PaymentApprovalMeta = PaymentApprovalAssignees & {
 export const PAYMENT_APPROVAL_STEP_LABELS: Record<PaymentApprovalStep, string> = {
   NOTED_BY: "NOTED BY",
   APPROVED_BY: "APPROVED BY",
-  APPROVED_BY_ACCOUNTING: "APPROVED BY ACCOUNTING",
-  APPROVED_BY_FINANCE: "APPROVED BY FINANCE",
+  APPROVED_BY_ACCOUNTING: "PREPARED BY BOOKKEEPER",
+  APPROVED_BY_FINANCE: "APPROVED BY ACCOUNTING",
 };
 
 export const PAYMENT_APPROVAL_FIELD_LABELS: Record<keyof PaymentApprovalAssignees, string> = {
   preparedByAgentId: "Prepared By",
   notedByAgentId: "Noted By",
   approvedByAgentId: "Approved By",
-  accountingAgentId: "Approved By (Accounting)",
-  financeAgentId: "Approved By (Finance)",
+  accountingAgentId: "Prepared by Bookkeeper:",
+  financeAgentId: "Approved By Accounting",
 };
 
 const LEGACY_STEP_ALIASES: Record<string, PaymentProceduralStep> = {
@@ -286,15 +286,14 @@ export function canEditDeferredPaymentMode(opts: {
 }
 
 /**
- * After Noted By + Approved By are green-lit and mode was deferred, the board holder
- * (or Admin) may assign the missing Accounting / Finance seats.
+ * After Noted By + Approved By are green-lit, missing Bookkeeper / Accounting seats
+ * may be assigned on the ticket (intake no longer collects those roles).
  */
 export function canAssignDeferredPaymentAccountingFinance(opts: {
   meta: PaymentApprovalMeta;
-  modeOfPayment: string | null | undefined;
+  modeOfPayment?: string | null | undefined;
 }): boolean {
-  const { meta, modeOfPayment } = opts;
-  if (!paymentModeDeferredOrEmpty(meta, modeOfPayment)) return false;
+  const { meta } = opts;
   if (!paymentNotedAndApprovedByComplete(meta)) return false;
   return !meta.accountingAgentId?.trim() || !meta.financeAgentId?.trim();
 }

@@ -72,6 +72,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
     description?: string | null;
     remarks?: string | null;
     dueDate?: string | null;
+    dueDateRollsWithCycle?: boolean | null;
     priority?: string | null;
     done?: boolean;
     /** Move to this segment (use "__unsegmented__" for the General board). */
@@ -120,12 +121,13 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
     body.description === undefined &&
     body.remarks === undefined &&
     body.dueDate === undefined &&
+    body.dueDateRollsWithCycle === undefined &&
     body.priority === undefined
   ) {
     return NextResponse.json(
       {
         error:
-          "Provide title, description, remarks, dueDate, priority, segmentId, and/or boardColumn.",
+          "Provide title, description, remarks, dueDate, dueDateRollsWithCycle, priority, segmentId, and/or boardColumn.",
       },
       { status: 400 },
     );
@@ -136,6 +138,9 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string; sub
     ...(body.description !== undefined ? { description: body.description ?? null } : {}),
     ...(body.remarks !== undefined ? { remarks: body.remarks ?? null } : {}),
     ...(body.dueDate !== undefined ? { dueDate: body.dueDate } : {}),
+    ...(body.dueDateRollsWithCycle !== undefined
+      ? { dueDateRollsWithCycle: body.dueDateRollsWithCycle === true }
+      : {}),
     ...(body.priority !== undefined ? { projectPriority: body.priority ?? null } : {}),
   });
   if (!result.ok) {

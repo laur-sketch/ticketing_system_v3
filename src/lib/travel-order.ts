@@ -487,9 +487,6 @@ export function validateTravelOrderDraft(draft: TravelOrderDraft): string | null
     if (!draft.driverAgentId.trim()) {
       return "Select a driver from the travelers list.";
     }
-    if (!draft.driverLicenseNo.trim()) {
-      return "Enter the driver license number.";
-    }
   }
   const gatePassError = validateTravelOrderGatePass(draft.gatePass);
   if (gatePassError) return gatePassError;
@@ -786,7 +783,11 @@ export function canCancelTravelOrderNow(
   );
 }
 
-/** Assigned traveler (including creator) on a travel order. */
+/**
+ * Assigned traveler on a travel order.
+ * Uses stored traveler ids; creator is only treated as a traveler for legacy
+ * rows that never persisted traveler_agent_ids (empty list).
+ */
 export function isTravelOrderTraveler(
   operatorAgentId: string | null | undefined,
   order: {
@@ -795,8 +796,11 @@ export function isTravelOrderTraveler(
   },
 ): boolean {
   if (!operatorAgentId) return false;
-  if (order.createdByAgentId === operatorAgentId) return true;
-  return (order.travelerAgentIds ?? []).includes(operatorAgentId);
+  const travelers = order.travelerAgentIds ?? [];
+  if (travelers.length > 0) {
+    return travelers.includes(operatorAgentId);
+  }
+  return order.createdByAgentId === operatorAgentId;
 }
 
 export function parseTravelOrderAttachments(raw: unknown): TaskScreenshotMetaItem[] {

@@ -234,6 +234,30 @@ export async function listOfflineDrafts(
   return travelOrderOfflineDb.drafts.orderBy("updatedAt").reverse().toArray();
 }
 
+export async function getOfflineDraft(
+  localId: string,
+): Promise<OfflineTravelOrderDraft | undefined> {
+  return travelOrderOfflineDb.drafts.get(localId);
+}
+
+export async function deleteOfflineDraft(localId: string): Promise<void> {
+  await travelOrderOfflineDb.drafts.delete(localId);
+}
+
+/** True when a draft has enough content to show in the Travel Orders list. */
+export function offlineDraftHasContent(draft: Pick<OfflineTravelOrderDraft, "draft">): boolean {
+  const d = draft.draft;
+  if (d.orderRequest.trim()) return true;
+  if (d.additionalTravelerAgentIds.length > 0) return true;
+  if (d.vehicle.trim()) return true;
+  if (d.locations.some((loc) => loc.label.trim())) return true;
+  if (d.approvedByAgentIds.length > 0 || d.approvalLevels.some((l) => l.agentId.trim())) {
+    return true;
+  }
+  if (d.confirmationByAgentId.trim()) return true;
+  return false;
+}
+
 /** Placeholder DTO so offline-queued creates appear in Travel Order lists before sync. */
 export function offlineDraftAsListItem(draft: OfflineTravelOrderDraft): TravelOrderDto {
   const d = draft.draft;
@@ -241,7 +265,7 @@ export function offlineDraftAsListItem(draft: OfflineTravelOrderDraft): TravelOr
     id: draft.serverTravelOrderId || draft.localId,
     kpiMaintenanceId: draft.serverKpiId || "",
     orderRequest: d.orderRequest,
-    status: "PENDING_SYNC",
+    status: draft.syncStatus === "draft" ? "DRAFT" : "PENDING_SYNC",
     approvedByAgentId: d.approvedByAgentIds[0] ?? null,
     approvedByAgent: null,
     approvedByAgentIds: d.approvedByAgentIds,

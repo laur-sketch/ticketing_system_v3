@@ -28,7 +28,7 @@ export default async function AgentTasksPage({
 }) {
   const session = await requireSession();
   if (!session?.user) redirect("/signin");
-  if (!["SuperAdmin", "Personnel", "Admin"].includes(session.user.role)) redirect("/");
+  if (!["SuperAdmin", "HighAdmin", "Personnel", "Admin"].includes(session.user.role)) redirect("/");
 
   const params = await searchParams;
   const selectedCompany = firstQuery(params.company) ?? "ALL";
@@ -183,6 +183,7 @@ export default async function AgentTasksPage({
               showAdminTaskManagement={
                 isElevatedUserRole(session.user.role) || session.user.role === "Admin"
               }
+              sessionRole={session.user.role}
               focusTaskId={focusTaskId}
               fromJobOrderTicketId={fromJobOrderTicketId}
             />
