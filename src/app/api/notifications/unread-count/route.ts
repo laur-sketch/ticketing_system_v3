@@ -4,7 +4,7 @@ import { requireRole } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { runForConfirmationReminderSweep } from "@/lib/confirmation-reminders";
-import { listPendingTravelApprovalsForAgent } from "@/lib/travel-order-db";
+import { listPendingTravelApprovalsForAgent, listPendingTravelConfirmationsForAgent } from "@/lib/travel-order-db";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   });
   const operatorId = operator?.id ?? null;
 
-  const [ticketCount, accountRequestCount, pendingTravelApprovals] = await Promise.all([
+  const [ticketCount, accountRequestCount, pendingTravelApprovals, pendingTravelConfirmations] = await Promise.all([
     prisma.ticket.count({
       where: {
         status: "OPEN",
@@ -53,10 +53,18 @@ export async function GET(req: Request) {
           return [];
         })
       : Promise.resolve([]),
+    operatorId
+      ? listPendingTravelConfirmationsForAgent(operatorId).catch((error) => {
+          console.warn("[unread-count] travel confirmation lookup failed", error);
+          return [];
+        })
+      : Promise.resolve([]),
   ]);
 
   const travelOrderApprovalIds = pendingTravelApprovals.map((row) => row.id);
   const travelOrderApprovalCount = travelOrderApprovalIds.length;
+  const travelOrderConfirmationIds = pendingTravelConfirmations.map((row) => row.id);
+  const travelOrderConfirmationCount = travelOrderConfirmationIds.length;
 
   return NextResponse.json(
     {
@@ -64,7 +72,10 @@ export async function GET(req: Request) {
       accountRequestCount,
       travelOrderApprovalCount,
       travelOrderApprovalIds,
-      total: ticketCount + accountRequestCount + travelOrderApprovalCount,
+      travelOrderConfirmationCount,
+      travelOrderConfirmationIds,
+      total:
+        ticketCount + accountRequestCount + travelOrderApprovalCount + travelOrderConfirmationCount,
     },
     {
       headers: { "cache-control": "private, no-store" },

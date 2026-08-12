@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
 import {
   canApproveTravelOrderNow,
+  canConfirmTravelOrderNow,
   getOperatorActionableApprovalLevel,
   hasHierarchicalApprovals,
   isApprovalHierarchySatisfied,
@@ -1021,6 +1022,104 @@ export async function listPendingTravelApprovalsForAgent(
 
 export async function countPendingTravelApprovalsForAgent(agentId: string): Promise<number> {
   const rows = await listPendingTravelApprovalsForAgent(agentId);
+  return rows.length;
+}
+
+/**
+ * APPROVED travel orders waiting on this agent to confirm
+ * (only the designated confirmer — no admin proxy).
+ */
+export async function listPendingTravelConfirmationsForAgent(
+  agentId: string,
+): Promise<TravelOrderRow[]> {
+  const id = typeof agentId === "string" ? agentId.trim() : "";
+  if (!id) return [];
+
+  return withTravelOrderFallback("listPendingTravelConfirmationsForAgent", [], async () => {
+    const orders = await prisma.$queryRaw<RawTravelOrder[]>`
+      SELECT
+        t.id,
+        t.kpi_maintenance_id,
+        t.order_request,
+        COALESCE(t.attachments, '[]'::jsonb) AS attachments,
+        t.status,
+        t.approved_by_agent_id,
+        t.approved_by_agent_ids,
+        COALESCE(t.approval_levels, '[]'::jsonb) AS approval_levels,
+        t.confirmation_by_agent_id,
+        t.created_by_agent_id,
+        t.company_team_id,
+        COALESCE(t.traveler_agent_ids, '[]'::jsonb) AS traveler_agent_ids,
+        t.vehicle,
+        COALESCE(t.driver_present, false) AS driver_present,
+        t.driver_agent_id,
+        t.driver_license_no,
+        COALESCE(t.gate_pass_included, false) AS gate_pass_included,
+        t.est_departure_at,
+        t.est_arrival_at,
+        t.actual_departure_started_at,
+        t.actual_departure_started_latitude,
+        t.actual_departure_started_longitude,
+        t.gate_pass_start_guard_on_duty,
+        t.actual_departure_ended_at,
+        t.actual_departure_ended_latitude,
+        t.actual_departure_ended_longitude,
+        t.gate_pass_end_guard_on_duty,
+        t.rejection_reason,
+        t.rejected_by_agent_id,
+        t.rejected_at,
+        t.rejected_at_level,
+        t.kpi_percent,
+        t.kpi_submitted_at,
+        t.created_by,
+        t.created_at,
+        t.updated_at,
+        a.id AS agent_id,
+        a.name AS agent_name,
+        a.email AS agent_email,
+        c.id AS confirm_agent_id,
+        c.name AS confirm_agent_name,
+        c.email AS confirm_agent_email,
+        cr.id AS creator_agent_id,
+        cr.name AS creator_agent_name,
+        cr.email AS creator_agent_email,
+        dr.id AS driver_join_agent_id,
+        dr.name AS driver_join_agent_name,
+        dr.email AS driver_join_agent_email,
+        rj.id AS reject_agent_id,
+        rj.name AS reject_agent_name,
+        rj.email AS reject_agent_email,
+        k.title AS kpi_title,
+        k.main_task AS kpi_main_task
+      FROM travel_orders t
+      LEFT JOIN agents a ON a.id = t.approved_by_agent_id
+      LEFT JOIN agents c ON c.id = t.confirmation_by_agent_id
+      LEFT JOIN agents cr ON cr.id = t.created_by_agent_id
+      LEFT JOIN agents dr ON dr.id = t.driver_agent_id
+      LEFT JOIN agents rj ON rj.id = t.rejected_by_agent_id
+      LEFT JOIN kpi_maintenance k ON k.id = t.kpi_maintenance_id
+      WHERE t.status = ${TRAVEL_ORDER_STATUS.APPROVED}
+        AND t.confirmation_by_agent_id = ${id}
+      ORDER BY t.updated_at DESC
+      LIMIT 100
+    `;
+
+    if (orders.length === 0) return [];
+
+    const ids = orders.map((o) => o.id);
+    const locations = await prisma.$queryRaw<RawLocation[]>`
+      SELECT * FROM travel_order_locations
+      WHERE travel_order_id IN (${Prisma.join(ids)})
+      ORDER BY sort_order ASC
+    `;
+
+    const hydrated = await hydrateApprovedByAgents(orders.map((o) => mapOrderBase(o, locations)));
+    return hydrated.filter((order) => canConfirmTravelOrderNow(id, order));
+  });
+}
+
+export async function countPendingTravelConfirmationsForAgent(agentId: string): Promise<number> {
+  const rows = await listPendingTravelConfirmationsForAgent(agentId);
   return rows.length;
 }
 

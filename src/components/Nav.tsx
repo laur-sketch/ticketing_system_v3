@@ -64,6 +64,16 @@ export function Nav() {
       updatedAt: string;
     }>
   >([]);
+  const [travelOrderConfirmations, setTravelOrderConfirmations] = useState<
+    Array<{
+      id: string;
+      kpiMaintenanceId: string;
+      kpiTitle: string | null;
+      kpiMainTask: string | null;
+      orderRequest: string;
+      updatedAt: string;
+    }>
+  >([]);
   const [phaseDelayAlerts, setPhaseDelayAlerts] = useState<
     Array<{
       kpiMaintenanceId: string;
@@ -102,6 +112,7 @@ export function Nav() {
         ticketCount?: number;
         accountRequestCount?: number;
         travelOrderApprovalIds?: string[];
+        travelOrderConfirmationIds?: string[];
         total?: number;
       };
       const ticketCount = Math.max(0, Number(payload.ticketCount ?? 0) || 0);
@@ -109,11 +120,15 @@ export function Nav() {
       const travelIds = Array.isArray(payload.travelOrderApprovalIds)
         ? payload.travelOrderApprovalIds.filter((id): id is string => typeof id === "string")
         : [];
+      const confirmationIds = Array.isArray(payload.travelOrderConfirmationIds)
+        ? payload.travelOrderConfirmationIds.filter((id): id is string => typeof id === "string")
+        : [];
+      const pendingIds = [...travelIds, ...confirmationIds];
       const seenTravelIds = readTravelSeenIds(email);
-      // Drop dismissed ids that are no longer pending.
-      const pruned = new Set([...seenTravelIds].filter((id) => travelIds.includes(id)));
+      // Drop dismissed ids that are no longer pending (approval or confirmation).
+      const pruned = new Set([...seenTravelIds].filter((id) => pendingIds.includes(id)));
       if (pruned.size !== seenTravelIds.size) writeTravelSeenIds(email, pruned);
-      const unreadTravelCount = travelIds.filter((id) => !pruned.has(id)).length;
+      const unreadTravelCount = pendingIds.filter((id) => !pruned.has(id)).length;
       setUnreadOpenCount(ticketCount + accountRequestCount + unreadTravelCount);
     } catch {
       // Ignore polling/network failures for badge updates.
@@ -134,9 +149,16 @@ export function Nav() {
         });
         const nextSeen = readTravelSeenIds(userEmail);
         for (const row of travelOrderApprovals) nextSeen.add(row.id);
+        for (const row of travelOrderConfirmations) nextSeen.add(row.id);
         if (res.ok) {
-          const payload = (await res.json()) as { travelOrderApprovalIds?: string[] };
+          const payload = (await res.json()) as {
+            travelOrderApprovalIds?: string[];
+            travelOrderConfirmationIds?: string[];
+          };
           for (const id of payload.travelOrderApprovalIds ?? []) {
+            if (typeof id === "string" && id.trim()) nextSeen.add(id);
+          }
+          for (const id of payload.travelOrderConfirmationIds ?? []) {
             if (typeof id === "string" && id.trim()) nextSeen.add(id);
           }
         }
@@ -146,11 +168,12 @@ export function Nav() {
       } catch {
         const nextSeen = readTravelSeenIds(userEmail);
         for (const row of travelOrderApprovals) nextSeen.add(row.id);
+        for (const row of travelOrderConfirmations) nextSeen.add(row.id);
         writeTravelSeenIds(userEmail, nextSeen);
         setSeenTravelIds(new Set(nextSeen));
       }
     })();
-  }, [userEmail, travelOrderApprovals, refreshUnreadOpenCount]);
+  }, [userEmail, travelOrderApprovals, travelOrderConfirmations, refreshUnreadOpenCount]);
 
   useEffect(() => {
     if (!data?.user) return;
@@ -166,6 +189,9 @@ export function Nav() {
       fetch("/api/travel-orders/pending-approvals", { cache: "no-store" }).then((r) =>
         r.ok ? r.json() : { pendingApprovals: [] },
       ),
+      fetch("/api/travel-orders/pending-confirmations", { cache: "no-store" }).then((r) =>
+        r.ok ? r.json() : { pendingConfirmations: [] },
+      ),
       fetch("/api/kpi-maintenance/phase-delay-alerts", { cache: "no-store" }).then((r) =>
         r.ok ? r.json() : { delayedPhases: [] },
       ),
@@ -179,6 +205,7 @@ export function Nav() {
         ([
           rows,
           travelPayload,
+          confirmationPayload,
           delayPayload,
           reqPayload,
         ]: [
@@ -192,6 +219,16 @@ export function Nav() {
               orderRequest?: string;
               pendingLevel?: number | null;
               pendingLevelOptional?: boolean;
+              updatedAt: string;
+            }>;
+          },
+          {
+            pendingConfirmations?: Array<{
+              id: string;
+              kpiMaintenanceId: string;
+              kpiTitle?: string | null;
+              kpiMainTask?: string | null;
+              orderRequest?: string;
               updatedAt: string;
             }>;
           },
@@ -231,6 +268,16 @@ export function Nav() {
               updatedAt: n.updatedAt,
             })),
           );
+          setTravelOrderConfirmations(
+            (confirmationPayload.pendingConfirmations ?? []).map((n) => ({
+              id: n.id,
+              kpiMaintenanceId: n.kpiMaintenanceId,
+              kpiTitle: n.kpiTitle ?? null,
+              kpiMainTask: n.kpiMainTask ?? null,
+              orderRequest: n.orderRequest ?? "",
+              updatedAt: n.updatedAt,
+            })),
+          );
           setPhaseDelayAlerts(delayPayload.delayedPhases ?? []);
           setAccountRequestNotifications(isAdminRole ? (reqPayload.rows ?? []) : []);
         },
@@ -239,6 +286,7 @@ export function Nav() {
         if (!ignore) {
           setNotifications([]);
           setTravelOrderApprovals([]);
+          setTravelOrderConfirmations([]);
           setPhaseDelayAlerts([]);
           setAccountRequestNotifications([]);
         }
@@ -317,6 +365,7 @@ export function Nav() {
         ) : notifications.length === 0 &&
           accountRequestNotifications.length === 0 &&
           travelOrderApprovals.length === 0 &&
+          travelOrderConfirmations.length === 0 &&
           phaseDelayAlerts.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">
             No recent notifications.
@@ -377,6 +426,52 @@ export function Nav() {
                         {n.pendingLevel != null
                           ? ` · Level ${n.pendingLevel}${n.pendingLevelOptional ? " (optional)" : ""}`
                           : ""}
+                      </p>
+                      <p className="line-clamp-1 text-xs text-zinc-700 dark:text-zinc-300">
+                        {label}
+                      </p>
+                      {n.orderRequest ? (
+                        <p className="mt-0.5 line-clamp-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                          {n.orderRequest}
+                        </p>
+                      ) : null}
+                      <p className="mt-1 text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                        Awaiting you · <ElapsedFromIso iso={n.updatedAt} className="inline" />
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {travelOrderConfirmations.length > 0 ? (
+              <div className="space-y-1">
+                <p className="px-2 pt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-sky-700 dark:text-sky-300">
+                  Travel order confirmations
+                </p>
+                {travelOrderConfirmations.map((n) => {
+                  const isUnread = !seenTravelIds.has(n.id);
+                  const label = n.kpiMainTask || n.kpiTitle || "Travel Order";
+                  return (
+                    <button
+                      key={`to-confirm-${n.id}`}
+                      type="button"
+                      onClick={() => {
+                        setNotifOpen(false);
+                        setTravelApprovalModal({
+                          taskId: n.kpiMaintenanceId,
+                          travelOrderId: n.id,
+                          title: label,
+                        });
+                      }}
+                      className={cn(
+                        "block w-full rounded-lg border px-3 py-2 text-left transition",
+                        isUnread
+                          ? "border-sky-500/40 bg-sky-500/10 hover:bg-sky-500/15 dark:border-sky-500/30 dark:bg-sky-500/10 dark:hover:bg-sky-500/15"
+                          : "border-zinc-200 bg-zinc-50 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950/60 dark:hover:bg-zinc-800/70",
+                      )}
+                    >
+                      <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+                        Needs confirmation
                       </p>
                       <p className="line-clamp-1 text-xs text-zinc-700 dark:text-zinc-300">
                         {label}
