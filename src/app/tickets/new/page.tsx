@@ -91,7 +91,6 @@ function NewTicketPageInner() {
   const [modeOfPayment, setModeOfPayment] = useState("");
   const [deliveryOfCheck, setDeliveryOfCheck] = useState("");
   const [letAccountingHandlePaymentMode, setLetAccountingHandlePaymentMode] = useState(false);
-  const [skipApprovedBy, setSkipApprovedBy] = useState(false);
   const [draftRequestType, setDraftRequestType] =
     useState<RequestTypeId>(DEFAULT_REQUEST_TYPE);
   const activeRequestType = useMemo(() => {
@@ -134,6 +133,8 @@ function NewTicketPageInner() {
     accountingAgentId: "",
     financeAgentId: "",
   });
+  const [skipPaymentNotedBy, setSkipPaymentNotedBy] = useState(false);
+  const [skipPaymentApprovedBy, setSkipPaymentApprovedBy] = useState(false);
   const [fundTransferAssignees, setFundTransferAssignees] = useState({
     recommendingApprovalAgentId: "",
     approvedByAgentId: "",
@@ -539,7 +540,8 @@ function NewTicketPageInner() {
     setModeOfPayment("");
     setDeliveryOfCheck("");
     setLetAccountingHandlePaymentMode(false);
-    setSkipApprovedBy(false);
+    setSkipPaymentNotedBy(false);
+    setSkipPaymentApprovedBy(false);
     setRequisitionItems([emptyRequisitionLineItem(0)]);
     setPurposeOfRequest("");
     setScreenshots([]);
@@ -893,11 +895,17 @@ function NewTicketPageInner() {
       if (canSetIntakeAssignees) {
         if (isPaymentRequest) {
           const { notedByAgentId, approvedByAgentId } = paymentAssignees;
-          if (!notedByAgentId || (!skipApprovedBy && !approvedByAgentId)) {
+          if (
+            (!skipPaymentNotedBy && !notedByAgentId) ||
+            (!skipPaymentApprovedBy && !approvedByAgentId)
+          ) {
             setError(
-              skipApprovedBy
-                ? "Noted By is required."
-                : "Noted By and Approved By are required.",
+              [
+                skipPaymentNotedBy ? null : "Noted By",
+                skipPaymentApprovedBy ? null : "Approved By",
+              ]
+                .filter(Boolean)
+                .join(", ") + " are required.",
             );
             setLoading(false);
             return;
@@ -937,7 +945,8 @@ function NewTicketPageInner() {
             "deferPaymentModeToAccounting",
             letAccountingHandlePaymentMode ? "true" : "false",
           );
-          target.append("skipApprovedBy", skipApprovedBy ? "true" : "false");
+          target.append("skipPaymentNotedBy", skipPaymentNotedBy ? "true" : "false");
+          target.append("skipPaymentApprovedBy", skipPaymentApprovedBy ? "true" : "false");
           if (!letAccountingHandlePaymentMode) {
             target.append("modeOfPayment", modeOfPaymentValue);
             if (deliveryOfCheckValue) target.append("deliveryOfCheck", deliveryOfCheckValue);
@@ -949,7 +958,8 @@ function NewTicketPageInner() {
           target.accountTitle = accountTitle;
           target.amount = amount;
           target.deferPaymentModeToAccounting = letAccountingHandlePaymentMode;
-          target.skipApprovedBy = skipApprovedBy;
+          target.skipPaymentNotedBy = skipPaymentNotedBy;
+          target.skipPaymentApprovedBy = skipPaymentApprovedBy;
           if (!letAccountingHandlePaymentMode) {
             target.modeOfPayment = modeOfPaymentValue;
             if (deliveryOfCheckValue) target.deliveryOfCheck = deliveryOfCheckValue;
@@ -1034,6 +1044,10 @@ function NewTicketPageInner() {
             return true;
           }),
         );
+        if (isPaymentRequest) {
+          if (skipPaymentNotedBy) delete cleaned.notedByAgentId;
+          if (skipPaymentApprovedBy) delete cleaned.approvedByAgentId;
+        }
         if (Object.keys(cleaned).length === 0) return;
         if (target instanceof FormData) {
           target.append("approvalAssignees", JSON.stringify(cleaned));
@@ -1458,7 +1472,7 @@ function NewTicketPageInner() {
                       maxLength={500}
                       autoComplete="organization"
                       defaultValue={portalCustomer?.companyName?.trim() ?? ""}
-                      placeholder="Type your company / SBU (e.g. AGC, ALI, MCHISI)"
+                      placeholder="Type your company / SBU (e.g. AGC, ALI, MCHISI LPG)"
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   </div>
@@ -1619,7 +1633,7 @@ function NewTicketPageInner() {
                     <span className="font-medium">Let Accounting and Finance Handle it</span>
                     <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
                       Hides Mode of payment. After Noted By
-                      {skipApprovedBy ? "" : " and Approved By"} are done, Accounting sets mode of
+                      {skipPaymentApprovedBy ? "" : " and Approved By"} are done, Accounting sets mode of
                       payment on the ticket. Prepared by Bookkeeper and Approved By Accounting are
                       assigned on the ticket as well.
                     </span>
@@ -2124,7 +2138,7 @@ function NewTicketPageInner() {
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-700 dark:bg-zinc-950/30 sm:p-4">
                 <div>
                   <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Set approval assignees
+                    Set approvers
                   </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                     Required for Request for Payment, Fund Transfer, and Job Order. Assign
@@ -2136,51 +2150,58 @@ function NewTicketPageInner() {
                 </div>
                 {isPaymentRequest ? (
                   <>
-                    <label className="flex items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950/50 dark:text-zinc-200">
-                      <input
-                        type="checkbox"
-                        checked={skipApprovedBy}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setSkipApprovedBy(checked);
-                          if (checked) {
-                            setPaymentAssignees((prev) => ({
-                              ...prev,
-                              approvedByAgentId: "",
-                            }));
-                          }
-                        }}
-                        className="mt-0.5 size-4 shrink-0 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
-                      />
-                      <span>
-                        <span className="font-medium">Skip Approved By</span>
-                        <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
-                          Hides the Approved By assignee. After Noted By is green-lit, the request
-                          continues to Prepared by Bookkeeper (assigned on the ticket).
-                        </span>
-                      </span>
-                    </label>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                      Noted By uses your company roster
-                      {staffDesignatedCompany?.name
-                        ? ` (${staffDesignatedCompany.name})`
-                        : ""}
-                      .
-                      {skipApprovedBy
-                        ? " Prepared by Bookkeeper and Approved By Accounting are assigned later on the ticket."
-                        : " Approved By can be chosen from any company. Prepared by Bookkeeper and Approved By Accounting are assigned later on the ticket."}
-                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <label className="flex w-fit cursor-pointer select-none items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={skipPaymentNotedBy}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setSkipPaymentNotedBy(checked);
+                            if (checked) {
+                              setSkipPaymentApprovedBy(false);
+                              setPaymentAssignees((prev) => ({
+                                ...prev,
+                                notedByAgentId: "",
+                              }));
+                            }
+                          }}
+                          className="size-3.5 accent-orange-600"
+                        />
+                        Skip Noted by:
+                      </label>
+                      <label className="flex w-fit cursor-pointer select-none items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={skipPaymentApprovedBy}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setSkipPaymentApprovedBy(checked);
+                            if (checked) {
+                              setSkipPaymentNotedBy(false);
+                              setPaymentAssignees((prev) => ({
+                                ...prev,
+                                approvedByAgentId: "",
+                              }));
+                            }
+                          }}
+                          className="size-3.5 accent-orange-600"
+                        />
+                        Skip Approved By:
+                      </label>
+                    </div>
                     {(
-                      (
-                        [
-                          ["notedByAgentId", "Noted By", "requestor"],
-                          ["approvedByAgentId", "Approved By", "any"],
-                        ] as const
-                      ).filter(([key]) => {
-                        if (skipApprovedBy && key === "approvedByAgentId") return false;
-                        return true;
-                      })
-                    ).map(([key, label, scope]) => {
+                      [
+                        ["notedByAgentId", "Noted By", "requestor"],
+                        ["approvedByAgentId", "Approved By", "sendTo"],
+                      ] as const
+                    )
+                      .filter(
+                        ([key]) =>
+                          !(skipPaymentNotedBy && key === "notedByAgentId") &&
+                          !(skipPaymentApprovedBy && key === "approvedByAgentId"),
+                      )
+                      .map(([key, label, scope]) => {
                       const roster =
                         scope === "requestor"
                           ? requestorApprovalAgents
@@ -2189,7 +2210,7 @@ function NewTicketPageInner() {
                         (
                           [
                             paymentAssignees.notedByAgentId,
-                            ...(skipApprovedBy ? [] : [paymentAssignees.approvedByAgentId]),
+                            ...(skipPaymentApprovedBy ? [] : [paymentAssignees.approvedByAgentId]),
                           ] as string[]
                         ).filter((id) => id && id !== paymentAssignees[key]),
                       );

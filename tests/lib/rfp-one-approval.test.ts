@@ -88,6 +88,37 @@ describe("RFP one-person-one-approval", () => {
     });
     assert.equal(gate.ok, true);
   });
+
+  it("starts at APPROVED_BY when Noted By is skipped", () => {
+    const meta = defaultPaymentApprovalMeta({ skipNotedBy: true });
+    assert.equal(meta.proceduralStep, "APPROVED_BY");
+    assert.equal(meta.skipNotedBy, true);
+  });
+
+  it("starts at APPROVED_BY_ACCOUNTING when both Noted By and Approved By are skipped", () => {
+    const meta = defaultPaymentApprovalMeta({ skipNotedBy: true, skipApprovedBy: true });
+    assert.equal(meta.proceduralStep, "APPROVED_BY_ACCOUNTING");
+    assert.equal(meta.skipNotedBy, true);
+    assert.equal(meta.skipApprovedBy, true);
+  });
+
+  it("jumps over APPROVED_BY when Approved By is skipped", () => {
+    const meta = defaultPaymentApprovalMeta({ skipApprovedBy: true });
+    assert.equal(meta.proceduralStep, "NOTED_BY");
+    const advanced = completePaymentApprovalStep(meta);
+    assert.equal(advanced.proceduralStep, "APPROVED_BY_ACCOUNTING");
+    assert.ok(advanced.completed.NOTED_BY);
+    assert.equal(advanced.completed.APPROVED_BY, undefined);
+  });
+
+  it("keeps APPROVED_BY in the chain when only Noted By is skipped", () => {
+    let meta = defaultPaymentApprovalMeta({ skipNotedBy: true });
+    assert.equal(meta.proceduralStep, "APPROVED_BY");
+    meta = completePaymentApprovalStep(meta);
+    assert.equal(meta.proceduralStep, "APPROVED_BY_ACCOUNTING");
+    assert.equal(meta.completed.NOTED_BY, undefined);
+    assert.ok(meta.completed.APPROVED_BY);
+  });
 });
 
 describe("RFP deferred mode of payment when Accounting/Finance unset", () => {

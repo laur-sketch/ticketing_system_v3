@@ -49,8 +49,13 @@ export type PaymentApprovalMeta = PaymentApprovalAssignees & {
    */
   deferPaymentModeToAccounting?: boolean;
   /**
-   * Intake skipped the Approved By seat — after Noted By is green-lit, the chain
-   * continues at Prepared by Bookkeeper.
+   * Intake chose “Skip Noted by” — the NOTED BY step is hidden and the chain
+   * starts at APPROVED BY.
+   */
+  skipNotedBy?: boolean;
+  /**
+   * Intake chose “Skip Approved By” — the APPROVED BY step is hidden; the chain
+   * goes NOTED BY → APPROVED BY (Accounting) unless Noted By is also skipped.
    */
   skipApprovedBy?: boolean;
 };
@@ -99,16 +104,32 @@ export function isPaymentApprovalAckStep(value: unknown): value is PaymentApprov
   );
 }
 
-export function defaultPaymentApprovalMeta(): PaymentApprovalMeta {
+export function paymentApprovalStartStep(
+  skipNotedBy: boolean,
+  skipApprovedBy: boolean,
+): PaymentApprovalStep {
+  if (skipNotedBy && skipApprovedBy) return "APPROVED_BY_ACCOUNTING";
+  if (skipNotedBy) return "APPROVED_BY";
+  return "NOTED_BY";
+}
+
+export function defaultPaymentApprovalMeta(opts?: {
+  skipNotedBy?: boolean;
+  skipApprovedBy?: boolean;
+}): PaymentApprovalMeta {
+  const skipNotedBy = opts?.skipNotedBy === true;
+  const skipApprovedBy = opts?.skipApprovedBy === true;
   return {
     preparedByAgentId: null,
     notedByAgentId: null,
     approvedByAgentId: null,
     accountingAgentId: null,
     financeAgentId: null,
-    proceduralStep: "NOTED_BY",
+    proceduralStep: paymentApprovalStartStep(skipNotedBy, skipApprovedBy),
     completed: {},
     stepApproved: {},
+    ...(skipNotedBy ? { skipNotedBy: true } : {}),
+    ...(skipApprovedBy ? { skipApprovedBy: true } : {}),
   };
 }
 
@@ -145,6 +166,7 @@ export function parsePaymentApprovalMeta(raw: unknown): PaymentApprovalMeta | nu
     completed,
     stepApproved,
     deferPaymentModeToAccounting: o.deferPaymentModeToAccounting === true,
+    skipNotedBy: o.skipNotedBy === true,
     skipApprovedBy: o.skipApprovedBy === true,
   };
 }
@@ -244,12 +266,13 @@ export function paymentAccountingFinanceAssigneesUnset(meta: PaymentApprovalMeta
 
 /** Procedural steps that apply for this request (Approved By may be skipped at intake). */
 export function paymentApprovalStepsFor(
-  meta: Pick<PaymentApprovalMeta, "skipApprovedBy"> | null | undefined,
+  meta: Pick<PaymentApprovalMeta, "skipApprovedBy" | "skipNotedBy"> | null | undefined,
 ): PaymentApprovalStep[] {
-  if (meta?.skipApprovedBy) {
-    return PAYMENT_APPROVAL_STEPS.filter((step) => step !== "APPROVED_BY");
-  }
-  return [...PAYMENT_APPROVAL_STEPS];
+  return PAYMENT_APPROVAL_STEPS.filter((step) => {
+    if (meta?.skipNotedBy && step === "NOTED_BY") return false;
+    if (meta?.skipApprovedBy && step === "APPROVED_BY") return false;
+    return true;
+  });
 }
 
 /** Noted By and Approved By have both been marked Done (green-lit). */
