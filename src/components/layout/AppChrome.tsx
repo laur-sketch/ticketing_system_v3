@@ -3,6 +3,9 @@
 import { Suspense, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { GlobalSearchProvider } from "@/components/global-search/GlobalSearchProvider";
+import { BreadcrumbProvider } from "@/components/navigation/BreadcrumbProvider";
+import { StaffBreadcrumbs } from "@/components/navigation/StaffBreadcrumbs";
 import { GlobalSidebar } from "@/components/GlobalSidebar";
 import { Nav } from "@/components/Nav";
 import { RealtimeRefreshBeacon } from "@/components/RealtimeRefreshBeacon";
@@ -47,41 +50,53 @@ function useLockDocumentScroll(active: boolean) {
   }, [active]);
 }
 
+function StaffMainChrome({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <Suspense fallback={null}>
+        <Nav />
+      </Suspense>
+      <StaffBreadcrumbs />
+      <div
+        data-staff-main-scroll=""
+        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom,0px))]"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function StaffAppShell({ children }: { children: React.ReactNode }) {
   const isLg = useIsDesktopLg();
   useLockDocumentScroll(isLg);
 
   if (!isLg) {
     return (
-      <div className="flex min-h-dvh flex-1 flex-col bg-zinc-50 text-foreground dark:bg-zinc-950">
-        <RealtimeRefreshBeacon />
-        <GlobalSidebar />
-        <Suspense fallback={null}>
-          <Nav />
-        </Suspense>
-        <div className="min-w-0 flex-1 overflow-x-hidden pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
-          {children}
-        </div>
-      </div>
+      <GlobalSearchProvider>
+        <BreadcrumbProvider>
+          <div className="flex min-h-dvh flex-1 flex-col bg-zinc-50 text-foreground dark:bg-zinc-950">
+            <RealtimeRefreshBeacon />
+            <GlobalSidebar />
+            <StaffMainChrome>{children}</StaffMainChrome>
+          </div>
+        </BreadcrumbProvider>
+      </GlobalSearchProvider>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-0 flex overflow-hidden bg-zinc-50 text-foreground dark:bg-zinc-950">
-      <RealtimeRefreshBeacon />
-      <GlobalSidebar />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950">
-        <Suspense fallback={null}>
-          <Nav />
-        </Suspense>
-        <div
-          data-staff-main-scroll=""
-          className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
-        >
-          {children}
+    <GlobalSearchProvider>
+      <BreadcrumbProvider>
+        <div className="fixed inset-0 z-0 flex overflow-hidden bg-zinc-50 text-foreground dark:bg-zinc-950">
+          <RealtimeRefreshBeacon />
+          <GlobalSidebar />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950">
+            <StaffMainChrome>{children}</StaffMainChrome>
+          </div>
         </div>
-      </div>
-    </div>
+      </BreadcrumbProvider>
+    </GlobalSearchProvider>
   );
 }
 
@@ -94,10 +109,7 @@ export function AppChrome({ children }: Props) {
     pathname === "/signin" ||
     pathname === "/signup" ||
     pathname === "/customer/signin" ||
-    pathname === "/customer/signup" ||
-    pathname === "/process" ||
-    pathname === "/travel-orders" ||
-    pathname.startsWith("/travel-orders/")
+    pathname === "/customer/signup"
   ) {
     return <>{children}</>;
   }

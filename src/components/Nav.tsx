@@ -4,11 +4,13 @@ import { isElevatedPlatformRole } from "@/lib/staff-role";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Menu, SlidersHorizontal } from "lucide-react";
+import { Bell, Menu, Search, SlidersHorizontal } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BrandLockup } from "@/components/BrandLockup";
+import { GlobalSearchBar } from "@/components/global-search/GlobalSearchBar";
+import { useGlobalSearch } from "@/components/global-search/GlobalSearchProvider";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
 import { ElapsedFromIso } from "@/components/ElapsedFromIso";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -100,6 +102,7 @@ export function Nav() {
   const role = data?.user?.role;
   const isAdminRole = isElevatedPlatformRole(role) || role === "Admin";
   const userEmail = data?.user?.email ?? "unknown";
+  const { openPalette } = useGlobalSearch();
   const showUtilities =
     isElevatedPlatformRole(role) || role === "Admin" || role === "Personnel";
 
@@ -579,7 +582,17 @@ export function Nav() {
               href="/"
               className="inline-flex shrink-0"
             />
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:max-w-xl sm:gap-2">
+            <GlobalSearchBar className="hidden min-w-0 flex-1 sm:flex sm:max-w-xl" />
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={() => openPalette()}
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-zinc-300 bg-white text-zinc-700 shadow-sm transition hover:bg-zinc-100 sm:hidden dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                aria-label="Open search"
+                title="Search (Ctrl+K)"
+              >
+                <Search size={15} />
+              </button>
               <PhilippineTimeClock compact className="hidden shrink-0 md:inline-flex" />
               <div className="relative shrink-0" ref={notifRef}>
                 <button

@@ -11,7 +11,9 @@ import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { AgentWorkspace } from "./workspace";
 import { AgentTicketModalShell } from "@/components/ticket/AgentTicketModalShell";
 import { TicketRequestMetaDetails } from "@/components/ticket/TicketRequestMetaDetails";
-import { requestTypeLabel } from "@/lib/request-types";
+import { TrackRecentSearchVisit } from "@/components/global-search/TrackRecentSearchVisit";
+import { requestTypeLabel, requestTypeAcronym } from "@/lib/request-types";
+import { TicketDetailBreadcrumbs } from "@/components/navigation/TicketDetailBreadcrumbs";
 import { paymentProceduralStatusLabel } from "@/lib/request-for-payment-approval";
 import { initPaymentApprovalMetaIfNeeded, loadPaymentApprovalMeta } from "@/lib/payment-approval-db";
 import { itemRequisitionProceduralStatusLabel } from "@/lib/item-requisition-approval";
@@ -295,6 +297,21 @@ export default async function AgentTicketPage({
 
   return (
     <AgentTicketModalShell>
+      <TrackRecentSearchVisit
+        id={`ticket-${ticketForWorkspace.id}`}
+        kind="ticket"
+        title={ticketForWorkspace.title?.trim() || ticketForWorkspace.ticketNumber}
+        subtitle={`${ticketForWorkspace.ticketNumber}${ticketForWorkspace.contactName ? ` · ${ticketForWorkspace.contactName}` : ""}`}
+        href={`/agent/tickets/${ticketForWorkspace.id}`}
+        status={formatTicketStatusLabel(ticketForWorkspace.status)}
+        requestType={requestTypeId ?? undefined}
+        badge={requestTypeId ? requestTypeAcronym(requestTypeId) : undefined}
+      />
+      <TicketDetailBreadcrumbs
+        ticketNumber={ticketForWorkspace.ticketNumber}
+        title={ticketForWorkspace.title}
+        ticketId={ticketForWorkspace.id}
+      />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-zinc-950 sm:p-6 dark:text-zinc-100">
         <div className="mb-4 flex shrink-0 flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-950 p-3 text-white shadow-sm sm:mb-5 sm:rounded-2xl sm:p-5 dark:border-zinc-800/90 dark:bg-[#181716]/80">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
