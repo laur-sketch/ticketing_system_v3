@@ -21,13 +21,15 @@ import {
 } from "@/components/metrics/MetricsCharts";
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { PersonnelTaskMetricsGrid } from "@/components/metrics/PersonnelTaskMetricsGrid";
+import { DepartmentTaskMetricsGrid } from "@/components/metrics/DepartmentTaskMetricsGrid";
 import {
-  applyPenaltyToTaskEfficiency,
-  normalizePersonName,
+  buildPersonnelInsightCards,
+  type MergedPersonnelEfficiencyRow,
   type PersonnelCombinedMetricCard,
   type PersonnelDelayPenaltyRow,
 } from "@/lib/task-personnel-metrics";
 import type { PersonnelTicketMetric } from "@/lib/kpis";
+import type { DepartmentMainMetric } from "@/lib/department-task-metrics";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
 import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
@@ -88,7 +90,7 @@ type KpiPayload = {
   };
 };
 
-type TaskMetricsViewMode = "company" | "personnel";
+type TaskMetricsViewMode = "company" | "personnel" | "departments";
 
 type InsightsTab = "ticket-metrics" | "task-metrics" | "kpi-mgmt";
 
@@ -130,6 +132,7 @@ function InsightsPageInner() {
   const isPersonnel = session?.user?.role === "Personnel";
   const isAdminRole = isElevatedPlatformRole(session?.user?.role) || session?.user?.role === "Admin";
   const isCompanyScopedAdmin = session?.user?.role === "Admin";
+  const isSuperAdmin = session?.user?.role === "SuperAdmin";
   const tabFromUrl = parseInsightsTab(searchParams.get("tab"));
   const [activeTab, setActiveTab] = useState<InsightsTab>(tabFromUrl ?? "ticket-metrics");
   const [data, setData] = useState<KpiPayload | null>(null);
@@ -185,6 +188,9 @@ function InsightsPageInner() {
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
   const [taskMetricsViewMode, setTaskMetricsViewMode] = useState<TaskMetricsViewMode>("company");
   const [taskMetricsTaskType, setTaskMetricsTaskType] = useState<TaskMetricsTaskType>("task");
+  const [departmentMetrics, setDepartmentMetrics] = useState<DepartmentMainMetric[]>([]);
+  const [departmentMetricsLoading, setDepartmentMetricsLoading] = useState(false);
+  const [departmentMetricsError, setDepartmentMetricsError] = useState<string | null>(null);
 
   const loadKpis = useCallback(async () => {
     setError(null);
@@ -211,6 +217,7 @@ function InsightsPageInner() {
   }, [from, to, isAdminRole, isCompanyScopedAdmin, selectedTicketMetricCompany]);
 
   const loadTaskMetrics = useCallback(async () => {
+    if (taskMetricsViewMode === "departments") return;
     setTaskMetricsError(null);
     setTaskMetricsLoading(true);
     const { from: tf, to: tt } = resolveTaskMetricsQueryRange(
@@ -284,6 +291,43 @@ function InsightsPageInner() {
     taskMetricsViewMode,
   ]);
 
+  const loadDepartmentMetrics = useCallback(async () => {
+    if (taskMetricsViewMode !== "departments") return;
+    setDepartmentMetricsError(null);
+    setDepartmentMetricsLoading(true);
+    const { from: tf, to: tt } = resolveTaskMetricsQueryRange(
+      taskMetricsCadence,
+      taskMetricsDailyDate,
+      taskMetricsFrom,
+      taskMetricsTo,
+    );
+    const qs = new URLSearchParams({
+      from: tf,
+      to: tt,
+      helpdeskCadence: taskMetricsCadence,
+      tz: recurrenceTz,
+    });
+    try {
+      const res = await fetch(`/api/kpis/department-metrics?${qs.toString()}`, { cache: "no-store" });
+      if (!res.ok) {
+        setDepartmentMetricsError("Could not load department metrics for the selected dates.");
+        setDepartmentMetrics([]);
+        return;
+      }
+      const json = (await res.json()) as { sections?: DepartmentMainMetric[] };
+      setDepartmentMetrics(json.sections ?? []);
+    } finally {
+      setDepartmentMetricsLoading(false);
+    }
+  }, [
+    taskMetricsCadence,
+    taskMetricsDailyDate,
+    taskMetricsFrom,
+    taskMetricsTo,
+    recurrenceTz,
+    taskMetricsViewMode,
+  ]);
+
   function handleTaskMetricsCadenceChange(next: TaskMetricsCadence) {
     setTaskMetricsCadence(next);
     const defaults = defaultTaskMetricsRangeForCadence(next);
@@ -316,6 +360,13 @@ function InsightsPageInner() {
     }
     queueMicrotask(() => void loadTaskMetrics());
   }, [activeTab, loadTaskMetrics]);
+
+  useEffect(() => {
+    if (activeTab !== "task-metrics") {
+      return;
+    }
+    queueMicrotask(() => void loadDepartmentMetrics());
+  }, [activeTab, loadDepartmentMetrics]);
 
   useEffect(() => {
     if (!showTaskReportingTabs) return;
@@ -487,10 +538,15 @@ function InsightsPageInner() {
             personnelFtrPreparedMetrics={personnelFtrPreparedMetrics}
             personnelAcaSubmittedMetrics={personnelAcaSubmittedMetrics}
             personnelDelayPenalties={personnelDelayPenalties}
+            departmentSections={departmentMetrics}
             helpdeskTickets={taskMetricsHelpdesk}
             userSupportTickets={taskMetricsUserSupport}
-            loading={taskMetricsLoading}
-            error={taskMetricsError}
+            loading={
+              taskMetricsViewMode === "departments" ? departmentMetricsLoading : taskMetricsLoading
+            }
+            error={
+              taskMetricsViewMode === "departments" ? departmentMetricsError : taskMetricsError
+            }
             taskMetricsCadence={taskMetricsCadence}
             onTaskMetricsCadenceChange={handleTaskMetricsCadenceChange}
             dailyDate={taskMetricsDailyDate}
@@ -510,6 +566,8 @@ function InsightsPageInner() {
             onTaskTypeChange={setTaskMetricsTaskType}
             allowAllCompaniesInPersonnel={true}
             canExtendView={isAdminRole}
+            canManageDepartmentVisibility={isSuperAdmin}
+            onDepartmentVisibilityChanged={() => void loadDepartmentMetrics()}
           />
         </div>
       
@@ -786,6 +844,7 @@ function TaskMetricsPanel({
   personnelFtrPreparedMetrics,
   personnelAcaSubmittedMetrics,
   personnelDelayPenalties,
+  departmentSections,
   helpdeskTickets,
   userSupportTickets,
   loading,
@@ -798,7 +857,7 @@ function TaskMetricsPanel({
   rangeTo,
   onRangeFromChange,
   onRangeToChange,
-  reportingTimeZone: _reportingTimeZone,
+  reportingTimeZone,
   companies,
   selectedCompany,
   onSelectedCompanyChange,
@@ -809,6 +868,8 @@ function TaskMetricsPanel({
   onTaskTypeChange,
   allowAllCompaniesInPersonnel,
   canExtendView = false,
+  canManageDepartmentVisibility = false,
+  onDepartmentVisibilityChanged,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   personnelTicketMetrics: PersonnelTicketMetric[];
@@ -818,6 +879,7 @@ function TaskMetricsPanel({
   personnelFtrPreparedMetrics: PersonnelTicketMetric[];
   personnelAcaSubmittedMetrics: PersonnelTicketMetric[];
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
+  departmentSections: DepartmentMainMetric[];
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
   loading: boolean;
@@ -841,6 +903,8 @@ function TaskMetricsPanel({
   onTaskTypeChange: (v: TaskMetricsTaskType) => void;
   allowAllCompaniesInPersonnel: boolean;
   canExtendView?: boolean;
+  canManageDepartmentVisibility?: boolean;
+  onDepartmentVisibilityChanged?: () => void;
 }) {
   const freq = taskMetricsCadence;
   const isMonthly = freq === "MONTHLY";
@@ -873,23 +937,6 @@ function TaskMetricsPanel({
   // merged_user_efficiency_breakdowns) so stored values can be verified.
   // Primary owns live task updates; sync dumps overall KPI here.
   const [mergedPersonnelRows, setMergedPersonnelRows] = useState<MergedPersonnelEfficiencyRow[]>([]);
-  type MergedPersonnelEfficiencyRow = {
-    sourceUserId: string;
-    name: string;
-    companyName: string | null;
-    totalTasks: number;
-    completedTasks: number;
-    delayedTasks: number;
-    ticketsClosed: number;
-    ticketsPending: number;
-    taskEfficiency: number | null;
-    ticketEfficiency: number | null;
-    overallEfficiency: number;
-    onTimeCompletionRate: number | null;
-    delayPenaltyTotal?: number;
-    taskEfficiencyBeforePenalty?: number | null;
-    computedAt: string;
-  };
   const [mergedPersonnelLoading, setMergedPersonnelLoading] = useState(false);
   const [mergedPersonnelError, setMergedPersonnelError] = useState<string | null>(null);
   const mergedPeriod = taskMetricsMergedPeriod(freq, { dailyDate, rangeFrom, rangeTo });
@@ -933,334 +980,21 @@ function TaskMetricsPanel({
   }, [metricsViewMode, mergedPeriod.periodKey, mergedPeriod.frequency]);
 
   const mergedPersonnelCards = useMemo<PersonnelCombinedMetricCard[]>(() => {
-    let rows = mergedPersonnelRows;
-    if (selectedCompanyName) {
-      const target = resolveRosterCompanyName(selectedCompanyName) ?? selectedCompanyName;
-      rows = rows.filter((row) => {
-        const rowCompany =
-          resolveRosterCompanyName(row.companyName) ?? row.companyName?.trim() ?? "";
-        return rowCompany.toLowerCase() === target.toLowerCase();
-      });
-    }
-
-    const penaltyById = new Map(personnelDelayPenalties.map((row) => [row.id, row.deduction]));
-    const penaltyByName = new Map(
-      personnelDelayPenalties.map((row) => [row.name.trim().toLowerCase(), row.deduction]),
-    );
-
-    /** Live request counts from PostgreSQL — preferred over merged DB fields that may be missing. */
-    const liveRequestsByName = new Map<string, PersonnelTicketMetric>();
-    for (const metric of personnelTicketMetrics) {
-      const key = normalizePersonName(metric.name);
-      if (!key) continue;
-      const existing = liveRequestsByName.get(key);
-      if (!existing) {
-        liveRequestsByName.set(key, { ...metric });
-        continue;
-      }
-      const closed = existing.closed + metric.closed;
-      const pending = existing.pending + metric.pending;
-      const total = closed + pending;
-      liveRequestsByName.set(key, {
-        ...existing,
-        closed,
-        pending,
-        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
-      });
-    }
-
-    const liveRfpAccountingByName = new Map<string, PersonnelTicketMetric>();
-    for (const metric of personnelRfpAccountingMetrics) {
-      const key = normalizePersonName(metric.name);
-      if (!key) continue;
-      const existing = liveRfpAccountingByName.get(key);
-      if (!existing) {
-        liveRfpAccountingByName.set(key, { ...metric });
-        continue;
-      }
-      const closed = existing.closed + metric.closed;
-      const pending = existing.pending + metric.pending;
-      const total = closed + pending;
-      liveRfpAccountingByName.set(key, {
-        ...existing,
-        closed,
-        pending,
-        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
-      });
-    }
-
-    const liveRfpFinanceByName = new Map<string, PersonnelTicketMetric>();
-    for (const metric of personnelRfpFinanceMetrics) {
-      const key = normalizePersonName(metric.name);
-      if (!key) continue;
-      const existing = liveRfpFinanceByName.get(key);
-      if (!existing) {
-        liveRfpFinanceByName.set(key, { ...metric });
-        continue;
-      }
-      const closed = existing.closed + metric.closed;
-      const pending = existing.pending + metric.pending;
-      const total = closed + pending;
-      liveRfpFinanceByName.set(key, {
-        ...existing,
-        closed,
-        pending,
-        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
-      });
-    }
-
-    const liveIrsCanvassByName = new Map<string, PersonnelTicketMetric>();
-    for (const metric of personnelIrsCanvassMetrics) {
-      const key = normalizePersonName(metric.name);
-      if (!key) continue;
-      const existing = liveIrsCanvassByName.get(key);
-      if (!existing) {
-        liveIrsCanvassByName.set(key, { ...metric });
-        continue;
-      }
-      const closed = existing.closed + metric.closed;
-      const pending = existing.pending + metric.pending;
-      const total = closed + pending;
-      liveIrsCanvassByName.set(key, {
-        ...existing,
-        closed,
-        pending,
-        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
-      });
-    }
-
-    const liveFtrPreparedByName = new Map<string, PersonnelTicketMetric>();
-    for (const metric of personnelFtrPreparedMetrics) {
-      const key = normalizePersonName(metric.name);
-      if (!key) continue;
-      const existing = liveFtrPreparedByName.get(key);
-      if (!existing) {
-        liveFtrPreparedByName.set(key, { ...metric });
-        continue;
-      }
-      const closed = existing.closed + metric.closed;
-      const pending = existing.pending + metric.pending;
-      const total = closed + pending;
-      liveFtrPreparedByName.set(key, {
-        ...existing,
-        closed,
-        pending,
-        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
-      });
-    }
-
-    const liveAcaSubmittedByName = new Map<string, PersonnelTicketMetric>();
-    for (const metric of personnelAcaSubmittedMetrics) {
-      const key = normalizePersonName(metric.name);
-      if (!key) continue;
-      const existing = liveAcaSubmittedByName.get(key);
-      if (!existing) {
-        liveAcaSubmittedByName.set(key, { ...metric });
-        continue;
-      }
-      const closed = existing.closed + metric.closed;
-      const pending = existing.pending + metric.pending;
-      const total = closed + pending;
-      liveAcaSubmittedByName.set(key, {
-        ...existing,
-        closed,
-        pending,
-        efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
-      });
-    }
-
-    const cards: PersonnelCombinedMetricCard[] = rows.map((row) => {
-      const livePenalty =
-        penaltyById.get(row.sourceUserId) ??
-        penaltyByName.get(row.name.trim().toLowerCase()) ??
-        0;
-      const storedPenalty = row.delayPenaltyTotal ?? 0;
-      const penaltyDeduction = Math.max(livePenalty, storedPenalty);
-      const efficiencyBeforePenalty = Math.round(
-        row.taskEfficiencyBeforePenalty ?? row.taskEfficiency ?? 0,
-      );
-      const taskEfficiency =
-        penaltyDeduction > 0
-          ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
-          : Math.round(row.taskEfficiency ?? 0);
-
-      const live = liveRequestsByName.get(normalizePersonName(row.name));
-      // When live Task Metrics has loaded, assignee ticket counts are authoritative.
-      // Do not fall back to merged ticketsClosed/Pending — those can still credit
-      // Approvers who are board assignees on procedural RFPs.
-      const liveTicketsAuthoritative = !loading && !error;
-      const closed = live != null
-        ? live.closed
-        : liveTicketsAuthoritative
-          ? 0
-          : Number(row.ticketsClosed ?? 0);
-      const pending = live != null
-        ? live.pending
-        : liveTicketsAuthoritative
-          ? 0
-          : Number(row.ticketsPending ?? 0);
-      const requestTotal = closed + pending;
-      const requestEfficiency =
-        live != null
-          ? Math.round(live.efficiency)
-          : liveTicketsAuthoritative
-            ? null
-            : row.ticketEfficiency != null
-              ? Math.round(Number(row.ticketEfficiency))
-              : requestTotal > 0
-                ? Math.round((closed / requestTotal) * 100)
-                : null;
-
-      const rfpAccounting = liveRfpAccountingByName.get(normalizePersonName(row.name)) ?? null;
-      const rfpFinance = liveRfpFinanceByName.get(normalizePersonName(row.name)) ?? null;
-      const irsCanvass = liveIrsCanvassByName.get(normalizePersonName(row.name)) ?? null;
-      const ftrPrepared = liveFtrPreparedByName.get(normalizePersonName(row.name)) ?? null;
-      const acaSubmitted = liveAcaSubmittedByName.get(normalizePersonName(row.name)) ?? null;
-
-      return {
-        id: row.sourceUserId,
-        name: row.name,
-        role: "Assignee",
-        tickets:
-          live != null || (!liveTicketsAuthoritative && (requestEfficiency != null || requestTotal > 0))
-            ? {
-                closed,
-                pending,
-                efficiency: requestEfficiency ?? 0,
-              }
-            : null,
-        // RFP requestors are not credited for KPI.
-        rfpRequestor: null,
-        rfpAccounting: rfpAccounting
-          ? {
-              closed: rfpAccounting.closed,
-              pending: rfpAccounting.pending,
-              efficiency: Math.round(rfpAccounting.efficiency),
-            }
-          : null,
-        rfpFinance: rfpFinance
-          ? {
-              closed: rfpFinance.closed,
-              pending: rfpFinance.pending,
-              efficiency: Math.round(rfpFinance.efficiency),
-            }
-          : null,
-        irsCanvass: irsCanvass
-          ? {
-              closed: irsCanvass.closed,
-              pending: irsCanvass.pending,
-              efficiency: Math.round(irsCanvass.efficiency),
-            }
-          : null,
-        ftrPrepared: ftrPrepared
-          ? {
-              closed: ftrPrepared.closed,
-              pending: ftrPrepared.pending,
-              efficiency: Math.round(ftrPrepared.efficiency),
-            }
-          : null,
-        acaSubmitted: acaSubmitted
-          ? {
-              closed: acaSubmitted.closed,
-              pending: acaSubmitted.pending,
-              efficiency: Math.round(acaSubmitted.efficiency),
-            }
-          : null,
-        tasks:
-          row.totalTasks > 0 || row.taskEfficiency != null
-            ? {
-                closed: row.completedTasks,
-                pending: Math.max(0, row.totalTasks - row.completedTasks),
-                efficiency: taskEfficiency,
-                pillarsContributed: 0,
-                ...(penaltyDeduction > 0
-                  ? { penaltyDeduction, efficiencyBeforePenalty }
-                  : {}),
-              }
-            : null,
-      };
+    const companyFilter = selectedCompanyName
+      ? (resolveRosterCompanyName(selectedCompanyName) ?? selectedCompanyName).trim().toLowerCase()
+      : null;
+    return buildPersonnelInsightCards({
+      mergedRows: mergedPersonnelRows,
+      selectedCompanyName: companyFilter,
+      personnelDelayPenalties,
+      personnelTicketMetrics,
+      personnelRfpAccountingMetrics,
+      personnelRfpFinanceMetrics,
+      personnelIrsCanvassMetrics,
+      personnelFtrPreparedMetrics,
+      personnelAcaSubmittedMetrics,
+      liveTicketsAuthoritative: !loading && !error,
     });
-
-    const seenNames = new Set(cards.map((card) => normalizePersonName(card.name)));
-    const ensureCard = (name: string, id: string) => {
-      const key = normalizePersonName(name);
-      if (!key || seenNames.has(key)) return cards.find((c) => normalizePersonName(c.name) === key);
-      seenNames.add(key);
-      const card: PersonnelCombinedMetricCard = {
-        id,
-        name,
-        role: "Assignee",
-        tickets: null,
-        rfpRequestor: null,
-        rfpAccounting: null,
-        rfpFinance: null,
-        irsCanvass: null,
-        ftrPrepared: null,
-        acaSubmitted: null,
-        tasks: null,
-      };
-      cards.push(card);
-      return card;
-    };
-
-    for (const live of liveRequestsByName.values()) {
-      const card = ensureCard(live.name, live.id);
-      if (!card) continue;
-      if (!card.tickets) {
-        card.tickets = {
-          closed: live.closed,
-          pending: live.pending,
-          efficiency: Math.round(live.efficiency),
-        };
-      }
-    }
-    for (const live of liveRfpAccountingByName.values()) {
-      const card = ensureCard(live.name, live.id);
-      if (!card) continue;
-      card.rfpAccounting = {
-        closed: live.closed,
-        pending: live.pending,
-        efficiency: Math.round(live.efficiency),
-      };
-    }
-    for (const live of liveRfpFinanceByName.values()) {
-      const card = ensureCard(live.name, live.id);
-      if (!card) continue;
-      card.rfpFinance = {
-        closed: live.closed,
-        pending: live.pending,
-        efficiency: Math.round(live.efficiency),
-      };
-    }
-    for (const live of liveIrsCanvassByName.values()) {
-      const card = ensureCard(live.name, live.id);
-      if (!card) continue;
-      card.irsCanvass = {
-        closed: live.closed,
-        pending: live.pending,
-        efficiency: Math.round(live.efficiency),
-      };
-    }
-    for (const live of liveFtrPreparedByName.values()) {
-      const card = ensureCard(live.name, live.id);
-      if (!card) continue;
-      card.ftrPrepared = {
-        closed: live.closed,
-        pending: live.pending,
-        efficiency: Math.round(live.efficiency),
-      };
-    }
-    for (const live of liveAcaSubmittedByName.values()) {
-      const card = ensureCard(live.name, live.id);
-      if (!card) continue;
-      card.acaSubmitted = {
-        closed: live.closed,
-        pending: live.pending,
-        efficiency: Math.round(live.efficiency),
-      };
-    }
-
-    return cards;
   }, [
     mergedPersonnelRows,
     selectedCompanyName,
@@ -1287,6 +1021,7 @@ function TaskMetricsPanel({
               [
                 { id: "company", label: "Company" },
                 { id: "personnel", label: "Personnel" },
+                { id: "departments", label: "Departments" },
               ] as const
             ).map((option) => (
               <button
@@ -1492,6 +1227,17 @@ function TaskMetricsPanel({
               taskType === "task" || taskType === "field" || taskType === "project"
             }
             canExtendView={canExtendView}
+            reportingTimeZone={reportingTimeZone}
+            companyId={selectedCompany || undefined}
+            taskType={taskType}
+          />
+        ) : metricsViewMode === "departments" ? (
+          <DepartmentTaskMetricsGrid
+            sections={departmentSections}
+            reportingPeriodLabel={reportingPeriodLabel}
+            loading={loading}
+            canManageVisibility={canManageDepartmentVisibility}
+            onVisibilityChanged={onDepartmentVisibilityChanged}
           />
         ) : (
           <>

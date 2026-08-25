@@ -7,11 +7,13 @@ import {
   getUserEfficiencyForPeriod,
   getUserEfficiencyTaskBreakdown,
 } from "@/lib/efficiency/user-efficiency-queries";
+import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
+import { prismaPrimary } from "@/lib/prisma";
 
 const FREQ = new Set(["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "LIFETIME"]);
 
 /**
- * GET /api/admin/efficiency?mode=leaderboard|user|details
+ * GET /api/admin/efficiency?mode=leaderboard|user|details|personnel
  *  &periodKey=2026-07&frequency=MONTHLY
  *  &sourceUserId=1671 (for user/details)
  *
@@ -40,46 +42,147 @@ export async function GET(req: Request) {
 
   try {
     if (mode === "personnel") {
-      // Personnel verification view: breakdown rows joined to merged_users so
-      // names/companies come straight from mergedatabase-demo.
+      // Soft-path roster: only ACTIVE portal profiles linked to current HRIS merge users.
+      // Excludes LEGACY_CONFLICT ticketing-only accounts and stale breakdown rows.
+      const [activePortals, hrisUsers] = await Promise.all([
+        prismaPrimary.portalAccount.findMany({
+          where: {
+            accountStatus: "ACTIVE",
+            mergedSourceUserId: { not: null },
+          },
+          select: { mergedSourceUserId: true },
+        }),
+        db.mergedUser.findMany({
+          where: {
+            isActive: true,
+            sourceDatabase: { in: resolveHrisSourceTags() },
+          },
+          select: { sourceUserId: true },
+        }),
+      ]);
+
+      const activePortalIds = new Set(
+        activePortals
+          .map((p) => p.mergedSourceUserId)
+          .filter((id): id is bigint => id != null)
+          .map((id) => id.toString()),
+      );
+      const hrisIds = new Set(hrisUsers.map((u) => u.sourceUserId.toString()));
+      const allowedIds = [...activePortalIds].filter((id) => hrisIds.has(id));
+
+      if (allowedIds.length === 0) {
+        return NextResponse.json({
+          periodKey,
+          frequency,
+          source: "mergedatabase",
+          rows: [],
+        });
+      }
+
       const rows = await db.mergedUserEfficiencyBreakdown.findMany({
-        where: { periodKey, frequency },
+        where: {
+          periodKey,
+          frequency,
+          sourceUserId: { in: allowedIds.map((id) => BigInt(id)) },
+        },
         orderBy: [{ overallEfficiency: "desc" }, { displayName: "asc" }],
-        include: { user: { select: { name: true, companyName: true } } },
+        include: { user: { select: { name: true, companyName: true, isActive: true, sourceDatabase: true } } },
       });
+
+      type PersonnelRow = {
+        sourceUserId: string;
+        name: string;
+        companyName: string | null;
+        totalTasks: number;
+        completedTasks: number;
+        delayedTasks: number;
+        ticketsClosed: number;
+        ticketsPending: number;
+        taskEfficiency: number | null;
+        ticketEfficiency: number | null;
+        overallEfficiency: number;
+        onTimeCompletionRate: number | null;
+        delayPenaltyTotal: number;
+        taskEfficiencyBeforePenalty: number | null;
+        computedAt: string;
+      };
+
+      const byName = new Map<string, PersonnelRow>();
+      for (const r of rows) {
+        const row = r as typeof r & {
+          ticketsClosed?: number;
+          ticketsPending?: number;
+          delayPenaltyTotal?: number;
+          taskEfficiencyBeforePenalty?: unknown;
+        };
+        if (row.user && row.user.isActive === false) continue;
+        const name = row.user?.name?.trim() || row.displayName;
+        const key = name
+          .trim()
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/,/g, " ")
+          .replace(/[^a-z0-9\s]/g, " ")
+          .split(/\s+/)
+          .filter(Boolean)
+          .sort()
+          .join(" ");
+        if (!key) continue;
+        const mapped: PersonnelRow = {
+          sourceUserId: row.sourceUserId.toString(),
+          name,
+          companyName: row.user?.companyName ?? null,
+          totalTasks: row.totalTasks,
+          completedTasks: row.completedTasks,
+          delayedTasks: row.delayedTasks,
+          ticketsClosed: Number(row.ticketsClosed ?? 0),
+          ticketsPending: Number(row.ticketsPending ?? 0),
+          taskEfficiency: row.taskEfficiency != null ? Number(row.taskEfficiency) : null,
+          ticketEfficiency: row.ticketEfficiency != null ? Number(row.ticketEfficiency) : null,
+          overallEfficiency: Number(row.overallEfficiency),
+          onTimeCompletionRate:
+            row.onTimeCompletionRate != null ? Number(row.onTimeCompletionRate) : null,
+          delayPenaltyTotal: Number(row.delayPenaltyTotal ?? 0),
+          taskEfficiencyBeforePenalty:
+            row.taskEfficiencyBeforePenalty != null
+              ? Number(row.taskEfficiencyBeforePenalty)
+              : null,
+          computedAt: row.computedAt.toISOString(),
+        };
+        const existing = byName.get(key);
+        if (!existing) {
+          byName.set(key, mapped);
+          continue;
+        }
+        const preferMapped =
+          mapped.totalTasks > existing.totalTasks ||
+          (mapped.totalTasks === existing.totalTasks &&
+            BigInt(mapped.sourceUserId) < BigInt(existing.sourceUserId));
+        const canonical = preferMapped ? mapped : existing;
+        const other = preferMapped ? existing : mapped;
+        byName.set(key, {
+          ...canonical,
+          name: canonical.name.includes(",") ? canonical.name : other.name.includes(",") ? other.name : canonical.name,
+          totalTasks: Math.max(canonical.totalTasks, other.totalTasks),
+          completedTasks: Math.max(canonical.completedTasks, other.completedTasks),
+          delayedTasks: Math.max(canonical.delayedTasks, other.delayedTasks),
+          ticketsClosed: Math.max(canonical.ticketsClosed, other.ticketsClosed),
+          ticketsPending: Math.max(canonical.ticketsPending, other.ticketsPending),
+          delayPenaltyTotal: Math.max(canonical.delayPenaltyTotal, other.delayPenaltyTotal),
+          taskEfficiency: canonical.taskEfficiency ?? other.taskEfficiency,
+          taskEfficiencyBeforePenalty:
+            canonical.taskEfficiencyBeforePenalty ?? other.taskEfficiencyBeforePenalty,
+          ticketEfficiency: canonical.ticketEfficiency ?? other.ticketEfficiency,
+          overallEfficiency: Math.max(canonical.overallEfficiency, other.overallEfficiency),
+        });
+      }
+
       return NextResponse.json({
         periodKey,
         frequency,
         source: "mergedatabase",
-        rows: rows.map((r) => {
-          const row = r as typeof r & {
-            ticketsClosed?: number;
-            ticketsPending?: number;
-            delayPenaltyTotal?: number;
-            taskEfficiencyBeforePenalty?: unknown;
-          };
-          return {
-            sourceUserId: row.sourceUserId.toString(),
-            name: row.user?.name?.trim() || row.displayName,
-            companyName: row.user?.companyName ?? null,
-            totalTasks: row.totalTasks,
-            completedTasks: row.completedTasks,
-            delayedTasks: row.delayedTasks,
-            ticketsClosed: Number(row.ticketsClosed ?? 0),
-            ticketsPending: Number(row.ticketsPending ?? 0),
-            taskEfficiency: row.taskEfficiency != null ? Number(row.taskEfficiency) : null,
-            ticketEfficiency: row.ticketEfficiency != null ? Number(row.ticketEfficiency) : null,
-            overallEfficiency: Number(row.overallEfficiency),
-            onTimeCompletionRate:
-              row.onTimeCompletionRate != null ? Number(row.onTimeCompletionRate) : null,
-            delayPenaltyTotal: Number(row.delayPenaltyTotal ?? 0),
-            taskEfficiencyBeforePenalty:
-              row.taskEfficiencyBeforePenalty != null
-                ? Number(row.taskEfficiencyBeforePenalty)
-                : null,
-            computedAt: row.computedAt.toISOString(),
-          };
-        }),
+        rows: [...byName.values()],
       });
     }
 

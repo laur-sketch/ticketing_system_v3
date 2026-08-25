@@ -1,0 +1,722 @@
+"use client";
+
+import { Building2, ChevronLeft, Eye, EyeOff, Layers, Settings2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/cn";
+import type { DepartmentMetricRow } from "@/lib/department-task-metrics";
+import { KPI_DONUT_COLORS, KINETIC_PALETTE } from "@/lib/kinetic-palette";
+
+type CatalogSection = {
+  id: string;
+  name: string;
+  parentId: string | null;
+};
+
+type DepartmentTaskMetricsGridProps = {
+  sections: DepartmentMetricRow[];
+  reportingPeriodLabel?: string;
+  companyLabel?: string | null;
+  loading?: boolean;
+  /** SuperAdmin: manage which sections appear in Departments metrics. */
+  canManageVisibility?: boolean;
+  onVisibilityChanged?: () => void;
+};
+
+function donutSlicePath(
+  cx: number,
+  cy: number,
+  rOut: number,
+  rIn: number,
+  start: number,
+  end: number,
+): string {
+  const polar = (r: number, a: number) => ({
+    x: cx + r * Math.cos(a),
+    y: cy + r * Math.sin(a),
+  });
+  const large = end - start > Math.PI ? 1 : 0;
+  const p0 = polar(rOut, start);
+  const p1 = polar(rOut, end);
+  const p2 = polar(rIn, end);
+  const p3 = polar(rIn, start);
+  return [
+    `M ${p0.x} ${p0.y}`,
+    `A ${rOut} ${rOut} 0 ${large} 1 ${p1.x} ${p1.y}`,
+    `L ${p2.x} ${p2.y}`,
+    `A ${rIn} ${rIn} 0 ${large} 0 ${p3.x} ${p3.y}`,
+    "Z",
+  ].join(" ");
+}
+
+function DepartmentDonutCard({
+  row,
+  onInspect,
+  inspectHint,
+  canHide,
+  onHide,
+}: {
+  row: DepartmentMetricRow;
+  onInspect?: () => void;
+  inspectHint?: string;
+  canHide?: boolean;
+  onHide?: () => void;
+}) {
+  const [lastTapMs, setLastTapMs] = useState(0);
+  const segments = [
+    { key: "done", label: "Done", value: row.done, color: KPI_DONUT_COLORS.positive },
+    { key: "missing", label: "Missing", value: row.missing, color: KPI_DONUT_COLORS.negative },
+  ];
+  const total = segments.reduce((a, s) => a + s.value, 0);
+  const cx = 50;
+  const cy = 50;
+  const rOut = 36;
+  const rIn = 24;
+  const headline = total > 0 ? `${row.percent}%` : "—";
+  let angle = -Math.PI / 2;
+  const paths: { d: string; color: string; label: string }[] = [];
+
+  if (total > 0) {
+    for (const seg of segments) {
+      if (seg.value <= 0) continue;
+      const sliceAngle = (seg.value / total) * 2 * Math.PI;
+      const isFull = sliceAngle >= 2 * Math.PI - 1e-3;
+      if (isFull) {
+        paths.push({ d: "__FULL__", color: seg.color, label: seg.label });
+        angle += sliceAngle;
+        continue;
+      }
+      const end = angle + sliceAngle;
+      paths.push({
+        d: donutSlicePath(cx, cy, rOut, rIn, angle, end),
+        color: seg.color,
+        label: seg.label,
+      });
+      angle = end;
+    }
+  }
+
+  const interactive = Boolean(onInspect);
+
+  return (
+    <article
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      title={inspectHint}
+      onDoubleClick={onInspect}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter") onInspect?.();
+            }
+          : undefined
+      }
+      onTouchEnd={
+        interactive
+          ? () => {
+              const now = Date.now();
+              if (now - lastTapMs < 350) onInspect?.();
+              setLastTapMs(now);
+            }
+          : undefined
+      }
+      className={cn(
+        "relative flex flex-col rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.06)] outline-none transition dark:border-zinc-700/80 dark:bg-zinc-900/40 dark:shadow-[0_12px_32px_rgba(0,0,0,0.35)]",
+        interactive &&
+          "cursor-pointer hover:border-orange-300 focus:ring-2 focus:ring-orange-500/30 dark:hover:border-orange-700/70",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
+            {row.name}
+          </p>
+          <p className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
+            {headline}
+          </p>
+          <p className="mt-1 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
+            {row.done}/{row.total || 0} done · {row.memberCount} member
+            {row.memberCount === 1 ? "" : "s"}
+            {row.subsections.length > 0 ? ` · ${row.subsections.length} sub` : ""}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-center gap-1.5">
+          <span className="flex size-9 items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            <Layers className="size-[18px]" strokeWidth={1.75} aria-hidden />
+          </span>
+          {canHide && onHide ? (
+            <button
+              type="button"
+              title="Hide this section from Departments metrics"
+              aria-label={`Hide ${row.name}`}
+              className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 transition hover:border-rose-300 hover:text-rose-600 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-rose-700 dark:hover:text-rose-300"
+              onClick={(e) => {
+                e.stopPropagation();
+                onHide();
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <EyeOff className="size-3.5" aria-hidden />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-1 flex-col items-center justify-center">
+        <svg viewBox="0 0 100 100" className="mx-auto h-36 w-36" aria-hidden>
+          {total === 0 ? (
+            <>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={rOut}
+                fill="none"
+                stroke={KINETIC_PALETTE.donutTrack}
+                strokeWidth={6}
+                className="dark:stroke-zinc-700"
+              />
+              <circle cx={cx} cy={cy} r={rIn} fill="white" className="dark:fill-zinc-900/80" />
+              <text
+                x={cx}
+                y={cy + 3}
+                textAnchor="middle"
+                className="fill-zinc-900 text-[9px] font-black dark:fill-zinc-100"
+              >
+                —
+              </text>
+            </>
+          ) : (
+            <>
+              {paths.map((p, i) =>
+                p.d === "__FULL__" ? (
+                  <g key={`${p.label}-full`}>
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={rOut}
+                      fill={p.color}
+                      stroke={KINETIC_PALETTE.donutStroke}
+                      strokeWidth="0.35"
+                      className="dark:stroke-zinc-950"
+                    />
+                    <circle cx={cx} cy={cy} r={rIn} fill="white" className="dark:fill-zinc-900/80" />
+                  </g>
+                ) : (
+                  <path
+                    key={`${p.label}-${i}`}
+                    d={p.d}
+                    fill={p.color}
+                    stroke={KINETIC_PALETTE.donutStroke}
+                    strokeWidth="0.35"
+                    className="dark:stroke-zinc-950"
+                  />
+                ),
+              )}
+              <circle cx={cx} cy={cy} r={rIn} fill="white" className="dark:fill-zinc-900/80" />
+              <text
+                x={cx}
+                y={cy + 3}
+                textAnchor="middle"
+                className="fill-zinc-900 text-[9px] font-black dark:fill-zinc-100"
+              >
+                {headline}
+              </text>
+            </>
+          )}
+        </svg>
+        <div className="mt-3 flex flex-wrap justify-center gap-3 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="size-2 rounded-full" style={{ background: KPI_DONUT_COLORS.positive }} />
+            Done {row.done}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="size-2 rounded-full" style={{ background: KPI_DONUT_COLORS.negative }} />
+            Missing {row.missing}
+          </span>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export function DepartmentTaskMetricsGrid({
+  sections,
+  reportingPeriodLabel,
+  companyLabel,
+  loading = false,
+  canManageVisibility = false,
+  onVisibilityChanged,
+}: DepartmentTaskMetricsGridProps) {
+  const [drillStack, setDrillStack] = useState<DepartmentMetricRow[]>([]);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [catalog, setCatalog] = useState<CatalogSection[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<string[]>([]);
+  const [visibilityLoading, setVisibilityLoading] = useState(false);
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
+  const [visibilityError, setVisibilityError] = useState<string | null>(null);
+
+  const inspected = drillStack.length > 0 ? drillStack[drillStack.length - 1]! : null;
+
+  const rollup = sections.reduce(
+    (acc, s) => ({
+      total: acc.total + s.total,
+      done: acc.done + s.done,
+    }),
+    { total: 0, done: 0 },
+  );
+  const rollupPercent =
+    rollup.total <= 0 ? 0 : Math.round((rollup.done / rollup.total) * 1000) / 10;
+
+  const loadVisibility = useCallback(async () => {
+    if (!canManageVisibility) return;
+    setVisibilityLoading(true);
+    setVisibilityError(null);
+    try {
+      const res = await fetch("/api/admin/department-metrics-visibility", { cache: "no-store" });
+      if (!res.ok) {
+        setVisibilityError("Could not load section visibility.");
+        return;
+      }
+      const json = (await res.json()) as {
+        hiddenSectionIds?: string[];
+        sections?: CatalogSection[];
+      };
+      setHiddenIds(json.hiddenSectionIds ?? []);
+      setCatalog(json.sections ?? []);
+    } catch {
+      setVisibilityError("Could not load section visibility.");
+    } finally {
+      setVisibilityLoading(false);
+    }
+  }, [canManageVisibility]);
+
+  useEffect(() => {
+    if (!canManageVisibility) return;
+    void loadVisibility();
+  }, [canManageVisibility, loadVisibility]);
+
+  const saveHiddenIds = useCallback(
+    async (nextIds: string[]) => {
+      setVisibilitySaving(true);
+      setVisibilityError(null);
+      const previous = hiddenIds;
+      setHiddenIds(nextIds);
+      try {
+        const res = await fetch("/api/admin/department-metrics-visibility", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ hiddenSectionIds: nextIds }),
+        });
+        if (!res.ok) {
+          setHiddenIds(previous);
+          setVisibilityError("Could not update section visibility.");
+          return;
+        }
+        const json = (await res.json()) as { hiddenSectionIds?: string[] };
+        setHiddenIds(json.hiddenSectionIds ?? nextIds);
+        onVisibilityChanged?.();
+      } catch {
+        setHiddenIds(previous);
+        setVisibilityError("Could not update section visibility.");
+      } finally {
+        setVisibilitySaving(false);
+      }
+    },
+    [hiddenIds, onVisibilityChanged],
+  );
+
+  function hideSection(id: string) {
+    if (hiddenIds.includes(id)) return;
+    void saveHiddenIds([...hiddenIds, id]);
+    setDrillStack((prev) => prev.filter((node) => node.id !== id));
+  }
+
+  function showSection(id: string) {
+    void saveHiddenIds(hiddenIds.filter((x) => x !== id));
+  }
+
+  const catalogByParent = useMemo(() => {
+    const map = new Map<string | null, CatalogSection[]>();
+    for (const s of catalog) {
+      const list = map.get(s.parentId) ?? [];
+      list.push(s);
+      map.set(s.parentId, list);
+    }
+    return map;
+  }, [catalog]);
+
+  const hiddenSet = useMemo(() => new Set(hiddenIds), [hiddenIds]);
+
+  function openSection(row: DepartmentMetricRow) {
+    setDrillStack((prev) => [...prev, row]);
+  }
+
+  function closeModal() {
+    setDrillStack([]);
+  }
+
+  function goBack() {
+    setDrillStack((prev) => prev.slice(0, -1));
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
+            Department sections
+          </p>
+          <h4 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">
+            {companyLabel ? `${companyLabel} departments` : "All departments"}
+          </h4>
+          {reportingPeriodLabel ? (
+            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
+          ) : null}
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
+            Main donuts use org-chart section membership. Double-click a section to open its
+            subsections; keep drilling into nested subsections the same way.
+            {canManageVisibility
+              ? " SuperAdmin can hide sections from this view for everyone."
+              : ""}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          {canManageVisibility ? (
+            <button
+              type="button"
+              onClick={() => {
+                setManageOpen(true);
+                void loadVisibility();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-orange-300 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-orange-700 dark:hover:text-orange-300"
+            >
+              <Settings2 className="size-3.5" aria-hidden />
+              Hide sections
+              {hiddenIds.length > 0 ? (
+                <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] tabular-nums dark:bg-zinc-800">
+                  {hiddenIds.length}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+          {sections.length > 0 ? (
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 dark:border-zinc-700/80 dark:bg-zinc-900/50">
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                Org rollup
+              </p>
+              <p className="mt-1 text-2xl font-black tabular-nums text-zinc-900 dark:text-zinc-100">
+                {rollupPercent}%
+              </p>
+              <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                {rollup.done}/{rollup.total} checklist items · {sections.length} main section
+                {sections.length === 1 ? "" : "s"}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {visibilityError ? (
+        <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/30 dark:text-rose-100">
+          {visibilityError}
+        </p>
+      ) : null}
+
+      <div className={cn(loading && "pointer-events-none opacity-60")}>
+        {sections.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-300 px-6 py-16 text-center dark:border-zinc-700">
+            <Building2 className="size-10 text-zinc-400 dark:text-zinc-600" aria-hidden />
+            <p className="mt-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+              No department section metrics for this scope
+            </p>
+            <p className="mt-1 max-w-md text-xs text-zinc-600 dark:text-zinc-500">
+              Assign people to org-chart sections, then reload. Metrics use checklist tasks for members
+              in each section tree.
+              {canManageVisibility && hiddenIds.length > 0
+                ? " Some sections may be hidden — use Hide sections to restore them."
+                : ""}
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {sections.map((section) => (
+              <DepartmentDonutCard
+                key={section.id}
+                row={section}
+                inspectHint="Double-click or double-tap to view subsections"
+                onInspect={() => openSection(section)}
+                canHide={canManageVisibility}
+                onHide={() => hideSection(section.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {inspected ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${inspected.name} subsections`}
+          onClick={closeModal}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-700 dark:bg-zinc-950 sm:p-7"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
+                  Extended view
+                </p>
+                {drillStack.length > 1 ? (
+                  <nav
+                    className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400"
+                    aria-label="Section path"
+                  >
+                    {drillStack.map((node, index) => (
+                      <span key={node.id} className="inline-flex items-center gap-1">
+                        {index > 0 ? <span className="text-zinc-400">/</span> : null}
+                        {index < drillStack.length - 1 ? (
+                          <button
+                            type="button"
+                            className="hover:text-orange-600 dark:hover:text-orange-300"
+                            onClick={() => setDrillStack((prev) => prev.slice(0, index + 1))}
+                          >
+                            {node.name}
+                          </button>
+                        ) : (
+                          <span className="text-zinc-800 dark:text-zinc-200">{node.name}</span>
+                        )}
+                      </span>
+                    ))}
+                  </nav>
+                ) : null}
+                <h4 className="mt-1 text-xl font-bold text-zinc-950 dark:text-zinc-50">
+                  {inspected.name}
+                </h4>
+                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  {inspected.percent}% · {inspected.done}/{inspected.total} done ·{" "}
+                  {inspected.subsections.length} subsection
+                  {inspected.subsections.length === 1 ? "" : "s"}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {canManageVisibility ? (
+                  <button
+                    type="button"
+                    onClick={() => hideSection(inspected.id)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-zinc-200 px-2.5 py-2 text-xs font-semibold text-zinc-700 transition hover:border-rose-300 hover:text-rose-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-rose-700 dark:hover:text-rose-300"
+                  >
+                    <EyeOff className="size-3.5" aria-hidden />
+                    Hide
+                  </button>
+                ) : null}
+                {drillStack.length > 1 ? (
+                  <button
+                    type="button"
+                    onClick={goBack}
+                    className="inline-flex items-center gap-1 rounded-xl border border-zinc-200 px-2.5 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  >
+                    <ChevronLeft className="size-3.5" aria-hidden />
+                    Back
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="rounded-xl border border-zinc-200 p-2 text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  aria-label="Close"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+
+            {inspected.subsections.length === 0 ? (
+              <div className="mt-8 rounded-2xl border border-dashed border-zinc-300 px-6 py-12 text-center dark:border-zinc-700">
+                <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                  No subsections under this section
+                </p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Create nested org-chart sections to break this department down further.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {inspected.subsections.map((sub) => (
+                  <DepartmentDonutCard
+                    key={sub.id}
+                    row={sub}
+                    inspectHint={
+                      sub.subsections.length > 0
+                        ? "Double-click or double-tap to view nested subsections"
+                        : undefined
+                    }
+                    onInspect={
+                      sub.subsections.length > 0 ? () => openSection(sub) : undefined
+                    }
+                    canHide={canManageVisibility}
+                    onHide={() => hideSection(sub.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {manageOpen && canManageVisibility ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Hide department sections"
+          onClick={() => setManageOpen(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-700 dark:bg-zinc-950 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
+                  SuperAdmin
+                </p>
+                <h4 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">
+                  Hide sections
+                </h4>
+                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  Hidden sections are removed from Departments metrics for everyone. Unhide to restore.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManageOpen(false)}
+                className="rounded-xl border border-zinc-200 p-2 text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                aria-label="Close"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {visibilityLoading ? (
+              <p className="mt-6 text-sm text-zinc-500">Loading sections…</p>
+            ) : catalog.length === 0 ? (
+              <p className="mt-6 text-sm text-zinc-500">No org-chart sections found.</p>
+            ) : (
+              <ul className="mt-5 space-y-1">
+                {(catalogByParent.get(null) ?? []).map((main) => {
+                  const children = catalogByParent.get(main.id) ?? [];
+                  const mainHidden = hiddenSet.has(main.id);
+                  return (
+                    <li key={main.id} className="rounded-xl border border-zinc-200 dark:border-zinc-800">
+                      <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+                        <div className="min-w-0">
+                          <p
+                            className={cn(
+                              "truncate text-sm font-semibold",
+                              mainHidden
+                                ? "text-zinc-400 line-through dark:text-zinc-600"
+                                : "text-zinc-900 dark:text-zinc-100",
+                            )}
+                          >
+                            {main.name}
+                          </p>
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                            Main section
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={visibilitySaving}
+                          onClick={() =>
+                            mainHidden ? showSection(main.id) : hideSection(main.id)
+                          }
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition disabled:opacity-50",
+                            mainHidden
+                              ? "border-orange-300 text-orange-700 hover:bg-orange-50 dark:border-orange-700 dark:text-orange-300 dark:hover:bg-orange-950/40"
+                              : "border-zinc-200 text-zinc-600 hover:border-rose-300 hover:text-rose-700 dark:border-zinc-700 dark:text-zinc-300",
+                          )}
+                        >
+                          {mainHidden ? (
+                            <>
+                              <Eye className="size-3.5" aria-hidden />
+                              Show
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="size-3.5" aria-hidden />
+                              Hide
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      {children.length > 0 ? (
+                        <ul className="border-t border-zinc-100 dark:border-zinc-800/80">
+                          {children.map((child) => {
+                            const childHidden = hiddenSet.has(child.id);
+                            return (
+                              <li
+                                key={child.id}
+                                className="flex items-center justify-between gap-2 px-3 py-2 pl-6"
+                              >
+                                <p
+                                  className={cn(
+                                    "truncate text-sm",
+                                    childHidden
+                                      ? "text-zinc-400 line-through dark:text-zinc-600"
+                                      : "text-zinc-700 dark:text-zinc-300",
+                                  )}
+                                >
+                                  {child.name}
+                                </p>
+                                <button
+                                  type="button"
+                                  disabled={visibilitySaving || mainHidden}
+                                  title={
+                                    mainHidden
+                                      ? "Unhide the main section first"
+                                      : undefined
+                                  }
+                                  onClick={() =>
+                                    childHidden
+                                      ? showSection(child.id)
+                                      : hideSection(child.id)
+                                  }
+                                  className={cn(
+                                    "inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-semibold transition disabled:opacity-40",
+                                    childHidden
+                                      ? "border-orange-300 text-orange-700 dark:border-orange-700 dark:text-orange-300"
+                                      : "border-zinc-200 text-zinc-500 dark:border-zinc-700 dark:text-zinc-400",
+                                  )}
+                                >
+                                  {childHidden ? (
+                                    <>
+                                      <Eye className="size-3" aria-hidden />
+                                      Show
+                                    </>
+                                  ) : (
+                                    <>
+                                      <EyeOff className="size-3" aria-hidden />
+                                      Hide
+                                    </>
+                                  )}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}

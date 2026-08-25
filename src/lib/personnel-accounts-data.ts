@@ -138,6 +138,9 @@ export async function loadPersonnelAccountsPayload(viewer: {
       FROM merged_users
       WHERE is_active = 1
         AND source_database IN (${Prisma.join(sourceTags)})
+        -- Platform super_admin rows are excluded here just like the on-duty
+        -- Activity loader, so both Workforce views filter the same people.
+        AND role <> 'super_admin'
       ORDER BY name ASC
     `,
     // Table is created by ensureMergedPortalWorkTables / portal-work sync.

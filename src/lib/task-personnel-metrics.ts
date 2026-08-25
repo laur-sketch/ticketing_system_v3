@@ -1,4 +1,5 @@
 import type { PersonnelTicketMetric, TaskChecklistPillarMetrics } from "@/lib/kpis";
+import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 
 export type PersonnelAccumulatedTaskMetric = {
   id: string;
@@ -218,7 +219,485 @@ export function normalizePersonnelTaskTotals(
 }
 
 export function normalizePersonName(name: string): string {
-  return name.trim().toLowerCase();
+  return name
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Stable identity for merging personnel cards across agent / HRIS name formats.
+ * "Magbanua, Edmund Narvaez" and "Edmund Narvaez Magbanua" share the same key.
+ */
+export function personnelIdentityKey(name: string): string {
+  let n = normalizePersonName(name);
+  if (!n) return "";
+  if (n.includes(",")) {
+    const [last, rest = ""] = n.split(",", 2);
+    n = `${rest.trim()} ${last.trim()}`.trim();
+  }
+  const tokens = n
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort();
+  return tokens.join(" ");
+}
+
+/** Merged-database personnel row (Insights verification view). */
+export type MergedPersonnelEfficiencyRow = {
+  sourceUserId: string;
+  name: string;
+  companyName: string | null;
+  totalTasks: number;
+  completedTasks: number;
+  delayedTasks: number;
+  ticketsClosed: number;
+  ticketsPending: number;
+  taskEfficiency: number | null;
+  ticketEfficiency: number | null;
+  overallEfficiency: number;
+  onTimeCompletionRate: number | null;
+  delayPenaltyTotal?: number;
+  taskEfficiencyBeforePenalty?: number | null;
+  computedAt: string;
+};
+
+function mergeTicketMetricMaps(
+  target: Map<string, PersonnelTicketMetric>,
+  rows: PersonnelTicketMetric[],
+) {
+  for (const metric of rows) {
+    const key = personnelIdentityKey(metric.name);
+    if (!key) continue;
+    const existing = target.get(key);
+    if (!existing) {
+      target.set(key, { ...metric });
+      continue;
+    }
+    const closed = existing.closed + metric.closed;
+    const pending = existing.pending + metric.pending;
+    const total = closed + pending;
+    target.set(key, {
+      ...existing,
+      id: existing.id || metric.id,
+      name: preferDisplayName(existing.name, metric.name),
+      closed,
+      pending,
+      efficiency: total > 0 ? Math.round((closed / total) * 100) : existing.efficiency,
+    });
+  }
+}
+
+function preferDisplayName(a: string, b: string): string {
+  const aT = a.trim();
+  const bT = b.trim();
+  if (!aT) return bT;
+  if (!bT) return aT;
+  // Prefer HRIS-style "Last, First" when either side has it.
+  if (aT.includes(",") && !bT.includes(",")) return aT;
+  if (bT.includes(",") && !aT.includes(",")) return bT;
+  return aT.length >= bT.length ? aT : bT;
+}
+
+function mergeActivityBuckets(
+  a: { closed: number; pending: number; efficiency: number } | null | undefined,
+  b: { closed: number; pending: number; efficiency: number } | null | undefined,
+): { closed: number; pending: number; efficiency: number } | null {
+  if (!a && !b) return null;
+  if (!a) return b ? { ...b } : null;
+  if (!b) return { ...a };
+  const closed = a.closed + b.closed;
+  const pending = a.pending + b.pending;
+  const total = closed + pending;
+  return {
+    closed,
+    pending,
+    efficiency: total > 0 ? Math.round((closed / total) * 100) : Math.max(a.efficiency, b.efficiency),
+  };
+}
+
+function mergeTaskBuckets(
+  a: PersonnelCombinedMetricCard["tasks"],
+  b: PersonnelCombinedMetricCard["tasks"],
+): PersonnelCombinedMetricCard["tasks"] {
+  if (!a && !b) return null;
+  if (!a) return b ? { ...b } : null;
+  if (!b) return { ...a };
+  const closed = a.closed + b.closed;
+  const pending = a.pending + b.pending;
+  const penaltyDeduction = Math.max(a.penaltyDeduction ?? 0, b.penaltyDeduction ?? 0);
+  const efficiencyBeforePenalty = Math.max(
+    a.efficiencyBeforePenalty ?? a.efficiency,
+    b.efficiencyBeforePenalty ?? b.efficiency,
+  );
+  const efficiency =
+    penaltyDeduction > 0
+      ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
+      : normalizePersonnelTaskTotals(closed + pending, closed).efficiency;
+  return {
+    closed,
+    pending,
+    efficiency,
+    pillarsContributed: Math.max(a.pillarsContributed, b.pillarsContributed),
+    ...(penaltyDeduction > 0 ? { penaltyDeduction, efficiencyBeforePenalty } : {}),
+  };
+}
+
+/** Fold two cards for the same person into one (requests + tasks + role seats). */
+export function mergePersonnelCombinedCards(
+  a: PersonnelCombinedMetricCard,
+  b: PersonnelCombinedMetricCard,
+): PersonnelCombinedMetricCard {
+  const preferAId =
+    !isSyntheticMergedId(a.id) && isSyntheticMergedId(b.id)
+      ? true
+      : isSyntheticMergedId(a.id) && !isSyntheticMergedId(b.id)
+        ? false
+        : (a.tasks?.closed ?? 0) + (a.tasks?.pending ?? 0) >=
+          (b.tasks?.closed ?? 0) + (b.tasks?.pending ?? 0);
+  return {
+    id: preferAId ? a.id || b.id : b.id || a.id,
+    name: preferDisplayName(a.name, b.name),
+    role: mergeRoles(a.role, b.role),
+    tickets: mergeActivityBuckets(a.tickets, b.tickets),
+    rfpRequestor: null,
+    rfpAccounting: mergeActivityBuckets(a.rfpAccounting, b.rfpAccounting),
+    rfpFinance: mergeActivityBuckets(a.rfpFinance, b.rfpFinance),
+    irsCanvass: mergeActivityBuckets(a.irsCanvass, b.irsCanvass),
+    ftrPrepared: mergeActivityBuckets(a.ftrPrepared, b.ftrPrepared),
+    acaSubmitted: mergeActivityBuckets(a.acaSubmitted, b.acaSubmitted),
+    tasks: mergeTaskBuckets(a.tasks, b.tasks),
+  };
+}
+
+/** Collapse any remaining same-person cards (name variants, split request/task rows). */
+export function consolidatePersonnelCards(
+  cards: PersonnelCombinedMetricCard[],
+): PersonnelCombinedMetricCard[] {
+  const byKey = new Map<string, PersonnelCombinedMetricCard>();
+  for (const card of cards) {
+    const key = personnelIdentityKey(card.name);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? mergePersonnelCombinedCards(existing, card) : card);
+  }
+  return [...byKey.values()];
+}
+
+function isSyntheticMergedId(id: string): boolean {
+  try {
+    return BigInt(id) >= 9000000000n;
+  } catch {
+    return false;
+  }
+}
+
+function pickCanonicalMergedRow(
+  a: MergedPersonnelEfficiencyRow,
+  b: MergedPersonnelEfficiencyRow,
+): MergedPersonnelEfficiencyRow {
+  const aSynthetic = isSyntheticMergedId(a.sourceUserId);
+  const bSynthetic = isSyntheticMergedId(b.sourceUserId);
+  if (aSynthetic !== bSynthetic) return aSynthetic ? b : a;
+  if (a.totalTasks !== b.totalTasks) return a.totalTasks > b.totalTasks ? a : b;
+  const aId = BigInt(a.sourceUserId);
+  const bId = BigInt(b.sourceUserId);
+  return aId <= bId ? a : b;
+}
+
+/** Collapse duplicate merged_users / breakdown rows that share the same person identity. */
+export function dedupeMergedPersonnelRows(
+  rows: MergedPersonnelEfficiencyRow[],
+): MergedPersonnelEfficiencyRow[] {
+  const byName = new Map<string, MergedPersonnelEfficiencyRow>();
+  for (const row of rows) {
+    const key = personnelIdentityKey(row.name);
+    if (!key) continue;
+    const existing = byName.get(key);
+    if (!existing) {
+      byName.set(key, row);
+      continue;
+    }
+    const canonical = pickCanonicalMergedRow(existing, row);
+    const other = canonical === existing ? row : existing;
+    byName.set(key, {
+      ...canonical,
+      name: preferDisplayName(canonical.name, other.name),
+      totalTasks: Math.max(canonical.totalTasks, other.totalTasks),
+      completedTasks: Math.max(canonical.completedTasks, other.completedTasks),
+      delayedTasks: Math.max(canonical.delayedTasks, other.delayedTasks),
+      ticketsClosed: Math.max(canonical.ticketsClosed, other.ticketsClosed),
+      ticketsPending: Math.max(canonical.ticketsPending, other.ticketsPending),
+      delayPenaltyTotal: Math.max(
+        canonical.delayPenaltyTotal ?? 0,
+        other.delayPenaltyTotal ?? 0,
+      ),
+      taskEfficiency: canonical.taskEfficiency ?? other.taskEfficiency,
+      taskEfficiencyBeforePenalty:
+        canonical.taskEfficiencyBeforePenalty ?? other.taskEfficiencyBeforePenalty,
+      ticketEfficiency: canonical.ticketEfficiency ?? other.ticketEfficiency,
+      overallEfficiency: Math.max(canonical.overallEfficiency, other.overallEfficiency),
+    });
+  }
+  return [...byName.values()];
+}
+
+function bucketHasActivity(
+  bucket: { closed: number; pending: number } | null | undefined,
+): boolean {
+  return bucket != null && (bucket.closed > 0 || bucket.pending > 0);
+}
+
+/**
+ * True when the person has task or performer-side request KPI — not approver-only
+ * seats (e.g. RFP Approved By Accounting / financeAgentId).
+ */
+export function personnelHasRecordedKpi(card: PersonnelCombinedMetricCard): boolean {
+  if (bucketHasActivity(card.tasks)) return true;
+  if (bucketHasActivity(card.tickets)) return true;
+  if (bucketHasActivity(card.rfpAccounting)) return true;
+  if (bucketHasActivity(card.irsCanvass)) return true;
+  if (bucketHasActivity(card.ftrPrepared)) return true;
+  if (bucketHasActivity(card.acaSubmitted)) return true;
+  return false;
+}
+
+export function filterPersonnelSearchQuery(
+  rows: PersonnelCombinedMetricCard[],
+  query: string,
+): PersonnelCombinedMetricCard[] {
+  const needle = normalizePersonName(query);
+  if (!needle) return rows;
+  const needleKey = personnelIdentityKey(query);
+  return rows.filter((row) => {
+    const name = normalizePersonName(row.name);
+    const key = personnelIdentityKey(row.name);
+    return name.includes(needle) || (needleKey.length > 0 && key.includes(needleKey));
+  });
+}
+
+export function buildPersonnelInsightCards(args: {
+  mergedRows: MergedPersonnelEfficiencyRow[];
+  selectedCompanyName?: string | null;
+  personnelDelayPenalties: PersonnelDelayPenaltyRow[];
+  personnelTicketMetrics: PersonnelTicketMetric[];
+  personnelRfpAccountingMetrics: PersonnelTicketMetric[];
+  personnelRfpFinanceMetrics: PersonnelTicketMetric[];
+  personnelIrsCanvassMetrics: PersonnelTicketMetric[];
+  personnelFtrPreparedMetrics: PersonnelTicketMetric[];
+  personnelAcaSubmittedMetrics: PersonnelTicketMetric[];
+  liveTicketsAuthoritative: boolean;
+}): PersonnelCombinedMetricCard[] {
+  let rows = dedupeMergedPersonnelRows(args.mergedRows);
+  if (args.selectedCompanyName) {
+    const target = args.selectedCompanyName.trim().toLowerCase();
+    rows = rows.filter((row) => {
+      const rowCompany =
+        (resolveRosterCompanyName(row.companyName) ?? row.companyName)?.trim().toLowerCase() ?? "";
+      return rowCompany === target;
+    });
+  }
+
+  const penaltyById = new Map(args.personnelDelayPenalties.map((row) => [row.id, row.deduction]));
+  const penaltyByName = new Map(
+    args.personnelDelayPenalties.map((row) => [personnelIdentityKey(row.name), row.deduction]),
+  );
+
+  const liveRequestsByName = new Map<string, PersonnelTicketMetric>();
+  mergeTicketMetricMaps(liveRequestsByName, args.personnelTicketMetrics);
+
+  const liveRfpAccountingByName = new Map<string, PersonnelTicketMetric>();
+  mergeTicketMetricMaps(liveRfpAccountingByName, args.personnelRfpAccountingMetrics);
+
+  const liveRfpFinanceByName = new Map<string, PersonnelTicketMetric>();
+  mergeTicketMetricMaps(liveRfpFinanceByName, args.personnelRfpFinanceMetrics);
+
+  const liveIrsCanvassByName = new Map<string, PersonnelTicketMetric>();
+  mergeTicketMetricMaps(liveIrsCanvassByName, args.personnelIrsCanvassMetrics);
+
+  const liveFtrPreparedByName = new Map<string, PersonnelTicketMetric>();
+  mergeTicketMetricMaps(liveFtrPreparedByName, args.personnelFtrPreparedMetrics);
+
+  const liveAcaSubmittedByName = new Map<string, PersonnelTicketMetric>();
+  mergeTicketMetricMaps(liveAcaSubmittedByName, args.personnelAcaSubmittedMetrics);
+
+  const byName = new Map<string, PersonnelCombinedMetricCard>();
+
+  for (const row of rows) {
+    const key = personnelIdentityKey(row.name);
+    if (!key) continue;
+
+    const livePenalty =
+      penaltyById.get(row.sourceUserId) ?? penaltyByName.get(key) ?? 0;
+    const storedPenalty = row.delayPenaltyTotal ?? 0;
+    const penaltyDeduction = Math.max(livePenalty, storedPenalty);
+    const efficiencyBeforePenalty = Math.round(
+      row.taskEfficiencyBeforePenalty ?? row.taskEfficiency ?? 0,
+    );
+    const taskEfficiency =
+      penaltyDeduction > 0
+        ? applyPenaltyToTaskEfficiency(efficiencyBeforePenalty, penaltyDeduction)
+        : Math.round(row.taskEfficiency ?? 0);
+
+    const live = liveRequestsByName.get(key);
+    const closed = live != null
+      ? live.closed
+      : args.liveTicketsAuthoritative
+        ? 0
+        : Number(row.ticketsClosed ?? 0);
+    const pending = live != null
+      ? live.pending
+      : args.liveTicketsAuthoritative
+        ? 0
+        : Number(row.ticketsPending ?? 0);
+    const requestTotal = closed + pending;
+    const requestEfficiency =
+      live != null
+        ? Math.round(live.efficiency)
+        : args.liveTicketsAuthoritative
+          ? null
+          : row.ticketEfficiency != null
+            ? Math.round(Number(row.ticketEfficiency))
+            : requestTotal > 0
+              ? Math.round((closed / requestTotal) * 100)
+              : null;
+
+    const rfpAccounting = liveRfpAccountingByName.get(key) ?? null;
+    const rfpFinance = liveRfpFinanceByName.get(key) ?? null;
+    const irsCanvass = liveIrsCanvassByName.get(key) ?? null;
+    const ftrPrepared = liveFtrPreparedByName.get(key) ?? null;
+    const acaSubmitted = liveAcaSubmittedByName.get(key) ?? null;
+
+    const card: PersonnelCombinedMetricCard = {
+      id: row.sourceUserId,
+      name: row.name,
+      role: "Assignee",
+      tickets:
+        live != null || (!args.liveTicketsAuthoritative && (requestEfficiency != null || requestTotal > 0))
+          ? {
+              closed,
+              pending,
+              efficiency: requestEfficiency ?? 0,
+            }
+          : null,
+      rfpRequestor: null,
+      rfpAccounting: rfpAccounting
+        ? {
+            closed: rfpAccounting.closed,
+            pending: rfpAccounting.pending,
+            efficiency: Math.round(rfpAccounting.efficiency),
+          }
+        : null,
+      rfpFinance: rfpFinance
+        ? {
+            closed: rfpFinance.closed,
+            pending: rfpFinance.pending,
+            efficiency: Math.round(rfpFinance.efficiency),
+          }
+        : null,
+      irsCanvass: irsCanvass
+        ? {
+            closed: irsCanvass.closed,
+            pending: irsCanvass.pending,
+            efficiency: Math.round(irsCanvass.efficiency),
+          }
+        : null,
+      ftrPrepared: ftrPrepared
+        ? {
+            closed: ftrPrepared.closed,
+            pending: ftrPrepared.pending,
+            efficiency: Math.round(ftrPrepared.efficiency),
+          }
+        : null,
+      acaSubmitted: acaSubmitted
+        ? {
+            closed: acaSubmitted.closed,
+            pending: acaSubmitted.pending,
+            efficiency: Math.round(acaSubmitted.efficiency),
+          }
+        : null,
+      tasks:
+        row.totalTasks > 0 || row.taskEfficiency != null
+          ? {
+              closed: row.completedTasks,
+              pending: Math.max(0, row.totalTasks - row.completedTasks),
+              efficiency: taskEfficiency,
+              pillarsContributed: 0,
+              ...(penaltyDeduction > 0
+                ? { penaltyDeduction, efficiencyBeforePenalty }
+                : {}),
+            }
+          : null,
+    };
+
+    const existing = byName.get(key);
+    byName.set(key, existing ? mergePersonnelCombinedCards(existing, card) : card);
+  }
+
+  // Live request metrics only enrich the soft-path merged roster — never create
+  // cards for legacy ticketing-only agents that aren't in mergeddatabase-dev.
+  const findRosterCard = (name: string) => {
+    const key = personnelIdentityKey(name);
+    if (!key) return null;
+    return byName.get(key) ?? null;
+  };
+
+  for (const live of liveRequestsByName.values()) {
+    const card = findRosterCard(live.name);
+    if (!card) continue;
+    card.tickets = mergeActivityBuckets(card.tickets, {
+      closed: live.closed,
+      pending: live.pending,
+      efficiency: Math.round(live.efficiency),
+    });
+    card.name = preferDisplayName(card.name, live.name);
+  }
+  for (const live of liveRfpAccountingByName.values()) {
+    const card = findRosterCard(live.name);
+    if (!card) continue;
+    card.rfpAccounting = accumulateRoleBucket(card.rfpAccounting, live);
+    card.name = preferDisplayName(card.name, live.name);
+  }
+  for (const live of liveIrsCanvassByName.values()) {
+    const card = findRosterCard(live.name);
+    if (!card) continue;
+    card.irsCanvass = accumulateRoleBucket(card.irsCanvass, live);
+    card.name = preferDisplayName(card.name, live.name);
+  }
+  for (const live of liveFtrPreparedByName.values()) {
+    const card = findRosterCard(live.name);
+    if (!card) continue;
+    card.ftrPrepared = accumulateRoleBucket(card.ftrPrepared, live);
+    card.name = preferDisplayName(card.name, live.name);
+  }
+  for (const live of liveAcaSubmittedByName.values()) {
+    const card = findRosterCard(live.name);
+    if (!card) continue;
+    card.acaSubmitted = accumulateRoleBucket(card.acaSubmitted, live);
+    card.name = preferDisplayName(card.name, live.name);
+  }
+  // RFP finance (Approved By Accounting) is approver-only — attach when a card
+  // already exists, but never create a card from finance metrics alone.
+  for (const live of liveRfpFinanceByName.values()) {
+    const card = findRosterCard(live.name);
+    if (!card) continue;
+    card.rfpFinance = accumulateRoleBucket(card.rfpFinance, live);
+  }
+
+  return consolidatePersonnelCards([...byName.values()].filter(personnelHasRecordedKpi)).sort(
+    (a, b) => {
+      const aEff = combinedPersonnelEfficiency(a) ?? -1;
+      const bEff = combinedPersonnelEfficiency(b) ?? -1;
+      const aReq = mergePersonnelRequestMetrics(a);
+      const bReq = mergePersonnelRequestMetrics(b);
+      const aClosed = (aReq?.closed ?? 0) + (a.tasks?.closed ?? 0);
+      const bClosed = (bReq?.closed ?? 0) + (b.tasks?.closed ?? 0);
+      return bEff - aEff || bClosed - aClosed || a.name.localeCompare(b.name);
+    },
+  );
 }
 
 function mergeRoles(existing: string, incoming: string): string {
@@ -344,7 +823,9 @@ export function attachPersonnelRequestRoleMetrics(
     acaSubmitted?: PersonnelTicketMetric[];
   },
 ): PersonnelCombinedMetricCard[] {
-  const byName = new Map(cards.map((card) => [normalizePersonName(card.name), card] as const));
+  const byName = new Map(
+    cards.map((card) => [personnelIdentityKey(card.name), card] as const).filter(([key]) => key),
+  );
 
   const apply = (
     rows: PersonnelTicketMetric[] | undefined,
@@ -352,24 +833,31 @@ export function attachPersonnelRequestRoleMetrics(
       PersonnelCombinedMetricCard,
       "rfpAccounting" | "rfpFinance" | "irsCanvass" | "ftrPrepared" | "acaSubmitted"
     >,
+    createIfMissing: boolean,
   ) => {
     for (const row of rows ?? []) {
-      const key = normalizePersonName(row.name);
+      const key = personnelIdentityKey(row.name);
       if (!key) continue;
-      const card = byName.get(key) ?? emptyPersonnelCard(row.id, row.name);
+      let card = byName.get(key);
+      if (!card) {
+        if (!createIfMissing) continue;
+        card = emptyPersonnelCard(row.id, row.name);
+      }
       card[field] = accumulateRoleBucket(card[field], row);
-      if (row.id) card.id = row.id;
+      card.name = preferDisplayName(card.name, row.name);
+      if (row.id) card.id = card.id || row.id;
       byName.set(key, card);
     }
   };
 
-  apply(roles.rfpAccounting, "rfpAccounting");
-  apply(roles.rfpFinance, "rfpFinance");
-  apply(roles.irsCanvass, "irsCanvass");
-  apply(roles.ftrPrepared, "ftrPrepared");
-  apply(roles.acaSubmitted, "acaSubmitted");
+  apply(roles.rfpAccounting, "rfpAccounting", true);
+  apply(roles.irsCanvass, "irsCanvass", true);
+  apply(roles.ftrPrepared, "ftrPrepared", true);
+  apply(roles.acaSubmitted, "acaSubmitted", true);
+  // Approver-only seat: never create a card from finance alone.
+  apply(roles.rfpFinance, "rfpFinance", false);
 
-  return [...byName.values()].sort((a, b) => {
+  return consolidatePersonnelCards([...byName.values()]).sort((a, b) => {
     const aReq = mergePersonnelRequestMetrics(a)?.efficiency ?? -1;
     const bReq = mergePersonnelRequestMetrics(b)?.efficiency ?? -1;
     return bReq - aReq || a.name.localeCompare(b.name);
@@ -383,11 +871,9 @@ export function mergePersonnelMetricCards(
   const byName = new Map<string, PersonnelCombinedMetricCard>();
 
   for (const ticket of tickets) {
-    const key = normalizePersonName(ticket.name);
+    const key = personnelIdentityKey(ticket.name);
     if (!key) continue;
     const current = byName.get(key) ?? emptyPersonnelCard(ticket.id, ticket.name);
-    // The same person can own several agent rows (legacy emails, duplicate
-    // accounts) — accumulate their counts instead of overwriting the card.
     const closed = (current.tickets?.closed ?? 0) + ticket.closed;
     const pending = (current.tickets?.pending ?? 0) + ticket.pending;
     const total = closed + pending;
@@ -396,12 +882,13 @@ export function mergePersonnelMetricCards(
       pending,
       efficiency: total > 0 ? Math.round((closed / total) * 100) : Math.round(ticket.efficiency),
     };
+    current.name = preferDisplayName(current.name, ticket.name);
     if (ticket.id) current.id = ticket.id;
     byName.set(key, current);
   }
 
   for (const task of tasks) {
-    const key = normalizePersonName(task.name);
+    const key = personnelIdentityKey(task.name);
     if (!key) continue;
     const current = byName.get(key) ?? {
       id: task.id,
@@ -417,8 +904,6 @@ export function mergePersonnelMetricCards(
       tasks: null,
     };
     const normalized = normalizePersonnelTaskTotals(task.total, task.done);
-    // Accumulate duplicate person rows; the delay penalty is name-keyed, so
-    // the same deduction would repeat — take the max instead of summing it.
     const closed = (current.tasks?.closed ?? 0) + normalized.closed;
     const pending = (current.tasks?.pending ?? 0) + normalized.pending;
     const penaltyDeduction = Math.max(
@@ -446,11 +931,12 @@ export function mergePersonnelMetricCards(
         : {}),
     };
     current.role = mergeRoles(current.role, task.role);
+    current.name = preferDisplayName(current.name, task.name);
     if (task.id && task.id !== "__unassigned__") current.id = task.id;
     byName.set(key, current);
   }
 
-  return [...byName.values()]
+  return consolidatePersonnelCards([...byName.values()])
     .filter((row) => row.tickets != null || row.tasks != null)
     .sort((a, b) => {
       const aEff = Math.max(a.tickets?.efficiency ?? 0, a.tasks?.efficiency ?? 0);
@@ -481,7 +967,9 @@ export function aggregatePersonnelTaskMetrics(
     const contributorRows = metric?.assigneeProgressAccumulated ?? metric?.assigneeProgress ?? [];
     for (const row of contributorRows) {
       if (!row.name.trim() || row.id === "__unassigned__") continue;
-      const key = row.id && row.id !== "__unassigned__" ? row.id : row.name.trim().toLowerCase();
+      const key = personnelIdentityKey(row.name) ||
+        (row.id && row.id !== "__unassigned__" ? row.id : normalizePersonName(row.name));
+      if (!key) continue;
       const current = byKey.get(key) ?? {
         id: row.id,
         name: row.name,
@@ -493,6 +981,7 @@ export function aggregatePersonnelTaskMetrics(
       current.roles.add(row.role);
       current.total += row.total;
       current.done += row.done;
+      current.name = preferDisplayName(current.name, row.name);
       if (row.total > 0) current.pillars.add(pillar);
       byKey.set(key, current);
     }

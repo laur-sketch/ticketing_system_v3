@@ -1,10 +1,14 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Users } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { BoardSearchBar } from "@/components/ui/BoardSearchBar";
 import type { PersonnelCombinedMetricCard } from "@/lib/task-personnel-metrics";
 import {
+  filterPersonnelSearchQuery,
   mergePersonnelRequestMetrics,
+  personnelIdentityKey,
   personnelEfficiencyBracket,
   applyPersonnelAverageEfficiencyFloor,
 } from "@/lib/task-personnel-metrics";
@@ -23,7 +27,15 @@ export function PersonnelTaskMetricsGrid({
   companyLabel,
   loading = false,
 }: PersonnelTaskMetricsGridProps) {
-  const totals = rows.reduce(
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredRows = useMemo(
+    () => filterPersonnelSearchQuery(rows, searchQuery),
+    [rows, searchQuery],
+  );
+
+  const totals = filteredRows.reduce(
     (acc, row) => {
       const requests = mergePersonnelRequestMetrics(row);
       const ticketClosed = requests?.closed ?? 0;
@@ -60,10 +72,10 @@ export function PersonnelTaskMetricsGrid({
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
           ) : null}
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
-            Each card shows Requests (all request types combined) and Tasks.
-            Task efficiency shows the net rate after delay penalties when applicable, with a note for penalty points.
-            The center badge averages available efficiency rates.
-            Mon–Sat task periods; Sundays excluded.
+            Roster matches active HRIS users from mergeddatabase (same soft-path as Workforce).
+            Each card shows Requests (performer roles and assignee work) and Tasks. Approver-only
+            seats are not listed unless the person also has task or performer KPI. Mon–Sat task
+            periods; Sundays excluded.
           </p>
         </div>
         {rows.length > 0 ? (
@@ -91,10 +103,21 @@ export function PersonnelTaskMetricsGrid({
             ) : null}
             <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
               {totals.closed} closed · avg {teamEfficiency}% efficiency
+              {searchQuery ? ` · ${filteredRows.length} shown` : ""}
             </p>
           </div>
         ) : null}
       </div>
+
+      {rows.length > 0 ? (
+        <BoardSearchBar
+          query={searchDraft}
+          onQueryChange={setSearchDraft}
+          onSearchSubmit={() => setSearchQuery(searchDraft.trim())}
+          placeholder="Search personnel by name"
+          ariaLabel="Search personnel by name"
+        />
+      ) : null}
 
       <div className={cn(loading && "pointer-events-none opacity-60")}>
         {rows.length === 0 ? (
@@ -104,14 +127,27 @@ export function PersonnelTaskMetricsGrid({
               No personnel task metrics for this scope
             </p>
             <p className="mt-1 max-w-md text-xs text-zinc-600 dark:text-zinc-500">
-              Try another company, cadence, or reporting range. Metrics appear when personnel have request or
-              checklist work in the selected period.
+              Try another company, cadence, or reporting range. Metrics appear when personnel have
+              recorded task or performer-side request KPI in the selected period.
+            </p>
+          </div>
+        ) : filteredRows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-300 px-6 py-16 text-center dark:border-zinc-700">
+            <Users className="size-10 text-zinc-400 dark:text-zinc-600" aria-hidden />
+            <p className="mt-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+              No personnel match &ldquo;{searchQuery}&rdquo;
+            </p>
+            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-500">
+              Try another name or clear the search.
             </p>
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {rows.map((row) => (
-              <ContributorPersonalKpiCard key={row.id} row={row} />
+            {filteredRows.map((row) => (
+              <ContributorPersonalKpiCard
+                key={`${personnelIdentityKey(row.name)}:${row.id}`}
+                row={row}
+              />
             ))}
           </div>
         )}

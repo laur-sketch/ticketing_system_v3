@@ -95,12 +95,22 @@ model PortalAccount {
   profileImagePosX          Int                    @default(50) @map("profile_image_pos_x")
   profileImagePosY          Int                    @default(50) @map("profile_image_pos_y")
   profileSyncedAt           DateTime?              @map("profile_synced_at")
+  primaryPositionId         String?                @map("primary_position_id")
+  primaryPosition           Position?              @relation("PortalPrimaryPosition", fields: [primaryPositionId], references: [id], onDelete: SetNull)
+  departmentId              String?                @map("department_id")
+  department                Department?            @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  reportsToPortalAccountId  String?                @map("reports_to_portal_account_id")
+  reportsToPortalAccount    PortalAccount?         @relation("PortalReportsTo", fields: [reportsToPortalAccountId], references: [id], onDelete: SetNull)
+  directReports             PortalAccount[]        @relation("PortalReportsTo")
   createdAt                 DateTime               @default(now()) @map("created_at")
   actionRequests            AccountActionRequest[]
   usernameAliases           PortalUsernameAlias[]
   mergeMapping              PortalMergeMapping?
 
   @@index([authUserId])
+  @@index([primaryPositionId])
+  @@index([departmentId])
+  @@index([reportsToPortalAccountId])
   @@map("portal_accounts")
 }
 
@@ -139,6 +149,9 @@ model Team {
   tickets                       Ticket[]
   customerPortalAccounts        PortalAccount[] @relation("PortalCustomerCompany")
   staffDesignatedPortalAccounts PortalAccount[] @relation("PortalStaffDesignatedCompany")
+  departments                 Department[]
+  positionAssignments         PositionAssignment[]
+  orgChartSections            OrgChartSection[]
 
   @@map("teams")
 }
@@ -181,6 +194,156 @@ model EscalationTrigger {
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
   @@map("escalation_triggers")
+}
+
+/// Organizational chart node. People only: every node is a staff member from the
+/// roster (MergedUser in the secondary DB), snapshotted so the chart survives roster drift.
+model OrgChartNode {
+  id                  String         @id @default(cuid())
+  parentId            String?        @map("parent_id")
+  parent              OrgChartNode?  @relation("OrgChartHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children            OrgChartNode[] @relation("OrgChartHierarchy")
+  sortOrder           Int            @default(0) @map("sort_order")
+  /// Roster person id (MergedUser.sourceUserId) this node represents.
+  mergedSourceUserId  String         @unique @map("merged_source_user_id")
+  personName          String         @map("person_name")
+  personRole          String?        @map("person_role")
+  companyName         String?        @map("company_name")
+  primaryPositionId   String?        @map("primary_position_id")
+  primaryPosition     Position?      @relation("OrgChartPrimaryPosition", fields: [primaryPositionId], references: [id], onDelete: SetNull)
+  /// Optional labeled section grouping (alongside reports-to hierarchy).
+  sectionId           String?        @map("section_id")
+  section             OrgChartSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  sectionMemberships  OrgChartNodeSectionMembership[]
+  headedSections      OrgChartSection[] @relation("OrgChartSectionHead")
+  eitherOrAsA         OrgChartEitherOrLink[] @relation("EitherOrNodeA")
+  eitherOrAsB         OrgChartEitherOrLink[] @relation("EitherOrNodeB")
+  /// When set, this person reports to a shared either/or manager pair (layout parentId is one peer).
+  parentEitherOrLinkId String?              @map("parent_either_or_link_id")
+  parentEitherOrLink   OrgChartEitherOrLink? @relation("EitherOrChildren", fields: [parentEitherOrLinkId], references: [id], onDelete: SetNull)
+  /// When true, reports-to cannot be changed (drag, dropdown, or bulk) until unlocked.
+  parentLocked         Boolean              @default(false) @map("parent_locked")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  @@index([parentId, sortOrder])
+  @@index([primaryPositionId])
+  @@index([sectionId])
+  @@index([parentEitherOrLinkId])
+  @@map("org_chart_nodes")
+}
+
+/// Undirected either/or link between two org-chart people.
+/// Approvals that hit either node may be satisfied by either linked person.
+/// Children may hang under the pair via OrgChartNode.parentEitherOrLinkId.
+model OrgChartEitherOrLink {
+  id        String       @id @default(cuid())
+  nodeAId   String       @map("node_a_id")
+  nodeBId   String       @map("node_b_id")
+  nodeA     OrgChartNode @relation("EitherOrNodeA", fields: [nodeAId], references: [id], onDelete: Cascade)
+  nodeB     OrgChartNode @relation("EitherOrNodeB", fields: [nodeBId], references: [id], onDelete: Cascade)
+  children  OrgChartNode[] @relation("EitherOrChildren")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  @@unique([nodeAId, nodeBId])
+  @@index([nodeBId])
+  @@map("org_chart_either_or_links")
+}
+
+/// Labeled grouping of org-chart people (e.g. Operations, Finance). Optional company scope.
+/// Top-level sections may contain nested subsections at any depth via parentId.
+model OrgChartSection {
+  id            String           @id @default(cuid())
+  name          String           @map("name")
+  description   String?          @map("description")
+  sortOrder     Int              @default(0) @map("sort_order")
+  parentId      String?          @map("parent_id")
+  parent        OrgChartSection? @relation("OrgChartSectionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children      OrgChartSection[] @relation("OrgChartSectionTree")
+  companyTeamId String?          @map("company_team_id")
+  companyTeam   Team?            @relation(fields: [companyTeamId], references: [id], onDelete: SetNull)
+  /// Optional section/subsection head (must be an org-chart member).
+  headNodeId    String?          @map("head_node_id")
+  headNode      OrgChartNode?    @relation("OrgChartSectionHead", fields: [headNodeId], references: [id], onDelete: SetNull)
+  nodes         OrgChartNode[]
+  memberships   OrgChartNodeSectionMembership[]
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  @@index([companyTeamId, sortOrder])
+  @@index([parentId, sortOrder])
+  @@index([headNodeId])
+  @@map("org_chart_sections")
+}
+
+/// Additional section memberships for a single org-chart member.
+/// OrgChartNode.sectionId remains the primary section for backward-compatible labels.
+model OrgChartNodeSectionMembership {
+  id        String          @id @default(cuid())
+  nodeId    String          @map("node_id")
+  sectionId String          @map("section_id")
+  node      OrgChartNode    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  section   OrgChartSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  @@unique([nodeId, sectionId])
+  @@index([sectionId])
+  @@map("org_chart_node_section_memberships")
+}
+
+/// Company-scoped department (optional grouping for users and routing).
+model Department {
+  id            String          @id @default(cuid())
+  name          String          @map("name")
+  companyTeamId String          @map("company_team_id")
+  companyTeam   Team            @relation(fields: [companyTeamId], references: [id], onDelete: Cascade)
+  isActive      Boolean         @default(true) @map("is_active")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  portalAccounts PortalAccount[]
+
+  @@unique([companyTeamId, name])
+  @@index([companyTeamId, isActive])
+  @@map("departments")
+}
+
+/// Catalog of business positions (RA/AP levels, RFP roles, etc.).
+model Position {
+  id          String   @id @default(cuid())
+  code        String   @unique @map("code")
+  name        String   @map("name")
+  level       Int      @default(0) @map("level_rank")
+  description String?  @map("description")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  assignments               PositionAssignment[]
+  primaryPortalAccounts     PortalAccount[] @relation("PortalPrimaryPosition")
+  primaryOrgChartNodes      OrgChartNode[]  @relation("OrgChartPrimaryPosition")
+
+  @@index([level, isActive])
+  @@map("positions")
+}
+
+/// Who holds a position (optionally scoped by company). Supports acting assignments later.
+model PositionAssignment {
+  id                 String    @id @default(cuid())
+  positionId         String    @map("position_id")
+  position           Position  @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  mergedSourceUserId String    @map("merged_source_user_id")
+  companyTeamId      String?   @map("company_team_id")
+  companyTeam        Team?     @relation(fields: [companyTeamId], references: [id], onDelete: SetNull)
+  effectiveFrom      DateTime? @map("effective_from")
+  effectiveTo        DateTime? @map("effective_to")
+  isActing           Boolean   @default(false) @map("is_acting")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@index([positionId, companyTeamId])
+  @@index([mergedSourceUserId])
+  @@map("position_assignments")
 }
 
 model Ticket {
@@ -572,4 +735,14 @@ model UserPatchNoteView {
   @@unique([userId, patchNoteId])
   @@index([userId])
   @@map("UserPatchNoteView")
+}
+
+/// Key/value JSON settings for platform-wide SuperAdmin configuration.
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("platform_settings")
 }

@@ -1,11 +1,8 @@
-import { prisma } from "@/lib/prisma";
-import { EscalationTriggersClient } from "./ui";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
+/** Priority alerts now live inside SuperAdmin Settings. */
 export default async function EscalationTriggersPage() {
-  const triggers = await prisma.escalationTrigger.findMany({
-    orderBy: { priority: "asc" },
-  });
-  return <EscalationTriggersClient initialTriggers={triggers} />;
+  redirect("/admin/superadmin-settings?tab=alerts");
 }
