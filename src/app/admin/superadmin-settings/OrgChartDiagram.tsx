@@ -12,15 +12,16 @@ import {
   applyNodeChanges,
   useReactFlow,
 } from "@xyflow/react";
-import type { Edge, Node, NodeChange, NodeProps } from "@xyflow/react";
+import type { Edge, Node, NodeChange, NodeProps, DefaultEdgeOptions } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, GitCompareArrows, Link2Off, Lock, LockOpen, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, Crown, FolderKanban, GitCompareArrows, Link2Off, Lock, LockOpen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   OrgChartBulkReportsBar,
   type BulkReportsToOptions,
 } from "./OrgChartBulkReportsBar";
+import type { OrgChartSectionRow } from "./OrgChartSectionsPanel";
 import {
   eitherOrLinkLabel,
   encodeReportsToValue,
@@ -32,25 +33,33 @@ import {
 
 const NODE_W = 248;
 /** Must match rendered card height so connector handles align with layout rows. */
-const NODE_H = 224;
+const NODE_H = 248;
 const X_GAP = 48;
 const X_ROOT_GAP = 72;
-const Y_GAP = 64;
+const Y_GAP = 72;
 /** Rounded elbow routing for hierarchy connectors. */
-const ORG_STEP_PATH = { borderRadius: 12, offset: 36 } as const;
+const ORG_STEP_PATH = { borderRadius: 14, offset: 28 } as const;
 const ORG_PEER_HANDLE_TOP = "38%";
 const ORG_CHILD_IN_LEFT = "32%";
 const ORG_CHILD_IN_RIGHT = "68%";
 
 const ORG_EDGE_NORMAL: Edge["style"] = {
-  stroke: "var(--org-line)",
-  strokeWidth: 1.75,
+  stroke: "var(--org-line-strong)",
+  strokeWidth: 2,
 };
 
 const ORG_EDGE_SHARED: Edge["style"] = {
   stroke: "#ea580c",
-  strokeWidth: 1.75,
-  strokeDasharray: "5 4",
+  strokeWidth: 2,
+  strokeDasharray: "6 4",
+};
+
+export type OrgChartDiagramNode = OrgChartNode & {
+  sectionMemberships?: Array<{
+    sectionId: string;
+    roleId?: string | null;
+    role?: { id: string; label: string } | null;
+  }>;
 };
 
 function orgStepEdge(
@@ -58,10 +67,10 @@ function orgStepEdge(
   pathOptions: { borderRadius: number; offset: number } = ORG_STEP_PATH,
 ): Edge {
   return {
-    type: "step",
+    type: "smoothstep",
     pathOptions,
     ...partial,
-  };
+  } as Edge;
 }
 
 type ManagersByLayer = Array<[number, OrgChartNode[]]>;
@@ -85,6 +94,8 @@ type OrgBoxData = {
 };
 
 type OrgBoxNodeType = Node<OrgBoxData, "orgBox">;
+
+type DiagramNode = OrgBoxNodeType;
 
 const AVATAR_PALETTE = [
   "bg-orange-500",
@@ -152,7 +163,7 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
     <article
       data-box-id={node.id}
       style={{ minHeight: NODE_H }}
-      title={`${node.personName}\n${roleLine}${sectionLabel ? `\nSection: ${sectionLabel}` : ""}`}
+      title={`${node.personName}\n${roleLine}${sectionLabel ? `\nDepartment: ${sectionLabel}` : ""}`}
       className={`w-[248px] rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${
         selected
           ? "border-orange-500/90 ring-2 ring-orange-500/45"
@@ -367,7 +378,76 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
 
 const nodeTypes = { orgBox: OrgBox };
 
-/** Angular (elbow) tree layout: children centered under their manager. */
+/** Section id plus all nested child departments (depth-first). */
+function collectSectionSubtreeIds(
+  rootId: string,
+  childrenByParent: Map<string | null, OrgChartSectionRow[]>,
+): string[] {
+  const ids: string[] = [rootId];
+  const stack = [...(childrenByParent.get(rootId) ?? [])];
+  while (stack.length > 0) {
+    const child = stack.pop()!;
+    ids.push(child.id);
+    stack.push(...(childrenByParent.get(child.id) ?? []));
+  }
+  return ids;
+}
+
+function membersOfSectionTree(
+  nodes: OrgChartDiagramNode[],
+  rootSectionId: string,
+  childrenByParent: Map<string | null, OrgChartSectionRow[]>,
+): OrgChartDiagramNode[] {
+  const sectionIds = new Set(collectSectionSubtreeIds(rootSectionId, childrenByParent));
+  const seen = new Set<string>();
+  const out: OrgChartDiagramNode[] = [];
+  for (const n of nodes) {
+    if (seen.has(n.id)) continue;
+    const inTree =
+      (n.sectionId && sectionIds.has(n.sectionId)) ||
+      (n.sectionMemberships ?? []).some((m) => sectionIds.has(m.sectionId));
+    if (!inTree) continue;
+    seen.add(n.id);
+    out.push(n);
+  }
+  return out;
+}
+
+/** Scope reports-to layout to members of this department and all nested sub-departments. */
+function scopeNodesForSectionView(
+  nodes: OrgChartDiagramNode[],
+  sectionId: string,
+  childrenByParent: Map<string | null, OrgChartSectionRow[]>,
+): OrgChartDiagramNode[] {
+  const members = membersOfSectionTree(nodes, sectionId, childrenByParent);
+  const ids = new Set(members.map((m) => m.id));
+  return members.map((n) => ({
+    ...n,
+    parentId: n.parentId && ids.has(n.parentId) ? n.parentId : null,
+    parentEitherOrLinkId:
+      n.parentEitherOrLinkId && n.parentId && ids.has(n.parentId)
+        ? n.parentEitherOrLinkId
+        : null,
+  }));
+}
+
+function sectionLabelForNode(
+  node: OrgChartDiagramNode,
+  sectionNameById?: Map<string, string>,
+): string | null {
+  const fromMemberships = (node.sectionMemberships ?? [])
+    .map((m) => sectionNameById?.get(m.sectionId)?.trim())
+    .filter((label): label is string => Boolean(label));
+  if (fromMemberships.length > 0) {
+    return [...new Set(fromMemberships)].join(" · ");
+  }
+  if (node.sectionId) {
+    return sectionNameById?.get(node.sectionId)?.trim() || null;
+  }
+  return null;
+}
+
+/** Angular (elbow) tree layout: children centered under their manager (horizontal siblings). */
 function computeLayout(nodes: OrgChartNode[]) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const childrenOf = new Map<string | null, OrgChartNode[]>();
@@ -420,8 +500,393 @@ export type OrgChartEitherOrLinkRow = {
   nodeBId: string;
 };
 
+const SECTION_NODE_W = 248;
+const SECTION_NODE_H = 156;
+const PERSON_ANCHOR_H = 72;
+const SECTION_X_GAP = 40;
+const SECTION_X_ROOT_GAP = 56;
+const SECTION_Y_GAP = 56;
+const PERSON_PREFIX = "person:";
+
+type SectionBoxData = {
+  section: OrgChartSectionRow;
+  memberCount: number;
+  subsectionCount: number;
+};
+
+type PersonAnchorData = {
+  personName: string;
+  personRole: string | null;
+  companyName: string | null;
+};
+
+type SectionTreeNodeType =
+  | Node<SectionBoxData, "sectionBox">
+  | Node<PersonAnchorData, "personAnchor">;
+
+function personAnchorId(nodeId: string) {
+  return `${PERSON_PREFIX}${nodeId}`;
+}
+
+function computeSectionTreeLayout(
+  sections: OrgChartSectionRow[],
+  peopleById: Map<string, OrgChartDiagramNode>,
+) {
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  /** Parent key: section id, person:<nodeId>, or null for top-level. */
+  const childrenOf = new Map<string | null, OrgChartSectionRow[]>();
+  const personParentIds = new Set<string>();
+
+  for (const s of sections) {
+    let parentKey: string | null = null;
+    if (s.reportsToNodeId) {
+      parentKey = personAnchorId(s.reportsToNodeId);
+      personParentIds.add(s.reportsToNodeId);
+    } else if (s.parentId && byId.has(s.parentId)) {
+      parentKey = s.parentId;
+    }
+    const list = childrenOf.get(parentKey) ?? [];
+    list.push(s);
+    childrenOf.set(parentKey, list);
+  }
+  for (const list of childrenOf.values()) {
+    list.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+  }
+
+  const widthOf = new Map<string, number>();
+  function subtreeWidth(id: string): number {
+    const kids = childrenOf.get(id) ?? [];
+    if (kids.length === 0) return SECTION_NODE_W;
+    const w =
+      kids.reduce((sum, k) => sum + subtreeWidth(k.id), 0) +
+      SECTION_X_GAP * (kids.length - 1);
+    widthOf.set(id, Math.max(w, SECTION_NODE_W));
+    return widthOf.get(id)!;
+  }
+
+  const positions = new Map<string, { x: number; y: number }>();
+
+  function placeSection(id: string, left: number, depth: number): number {
+    const kids = childrenOf.get(id) ?? [];
+    const w = widthOf.get(id) ?? subtreeWidth(id);
+    const x = left + (w - SECTION_NODE_W) / 2;
+    positions.set(id, { x, y: depth * (SECTION_NODE_H + SECTION_Y_GAP) });
+    const childrenWidth =
+      kids.reduce((sum, k) => sum + (widthOf.get(k.id) ?? SECTION_NODE_W), 0) +
+      SECTION_X_GAP * Math.max(0, kids.length - 1);
+    let childLeft = left + (w - childrenWidth) / 2;
+    for (const kid of kids) {
+      childLeft = placeSection(kid.id, childLeft, depth + 1) + SECTION_X_GAP;
+    }
+    return left + w;
+  }
+
+  function placePersonRoot(personId: string, left: number): number {
+    const anchorKey = personAnchorId(personId);
+    const kids = childrenOf.get(anchorKey) ?? [];
+    for (const kid of kids) subtreeWidth(kid.id);
+    const childrenWidth =
+      kids.reduce((sum, k) => sum + (widthOf.get(k.id) ?? SECTION_NODE_W), 0) +
+      SECTION_X_GAP * Math.max(0, kids.length - 1);
+    const w = Math.max(childrenWidth, SECTION_NODE_W);
+    positions.set(anchorKey, {
+      x: left + (w - SECTION_NODE_W) / 2,
+      y: 0,
+    });
+    let childLeft = left + (w - childrenWidth) / 2;
+    for (const kid of kids) {
+      childLeft = placeSection(kid.id, childLeft, 1) + SECTION_X_GAP;
+    }
+    return left + w;
+  }
+
+  const topSections = childrenOf.get(null) ?? [];
+  const personRoots = [...personParentIds].sort((a, b) => {
+    const na = peopleById.get(a)?.personName ?? a;
+    const nb = peopleById.get(b)?.personName ?? b;
+    return na.localeCompare(nb);
+  });
+
+  let cursor = 0;
+  for (const personId of personRoots) {
+    cursor = placePersonRoot(personId, cursor) + SECTION_X_ROOT_GAP;
+  }
+  for (const root of topSections) {
+    subtreeWidth(root.id);
+    cursor = placeSection(root.id, cursor, 0) + SECTION_X_ROOT_GAP;
+  }
+
+  return { positions, childrenOf, personParentIds };
+}
+
+const SectionBox = memo(function SectionBox({ data }: NodeProps<Node<SectionBoxData, "sectionBox">>) {
+  const { section, memberCount, subsectionCount } = data;
+  const headLine = section.headName?.trim() || "No head assigned";
+  const headMeta = [section.headRole, section.headCompanyName].filter(Boolean).join(" · ");
+
+  return (
+    <article
+      style={{ width: SECTION_NODE_W, minHeight: SECTION_NODE_H }}
+      className="cursor-pointer rounded-xl border border-zinc-200/90 bg-white shadow-sm transition hover:border-orange-400/70 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-orange-500/50"
+    >
+      <Handle type="target" position={Position.Top} id="in" className="!h-0.5 !w-0.5 !opacity-0" />
+      <div className="flex h-full w-full flex-col p-3 text-left nodrag nopan">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">
+              Department
+            </p>
+            <h3 className="mt-0.5 line-clamp-2 text-[13px] font-bold leading-snug text-zinc-950 dark:text-zinc-50">
+              {section.name}
+            </h3>
+          </div>
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300">
+            <FolderKanban className="size-4" aria-hidden />
+          </span>
+        </div>
+        <div className="mt-2 rounded-lg border border-zinc-100 bg-zinc-50/90 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/50">
+          <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+            <Crown className="size-3" aria-hidden />
+            Head
+          </p>
+          <p className="mt-0.5 truncate text-[12px] font-semibold text-zinc-900 dark:text-zinc-100">
+            {headLine}
+          </p>
+          {headMeta ? (
+            <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">{headMeta}</p>
+          ) : null}
+        </div>
+        <p className="mt-2 text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
+          {memberCount} member{memberCount === 1 ? "" : "s"}
+          {subsectionCount > 0 ? ` · ${subsectionCount} sub` : ""}
+        </p>
+        <p className="mt-1 text-[10px] font-semibold text-orange-700 dark:text-orange-300">
+          Click to open members →
+        </p>
+      </div>
+      <Handle type="source" position={Position.Bottom} id="out" className="!h-0.5 !w-0.5 !opacity-0" />
+    </article>
+  );
+});
+
+const PersonAnchorBox = memo(function PersonAnchorBox({
+  data,
+}: NodeProps<Node<PersonAnchorData, "personAnchor">>) {
+  const meta = [data.personRole, data.companyName].filter(Boolean).join(" · ");
+  return (
+    <article
+      style={{ width: SECTION_NODE_W, minHeight: PERSON_ANCHOR_H }}
+      className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
+    >
+      <Handle type="target" position={Position.Top} id="in" className="!h-0.5 !w-0.5 !opacity-0" />
+      <p className="truncate text-[13px] font-bold text-zinc-950 dark:text-zinc-50">
+        {data.personName}
+      </p>
+      {meta ? (
+        <p className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">{meta}</p>
+      ) : null}
+      <Handle type="source" position={Position.Bottom} id="out" className="!h-0.5 !w-0.5 !opacity-0" />
+    </article>
+  );
+});
+
+const sectionNodeTypes = {
+  sectionBox: SectionBox,
+  personAnchor: PersonAnchorBox,
+};
+
+function SectionTreeCanvas({
+  sections,
+  nodes,
+  memberCountBySection,
+  childrenByParent,
+  onOpenSection,
+}: {
+  sections: OrgChartSectionRow[];
+  nodes: OrgChartDiagramNode[];
+  memberCountBySection: Map<string, number>;
+  childrenByParent: Map<string | null, OrgChartSectionRow[]>;
+  onOpenSection: (sectionId: string) => void;
+}) {
+  const { setViewport } = useReactFlow();
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const peopleById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const { positions, personParentIds } = useMemo(
+    () => computeSectionTreeLayout(sections, peopleById),
+    [sections, peopleById],
+  );
+
+  const diagramSize = useMemo(() => {
+    let w = 0;
+    let h = 0;
+    for (const [id, p] of positions) {
+      const isPerson = id.startsWith(PERSON_PREFIX);
+      w = Math.max(w, p.x + SECTION_NODE_W);
+      h = Math.max(h, p.y + (isPerson ? PERSON_ANCHOR_H : SECTION_NODE_H));
+    }
+    return { w: Math.max(w, 400), h: Math.max(h, 280) };
+  }, [positions]);
+
+  const rfNodes = useMemo<SectionTreeNodeType[]>(() => {
+    const sectionNodes: SectionTreeNodeType[] = sections.map((section) => ({
+      id: section.id,
+      type: "sectionBox",
+      position: positions.get(section.id) ?? { x: 0, y: 0 },
+      width: SECTION_NODE_W,
+      height: SECTION_NODE_H,
+      draggable: false,
+      selectable: true,
+      data: {
+        section,
+        memberCount: memberCountBySection.get(section.id) ?? 0,
+        subsectionCount: (childrenByParent.get(section.id) ?? []).length,
+      },
+    }));
+    const anchors: SectionTreeNodeType[] = [...personParentIds].map((personId) => {
+      const person = peopleById.get(personId);
+      return {
+        id: personAnchorId(personId),
+        type: "personAnchor",
+        position: positions.get(personAnchorId(personId)) ?? { x: 0, y: 0 },
+        width: SECTION_NODE_W,
+        height: PERSON_ANCHOR_H,
+        draggable: false,
+        selectable: false,
+        data: {
+          personName: person?.personName ?? "Unknown person",
+          personRole: person?.personRole ?? null,
+          companyName: person?.companyName ?? null,
+        },
+      };
+    });
+    return [...anchors, ...sectionNodes];
+  }, [
+    sections,
+    positions,
+    memberCountBySection,
+    childrenByParent,
+    personParentIds,
+    peopleById,
+  ]);
+
+  const rfEdges = useMemo<Edge[]>(() => {
+    const edges: Edge[] = [];
+    for (const s of sections) {
+      if (!positions.has(s.id)) continue;
+      if (s.reportsToNodeId) {
+        const source = personAnchorId(s.reportsToNodeId);
+        if (!positions.has(source)) continue;
+        edges.push(
+          orgStepEdge({
+            id: `dept-person-edge-${s.id}`,
+            source,
+            target: s.id,
+            sourceHandle: "out",
+            targetHandle: "in",
+            style: ORG_EDGE_NORMAL,
+            zIndex: 0,
+          }),
+        );
+      } else if (s.parentId && positions.has(s.parentId)) {
+        edges.push(
+          orgStepEdge({
+            id: `dept-edge-${s.id}`,
+            source: s.parentId,
+            target: s.id,
+            sourceHandle: "out",
+            targetHandle: "in",
+            style: ORG_EDGE_NORMAL,
+            zIndex: 0,
+          }),
+        );
+      }
+    }
+    return edges;
+  }, [sections, positions]);
+
+  const layoutKey = useMemo(
+    () =>
+      sections
+        .map(
+          (s) =>
+            `${s.id}:${s.parentId ?? ""}:${s.reportsToNodeId ?? ""}:${s.sortOrder}`,
+        )
+        .join("|"),
+    [sections],
+  );
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (!rect.width || !rect.height || !diagramSize.w || !diagramSize.h) return;
+    const zoom = Math.min(
+      Math.min(rect.width / diagramSize.w, rect.height / diagramSize.h),
+      1.05,
+    );
+    setViewport({
+      x: (rect.width - diagramSize.w * zoom) / 2,
+      y: Math.max(16, (rect.height - diagramSize.h * zoom) / 2),
+      zoom,
+    });
+  }, [setViewport, layoutKey, diagramSize]);
+
+  const handleNodeClick = useCallback(
+    (_event: unknown, node: Node) => {
+      if (node.type === "sectionBox" && !node.id.startsWith(PERSON_PREFIX)) {
+        onOpenSection(node.id);
+      }
+    },
+    [onOpenSection],
+  );
+
+  return (
+    <div className="relative h-[640px] w-full org-chart-flow">
+      <div
+        ref={containerRef}
+        className="h-full w-full overflow-hidden rounded-2xl border border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-950/40"
+      >
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          nodeTypes={sectionNodeTypes}
+          onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeClick}
+          defaultEdgeOptions={
+            {
+              type: "smoothstep",
+              pathOptions: ORG_STEP_PATH,
+              style: ORG_EDGE_NORMAL,
+            } as unknown as DefaultEdgeOptions
+          }
+          minZoom={0.05}
+          maxZoom={2.5}
+          nodesConnectable={false}
+          nodesDraggable={false}
+          edgesReconnectable={false}
+          deleteKeyCode={null}
+          elementsSelectable={false}
+          selectNodesOnDrag={false}
+          panOnDrag
+          zoomOnScroll
+          fitView={false}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={18}
+            size={1.5}
+            color="var(--org-line)"
+          />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+    </div>
+  );
+}
+
 export function OrgChartDiagram({
   nodes,
+  sections = [],
   busy,
   onReparent,
   onReparentMany,
@@ -435,61 +900,290 @@ export function OrgChartDiagram({
   eitherOrLinks = [],
   onCreateEitherOr,
   onRemoveEitherOr,
+  onOpenEitherOrPicker,
   bulkReportsTo = "",
   onBulkReportsToChange,
   onBulkApply,
   bulkReportsToOptions,
   bulkMovableCount = 0,
 }: {
-  nodes: OrgChartNode[];
+  nodes: OrgChartDiagramNode[];
+  /** Org-chart departments — top-level browse shows these (+ heads) instead of every person. */
+  sections?: OrgChartSectionRow[];
   busy: boolean;
   onReparent: (id: string, parentId: string) => void;
   onReparentMany: (ids: string[], parentId: string) => void;
   onMove: (id: string, moveUp: boolean) => void;
   onRemove: (id: string, reports: number) => void;
   onToggleParentLock: (id: string, locked: boolean) => void;
-  /** Card clicked on the chart → selected in the Add/Remove panel. */
   onSelectNode: (node: OrgChartNode | null) => void;
-  /** Multi-selection for bulk remove / panel status. */
   onSelectionChange?: (ids: string[]) => void;
-  /** Node id picked in the Add/Remove panel → highlighted on the chart. */
   highlightId?: string | null;
-  /** Optional section labels keyed by section id. */
   sectionNameById?: Map<string, string>;
-  /** Either/or approval relation lines between two nodes. */
   eitherOrLinks?: OrgChartEitherOrLinkRow[];
   onCreateEitherOr?: (nodeAId: string, nodeBId: string) => void;
   onRemoveEitherOr?: (linkId: string) => void;
+  onOpenEitherOrPicker?: (prefillA?: string, prefillB?: string) => void;
   bulkReportsTo?: string;
   onBulkReportsToChange?: (value: string) => void;
   onBulkApply?: () => void;
   bulkReportsToOptions?: BulkReportsToOptions;
   bulkMovableCount?: number;
 }) {
+  const [drillStack, setDrillStack] = useState<string[]>([]);
+  const currentSectionId = drillStack.length > 0 ? drillStack[drillStack.length - 1]! : null;
+
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string | null, OrgChartSectionRow[]>();
+    for (const s of sections) {
+      const list = map.get(s.parentId) ?? [];
+      list.push(s);
+      map.set(s.parentId, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    }
+    return map;
+  }, [sections]);
+
+  const sectionById = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
+
+  const rootSections = useMemo(() => {
+    return sections.filter((s) => !s.parentId || !sectionById.has(s.parentId));
+  }, [sections, sectionById]);
+
+  const currentSection = currentSectionId ? sectionById.get(currentSectionId) ?? null : null;
+  const childSections = currentSectionId
+    ? (childrenByParent.get(currentSectionId) ?? [])
+    : [];
+
+  const scopedNodes = useMemo(() => {
+    if (!currentSectionId) return [];
+    return scopeNodesForSectionView(nodes, currentSectionId, childrenByParent);
+  }, [nodes, currentSectionId, childrenByParent]);
+
+  const scopedEitherOrLinks = useMemo(() => {
+    if (!currentSectionId) return [];
+    const ids = new Set(scopedNodes.map((n) => n.id));
+    return eitherOrLinks.filter((l) => ids.has(l.nodeAId) && ids.has(l.nodeBId));
+  }, [eitherOrLinks, scopedNodes, currentSectionId]);
+
+  const memberCountBySection = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of sections) {
+      map.set(s.id, membersOfSectionTree(nodes, s.id, childrenByParent).length);
+    }
+    return map;
+  }, [sections, nodes, childrenByParent]);
+
+  function openSection(sectionId: string) {
+    setDrillStack((prev) => [...prev, sectionId]);
+    onSelectionChange?.([]);
+    onSelectNode(null);
+  }
+
+  const handleOpenSection = useCallback(
+    (sectionId: string) => {
+      setDrillStack((prev) => [...prev, sectionId]);
+      onSelectionChange?.([]);
+      onSelectNode(null);
+    },
+    [onSelectionChange, onSelectNode],
+  );
+
+  function goBack() {
+    setDrillStack((prev) => prev.slice(0, -1));
+    onSelectionChange?.([]);
+    onSelectNode(null);
+  }
+
+  function jumpToBreadcrumb(index: number) {
+    setDrillStack((prev) => prev.slice(0, index + 1));
+    onSelectionChange?.([]);
+    onSelectNode(null);
+  }
+
+  // No sections yet — fall back to the classic full people chart.
+  if (sections.length === 0) {
+    return (
+      <div className="space-y-3">
+        <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-3 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
+          Create departments under <span className="font-semibold">Manage departments</span> to
+          browse by group. Until then, all chart members are shown here.
+        </p>
+        <ReactFlowProvider>
+          <OrgChartCanvas
+            nodes={nodes}
+            busy={busy}
+            onReparent={onReparent}
+            onReparentMany={onReparentMany}
+            onMove={onMove}
+            onRemove={onRemove}
+            onToggleParentLock={onToggleParentLock}
+            onSelectNode={onSelectNode}
+            onSelectionChange={onSelectionChange}
+            highlightId={highlightId}
+            sectionNameById={sectionNameById}
+            eitherOrLinks={eitherOrLinks}
+            onCreateEitherOr={onCreateEitherOr}
+            onRemoveEitherOr={onRemoveEitherOr}
+            onOpenEitherOrPicker={onOpenEitherOrPicker}
+            bulkReportsTo={bulkReportsTo}
+            onBulkReportsToChange={onBulkReportsToChange}
+            onBulkApply={onBulkApply}
+            bulkReportsToOptions={bulkReportsToOptions}
+            bulkMovableCount={bulkMovableCount}
+          />
+        </ReactFlowProvider>
+      </div>
+    );
+  }
+
+  if (!currentSectionId || !currentSection) {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Department org chart — each box is a department and its head. Lines connect parent
+          departments (or a person a department reports to). Click a department to open its
+          members.
+        </p>
+        {rootSections.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
+            No departments yet. Use Manage departments to create one.
+          </p>
+        ) : (
+          <ReactFlowProvider>
+            <SectionTreeCanvas
+              sections={sections}
+              nodes={nodes}
+              memberCountBySection={memberCountBySection}
+              childrenByParent={childrenByParent}
+              onOpenSection={handleOpenSection}
+            />
+          </ReactFlowProvider>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <ReactFlowProvider>
-      <OrgChartCanvas
-        nodes={nodes}
-        busy={busy}
-        onReparent={onReparent}
-        onReparentMany={onReparentMany}
-        onMove={onMove}
-        onRemove={onRemove}
-        onToggleParentLock={onToggleParentLock}
-        onSelectNode={onSelectNode}
-        onSelectionChange={onSelectionChange}
-        highlightId={highlightId}
-        sectionNameById={sectionNameById}
-        eitherOrLinks={eitherOrLinks}
-        onCreateEitherOr={onCreateEitherOr}
-        onRemoveEitherOr={onRemoveEitherOr}
-        bulkReportsTo={bulkReportsTo}
-        onBulkReportsToChange={onBulkReportsToChange}
-        onBulkApply={onBulkApply}
-        bulkReportsToOptions={bulkReportsToOptions}
-        bulkMovableCount={bulkMovableCount}
-      />
-    </ReactFlowProvider>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <nav
+            className="flex flex-wrap items-center gap-1 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400"
+            aria-label="Department path"
+          >
+            <button
+              type="button"
+              className="hover:text-orange-600 dark:hover:text-orange-300"
+              onClick={() => {
+                setDrillStack([]);
+                onSelectionChange?.([]);
+                onSelectNode(null);
+              }}
+            >
+              Department chart
+            </button>
+            {drillStack.map((id, index) => {
+              const s = sectionById.get(id);
+              if (!s) return null;
+              const isLast = index === drillStack.length - 1;
+              return (
+                <span key={id} className="inline-flex items-center gap-1">
+                  <span className="text-zinc-400">/</span>
+                  {isLast ? (
+                    <span className="text-zinc-800 dark:text-zinc-200">{s.name}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="hover:text-orange-600 dark:hover:text-orange-300"
+                      onClick={() => jumpToBreadcrumb(index)}
+                    >
+                      {s.name}
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+          </nav>
+          <h3 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">
+            {currentSection.name}
+          </h3>
+          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+            <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-300">
+              <Crown className="size-3.5" aria-hidden />
+              {currentSection.headName?.trim() || "No head"}
+            </span>
+            {" · "}
+            {scopedNodes.length} member{scopedNodes.length === 1 ? "" : "s"}
+          </p>
+        </div>
+        <Button type="button" variant="outline" className="h-9 rounded-xl" onClick={goBack}>
+          <ChevronLeft className="mr-1 h-4 w-4" />
+          Back to chart
+        </Button>
+      </div>
+
+      {childSections.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">
+            Child departments
+          </span>
+          {childSections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              onClick={() => openSection(section.id)}
+              className="rounded-full border border-orange-300/70 bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200 dark:hover:bg-orange-950/50"
+            >
+              {section.name}
+              <span className="ml-1 opacity-70">
+                ({memberCountBySection.get(section.id) ?? 0})
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="space-y-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">
+          Members in this department
+          {childSections.length > 0 ? " (includes sub-departments)" : ""}
+        </p>
+        {scopedNodes.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+            No members assigned to this department or its sub-departments yet. Use Manage
+            departments to add people.
+          </p>
+        ) : (
+          <ReactFlowProvider>
+            <OrgChartCanvas
+              nodes={scopedNodes}
+              busy={busy}
+              onReparent={onReparent}
+              onReparentMany={onReparentMany}
+              onMove={onMove}
+              onRemove={onRemove}
+              onToggleParentLock={onToggleParentLock}
+              onSelectNode={onSelectNode}
+              onSelectionChange={onSelectionChange}
+              highlightId={highlightId}
+              sectionNameById={sectionNameById}
+              eitherOrLinks={scopedEitherOrLinks}
+              onCreateEitherOr={onCreateEitherOr}
+              onRemoveEitherOr={onRemoveEitherOr}
+              onOpenEitherOrPicker={onOpenEitherOrPicker}
+              bulkReportsTo={bulkReportsTo}
+              onBulkReportsToChange={onBulkReportsToChange}
+              onBulkApply={onBulkApply}
+              bulkReportsToOptions={bulkReportsToOptions}
+              bulkMovableCount={bulkMovableCount}
+            />
+          </ReactFlowProvider>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -508,13 +1202,14 @@ function OrgChartCanvas({
   eitherOrLinks,
   onCreateEitherOr,
   onRemoveEitherOr,
+  onOpenEitherOrPicker,
   bulkReportsTo = "",
   onBulkReportsToChange,
   onBulkApply,
   bulkReportsToOptions,
   bulkMovableCount = 0,
 }: {
-  nodes: OrgChartNode[];
+  nodes: OrgChartDiagramNode[];
   busy: boolean;
   onReparent: (id: string, parentId: string) => void;
   onReparentMany: (ids: string[], parentId: string) => void;
@@ -528,6 +1223,7 @@ function OrgChartCanvas({
   eitherOrLinks: OrgChartEitherOrLinkRow[];
   onCreateEitherOr?: (nodeAId: string, nodeBId: string) => void;
   onRemoveEitherOr?: (linkId: string) => void;
+  onOpenEitherOrPicker?: (prefillA?: string, prefillB?: string) => void;
   bulkReportsTo?: string;
   onBulkReportsToChange?: (value: string) => void;
   onBulkApply?: () => void;
@@ -587,18 +1283,20 @@ function OrgChartCanvas({
     onSelectionChangeRef.current?.([...next]);
   }
 
-  function handleNodeClick(event: React.MouseEvent, node: OrgBoxNodeType) {
+  function handleNodeClick(event: React.MouseEvent, node: Node) {
+    if (node.type !== "orgBox") return;
+    const orgNode = node as OrgBoxNodeType;
     const multi = event.shiftKey || event.metaKey || event.ctrlKey;
     const next = new Set(selectedIdsRef.current);
     if (multi) {
-      if (next.has(node.id)) next.delete(node.id);
-      else next.add(node.id);
+      if (next.has(orgNode.id)) next.delete(orgNode.id);
+      else next.add(orgNode.id);
     } else {
       next.clear();
-      next.add(node.id);
+      next.add(orgNode.id);
     }
     updateSelection(next);
-    onSelectNode(next.has(node.id) ? node.data.node : null);
+    onSelectNode(next.has(orgNode.id) ? orgNode.data.node : null);
   }
 
   function isEligibleTarget(dragging: Set<string>, targetId: string) {
@@ -611,7 +1309,7 @@ function OrgChartCanvas({
 
   const layerById = useMemo(() => orgChartLayerById(nodes), [nodes]);
 
-  const layoutNodes = useMemo<OrgBoxNodeType[]>(() => {
+  const layoutNodes = useMemo<DiagramNode[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const sharedKidsByPeer = new Map<string, number>();
     for (const link of eitherOrLinks) {
@@ -623,7 +1321,7 @@ function OrgChartCanvas({
         (sharedKidsByPeer.get(link.nodeBId) ?? 0) + count,
       );
     }
-    return nodes.map((n) => {
+    const personNodes: OrgBoxNodeType[] = nodes.map((n) => {
       const sibling = siblingInfo.get(n.id) ?? { index: 0, count: 1 };
       const selected = selectedIds.has(n.id);
       const managerOptions = nodes.filter(
@@ -649,6 +1347,7 @@ function OrgChartCanvas({
         selectable: true,
         draggable: !n.parentLocked,
         selected,
+        zIndex: 1,
         data: {
           node: n,
           kidsCount:
@@ -664,7 +1363,7 @@ function OrgChartCanvas({
           siblingCount: sibling.count,
           busy,
           selected,
-          sectionLabel: n.sectionId ? (sectionNameById?.get(n.sectionId) ?? null) : null,
+          sectionLabel: sectionLabelForNode(n, sectionNameById),
           onReparent,
           onMove,
           onRemove,
@@ -672,6 +1371,7 @@ function OrgChartCanvas({
         },
       };
     });
+    return personNodes;
   }, [
     nodes,
     positions,
@@ -689,7 +1389,7 @@ function OrgChartCanvas({
     onToggleParentLock,
   ]);
 
-  const [liveNodes, setLiveNodes] = useState<OrgBoxNodeType[]>(layoutNodes);
+  const [liveNodes, setLiveNodes] = useState<DiagramNode[]>(layoutNodes);
 
   useEffect(() => {
     if (draggingRef.current) return;
@@ -766,7 +1466,7 @@ function OrgChartCanvas({
         target: link.nodeBId,
         sourceHandle: aIsLeft ? "peer-right" : "peer-left",
         targetHandle: aIsLeft ? "peer-in-left" : "peer-in-right",
-        type: sameRow ? "straight" : "step",
+        type: sameRow ? "straight" : "smoothstep",
         pathOptions: sameRow ? undefined : { borderRadius: 8, offset: 16 },
         style: {
           ...ORG_EDGE_SHARED,
@@ -774,7 +1474,7 @@ function OrgChartCanvas({
         },
         zIndex: 1,
         data: { linkId: link.id, kind: "either-or" },
-      });
+      } as Edge);
     }
     return [...hierarchy, ...peers];
   }, [nodes, positions, eitherOrLinks]);
@@ -870,7 +1570,7 @@ function OrgChartCanvas({
     }
   });
 
-  const onNodesChange = useCallback((changes: NodeChange<OrgBoxNodeType>[]) => {
+  const onNodesChange = useCallback((changes: NodeChange<DiagramNode>[]) => {
     if (!draggingRef.current) return;
     const positionChanges = changes.filter((change) => change.type === "position");
     if (positionChanges.length === 0) return;
@@ -912,59 +1612,24 @@ function OrgChartCanvas({
             busy={busy}
             options={bulkReportsToOptions}
           />
-          {selectedPair && (onCreateEitherOr || onRemoveEitherOr) ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-orange-200/80 pt-2 dark:border-orange-900/40">
-              <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200">
-                Either / or approval
-              </span>
-              {existingPairLink ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-8 rounded-lg px-2 text-xs"
-                  disabled={busy}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onRemoveEitherOr?.(existingPairLink.id);
-                  }}
-                >
-                  <Link2Off className="mr-1 h-3.5 w-3.5" />
-                  Remove link
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  className="h-8 rounded-lg bg-orange-600 px-2 text-xs text-white hover:bg-orange-500"
-                  disabled={busy || !onCreateEitherOr}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onCreateEitherOr?.(selectedPair[0], selectedPair[1]);
-                  }}
-                >
-                  <GitCompareArrows className="mr-1 h-3.5 w-3.5" />
-                  Link as either / or
-                </Button>
-              )}
-            </div>
-          ) : null}
         </div>
-      ) : selectedPair && (onCreateEitherOr || onRemoveEitherOr) ? (
+      ) : null}
+      {selectedPair && (onOpenEitherOrPicker || onCreateEitherOr || onRemoveEitherOr) ? (
         <div
-          className="absolute left-3 top-3 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-orange-300/80 bg-white/95 px-3 py-2 shadow-sm dark:border-orange-800 dark:bg-zinc-900/95"
+          className={`absolute right-3 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-300/90 bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/95 ${
+            selectedIds.size >= 2 && bulkReportsToOptions && onBulkApply && onBulkReportsToChange
+              ? "top-[4.75rem]"
+              : "top-3"
+          }`}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-200">
-            Either / or approval
-          </span>
           {existingPairLink ? (
             <Button
               type="button"
               variant="outline"
-              className="h-8 rounded-lg px-2 text-xs"
+              className="h-9 rounded-lg px-3 text-xs"
               disabled={busy}
               onClick={(e) => {
                 e.preventDefault();
@@ -972,22 +1637,26 @@ function OrgChartCanvas({
                 onRemoveEitherOr?.(existingPairLink.id);
               }}
             >
-              <Link2Off className="mr-1 h-3.5 w-3.5" />
-              Remove link
+              <Link2Off className="mr-1.5 h-3.5 w-3.5" />
+              Unlink either / or
             </Button>
           ) : (
             <Button
               type="button"
-              className="h-8 rounded-lg bg-orange-600 px-2 text-xs text-white hover:bg-orange-500"
-              disabled={busy || !onCreateEitherOr}
+              className="h-9 rounded-lg bg-orange-600 px-3 text-xs text-white hover:bg-orange-500"
+              disabled={busy || (!onOpenEitherOrPicker && !onCreateEitherOr)}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (onOpenEitherOrPicker) {
+                  onOpenEitherOrPicker(selectedPair[0], selectedPair[1]);
+                  return;
+                }
                 onCreateEitherOr?.(selectedPair[0], selectedPair[1]);
               }}
             >
-              <GitCompareArrows className="mr-1 h-3.5 w-3.5" />
-              Link as either / or
+              <GitCompareArrows className="mr-1.5 h-3.5 w-3.5" />
+              Link either / or
             </Button>
           )}
         </div>
@@ -1000,11 +1669,13 @@ function OrgChartCanvas({
         nodes={liveNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={{
-          type: "step",
-          pathOptions: ORG_STEP_PATH,
-          style: ORG_EDGE_NORMAL,
-        }}
+        defaultEdgeOptions={
+          {
+            type: "smoothstep",
+            pathOptions: ORG_STEP_PATH,
+            style: ORG_EDGE_NORMAL,
+          } as unknown as DefaultEdgeOptions
+        }
         minZoom={0.05}
         maxZoom={2.5}
         nodesConnectable={false}
@@ -1023,7 +1694,8 @@ function OrgChartCanvas({
         onNodesChange={onNodesChange}
         onNodeClick={(event, node) => handleNodeClick(event, node)}
         onNodeDragStart={(_, node) => {
-          if (node.data.node.parentLocked) return;
+          if (node.type !== "orgBox") return;
+          if (!("node" in node.data) || node.data.node.parentLocked) return;
           const dragSet = new Set(selectedIdsRef.current);
           if (!dragSet.has(node.id)) {
             dragSet.clear();

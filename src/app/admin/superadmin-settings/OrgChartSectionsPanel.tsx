@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Crown,
   FolderKanban,
+  GripVertical,
   Pencil,
   Plus,
   Trash2,
@@ -14,6 +15,12 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+export type OrgChartSectionRoleRow = {
+  id: string;
+  label: string;
+  sortOrder: number;
+};
 
 export type OrgChartSectionRow = {
   id: string;
@@ -27,11 +34,20 @@ export type OrgChartSectionRow = {
   headName: string | null;
   headRole: string | null;
   headCompanyName: string | null;
+  reportsToNodeId?: string | null;
+  reportsToName?: string | null;
+  reportsToRole?: string | null;
+  reportsToCompanyName?: string | null;
+  roles: OrgChartSectionRoleRow[];
   memberCount: number;
 };
 
 type OrgChartNodeRow = OrgChartNode & {
-  sectionMemberships: Array<{ sectionId: string }>;
+  sectionMemberships: Array<{
+    sectionId: string;
+    roleId?: string | null;
+    role?: { id: string; label: string } | null;
+  }>;
 };
 
 type CompanyOption = { id: string; name: string };
@@ -55,7 +71,7 @@ export function OrgChartSectionsPanel({
   busy: boolean;
   chartSelectedIds: string[];
   onSectionsChange: (next: OrgChartSectionRow[]) => void;
-  onNodesChange: (next: OrgChartNode[]) => void;
+  onNodesChange: (next: OrgChartNodeRow[]) => void;
   onSelectMember: (node: OrgChartNodeRow) => void;
   onMessage: (msg: string | null) => void;
   onError: (msg: string | null) => void;
@@ -65,11 +81,16 @@ export function OrgChartSectionsPanel({
   const [creating, setCreating] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [parentIdForCreate, setParentIdForCreate] = useState<string | null>(null);
+  /** Reports-to target when editing/creating: "" | dept:<id> | person:<id> */
+  const [reportsToTarget, setReportsToTarget] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [companyTeamId, setCompanyTeamId] = useState("");
   const [dragNodeId, setDragNodeId] = useState<string | null>(null);
+  const [dragSectionId, setDragSectionId] = useState<string | null>(null);
   const [dropSectionId, setDropSectionId] = useState<string | null>(null);
+  const [dropSectionBeforeId, setDropSectionBeforeId] = useState<string | null>(null);
+  const [newRoleBySection, setNewRoleBySection] = useState<Record<string, string>>({});
 
   const nodesBySection = useMemo(() => {
     const map = new Map<string | null, OrgChartNodeRow[]>();
@@ -124,6 +145,7 @@ export function OrgChartSectionsPanel({
     setCreating(false);
     setEditId(null);
     setParentIdForCreate(null);
+    setReportsToTarget("");
     setName("");
     setDescription("");
     setCompanyTeamId("");
@@ -132,6 +154,7 @@ export function OrgChartSectionsPanel({
   function startCreateMain() {
     setEditId(null);
     setParentIdForCreate(null);
+    setReportsToTarget("");
     setCreating(true);
     setName("");
     setDescription("");
@@ -141,6 +164,7 @@ export function OrgChartSectionsPanel({
   function startCreateSubsection(parent: OrgChartSectionRow) {
     setEditId(null);
     setParentIdForCreate(parent.id);
+    setReportsToTarget(`dept:${parent.id}`);
     setCreating(true);
     setName("");
     setDescription("");
@@ -151,6 +175,13 @@ export function OrgChartSectionsPanel({
   function startEdit(section: OrgChartSectionRow) {
     setCreating(false);
     setParentIdForCreate(section.parentId);
+    setReportsToTarget(
+      section.reportsToNodeId
+        ? `person:${section.reportsToNodeId}`
+        : section.parentId
+          ? `dept:${section.parentId}`
+          : "",
+    );
     setEditId(section.id);
     setName(section.name);
     setDescription(section.description ?? "");
@@ -159,7 +190,7 @@ export function OrgChartSectionsPanel({
 
   const reloadSections = useCallback(async () => {
     const res = await fetch("/api/admin/org-chart-sections", { cache: "no-store" });
-    if (!res.ok) throw new Error("Could not reload sections.");
+    if (!res.ok) throw new Error("Could not reload departments.");
     const body = (await res.json()) as OrgChartSectionRow[];
     onSectionsChange(body);
   }, [onSectionsChange]);
@@ -174,7 +205,7 @@ export function OrgChartSectionsPanel({
   async function saveSection() {
     const trimmed = name.trim();
     if (!trimmed) {
-      onError("Enter a section name.");
+      onError("Enter a department name.");
       return;
     }
     setBusy(true);
@@ -188,8 +219,21 @@ export function OrgChartSectionsPanel({
       };
       if (editId) {
         payload.id = editId;
-      } else if (parentIdForCreate) {
-        payload.parentId = parentIdForCreate;
+      }
+      if (reportsToTarget.startsWith("person:")) {
+        payload.reportsToNodeId = reportsToTarget.slice("person:".length);
+        payload.parentId = null;
+      } else if (reportsToTarget.startsWith("dept:")) {
+        payload.parentId = reportsToTarget.slice("dept:".length);
+        payload.reportsToNodeId = null;
+      } else if (editId || parentIdForCreate) {
+        // Explicit clear / use create-parent fallback
+        if (parentIdForCreate && !editId && !reportsToTarget) {
+          payload.parentId = parentIdForCreate;
+        } else {
+          payload.parentId = null;
+          payload.reportsToNodeId = null;
+        }
       }
       const res = await fetch("/api/admin/org-chart-sections", {
         method: editId ? "PATCH" : "POST",
@@ -199,17 +243,14 @@ export function OrgChartSectionsPanel({
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(
-          typeof body?.error === "string" ? body.error : "Could not save section.",
+          typeof body?.error === "string" ? body.error : "Could not save department.",
         );
       }
       await reloadSections();
-      const kind = parentIdForCreate && !editId ? "subsection" : "section";
-      onMessage(
-        editId ? `Updated ${kind} “${trimmed}”.` : `Created ${kind} “${trimmed}”.`,
-      );
+      onMessage(editId ? `Updated department “${trimmed}”.` : `Created department “${trimmed}”.`);
       resetForm();
     } catch (e) {
-      onError(e instanceof Error ? e.message : "Could not save section.");
+      onError(e instanceof Error ? e.message : "Could not save department.");
     } finally {
       setBusy(false);
     }
@@ -240,12 +281,12 @@ export function OrgChartSectionsPanel({
     const bits: string[] = [];
     if (descendantIds.length > 0) {
       bits.push(
-        `${descendantIds.length} nested subsection${descendantIds.length === 1 ? "" : "s"} will also be deleted`,
+        `${descendantIds.length} nested department${descendantIds.length === 1 ? "" : "s"} will also be deleted`,
       );
     }
     if (members > 0) {
       bits.push(
-        `${members} section membership${members === 1 ? "" : "s"} will be removed (hierarchy stays)`,
+        `${members} department membership${members === 1 ? "" : "s"} will be removed (hierarchy stays)`,
       );
     }
     const ok = window.confirm(
@@ -314,6 +355,89 @@ export function OrgChartSectionsPanel({
     }
   }
 
+  async function createSectionRole(sectionId: string) {
+    const label = (newRoleBySection[sectionId] ?? "").trim();
+    if (!label) {
+      onError("Enter a role label first (e.g. Deputy, Coordinator).");
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    onMessage(null);
+    try {
+      const res = await fetch("/api/admin/org-chart-sections", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sectionId, createRole: { label } }),
+      });
+      const body = (await res.json().catch(() => ({}))) as OrgChartSectionRow & {
+        error?: string;
+      };
+      if (!res.ok) throw new Error(body.error ?? "Could not create role.");
+      setNewRoleBySection((prev) => ({ ...prev, [sectionId]: "" }));
+      await reloadSections();
+      onMessage(`Added role “${label}” to “${body.name}”.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not create role.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSectionRole(sectionId: string, roleId: string, label: string) {
+    if (!window.confirm(`Remove role “${label}” from this section?`)) return;
+    setBusy(true);
+    onError(null);
+    onMessage(null);
+    try {
+      const res = await fetch("/api/admin/org-chart-sections", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sectionId, deleteRoleId: roleId }),
+      });
+      const body = (await res.json().catch(() => ({}))) as OrgChartSectionRow & {
+        error?: string;
+      };
+      if (!res.ok) throw new Error(body.error ?? "Could not delete role.");
+      await reloadSections();
+      await reloadNodes();
+      onMessage(`Removed role “${label}”.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not delete role.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setMemberSectionRole(
+    sectionId: string,
+    nodeId: string,
+    roleId: string | null,
+  ) {
+    setBusy(true);
+    onError(null);
+    onMessage(null);
+    try {
+      const res = await fetch("/api/admin/org-chart-sections", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: sectionId,
+          memberRoleNodeId: nodeId,
+          roleId,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Could not update member role.");
+      await reloadNodes();
+      onMessage("Updated section role.");
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not update member role.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function assignNodes(sectionId: string | null, nodeIds: string[]) {
     const ids = [...new Set(nodeIds.filter(Boolean))];
     if (ids.length === 0) return;
@@ -372,6 +496,65 @@ export function OrgChartSectionsPanel({
     }
   }
 
+  async function reorderSiblingDepartments(
+    parentId: string | null,
+    draggedId: string,
+    beforeId: string | null,
+  ) {
+    const siblings =
+      parentId == null
+        ? roots
+        : (childrenByParent.get(parentId) ?? []);
+    const ids = siblings.map((s) => s.id);
+    if (!ids.includes(draggedId)) return;
+    if (beforeId && !ids.includes(beforeId)) return;
+    if (beforeId === draggedId) return;
+
+    const without = ids.filter((id) => id !== draggedId);
+    const insertAt = beforeId ? without.indexOf(beforeId) : without.length;
+    if (insertAt < 0) return;
+    const orderedIds = [
+      ...without.slice(0, insertAt),
+      draggedId,
+      ...without.slice(insertAt),
+    ];
+    if (orderedIds.every((id, i) => id === ids[i])) return;
+
+    // Optimistic local reorder
+    const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
+    onSectionsChange(
+      sections.map((s) =>
+        orderMap.has(s.id) ? { ...s, sortOrder: orderMap.get(s.id)! } : s,
+      ),
+    );
+
+    setBusy(true);
+    onError(null);
+    onMessage(null);
+    try {
+      const res = await fetch("/api/admin/org-chart-sections", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reorder: { parentId, orderedIds } }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof body?.error === "string" ? body.error : "Could not reorder departments.",
+        );
+      }
+      await reloadSections();
+      onMessage("Updated department order.");
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not reorder departments.");
+      await reloadSections();
+    } finally {
+      setBusy(false);
+      setDragSectionId(null);
+      setDropSectionBeforeId(null);
+    }
+  }
+
   async function removeNodesFromSection(sectionId: string, nodeIds: string[]) {
     const ids = [...new Set(nodeIds.filter(Boolean))];
     if (ids.length === 0) return;
@@ -426,14 +609,15 @@ export function OrgChartSectionsPanel({
 
   function renderMemberList(section: OrgChartSectionRow, emptyHint: string) {
     const members = nodesBySection.get(section.id) ?? [];
+    const roles = section.roles ?? [];
     return (
       <div>
         {members.length > 0 ? (
-          <div className="border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+          <div className="space-y-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
             <label className="flex flex-wrap items-center gap-2 text-xs">
               <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                 <Crown className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                Section head
+                Department head
               </span>
               <select
                 disabled={busy}
@@ -455,6 +639,68 @@ export function OrgChartSectionsPanel({
                 ))}
               </select>
             </label>
+            <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/70 p-2 dark:border-zinc-700 dark:bg-zinc-950/40">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                Custom section roles
+              </p>
+              {roles.length > 0 ? (
+                <ul className="mb-2 flex flex-wrap gap-1.5">
+                  {roles.map((role) => (
+                    <li
+                      key={role.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    >
+                      {role.label}
+                      <button
+                        type="button"
+                        disabled={busy}
+                        title={`Remove ${role.label}`}
+                        className="text-zinc-400 hover:text-rose-600 disabled:opacity-40"
+                        onClick={() => void deleteSectionRole(section.id, role.id, role.label)}
+                      >
+                        <X className="h-3 w-3" aria-hidden />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mb-2 text-[11px] text-zinc-500">
+                  Add roles like Deputy, Coordinator, or SME — then assign them on each member.
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  type="text"
+                  value={newRoleBySection[section.id] ?? ""}
+                  disabled={busy}
+                  placeholder="New role label"
+                  maxLength={80}
+                  onChange={(e) =>
+                    setNewRoleBySection((prev) => ({
+                      ...prev,
+                      [section.id]: e.target.value,
+                    }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void createSectionRole(section.id);
+                    }
+                  }}
+                  className="h-8 min-w-[10rem] flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-orange-500/60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  className="h-8 rounded-lg px-2 text-xs"
+                  onClick={() => void createSectionRole(section.id)}
+                >
+                  <Plus className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Add role
+                </Button>
+              </div>
+            </div>
           </div>
         ) : null}
         <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -463,6 +709,9 @@ export function OrgChartSectionsPanel({
           ) : (
             members.map((n) => {
               const isHead = section.headNodeId === n.id;
+              const membership = n.sectionMemberships.find((m) => m.sectionId === section.id);
+              const assignedRoleId = membership?.roleId ?? membership?.role?.id ?? "";
+              const assignedRoleLabel = membership?.role?.label ?? null;
               return (
                 <li
                   key={n.id}
@@ -477,7 +726,7 @@ export function OrgChartSectionsPanel({
                     setDragNodeId(null);
                     setDropSectionId(null);
                   }}
-                  className={`flex items-center gap-3 px-4 py-2.5 text-sm ${
+                  className={`flex flex-wrap items-center gap-2 px-4 py-2.5 text-sm sm:flex-nowrap sm:gap-3 ${
                     dragNodeId === n.id ? "opacity-50" : ""
                   } ${isHead ? "bg-amber-50/80 dark:bg-amber-950/20" : ""} ${
                     busy
@@ -500,10 +749,45 @@ export function OrgChartSectionsPanel({
                         Head
                       </span>
                     ) : null}
+                    {assignedRoleLabel ? (
+                      <span className="ml-1.5 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">
+                        {assignedRoleLabel}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="shrink-0 truncate text-xs text-zinc-500">
                     {[n.personRole, n.companyName].filter(Boolean).join(" · ")}
                   </span>
+                  <label
+                    className="flex shrink-0 items-center gap-1 text-[11px] text-zinc-500"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className="sr-only">Section role</span>
+                    <select
+                      disabled={busy || roles.length === 0}
+                      value={assignedRoleId}
+                      title={
+                        roles.length === 0
+                          ? "Add a custom role above first"
+                          : "Assign section role"
+                      }
+                      onChange={(e) => {
+                        void setMemberSectionRole(
+                          section.id,
+                          n.id,
+                          e.target.value || null,
+                        );
+                      }}
+                      className="h-7 max-w-[9rem] rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] outline-none focus:border-orange-500/60 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      <option value="">Role…</option>
+                      {roles.map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <button
                     type="button"
                     disabled={busy}
@@ -540,49 +824,152 @@ export function OrgChartSectionsPanel({
     return total;
   }
 
-  function renderSectionBlock(section: OrgChartSectionRow, depth: number) {
-    const members = nodesBySection.get(section.id) ?? [];
-    const subsections = childrenByParent.get(section.id) ?? [];
-    const isCollapsed = collapsed[section.id] === true;
-    const isDropTarget = dropSectionId === section.id;
-    const totalInTree = countMembersInSubtree(section.id);
-    const nestedCount = countDescendantSections(section.id);
-    const isMain = depth === 0;
-
+  function renderSiblingEndDrop(parentId: string | null, depth: number) {
+    if (!dragSectionId) return null;
+    const dragged = sectionById.get(dragSectionId);
+    if (!dragged) return null;
+    if ((dragged.parentId ?? null) !== (parentId ?? null)) return null;
+    const isActive = dropSectionBeforeId === `__end__:${parentId ?? "root"}`;
     return (
       <div
-        key={section.id}
+        key={`end-drop-${parentId ?? "root"}`}
         onDragOver={(e) => {
-          if (!dragNodeId) return;
           e.preventDefault();
           e.stopPropagation();
-          setDropSectionId(section.id);
+          e.dataTransfer.dropEffect = "move";
+          setDropSectionBeforeId(`__end__:${parentId ?? "root"}`);
         }}
         onDragLeave={() => {
-          if (dropSectionId === section.id) setDropSectionId(null);
+          if (dropSectionBeforeId === `__end__:${parentId ?? "root"}`) {
+            setDropSectionBeforeId(null);
+          }
         }}
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          const id = e.dataTransfer.getData("text/org-node-id") || dragNodeId;
-          if (id) void assignNodes(section.id, [id]);
+          const sectionDragId =
+            e.dataTransfer.getData("text/org-section-id") || dragSectionId;
+          if (sectionDragId) {
+            void reorderSiblingDepartments(parentId, sectionDragId, null);
+          }
+          setDragSectionId(null);
+          setDropSectionBeforeId(null);
         }}
-        className={`overflow-hidden rounded-xl border transition ${
-          depth > 0 ? "border-l-2 border-l-orange-300/70 dark:border-l-orange-700/60" : ""
-        } ${
-          isDropTarget
-            ? "border-orange-400 bg-orange-50/80 dark:border-orange-600 dark:bg-orange-950/30"
-            : "border-zinc-200 dark:border-zinc-800"
+        className={`rounded-lg border border-dashed px-3 py-2 text-center text-[11px] font-semibold transition ${
+          isActive
+            ? "border-orange-400 bg-orange-50 text-orange-800 dark:border-orange-600 dark:bg-orange-950/40 dark:text-orange-200"
+            : "border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500"
         }`}
         style={depth > 0 ? { marginLeft: `${Math.min(depth, 6) * 16}px` } : undefined}
       >
+        Drop here to place last
+      </div>
+    );
+  }
+
+  function renderSectionBlock(section: OrgChartSectionRow, depth: number) {
+    const members = nodesBySection.get(section.id) ?? [];
+    const subsections = childrenByParent.get(section.id) ?? [];
+    const isCollapsed = collapsed[section.id] === true;
+    const isMemberDropTarget = dropSectionId === section.id && !dragSectionId;
+    const isReorderTarget = dropSectionBeforeId === section.id && Boolean(dragSectionId);
+    const totalInTree = countMembersInSubtree(section.id);
+    const nestedCount = countDescendantSections(section.id);
+    const isMain = depth === 0;
+    const siblingParentId = section.parentId;
+
+    return (
+      <div
+        key={section.id}
+        className={`overflow-hidden rounded-xl border transition ${
+          depth > 0 ? "border-l-2 border-l-orange-300/70 dark:border-l-orange-700/60" : ""
+        } ${
+          dragSectionId === section.id
+            ? "opacity-50"
+            : isMemberDropTarget
+              ? "border-orange-400 bg-orange-50/80 dark:border-orange-600 dark:bg-orange-950/30"
+              : "border-zinc-200 dark:border-zinc-800"
+        }`}
+        style={depth > 0 ? { marginLeft: `${Math.min(depth, 6) * 16}px` } : undefined}
+      >
+        {isReorderTarget ? (
+          <div
+            className="h-1 rounded-t-xl bg-orange-500"
+            aria-hidden
+          />
+        ) : null}
         <div
           className={`flex flex-wrap items-center gap-2 px-3 py-2.5 ${
             isMain
               ? "bg-zinc-50/80 dark:bg-zinc-950/50"
               : "bg-white dark:bg-zinc-900/80"
           }`}
+          onDragOver={(e) => {
+            if (dragSectionId) {
+              const dragged = sectionById.get(dragSectionId);
+              if (!dragged || dragged.id === section.id) return;
+              if ((dragged.parentId ?? null) !== (siblingParentId ?? null)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              setDropSectionBeforeId(section.id);
+              return;
+            }
+            if (!dragNodeId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setDropSectionId(section.id);
+          }}
+          onDragLeave={() => {
+            if (dropSectionId === section.id) setDropSectionId(null);
+            if (dropSectionBeforeId === section.id) setDropSectionBeforeId(null);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const sectionDragId =
+              e.dataTransfer.getData("text/org-section-id") || dragSectionId;
+            if (sectionDragId) {
+              const dragged = sectionById.get(sectionDragId);
+              if (
+                dragged &&
+                dragged.id !== section.id &&
+                (dragged.parentId ?? null) === (siblingParentId ?? null)
+              ) {
+                void reorderSiblingDepartments(
+                  siblingParentId ?? null,
+                  sectionDragId,
+                  section.id,
+                );
+              }
+              setDragSectionId(null);
+              setDropSectionBeforeId(null);
+              return;
+            }
+            const id = e.dataTransfer.getData("text/org-node-id") || dragNodeId;
+            if (id) void assignNodes(section.id, [id]);
+          }}
         >
+          <button
+            type="button"
+            draggable={!busy}
+            title="Drag to reorder among siblings"
+            aria-label={`Reorder ${section.name}`}
+            onDragStart={(e) => {
+              e.stopPropagation();
+              e.dataTransfer.setData("text/org-section-id", section.id);
+              e.dataTransfer.effectAllowed = "move";
+              setDragSectionId(section.id);
+              setDropSectionId(null);
+            }}
+            onDragEnd={() => {
+              setDragSectionId(null);
+              setDropSectionBeforeId(null);
+            }}
+            className="inline-flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 hover:bg-zinc-100 active:cursor-grabbing dark:border-zinc-700 dark:hover:bg-zinc-800"
+          >
+            <GripVertical className="h-4 w-4" aria-hidden />
+          </button>
           <button
             type="button"
             onClick={() => toggleCollapsed(section.id)}
@@ -633,6 +1020,14 @@ export function OrgChartSectionsPanel({
               <span className="truncate">Head: {section.headName}</span>
             </span>
           ) : null}
+          {section.reportsToName ? (
+            <span
+              className="inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-900 dark:bg-sky-950/50 dark:text-sky-200"
+              title={section.reportsToName}
+            >
+              <span className="truncate">Reports to: {section.reportsToName}</span>
+            </span>
+          ) : null}
           {section.description ? (
             <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">
               {section.description}
@@ -648,7 +1043,7 @@ export function OrgChartSectionsPanel({
             onClick={() => startCreateSubsection(section)}
           >
             <Plus className="mr-1 h-3.5 w-3.5" />
-            Add subsection
+            Add child
           </Button>
           <Button
             type="button"
@@ -694,6 +1089,7 @@ export function OrgChartSectionsPanel({
             {subsections.length > 0 ? (
               <div className="space-y-2 pt-1">
                 {subsections.map((child) => renderSectionBlock(child, depth + 1))}
+                {renderSiblingEndDrop(section.id, depth + 1)}
               </div>
             ) : null}
           </div>
@@ -709,7 +1105,7 @@ export function OrgChartSectionsPanel({
           <div className="flex items-center gap-2">
             <FolderKanban className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
             <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-              Sections
+              Departments
             </h2>
             <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
               {roots.length} main
@@ -719,8 +1115,9 @@ export function OrgChartSectionsPanel({
             </span>
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            Label groups alongside the reports-to hierarchy. Nest subsections at any depth with
-            Add subsection, assign members, then pick a head from each group’s member list.
+            Departments appear on the org chart. Drag the grip handle to reorder departments or
+            subsections among siblings. Nest under another department or report to a person,
+            assign members, then pick a head and optional custom roles.
           </p>
         </div>
         <Button
@@ -731,7 +1128,7 @@ export function OrgChartSectionsPanel({
           onClick={startCreateMain}
         >
           <Plus className="mr-1.5 h-4 w-4" />
-          New section
+          New department
         </Button>
       </div>
 
@@ -740,12 +1137,10 @@ export function OrgChartSectionsPanel({
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {editId
-                ? isSubsectionForm
-                  ? "Edit subsection"
-                  : "Edit section"
+                ? "Edit department"
                 : isSubsectionForm
-                  ? `New subsection under “${formParent?.name ?? "section"}”`
-                  : "Create section"}
+                  ? `New department under “${formParent?.name ?? "department"}”`
+                  : "Create department"}
             </p>
             <button
               type="button"
@@ -790,6 +1185,47 @@ export function OrgChartSectionsPanel({
             </label>
             <label className="block sm:col-span-2">
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                Reports to
+              </span>
+              <select
+                value={reportsToTarget}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setReportsToTarget(next);
+                  if (next.startsWith("dept:")) {
+                    setParentIdForCreate(next.slice("dept:".length));
+                  } else {
+                    setParentIdForCreate(null);
+                  }
+                }}
+                className="h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-orange-500/60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              >
+                <option value="">— Top-level (no parent) —</option>
+                <optgroup label="Department">
+                  {sections
+                    .filter((s) => s.id !== editId)
+                    .map((s) => (
+                      <option key={`dept-${s.id}`} value={`dept:${s.id}`}>
+                        {s.name}
+                      </option>
+                    ))}
+                </optgroup>
+                <optgroup label="Person on org chart">
+                  {nodes.map((n) => (
+                    <option key={`person-${n.id}`} value={`person:${n.id}`}>
+                      {n.personName}
+                      {n.personRole ? ` · ${n.personRole}` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+              <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                Choose another department or an individual. Person and department parents are
+                mutually exclusive.
+              </p>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                 Description (optional)
               </span>
               <textarea
@@ -804,11 +1240,7 @@ export function OrgChartSectionsPanel({
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" className="h-9 rounded-xl" disabled={busy} onClick={saveSection}>
-              {editId
-                ? "Save changes"
-                : isSubsectionForm
-                  ? "Create subsection"
-                  : "Create section"}
+              {editId ? "Save changes" : "Create department"}
             </Button>
             <Button
               type="button"
@@ -826,11 +1258,12 @@ export function OrgChartSectionsPanel({
       <div className="mt-4 space-y-2">
         {roots.length === 0 && unassigned.length === 0 ? (
           <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
-            No sections yet. Create one to group people on the chart.
+            No departments yet. Create one to group people on the chart.
           </p>
         ) : null}
 
         {roots.map((section) => renderSectionBlock(section, 0))}
+        {roots.length > 0 ? renderSiblingEndDrop(null, 0) : null}
 
         <div
           onDragOver={(e) => {
@@ -872,7 +1305,7 @@ export function OrgChartSectionsPanel({
               {unassigned.length}
             </span>
             <span className="min-w-0 flex-1 text-xs text-zinc-500">
-              On the chart but not in a section
+              On the chart but not in a department
             </span>
             {chartSelectedIds.length > 0 ? (
               <Button

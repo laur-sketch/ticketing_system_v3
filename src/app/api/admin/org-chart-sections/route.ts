@@ -21,6 +21,7 @@ function serializeSection(s: {
   parentId: string | null;
   companyTeamId: string | null;
   headNodeId: string | null;
+  reportsToNodeId?: string | null;
   companyTeam: { id: string; name: string } | null;
   headNode: {
     id: string;
@@ -28,6 +29,13 @@ function serializeSection(s: {
     personRole: string | null;
     companyName: string | null;
   } | null;
+  reportsToNode?: {
+    id: string;
+    personName: string;
+    personRole: string | null;
+    companyName: string | null;
+  } | null;
+  roles?: Array<{ id: string; label: string; sortOrder: number }> | null;
   _count: { memberships: number };
   createdAt: Date;
   updatedAt: Date;
@@ -44,6 +52,15 @@ function serializeSection(s: {
     headName: s.headNode?.personName ?? null,
     headRole: s.headNode?.personRole ?? null,
     headCompanyName: s.headNode?.companyName ?? null,
+    reportsToNodeId: s.reportsToNodeId ?? null,
+    reportsToName: s.reportsToNode?.personName ?? null,
+    reportsToRole: s.reportsToNode?.personRole ?? null,
+    reportsToCompanyName: s.reportsToNode?.companyName ?? null,
+    roles: (s.roles ?? []).map((r) => ({
+      id: r.id,
+      label: r.label,
+      sortOrder: r.sortOrder,
+    })),
     memberCount: s._count.memberships,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
@@ -60,8 +77,22 @@ const sectionInclude = {
       companyName: true,
     },
   },
+  reportsToNode: {
+    select: {
+      id: true,
+      personName: true,
+      personRole: true,
+      companyName: true,
+    },
+  },
+  roles: {
+    select: { id: true, label: true, sortOrder: true },
+    orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
+  },
   _count: { select: { memberships: true } },
-} as const;
+};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sectionIncludeArgs = sectionInclude as any;
 
 /// Top-level sections may contain nested subsections at any depth via parentId.
 async function isSectionDescendantOf(
@@ -87,6 +118,22 @@ async function isSectionDescendantOf(
     for (const child of childrenOf.get(current) ?? []) stack.push(child);
   }
   return false;
+}
+
+async function resolveReportsToNodeId(
+  raw: unknown,
+): Promise<{ reportsToNodeId: string } | { error: string; status: number } | null> {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const reportsToNodeId = String(raw).trim();
+  if (!reportsToNodeId) return null;
+  const node = await prismaPrimary.orgChartNode.findUnique({
+    where: { id: reportsToNodeId },
+    select: { id: true },
+  });
+  if (!node) {
+    return { error: "Reports-to person not found on the org chart.", status: 400 };
+  }
+  return { reportsToNodeId: node.id };
 }
 
 async function resolveParentId(
@@ -196,10 +243,10 @@ export async function GET() {
 
   const sections = await prismaPrimary.orgChartSection.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    include: sectionInclude,
+    include: sectionIncludeArgs,
   });
 
-  return NextResponse.json(sections.map(serializeSection));
+  return NextResponse.json(sections.map((s) => serializeSection(s as any)));
 }
 
 export async function POST(req: Request) {
@@ -224,6 +271,20 @@ export async function POST(req: Request) {
   }
   const parentId = parentResolved?.parentId ?? null;
 
+  const reportsResolved = await resolveReportsToNodeId(body.reportsToNodeId);
+  if (reportsResolved && "error" in reportsResolved) {
+    return NextResponse.json(
+      { error: reportsResolved.error },
+      { status: reportsResolved.status },
+    );
+  }
+  let reportsToNodeId = reportsResolved?.reportsToNodeId ?? null;
+  // Prefer one reports-to target: person takes precedence over parent department.
+  const effectiveParentId = reportsToNodeId ? null : parentId;
+  if (reportsToNodeId && parentId) {
+    reportsToNodeId = reportsResolved!.reportsToNodeId;
+  }
+
   let companyTeamId: string | null = body.companyTeamId
     ? String(body.companyTeamId).trim()
     : null;
@@ -245,7 +306,7 @@ export async function POST(req: Request) {
   }
 
   const [max] = await prismaPrimary.orgChartSection.findMany({
-    where: { parentId },
+    where: { parentId: effectiveParentId },
     orderBy: { sortOrder: "desc" },
     take: 1,
     select: { sortOrder: true },
@@ -260,13 +321,14 @@ export async function POST(req: Request) {
       name: name.slice(0, 120),
       description,
       companyTeamId,
-      parentId,
+      parentId: effectiveParentId,
+      reportsToNodeId,
       sortOrder,
     },
-    include: sectionInclude,
+    include: sectionIncludeArgs,
   });
 
-  return NextResponse.json(serializeSection(created), { status: 201 });
+  return NextResponse.json(serializeSection(created as any), { status: 201 });
 }
 
 export async function PATCH(req: Request) {
@@ -274,6 +336,68 @@ export async function PATCH(req: Request) {
   if (denied) return denied;
 
   const body = (await req.json()) as Record<string, unknown>;
+
+  // Reorder sibling departments / subsections by sortOrder.
+  // Body: { reorder: { parentId: string | null, orderedIds: string[] } }
+  if (body.reorder && typeof body.reorder === "object" && body.reorder !== null) {
+    const reorder = body.reorder as { parentId?: unknown; orderedIds?: unknown };
+    const parentIdRaw = reorder.parentId;
+    const parentId =
+      parentIdRaw === null || parentIdRaw === undefined || parentIdRaw === ""
+        ? null
+        : String(parentIdRaw).trim();
+    const orderedIds = Array.isArray(reorder.orderedIds)
+      ? [...new Set(reorder.orderedIds.map((x) => String(x ?? "").trim()).filter(Boolean))]
+      : [];
+    if (orderedIds.length === 0) {
+      return NextResponse.json(
+        { error: "orderedIds is required for department reorder." },
+        { status: 400 },
+      );
+    }
+    if (parentId) {
+      const parent = await prismaPrimary.orgChartSection.findUnique({
+        where: { id: parentId },
+        select: { id: true },
+      });
+      if (!parent) {
+        return NextResponse.json({ error: "Parent department not found." }, { status: 404 });
+      }
+    }
+    const siblings = await prismaPrimary.orgChartSection.findMany({
+      where: { parentId },
+      select: { id: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    const siblingIds = new Set(siblings.map((s) => s.id));
+    if (
+      orderedIds.length !== siblingIds.size ||
+      orderedIds.some((id) => !siblingIds.has(id))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "orderedIds must include every department at this level (same parent) exactly once.",
+        },
+        { status: 400 },
+      );
+    }
+    await prismaPrimary.$transaction(
+      orderedIds.map((sectionId, index) =>
+        prismaPrimary.orgChartSection.update({
+          where: { id: sectionId },
+          data: { sortOrder: index },
+        }),
+      ),
+    );
+    const refreshed = await prismaPrimary.orgChartSection.findMany({
+      where: { id: { in: orderedIds } },
+      include: sectionIncludeArgs,
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    return NextResponse.json(refreshed.map((s) => serializeSection(s as any)));
+  }
+
   const id = String(body.id ?? "").trim();
 
   const fromList = Array.isArray(body.nodeIds)
@@ -369,9 +493,105 @@ export async function PATCH(req: Request) {
     const updated = await prismaPrimary.orgChartSection.update({
       where: { id },
       data: { headNodeId: resolved.headNodeId },
-      include: sectionInclude,
+      include: sectionIncludeArgs,
     });
-    return NextResponse.json(serializeSection(updated));
+    return NextResponse.json(serializeSection(updated as any));
+  }
+
+  // Create a custom section role (e.g. Deputy, Coordinator).
+  if (body.createRole && typeof body.createRole === "object") {
+    const createRole = body.createRole as { label?: unknown };
+    const label = String(createRole.label ?? "").trim().slice(0, 80);
+    if (!label) {
+      return NextResponse.json({ error: "Role label is required." }, { status: 400 });
+    }
+    const [max] = await prismaPrimary.orgChartSectionRole.findMany({
+      where: { sectionId: id },
+      orderBy: { sortOrder: "desc" },
+      take: 1,
+      select: { sortOrder: true },
+    });
+    try {
+      await prismaPrimary.orgChartSectionRole.create({
+        data: {
+          sectionId: id,
+          label,
+          sortOrder: (max?.sortOrder ?? -1) + 1,
+        },
+      });
+    } catch {
+      return NextResponse.json(
+        { error: "A role with that label already exists in this section." },
+        { status: 409 },
+      );
+    }
+    const updated = await prismaPrimary.orgChartSection.findUniqueOrThrow({
+      where: { id },
+      include: sectionIncludeArgs,
+    });
+    return NextResponse.json(serializeSection(updated as any));
+  }
+
+  // Delete a custom section role.
+  if (body.deleteRoleId !== undefined) {
+    const roleId = String(body.deleteRoleId ?? "").trim();
+    if (!roleId) {
+      return NextResponse.json({ error: "deleteRoleId is required." }, { status: 400 });
+    }
+    const role = await prismaPrimary.orgChartSectionRole.findFirst({
+      where: { id: roleId, sectionId: id },
+      select: { id: true },
+    });
+    if (!role) {
+      return NextResponse.json({ error: "Role not found in this section." }, { status: 404 });
+    }
+    await prismaPrimary.orgChartSectionRole.delete({ where: { id: roleId } });
+    const updated = await prismaPrimary.orgChartSection.findUniqueOrThrow({
+      where: { id },
+      include: sectionIncludeArgs,
+    });
+    return NextResponse.json(serializeSection(updated as any));
+  }
+
+  // Assign / clear a custom role on a section member (not the Head pointer).
+  if (body.memberRoleNodeId !== undefined) {
+    const nodeId = String(body.memberRoleNodeId ?? "").trim();
+    if (!nodeId) {
+      return NextResponse.json({ error: "memberRoleNodeId is required." }, { status: 400 });
+    }
+    const membership = await prismaPrimary.orgChartNodeSectionMembership.findUnique({
+      where: { nodeId_sectionId: { nodeId, sectionId: id } },
+      select: { id: true },
+    });
+    if (!membership) {
+      return NextResponse.json(
+        { error: "That person is not a member of this section." },
+        { status: 400 },
+      );
+    }
+    let roleId: string | null = null;
+    if (body.roleId !== null && body.roleId !== undefined && body.roleId !== "") {
+      roleId = String(body.roleId).trim();
+      const role = await prismaPrimary.orgChartSectionRole.findFirst({
+        where: { id: roleId, sectionId: id },
+        select: { id: true },
+      });
+      if (!role) {
+        return NextResponse.json(
+          { error: "Role not found in this section." },
+          { status: 404 },
+        );
+      }
+    }
+    await prismaPrimary.orgChartNodeSectionMembership.update({
+      where: { nodeId_sectionId: { nodeId, sectionId: id } },
+      data: { roleId },
+    });
+    return NextResponse.json({
+      sectionId: id,
+      nodeId,
+      roleId,
+    });
   }
 
   const data: {
@@ -380,6 +600,7 @@ export async function PATCH(req: Request) {
     sortOrder?: number;
     companyTeamId?: string | null;
     parentId?: string | null;
+    reportsToNodeId?: string | null;
   } = {};
 
   if (body.name !== undefined) {
@@ -412,6 +633,23 @@ export async function PATCH(req: Request) {
       );
     }
     data.parentId = parentResolved?.parentId ?? null;
+    if (data.parentId) {
+      data.reportsToNodeId = null;
+    }
+  }
+
+  if (body.reportsToNodeId !== undefined) {
+    const reportsResolved = await resolveReportsToNodeId(body.reportsToNodeId);
+    if (reportsResolved && "error" in reportsResolved) {
+      return NextResponse.json(
+        { error: reportsResolved.error },
+        { status: reportsResolved.status },
+      );
+    }
+    data.reportsToNodeId = reportsResolved?.reportsToNodeId ?? null;
+    if (data.reportsToNodeId) {
+      data.parentId = null;
+    }
   }
 
   if (body.companyTeamId !== undefined) {
@@ -441,10 +679,10 @@ export async function PATCH(req: Request) {
   const updated = await prismaPrimary.orgChartSection.update({
     where: { id },
     data,
-    include: sectionInclude,
+    include: sectionIncludeArgs,
   });
 
-  return NextResponse.json(serializeSection(updated));
+  return NextResponse.json(serializeSection(updated as any));
 }
 
 export async function DELETE(req: Request) {

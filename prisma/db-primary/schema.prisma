@@ -216,6 +216,8 @@ model OrgChartNode {
   section             OrgChartSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   sectionMemberships  OrgChartNodeSectionMembership[]
   headedSections      OrgChartSection[] @relation("OrgChartSectionHead")
+  /// Departments that report directly to this person (alongside section nesting).
+  reportedDepartments OrgChartSection[] @relation("OrgChartSectionReportsTo")
   eitherOrAsA         OrgChartEitherOrLink[] @relation("EitherOrNodeA")
   eitherOrAsB         OrgChartEitherOrLink[] @relation("EitherOrNodeB")
   /// When set, this person reports to a shared either/or manager pair (layout parentId is one peer).
@@ -252,7 +254,8 @@ model OrgChartEitherOrLink {
 }
 
 /// Labeled grouping of org-chart people (e.g. Operations, Finance). Optional company scope.
-/// Top-level sections may contain nested subsections at any depth via parentId.
+/// Top-level departments may contain nested sub-departments at any depth via parentId,
+/// or report to an individual org-chart person via reportsToNodeId.
 model OrgChartSection {
   id            String           @id @default(cuid())
   name          String           @map("name")
@@ -263,32 +266,58 @@ model OrgChartSection {
   children      OrgChartSection[] @relation("OrgChartSectionTree")
   companyTeamId String?          @map("company_team_id")
   companyTeam   Team?            @relation(fields: [companyTeamId], references: [id], onDelete: SetNull)
-  /// Optional section/subsection head (must be an org-chart member).
+  /// Optional department head (must be an org-chart member).
   headNodeId    String?          @map("head_node_id")
   headNode      OrgChartNode?    @relation("OrgChartSectionHead", fields: [headNodeId], references: [id], onDelete: SetNull)
+  /// Optional person this department reports to (instead of / in addition to a parent department).
+  /// When set, the department chart hangs under that person; parentId should be null.
+  reportsToNodeId String?        @map("reports_to_node_id")
+  reportsToNode   OrgChartNode?  @relation("OrgChartSectionReportsTo", fields: [reportsToNodeId], references: [id], onDelete: SetNull)
   nodes         OrgChartNode[]
   memberships   OrgChartNodeSectionMembership[]
+  roles         OrgChartSectionRole[]
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
 
   @@index([companyTeamId, sortOrder])
   @@index([parentId, sortOrder])
   @@index([headNodeId])
+  @@index([reportsToNodeId])
   @@map("org_chart_sections")
+}
+
+/// Custom org roles defined for a section (e.g. Deputy, Coordinator, SME).
+/// Distinct from the singleton section head (OrgChartSection.headNodeId).
+model OrgChartSectionRole {
+  id          String          @id @default(cuid())
+  sectionId   String          @map("section_id")
+  section     OrgChartSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  label       String          @map("label")
+  sortOrder   Int             @default(0) @map("sort_order")
+  memberships OrgChartNodeSectionMembership[]
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  @@unique([sectionId, label])
+  @@index([sectionId, sortOrder])
+  @@map("org_chart_section_roles")
 }
 
 /// Additional section memberships for a single org-chart member.
 /// OrgChartNode.sectionId remains the primary section for backward-compatible labels.
 model OrgChartNodeSectionMembership {
-  id        String          @id @default(cuid())
-  nodeId    String          @map("node_id")
-  sectionId String          @map("section_id")
-  node      OrgChartNode    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
-  section   OrgChartSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  createdAt DateTime        @default(now()) @map("created_at")
+  id        String               @id @default(cuid())
+  nodeId    String               @map("node_id")
+  sectionId String               @map("section_id")
+  roleId    String?              @map("role_id")
+  node      OrgChartNode         @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  section   OrgChartSection      @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  role      OrgChartSectionRole? @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  createdAt DateTime             @default(now()) @map("created_at")
 
   @@unique([nodeId, sectionId])
   @@index([sectionId])
+  @@index([roleId])
   @@map("org_chart_node_section_memberships")
 }
 

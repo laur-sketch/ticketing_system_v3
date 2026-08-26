@@ -837,3 +837,36 @@ input[type="date"].date-input-with-icon::-ms-reveal {
     transform: translateY(-6px);
   }
 }
+
+/* Org chart (React Flow) — connector strokes + interaction affordances */
+.org-chart-flow {
+  --org-line: #a8a29e;
+  --org-line-strong: #78716c;
+}
+
+html.dark .org-chart-flow {
+  --org-line: #57534e;
+  --org-line-strong: #a8a29e;
+}
+
+.org-chart-flow .react-flow__edge-path {
+  stroke: var(--org-line-strong);
+}
+
+.org-chart-flow .react-flow__edge.selected .react-flow__edge-path,
+.org-chart-flow .react-flow__edge:focus .react-flow__edge-path {
+  stroke: var(--brand);
+}
+
+.org-chart-flow .org-chart-drop-target {
+  box-shadow: 0 0 0 2px rgb(249 115 22 / 0.85), 0 8px 24px rgb(249 115 22 / 0.2);
+}
+
+.org-chart-flow .org-chart-picked {
+  box-shadow: 0 0 0 2px rgb(249 115 22 / 0.7);
+}
+
+.org-chart-flow .react-flow__node-sectionFrame {
+  pointer-events: none;
+  z-index: -1 !important;
+}

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { FileText } from "lucide-react";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
+import { formatTicketActivityDetail } from "@/lib/ticket-activity-display";
 import { requestTypeLabel } from "@/lib/request-types";
 import type { TicketPrintField, TicketPrintModel } from "@/lib/ticket-details-print";
 import { parsePaymentRequestDescription, formatPaymentPeso, formatPaymentRequestTitle, MODE_OF_PAYMENT_CHECK, MODE_OF_PAYMENT_OPTIONS, DELIVERY_OF_CHECK_OPTIONS, paymentModeRequiresBankDetails } from "@/lib/request-for-payment";
@@ -3437,15 +3438,18 @@ export function AgentWorkspace({
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4">
               <ul className="space-y-3">
-                {ticket.activities.map((a) => (
+                {ticket.activities.map((a) => {
+                  const detail = formatTicketActivityDetail(a.summary, a.detail);
+                  return (
                   <li key={a.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-100">{a.summary}</p>
-                    {a.detail ? <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{a.detail}</p> : null}
+                    {detail ? <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">{detail}</p> : null}
                     <p className="mt-2 text-[11px] uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                       {a.actor} · {a.createdAt.toLocaleString()}
                     </p>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           </section>

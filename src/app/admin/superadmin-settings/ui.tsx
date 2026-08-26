@@ -5,7 +5,7 @@ import type { PersonnelRosterRow } from "@/lib/personnel-accounts-data";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, GitBranch, Search, Trash2, UserRound, Users, X } from "lucide-react";
+import { Check, FolderKanban, GitBranch, GitCompareArrows, Link2Off, Search, Trash2, UserRound, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -48,7 +48,11 @@ export type OrgChartEitherOrLinkRow = {
 };
 
 export type OrgChartNodeRow = OrgChartNode & {
-  sectionMemberships: Array<{ sectionId: string }>;
+  sectionMemberships: Array<{
+    sectionId: string;
+    roleId?: string | null;
+    role?: { id: string; label: string } | null;
+  }>;
 };
 
 type SuperAdminSettingsTab = "alerts" | "orgchart" | "access" | "faq";
@@ -165,6 +169,10 @@ export function SuperAdminSettingsClient({
   const [bulkReportsTo, setBulkReportsTo] = useState<string>("");
   const [addParentId, setAddParentId] = useState<string>("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [sectionsPanelOpen, setSectionsPanelOpen] = useState(false);
+  const [eitherOrPickerOpen, setEitherOrPickerOpen] = useState(false);
+  const [eitherOrPersonA, setEitherOrPersonA] = useState("");
+  const [eitherOrPersonB, setEitherOrPersonB] = useState("");
   const pickerRef = useRef<HTMLDivElement | null>(null);
 
   const assignedPersonIds = useMemo(
@@ -251,6 +259,65 @@ export function SuperAdminSettingsClient({
   const bulkReportsToOptions = useMemo(
     () => orgChartReportsToOptions(nodes, chartSelectedIds, eitherOrLinks),
     [nodes, chartSelectedIds, eitherOrLinks],
+  );
+
+  const chartSelectedPairLink = useMemo(() => {
+    if (chartSelectedIds.length !== 2) return null;
+    const [a, b] = chartSelectedIds;
+    if (!a || !b) return null;
+    return (
+      eitherOrLinks.find(
+        (l) =>
+          (l.nodeAId === a && l.nodeBId === b) || (l.nodeAId === b && l.nodeBId === a),
+      ) ?? null
+    );
+  }, [chartSelectedIds, eitherOrLinks]);
+
+  const eitherOrPickerLink = useMemo(() => {
+    if (!eitherOrPersonA || !eitherOrPersonB || eitherOrPersonA === eitherOrPersonB) {
+      return null;
+    }
+    return (
+      eitherOrLinks.find(
+        (l) =>
+          (l.nodeAId === eitherOrPersonA && l.nodeBId === eitherOrPersonB) ||
+          (l.nodeAId === eitherOrPersonB && l.nodeBId === eitherOrPersonA),
+      ) ?? null
+    );
+  }, [eitherOrPersonA, eitherOrPersonB, eitherOrLinks]);
+
+  function openEitherOrPicker(prefillA?: string, prefillB?: string) {
+    const a = prefillA ?? chartSelectedIds[0] ?? "";
+    const b = prefillB ?? chartSelectedIds[1] ?? "";
+    setEitherOrPersonA(a);
+    setEitherOrPersonB(b && b !== a ? b : "");
+    setEitherOrPickerOpen(true);
+  }
+
+  function closeEitherOrPicker() {
+    setEitherOrPickerOpen(false);
+    setEitherOrPersonA("");
+    setEitherOrPersonB("");
+  }
+
+  function confirmEitherOrLink() {
+    if (!eitherOrPersonA || !eitherOrPersonB || eitherOrPersonA === eitherOrPersonB) {
+      setError("Choose two different people for Person A and Person B.");
+      return;
+    }
+    if (eitherOrPickerLink) {
+      removeEitherOr(eitherOrPickerLink.id);
+      closeEitherOrPicker();
+      return;
+    }
+    createEitherOr(eitherOrPersonA, eitherOrPersonB);
+    closeEitherOrPicker();
+  }
+
+  const eitherOrNodeOptions = useMemo(
+    () =>
+      [...nodes].sort((x, y) => x.personName.localeCompare(y.personName)),
+    [nodes],
   );
 
   /** Close the roster dropdown on outside click / Escape instead of leaving it
@@ -675,20 +742,6 @@ export function SuperAdminSettingsClient({
         <FaqPanel />
       ) : (
         <section className="space-y-6">
-          <OrgChartSectionsPanel
-            sections={sections}
-            nodes={nodes}
-            companyOptions={companyOptions}
-            busy={busy}
-            chartSelectedIds={chartSelectedIds}
-            onSectionsChange={setSections}
-            onNodesChange={setNodes}
-            onSelectMember={handleSectionMemberSelect}
-            onMessage={setMessage}
-            onError={setError}
-            setBusy={setBusy}
-          />
-
           <div className="rounded-2xl border border-zinc-200/80 bg-white/95 p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -886,7 +939,143 @@ export function SuperAdminSettingsClient({
                     ? `Remove ${chartSelectedIds.length}`
                     : "Remove member"}
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 min-w-[9.5rem] flex-1 rounded-xl px-4 sm:flex-none"
+                  disabled={busy || nodes.length < 2}
+                  title="Choose Person A and Person B to link as either/or"
+                  onClick={() => {
+                    if (chartSelectedPairLink) {
+                      removeEitherOr(chartSelectedPairLink.id);
+                      return;
+                    }
+                    openEitherOrPicker();
+                  }}
+                >
+                  {chartSelectedPairLink ? (
+                    <Link2Off className="mr-2 h-4 w-4" />
+                  ) : (
+                    <GitCompareArrows className="mr-2 h-4 w-4" />
+                  )}
+                  {chartSelectedPairLink ? "Unlink either / or" : "Link either / or"}
+                </Button>
               </div>
+
+              {eitherOrPickerOpen ? (
+                <div className="rounded-xl border border-orange-300 bg-orange-50/80 p-4 dark:border-orange-800 dark:bg-orange-950/30">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                      Either / or link
+                    </p>
+                    <button
+                      type="button"
+                      aria-label="Close either/or picker"
+                      onClick={closeEitherOrPicker}
+                      className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-200/70 dark:hover:bg-zinc-800"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-end">
+                    <label className="block min-w-0">
+                      <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-orange-800 dark:text-orange-200">
+                        Person A
+                      </span>
+                      <select
+                        value={eitherOrPersonA}
+                        onChange={(e) => setEitherOrPersonA(e.target.value)}
+                        disabled={busy}
+                        className="h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-orange-500/60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      >
+                        <option value="">— Choose person A —</option>
+                        {eitherOrNodeOptions.map((n) => (
+                          <option
+                            key={`eo-a-${n.id}`}
+                            value={n.id}
+                            disabled={n.id === eitherOrPersonB}
+                          >
+                            {n.personName}
+                            {n.personRole ? ` · ${n.personRole}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {eitherOrPersonA ? (
+                        <p className="mt-1.5 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                          {nodes.find((n) => n.id === eitherOrPersonA)?.personName}
+                        </p>
+                      ) : null}
+                    </label>
+                    <div className="flex items-center justify-center pb-2 sm:pb-2.5">
+                      <span className="rounded-full border border-orange-300 bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-800 dark:border-orange-700 dark:bg-zinc-900 dark:text-orange-200">
+                        either / or
+                      </span>
+                    </div>
+                    <label className="block min-w-0">
+                      <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-orange-800 dark:text-orange-200">
+                        Person B
+                      </span>
+                      <select
+                        value={eitherOrPersonB}
+                        onChange={(e) => setEitherOrPersonB(e.target.value)}
+                        disabled={busy}
+                        className="h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-orange-500/60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      >
+                        <option value="">— Choose person B —</option>
+                        {eitherOrNodeOptions.map((n) => (
+                          <option
+                            key={`eo-b-${n.id}`}
+                            value={n.id}
+                            disabled={n.id === eitherOrPersonA}
+                          >
+                            {n.personName}
+                            {n.personRole ? ` · ${n.personRole}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {eitherOrPersonB ? (
+                        <p className="mt-1.5 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                          {nodes.find((n) => n.id === eitherOrPersonB)?.personName}
+                        </p>
+                      ) : null}
+                    </label>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      className="h-9 rounded-xl"
+                      disabled={
+                        busy ||
+                        !eitherOrPersonA ||
+                        !eitherOrPersonB ||
+                        eitherOrPersonA === eitherOrPersonB
+                      }
+                      onClick={confirmEitherOrLink}
+                    >
+                      {eitherOrPickerLink ? (
+                        <>
+                          <Link2Off className="mr-1.5 h-4 w-4" />
+                          Unlink pair
+                        </>
+                      ) : (
+                        <>
+                          <GitCompareArrows className="mr-1.5 h-4 w-4" />
+                          Confirm link
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 rounded-xl"
+                      disabled={busy}
+                      onClick={closeEitherOrPicker}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
 
               {chartSelectedIds.length >= 2 ? (
                 <div className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2.5 dark:border-orange-800 dark:bg-orange-950/40">
@@ -931,7 +1120,11 @@ export function SuperAdminSettingsClient({
                       {chartSelectedIds.length} boxes selected
                       <span className="font-normal opacity-80">
                         {" "}
-                        · use Bulk move above · Shift-click on chart to adjust selection
+                        · use Bulk move above
+                        {chartSelectedIds.length === 2
+                          ? " · or Link either / or"
+                          : ""}{" "}
+                        · Shift-click on chart to adjust selection
                       </span>
                     </span>
                   </>
@@ -974,6 +1167,11 @@ export function SuperAdminSettingsClient({
                 <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                   {nodes.length} {nodes.length === 1 ? "member" : "members"}
                 </span>
+                {sections.length > 0 ? (
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">
+                    {sections.length} department{sections.length === 1 ? "" : "s"}
+                  </span>
+                ) : null}
                 {eitherOrLinks.length > 0 ? (
                   <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-800 dark:bg-orange-950/50 dark:text-orange-200">
                     {eitherOrLinks.length} either/or
@@ -985,30 +1183,57 @@ export function SuperAdminSettingsClient({
                   </span>
                 ) : null}
               </div>
-              <p className="max-w-xl text-xs leading-relaxed text-zinc-500">
-                Reports hang below managers on elbow connectors. Drag a box onto another
-                member to reassign, or Shift-click several boxes and set Reports to for all
-                at once. Use Lock on a card to pin someone to their manager — locked
-                reports move with that manager when they are reparented.
-                Shift-click two boxes to link them as either/or for approvals.
-              </p>
+              <div className="flex flex-col items-stretch gap-2 sm:items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 rounded-xl"
+                  onClick={() => setSectionsPanelOpen((v) => !v)}
+                >
+                  <FolderKanban className="mr-1.5 h-4 w-4" />
+                  {sectionsPanelOpen ? "Hide departments" : "Manage departments"}
+                </Button>
+                <p className="max-w-xl text-xs leading-relaxed text-zinc-500 sm:text-right">
+                  The org chart shows departments and heads with hierarchy lines. Click a
+                  department to open its members. Use Manage departments to create groups, nest
+                  them, or have them report to a person.
+                </p>
+              </div>
             </div>
 
             {chartSelectedIds.length < 2 ? (
               <p className="mt-3 text-[11px] text-zinc-500">
-                Tip: hold Shift and click multiple people on the chart for bulk move (Apply to
-                N), or two people to link either/or for approvals.
+                Tip: open a department, then Shift-click members. Use Add / Remove for membership.
+                Link either / or opens a Person A / Person B picker.
               </p>
             ) : null}
 
-            <div className="mt-4">
-              {nodes.length === 0 ? (
+            <div className="relative mt-4">
+              {sectionsPanelOpen ? (
+                <div className="mb-4 max-h-[min(70vh,560px)] overflow-y-auto rounded-2xl border border-sky-200/80 bg-sky-50/40 p-1 dark:border-sky-900/40 dark:bg-sky-950/20">
+                  <OrgChartSectionsPanel
+                    sections={sections}
+                    nodes={nodes}
+                    companyOptions={companyOptions}
+                    busy={busy}
+                    chartSelectedIds={chartSelectedIds}
+                    onSectionsChange={setSections}
+                    onNodesChange={setNodes}
+                    onSelectMember={handleSectionMemberSelect}
+                    onMessage={setMessage}
+                    onError={setError}
+                    setBusy={setBusy}
+                  />
+                </div>
+              ) : null}
+              {nodes.length === 0 && sections.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-                  The chart is empty. Add the first member above.
+                  The chart is empty. Add members above, then create departments to organize them.
                 </p>
               ) : (
                 <OrgChartDiagram
                   nodes={nodes}
+                  sections={sections}
                   busy={busy}
                   onReparent={reparent}
                   onReparentMany={reparentMany}
@@ -1022,6 +1247,7 @@ export function SuperAdminSettingsClient({
                   eitherOrLinks={eitherOrLinks}
                   onCreateEitherOr={createEitherOr}
                   onRemoveEitherOr={removeEitherOr}
+                  onOpenEitherOrPicker={openEitherOrPicker}
                   bulkReportsTo={bulkReportsTo}
                   onBulkReportsToChange={setBulkReportsTo}
                   onBulkApply={applyBulkReportsTo}

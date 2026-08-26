@@ -336,7 +336,6 @@ export function FaqPanel() {
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
                     disabled={busy}
                     onClick={() => startEdit(item)}
                     className="h-8 rounded-lg"
@@ -345,11 +344,10 @@ export function FaqPanel() {
                   </Button>
                   <Button
                     type="button"
-                    variant="destructive"
-                    size="sm"
+                    variant="outline"
                     disabled={busy}
                     onClick={() => void removeItem(item)}
-                    className="h-8 rounded-lg"
+                    className="h-8 rounded-lg border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
                   >
                     <Trash2 className="mr-1 size-3.5" aria-hidden />
                     Remove

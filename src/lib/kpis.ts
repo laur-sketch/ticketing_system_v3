@@ -35,6 +35,7 @@ export type {
   TaskChecklistPillarMetric,
   TaskChecklistIncludedTask,
   TaskChecklistIncludedPhase,
+  TaskChecklistIncludedTaskSegment,
 } from "@/lib/kpi-period-snapshots";
 
 export type KpiRange = { from: Date; to: Date };

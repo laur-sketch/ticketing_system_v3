@@ -10,6 +10,7 @@ import {
   snapshotTimeZoneForTaskMetrics,
 } from "@/lib/kpi-period-snapshots";
 import type { TaskChecklistPillarMetrics } from "@/lib/kpis";
+import type { TaskChecklistIncludedTask } from "@/lib/kpi-period-snapshots";
 import type { TaskMetricsCadence } from "@/lib/task-metrics-range";
 
 export type DepartmentMetricRow = {
@@ -22,6 +23,8 @@ export type DepartmentMetricRow = {
   done: number;
   missing: number;
   percent: number;
+  /** Live Task Board rows for members in this section tree (extended / SegmentView). */
+  includedTasks: TaskChecklistIncludedTask[];
   /** Direct child subsections (recursive). */
   subsections: DepartmentMetricRow[];
 };
@@ -38,17 +41,23 @@ function rollupChecklistPillars(pillars: TaskChecklistPillarMetrics): {
   done: number;
   missing: number;
   percent: number;
+  includedTasks: TaskChecklistIncludedTask[];
 } {
   let total = 0;
   let done = 0;
+  const byId = new Map<string, TaskChecklistIncludedTask>();
   for (const pillar of Object.values(pillars)) {
     if (!pillar) continue;
     total += pillar.total;
     done += pillar.done;
+    for (const task of pillar.includedTasks ?? []) {
+      if (!byId.has(task.id)) byId.set(task.id, task);
+    }
   }
   const missing = Math.max(0, total - done);
   const percent = total <= 0 ? 0 : Math.round((done / total) * 1000) / 10;
-  return { total, done, missing, percent };
+  const includedTasks = [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));
+  return { total, done, missing, percent, includedTasks };
 }
 
 function collectDescendantIds(
@@ -72,9 +81,15 @@ async function metricForAgentIds(args: {
   toYmd: string;
   metricsCadence: TaskMetricsCadence;
   timeZone: string;
-}): Promise<{ total: number; done: number; missing: number; percent: number }> {
+}): Promise<{
+  total: number;
+  done: number;
+  missing: number;
+  percent: number;
+  includedTasks: TaskChecklistIncludedTask[];
+}> {
   if (args.agentIds.length === 0) {
-    return { total: 0, done: 0, missing: 0, percent: 0 };
+    return { total: 0, done: 0, missing: 0, percent: 0, includedTasks: [] };
   }
   const pillars = await computeTaskChecklistPillarMetrics({
     metricsCadence: args.metricsCadence,

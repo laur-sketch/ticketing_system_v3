@@ -103,7 +103,15 @@ export async function POST(req: Request) {
     body.portalAccountId?.trim() ||
     (
       await prisma.portalAccount.findFirst({
-        where: { mergedSourceUserId },
+        where: {
+          mergedSourceUserId: (() => {
+            try {
+              return BigInt(mergedSourceUserId);
+            } catch {
+              return null;
+            }
+          })(),
+        },
         select: { id: true },
       })
     )?.id;

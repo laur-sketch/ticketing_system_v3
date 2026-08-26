@@ -12,6 +12,7 @@ import {
   jobOrderProjectRequestPendingFromActivities,
 } from "@/lib/job-order-project-request";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
+import { kpiRowInCompanyScope } from "@/lib/kpi-company-board-scope";
 import { isProjectTask } from "@/lib/kpi-subkpis";
 import { prisma } from "@/lib/prisma";
 import { loadAgentIdsForCompanyTeam } from "@/lib/staff-company-scope";
@@ -65,35 +66,40 @@ export async function GET(
     const companyTeamId = prefill.teamId?.trim() || null;
 
     let where: Prisma.KpiMaintenanceWhereInput = {};
+    let companyAgentIdSet: Set<string> | null = null;
+    let companyFilterId: string | null = null;
     if (canAssignWork && companyTeamId) {
-      const agentIds = await loadAgentIdsForCompanyTeam(companyTeamId);
-      const companyScopeOr: Prisma.KpiMaintenanceWhereInput[] = [
-        { assignedAgentId: null, scopedCompanyTeamId: companyTeamId },
-      ];
-      if (agentIds.length > 0) {
-        companyScopeOr.unshift({ assignedAgentId: { in: agentIds } });
-      }
-      where = { OR: companyScopeOr };
+      // Load broadly, then apply kpiRowInCompanyScope so sub-assignee-only projects appear.
+      companyFilterId = companyTeamId;
+      companyAgentIdSet = new Set(await loadAgentIdsForCompanyTeam(companyTeamId));
     } else if (!canAssignWork) {
       const operatorId = operator?.id ?? null;
       where = operatorId ? { assignedAgentId: operatorId } : { id: "__none__" };
     }
 
-    const rows = await prisma.kpiMaintenance.findMany({
+    let rows = await prisma.kpiMaintenance.findMany({
       where,
       orderBy: { updatedAt: "desc" },
-      take: 200,
+      take: companyFilterId ? 500 : 200,
       select: {
         id: true,
         title: true,
         mainTask: true,
         itProjectName: true,
+        assignedAgentId: true,
+        scopedCompanyTeamId: true,
         subKpis: true,
       },
     });
+    if (companyFilterId && companyAgentIdSet) {
+      rows = rows.filter((r) =>
+        kpiRowInCompanyScope(r, companyFilterId, companyAgentIdSet),
+      );
+    }
 
     projects = rows
       .filter((r) => isItProjectImplementationPillar(r.title) || isProjectTask(r.subKpis))
+      .slice(0, 200)
       .map((r) => ({
         id: r.id,
         displayName: projectDisplayName(r),

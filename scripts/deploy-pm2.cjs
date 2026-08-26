@@ -71,6 +71,18 @@ if (process.platform === "win32") {
   }
 }
 
+/** Stale .next artifacts cause React Client Manifest errors and blank pages. */
+const nextDir = path.join(root, ".next");
+try {
+  const fs = require("fs");
+  if (fs.existsSync(nextDir)) {
+    console.log("Removing stale .next build…");
+    fs.rmSync(nextDir, { recursive: true, force: true });
+  }
+} catch (e) {
+  console.warn("Could not remove .next:", e.message);
+}
+
 execSync("npm run build", opts);
 
 try {

@@ -82,6 +82,10 @@ export async function countTaskBoardLanes(input: {
       frequency: true,
       subKpis: true,
       isRecurring: true,
+      recurrenceWeekday: true,
+      recurrenceMonthDay: true,
+      periodCycleStartAt: true,
+      nonRecurringEndAt: true,
       assignedAgentId: true,
     },
   });

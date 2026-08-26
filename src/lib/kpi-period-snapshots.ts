@@ -21,11 +21,13 @@ import {
   isProjectTask,
   kpiChecklistMetricView,
   kpiChecklistProgress,
+  isUnsegmentedSegmentId,
   normalizeSubKpis,
   pillarVirtualSubKpiItem,
   progressWithInvertedRecording,
   subKpiProgressOwner,
   taskUsesInvertedRecording,
+  UNSEGMENTED_SEGMENT_LABEL,
   type KpiChecklistProgress,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
@@ -432,6 +434,16 @@ export type TaskChecklistIncludedTaskPhase = {
   percent: number;
 };
 
+/** Named checklist segments for SegmentView (donut inspect). */
+export type TaskChecklistIncludedTaskSegment = {
+  id: string;
+  name: string;
+  total: number;
+  done: number;
+  percent: number;
+  items: TaskChecklistIncludedTaskItem[];
+};
+
 /** @deprecated Prefer {@link TaskChecklistIncludedTaskPhase}. */
 export type TaskChecklistIncludedPhase = TaskChecklistIncludedTaskPhase;
 
@@ -457,6 +469,8 @@ export type TaskChecklistIncludedTask = {
   items: TaskChecklistIncludedTaskItem[];
   /** Project timeline extended view — progress per phase instead of flat sub-tasks. */
   phases?: TaskChecklistIncludedTaskPhase[];
+  /** Segmented checklists — SegmentView shows these instead of flat items. */
+  segments?: TaskChecklistIncludedTaskSegment[];
 };
 
 export type TaskChecklistPillarMetric = KpiChecklistProgress & {
@@ -523,6 +537,65 @@ export function kpiMaintenanceWhereForTaskMetrics(
   return { assignedAgentId };
 }
 
+function mapIncludedTaskSegmentItems(
+  items: SubKpiItem[],
+  parentAssignee: { id: string; name: string } | null,
+): TaskChecklistIncludedTaskItem[] {
+  return items
+    .filter((item) => item.title.trim().length > 0)
+    .map((item) => {
+      const owner = subKpiProgressOwner(item, parentAssignee);
+      return {
+        id: item.id,
+        title: item.title.trim(),
+        done: Boolean(item.done),
+        assigneeName: owner.role === "Unassigned" ? null : owner.name,
+        recordedPercent: numericalRecordProgressPercent(item.numericalValue, item.numericalTarget),
+      };
+    });
+}
+
+/** Named segments for SegmentView; undefined when the checklist is not segmented. */
+function buildIncludedTaskSegments(
+  subKpis: unknown,
+  parentAssignee: { id: string; name: string } | null,
+): TaskChecklistIncludedTaskSegment[] | undefined {
+  const n = normalizeSubKpis(subKpis);
+  if (!n.segmented) return undefined;
+  const segments = n.segments
+    .map((seg) => {
+      const items = mapIncludedTaskSegmentItems(seg.items, parentAssignee);
+      const total = items.length;
+      const done = items.reduce((sum, item) => sum + (item.done ? 1 : 0), 0);
+      return {
+        id: seg.id,
+        name: isUnsegmentedSegmentId(seg.id)
+          ? UNSEGMENTED_SEGMENT_LABEL
+          : seg.label?.trim() || "Segment",
+        total,
+        done,
+        percent: total > 0 ? Math.round((done / total) * 100) : 0,
+        items,
+      };
+    })
+    .filter((seg) => seg.total > 0 || !isUnsegmentedSegmentId(seg.id));
+  return segments.length > 0 ? segments : undefined;
+}
+
+function phasesAsIncludedSegments(
+  phases: TaskChecklistIncludedTaskPhase[],
+): TaskChecklistIncludedTaskSegment[] | undefined {
+  if (phases.length === 0) return undefined;
+  return phases.map((ph) => ({
+    id: ph.id,
+    name: ph.name,
+    total: ph.total,
+    done: ph.done,
+    percent: ph.percent,
+    items: [] as TaskChecklistIncludedTaskItem[],
+  }));
+}
+
 function buildIncludedTasksFromKpis(
   rows: ReadonlyArray<{
     id: string;
@@ -575,9 +648,13 @@ function buildIncludedTasksFromKpis(
         percent: total > 0 ? Math.round((done / total) * 100) : agg.averagePercent,
         items: [],
         phases,
+        segments: phasesAsIncludedSegments(phases),
       });
       continue;
     }
+    const parentAssignee = row.assignedAgent
+      ? { id: row.assignedAgent.id, name: row.assignedAgent.name }
+      : null;
     const items = (opts?.itemsForRow?.(row) ?? collectChecklistProgressItems(row.subKpis, title)).filter(
       (item) => item.title.trim().length > 0,
     );
@@ -599,6 +676,7 @@ function buildIncludedTasksFromKpis(
         title: item.title.trim(),
         done: isDone(item),
       })),
+      segments: buildIncludedTaskSegments(row.subKpis, parentAssignee),
     });
   }
   return out.sort((a, b) => a.title.localeCompare(b.title));
@@ -912,6 +990,13 @@ function buildIncludedTasksForKpis(
     if (isProjectTimelineMetricsKpi(kpi)) {
       const agg = itProjectAggregatedProgressFromRaw(kpi.subKpis);
       const missing = Math.max(0, agg.totalItems - agg.totalDone);
+      const phases = agg.phases.map((ph) => ({
+        id: ph.phaseId,
+        name: ph.phaseName,
+        total: ph.total,
+        done: ph.done,
+        percent: ph.percent,
+      }));
       return {
         id: kpi.id,
         title: kpi.title,
@@ -927,13 +1012,8 @@ function buildIncludedTasksForKpis(
         totalDataRecordedPeriods:
           totalDataRecordedPeriods > 0 ? totalDataRecordedPeriods : agg.totalItems > 0 ? 1 : 0,
         items: [] as TaskChecklistIncludedTaskItem[],
-        phases: agg.phases.map((ph) => ({
-          id: ph.phaseId,
-          name: ph.phaseName,
-          total: ph.total,
-          done: ph.done,
-          percent: ph.percent,
-        })),
+        phases,
+        segments: phasesAsIncludedSegments(phases),
       };
     }
 
@@ -977,6 +1057,7 @@ function buildIncludedTasksForKpis(
       totalDataRecordedPeriods:
         totalDataRecordedPeriods > 0 ? totalDataRecordedPeriods : progress.total > 0 ? 1 : 0,
       items,
+      segments: buildIncludedTaskSegments(kpi.subKpis, parentAssignee),
     };
   });
 }

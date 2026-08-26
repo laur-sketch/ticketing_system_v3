@@ -163,7 +163,7 @@ export async function resolveLiveHrisDbAvailable(): Promise<string> {
       /* try next */
     }
   }
-  resolvedLiveHrisDb = preferred;
+  // Do not cache a miss — schemas may appear later (or env may change) in long-lived PM2.
   return preferred;
 }
 

@@ -338,6 +338,12 @@ export async function mergeLegacyConflictPortals(options?: {
         })
       ).count;
 
+      await prismaPrimary.portalMergeMapping.deleteMany({
+        where: {
+          mergedSourceUserId: pair.canonical.mergedSourceUserId!,
+          NOT: { portalAccountId: pair.canonical.id },
+        },
+      });
       await prismaPrimary.portalMergeMapping.upsert({
         where: { portalAccountId: pair.canonical.id },
         create: {
@@ -348,6 +354,7 @@ export async function mergeLegacyConflictPortals(options?: {
           lastSyncedAt: new Date(),
         },
         update: {
+          mergedSourceUserId: pair.canonical.mergedSourceUserId!,
           legacyPortalEmail: pair.legacy.email,
           legacyUsername: pair.legacy.username ?? undefined,
           lastSyncedAt: new Date(),

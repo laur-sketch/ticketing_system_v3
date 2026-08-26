@@ -154,15 +154,15 @@ export function mergeAccessControlConfig(
 }
 
 export function accessCapabilityGroups() {
-  const groups: Array<{ group: string; items: typeof ACCESS_CAPABILITIES }> = [];
-  const byGroup = new Map<string, (typeof ACCESS_CAPABILITIES)[number][]>();
+  const groups: Array<{ group: string; items: Array<(typeof ACCESS_CAPABILITIES)[number]> }> = [];
+  const byGroup = new Map<string, Array<(typeof ACCESS_CAPABILITIES)[number]>>();
   for (const cap of ACCESS_CAPABILITIES) {
     const list = byGroup.get(cap.group) ?? [];
     list.push(cap);
     byGroup.set(cap.group, list);
   }
   for (const [group, items] of byGroup) {
-    groups.push({ group, items: items as typeof ACCESS_CAPABILITIES });
+    groups.push({ group, items });
   }
   return groups;
 }

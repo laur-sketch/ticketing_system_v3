@@ -214,8 +214,30 @@ async function syncAuthFromPortal(portal: PortalRow, mergedSourceUserId: bigint,
   };
 
   if (!authUser) {
-    authUser = await prismaAuth.user.create({ data });
-  } else {
+    try {
+      authUser = await prismaAuth.user.create({ data });
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "P2002") throw e;
+      authUser =
+        (await prismaAuth.user.findUnique({ where: { portalAccountId: portal.id } })) ??
+        (await prismaAuth.user.findUnique({ where: { hrisSourceUserId: mergedSourceUserId } })) ??
+        (await prismaAuth.user.findUnique({ where: { email } }));
+      if (!authUser) throw e;
+    }
+  }
+
+  if (authUser) {
+    // Unique portal_account_id / hris_source_user_id — free from other auth rows first.
+    await prismaAuth.user.updateMany({
+      where: { portalAccountId: portal.id, NOT: { id: authUser.id } },
+      data: { portalAccountId: null },
+    });
+    await prismaAuth.user.updateMany({
+      where: { hrisSourceUserId: mergedSourceUserId, NOT: { id: authUser.id } },
+      data: { hrisSourceUserId: null },
+    });
+
     const emailTaken =
       authUser.email !== email
         ? await prismaAuth.user.findUnique({ where: { email } })
@@ -225,28 +247,141 @@ async function syncAuthFromPortal(portal: PortalRow, mergedSourceUserId: bigint,
         ? await prismaAuth.user.findUnique({ where: { username } })
         : null;
 
-    authUser = await prismaAuth.user.update({
-      where: { id: authUser.id },
-      data: {
-        name: data.name,
-        email: emailTaken && emailTaken.id !== authUser.id ? authUser.email : email,
-        username:
-          usernameTaken && usernameTaken.id !== authUser.id ? authUser.username : username,
-        portalAccountId: authUser.portalAccountId ?? portal.id,
-        hrisSourceUserId: authUser.hrisSourceUserId ?? mergedSourceUserId,
-        hrisRole,
-        portalRole,
-        headPrivileges: portal.headPrivileges,
-        lastSyncedAt: new Date(),
-      },
+    try {
+      authUser = await prismaAuth.user.update({
+        where: { id: authUser.id },
+        data: {
+          name: data.name,
+          email: emailTaken && emailTaken.id !== authUser.id ? authUser.email : email,
+          username:
+            usernameTaken && usernameTaken.id !== authUser.id ? authUser.username : username,
+          portalAccountId: portal.id,
+          hrisSourceUserId: mergedSourceUserId,
+          hrisRole,
+          portalRole,
+          headPrivileges: portal.headPrivileges,
+          lastSyncedAt: new Date(),
+        },
+      });
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "P2002") throw e;
+      await prismaAuth.user.updateMany({
+        where: { portalAccountId: portal.id, NOT: { id: authUser.id } },
+        data: { portalAccountId: null },
+      });
+      await prismaAuth.user.updateMany({
+        where: { hrisSourceUserId: mergedSourceUserId, NOT: { id: authUser.id } },
+        data: { hrisSourceUserId: null },
+      });
+      authUser = await prismaAuth.user.update({
+        where: { id: authUser.id },
+        data: {
+          name: data.name,
+          portalAccountId: portal.id,
+          hrisSourceUserId: mergedSourceUserId,
+          hrisRole,
+          portalRole,
+          headPrivileges: portal.headPrivileges,
+          lastSyncedAt: new Date(),
+        },
+      });
+    }
+  }
+
+  if (!authUser) {
+    throw new Error(`Could not resolve auth user for portal ${portal.id}`);
+  }
+
+  // auth_user_id is unique on portal_accounts — free conflicts before link.
+  await prismaPrimary.portalAccount.updateMany({
+    where: { authUserId: authUser.id, NOT: { id: portal.id } },
+    data: { authUserId: null },
+  });
+  try {
+    await prismaPrimary.portalAccount.update({
+      where: { id: portal.id },
+      data: { authUserId: authUser.id },
+    });
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code !== "P2002") throw e;
+    await prismaPrimary.portalAccount.updateMany({
+      where: { authUserId: authUser.id, NOT: { id: portal.id } },
+      data: { authUserId: null },
+    });
+    await prismaPrimary.portalAccount.update({
+      where: { id: portal.id },
+      data: { authUserId: authUser.id },
+    });
+  }
+  return true;
+}
+
+async function upsertPortalMergeMapping(input: {
+  portalAccountId: string;
+  mergedSourceUserId: bigint;
+  legacyPortalEmail: string;
+  legacyUsername: string | null;
+}): Promise<void> {
+  const { portalAccountId, mergedSourceUserId, legacyPortalEmail, legacyUsername } = input;
+  const now = new Date();
+
+  // Unique on merged_source_user_id: move or clear any other portal's claim first.
+  const conflict = await prismaPrimary.portalMergeMapping.findFirst({
+    where: { mergedSourceUserId, NOT: { portalAccountId } },
+    select: { portalAccountId: true },
+  });
+  if (conflict) {
+    await prismaPrimary.portalMergeMapping.delete({
+      where: { portalAccountId: conflict.portalAccountId },
     });
   }
 
-  await prismaPrimary.portalAccount.update({
-    where: { id: portal.id },
-    data: { authUserId: authUser.id },
+  const existing = await prismaPrimary.portalMergeMapping.findUnique({
+    where: { portalAccountId },
+    select: { portalAccountId: true },
   });
-  return true;
+  if (existing) {
+    await prismaPrimary.portalMergeMapping.update({
+      where: { portalAccountId },
+      data: {
+        mergedSourceUserId,
+        legacyPortalEmail,
+        legacyUsername,
+        lastSyncedAt: now,
+      },
+    });
+    return;
+  }
+
+  try {
+    await prismaPrimary.portalMergeMapping.create({
+      data: {
+        portalAccountId,
+        mergedSourceUserId,
+        legacyPortalEmail,
+        legacyUsername,
+        lastSyncedAt: now,
+      },
+    });
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code !== "P2002") throw e;
+    // Lost a race — retry as update after freeing the merged id.
+    await prismaPrimary.portalMergeMapping.deleteMany({
+      where: { mergedSourceUserId, NOT: { portalAccountId } },
+    });
+    await prismaPrimary.portalMergeMapping.update({
+      where: { portalAccountId },
+      data: {
+        mergedSourceUserId,
+        legacyPortalEmail,
+        legacyUsername,
+        lastSyncedAt: now,
+      },
+    });
+  }
 }
 
 async function ensureAgentForPortal(portal: PortalRow, dryRun: boolean): Promise<boolean> {
@@ -347,28 +482,11 @@ export async function runPortalToMergedSync(options?: {
       result.agentOwnershipMerged += await mergeLegacyAgentOwnership(portal, dryRun);
 
       if (!dryRun) {
-        // merged_source_user_id is unique — free any stale mapping pointing at this merged user.
-        await prismaPrimary.portalMergeMapping.deleteMany({
-          where: {
-            mergedSourceUserId,
-            NOT: { portalAccountId: portal.id },
-          },
-        });
-        await prismaPrimary.portalMergeMapping.upsert({
-          where: { portalAccountId: portal.id },
-          create: {
-            portalAccountId: portal.id,
-            mergedSourceUserId,
-            legacyPortalEmail: portal.email,
-            legacyUsername: portal.username,
-            lastSyncedAt: new Date(),
-          },
-          update: {
-            mergedSourceUserId,
-            legacyPortalEmail: portal.email,
-            legacyUsername: portal.username,
-            lastSyncedAt: new Date(),
-          },
+        await upsertPortalMergeMapping({
+          portalAccountId: portal.id,
+          mergedSourceUserId,
+          legacyPortalEmail: portal.email,
+          legacyUsername: portal.username,
         });
       }
     } catch (e) {

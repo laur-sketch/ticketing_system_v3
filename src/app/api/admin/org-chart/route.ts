@@ -122,7 +122,11 @@ export async function GET() {
   const nodes = await prismaPrimary.orgChartNode.findMany({
     include: {
       sectionMemberships: {
-        select: { sectionId: true },
+        select: {
+          sectionId: true,
+          roleId: true,
+          role: { select: { id: true, label: true } },
+        },
         orderBy: { createdAt: "asc" },
       },
     },
@@ -442,7 +446,11 @@ export async function PATCH(req: Request) {
       },
       include: {
         sectionMemberships: {
-          select: { sectionId: true },
+          select: {
+            sectionId: true,
+            roleId: true,
+            role: { select: { id: true, label: true } },
+          },
           orderBy: { createdAt: "asc" },
         },
       },

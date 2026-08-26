@@ -528,7 +528,7 @@ export function AgentKpiKanbanFlow({
   const [confirmRemoveDraftId, setConfirmRemoveDraftId] = useState<string | null>(null);
   const [viewTravelOrder, setViewTravelOrder] = useState<{
     taskId: string;
-    travelOrderId: string;
+    travelOrderId: string | null;
     title: string;
   } | null>(null);
   const [taskCategoryFilter, setTaskCategoryFilter] = useState<TaskBoardCategory>("all");
@@ -4862,13 +4862,13 @@ export function AgentKpiKanbanFlow({
       <TaskBoardPopup
         open={travelOrdersOpen}
         title="Travel Orders"
-        description="Travel orders for your company, plus any where you are a traveler, approver, or confirmer. Create a request, add co-travelers, and open a row for approvals and check-ins."
+        description="Travel orders for your company, plus any where you are a traveler, confirmer, or approver. Open a row to view details — including confirmed orders."
         onClose={() => setTravelOrdersOpen(false)}
         size="lg"
       >
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Includes your company&apos;s orders and travel orders you are assigned to.
+            Includes company orders and orders you travel on, confirm, or approve. Confirmed orders stay viewable here.
           </p>
           <button
             type="button"
@@ -4990,6 +4990,17 @@ export function AgentKpiKanbanFlow({
           </ul>
         )}
       </TaskBoardPopup>
+      <TravelOrderApprovalModal
+        open={Boolean(viewTravelOrder)}
+        taskId={viewTravelOrder?.taskId ?? null}
+        travelOrderId={viewTravelOrder?.travelOrderId ?? null}
+        title={viewTravelOrder?.title}
+        onClose={() => setViewTravelOrder(null)}
+        onUpdated={() => {
+          void load();
+          void reloadCompanyTravelOrders();
+        }}
+      />
       <TravelOrderRequestModal
         open={createTravelOrderOpen}
         mainTaskName=""
@@ -5013,7 +5024,11 @@ export function AgentKpiKanbanFlow({
             return;
           }
           void load();
-          openActiveTask(kpiId);
+          setViewTravelOrder({
+            taskId: kpiId,
+            travelOrderId: null,
+            title: "Travel order",
+          });
         }}
       />
       <TravelOrderApprovalModal

@@ -1227,9 +1227,6 @@ function TaskMetricsPanel({
               taskType === "task" || taskType === "field" || taskType === "project"
             }
             canExtendView={canExtendView}
-            reportingTimeZone={reportingTimeZone}
-            companyId={selectedCompany || undefined}
-            taskType={taskType}
           />
         ) : metricsViewMode === "departments" ? (
           <DepartmentTaskMetricsGrid

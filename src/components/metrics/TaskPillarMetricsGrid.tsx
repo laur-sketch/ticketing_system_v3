@@ -999,9 +999,9 @@ export function TaskPillarMetricsGrid({
             headline={headline}
             subLabel={subLabel}
             onInspect={() => {
-              setInspectedPillar(pillar);
-              setExtendedView(false);
-            }}
+                setInspectedPillar(pillar);
+                setExtendedView(false);
+              }}
           />
         );
       })}

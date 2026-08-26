@@ -32,7 +32,11 @@ export default async function SuperAdminSettingsPage({
     prisma.orgChartNode.findMany({
       include: {
         sectionMemberships: {
-          select: { sectionId: true },
+          select: {
+            sectionId: true,
+            roleId: true,
+            role: { select: { id: true, label: true } },
+          },
           orderBy: { createdAt: "asc" },
         },
       },
@@ -49,6 +53,18 @@ export default async function SuperAdminSettingsPage({
             personRole: true,
             companyName: true,
           },
+        },
+        reportsToNode: {
+          select: {
+            id: true,
+            personName: true,
+            personRole: true,
+            companyName: true,
+          },
+        },
+        roles: {
+          select: { id: true, label: true, sortOrder: true },
+          orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
         },
         _count: { select: { memberships: true } },
       },
@@ -79,6 +95,11 @@ export default async function SuperAdminSettingsPage({
         headName: s.headNode?.personName ?? null,
         headRole: s.headNode?.personRole ?? null,
         headCompanyName: s.headNode?.companyName ?? null,
+        reportsToNodeId: s.reportsToNodeId,
+        reportsToName: s.reportsToNode?.personName ?? null,
+        reportsToRole: s.reportsToNode?.personRole ?? null,
+        reportsToCompanyName: s.reportsToNode?.companyName ?? null,
+        roles: s.roles,
         memberCount: s._count.memberships,
       }))}
       initialEitherOrLinks={eitherOrLinks.map((l) => ({

@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import {
   findMergedUserByEmail,
   normalizeBcryptHash,
+  resolveLiveHrisDbAvailable,
   toLaravelBcryptHash,
   verifyMergedUserPassword,
 } from "@/lib/auth/merged-credentials";
@@ -93,17 +94,15 @@ export async function setLinkedAccountPassword(
         LIMIT 1
       `;
       if (tagged[0] && hrisTags.includes(tagged[0].source_database)) {
-        const liveDb = process.env.HRIS_LIVE_SOURCE_DB?.trim() || "hris-dev";
-        if (/^[A-Za-z0-9_-]+$/.test(liveDb)) {
-          try {
-            await db.$executeRawUnsafe(
-              `UPDATE \`${liveDb}\`.users SET password = ? WHERE id = ?`,
-              laravelHash,
-              portal.mergedSourceUserId,
-            );
-          } catch (e) {
-            console.warn("[linked-account-password] HRIS password write failed", e);
-          }
+        const liveDb = await resolveLiveHrisDbAvailable();
+        try {
+          await db.$executeRawUnsafe(
+            `UPDATE \`${liveDb}\`.users SET password = ? WHERE id = ?`,
+            laravelHash,
+            portal.mergedSourceUserId,
+          );
+        } catch (e) {
+          console.warn("[linked-account-password] HRIS password write failed", e);
         }
       }
     });

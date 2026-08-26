@@ -31,10 +31,10 @@ export function formatOrgChartLayerLabel(layer: number): string {
 }
 
 /** Sort nodes by layer (asc), then name — for Reports-to dropdowns. */
-export function sortOrgNodesByLayer(
-  nodes: OrgChartNode[],
+export function sortOrgNodesByLayer<T extends Pick<OrgChartNode, "id" | "personName">>(
+  nodes: T[],
   layers: Map<string, number>,
-): OrgChartNode[] {
+): T[] {
   return [...nodes].sort((a, b) => {
     const la = layers.get(a.id) ?? 1;
     const lb = layers.get(b.id) ?? 1;
@@ -43,7 +43,10 @@ export function sortOrgNodesByLayer(
   });
 }
 
-export function orgChartOptionLabel(node: OrgChartNode, layer: number): string {
+export function orgChartOptionLabel(
+  node: Pick<OrgChartNode, "personName" | "companyName">,
+  layer: number,
+): string {
   const company = node.companyName?.trim();
   const base = `${formatOrgChartLayerLabel(layer)} · ${node.personName}`;
   return company ? `${base} · ${company}` : base;
