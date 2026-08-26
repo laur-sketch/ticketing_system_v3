@@ -1,0 +1,10 @@
+main_task,frequency,is_recurring,assignee_email,department_name,company,subtask_title,require_checkbox,require_before_after_screenshots,require_screenshot_upload,require_numerical,numerical_target,numerical_value,notes
+Operations daily checks,DAILY,TRUE,alice@example.com,Finance & Accounting,ACI,Bank recon,TRUE,FALSE,FALSE,FALSE,,,Checkbox only — done when checked
+Operations daily checks,DAILY,TRUE,alice@example.com,Finance & Accounting,ACI,Site photo proof,FALSE,TRUE,FALSE,FALSE,,,Before+after screenshots required (no checkbox)
+Operations daily checks,DAILY,TRUE,alice@example.com,Finance & Accounting,ACI,Signed form upload,FALSE,FALSE,TRUE,FALSE,,,Generic screenshot/file upload required
+Operations daily checks,DAILY,TRUE,alice@example.com,Finance & Accounting,ACI,Collections target,FALSE,FALSE,FALSE,TRUE,100,85,Target 100 · actual 85 (partial progress)
+Store visit pack,WEEKLY,TRUE,bob@example.com,Revenue Sales,ACI,Visit checklist,TRUE,TRUE,FALSE,FALSE,,,Checkbox AND before/after screenshots (all must pass)
+Store visit pack,WEEKLY,TRUE,bob@example.com,Revenue Sales,ACI,Units sold,TRUE,FALSE,FALSE,TRUE,50,50,Target 50 · actual 50 (meets numerical; checkbox still required)
+Month-end close,MONTHLY,TRUE,carol@example.com,Accounting,ACI,Journal pack upload,TRUE,FALSE,TRUE,FALSE,,,Checkbox AND generic upload
+Special audit request,ONE_OFF,FALSE,dave@example.com,Internal Audit,ACI,PBC evidence,FALSE,FALSE,TRUE,FALSE,,,One-off only counts in metrics after full task completion
+Daily headcount,DAILY,TRUE,alice@example.com,Finance & Accounting,ACI,,FALSE,FALSE,FALSE,TRUE,100,100,Pillar-only — blank subtask_title; completion on main task

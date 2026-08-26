@@ -568,6 +568,7 @@ function InsightsPageInner() {
             canExtendView={isAdminRole}
             canManageDepartmentVisibility={isSuperAdmin}
             onDepartmentVisibilityChanged={() => void loadDepartmentMetrics()}
+            canImportDepartmentTasks={isAdminRole}
           />
         </div>
       
@@ -870,6 +871,7 @@ function TaskMetricsPanel({
   canExtendView = false,
   canManageDepartmentVisibility = false,
   onDepartmentVisibilityChanged,
+  canImportDepartmentTasks = false,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   personnelTicketMetrics: PersonnelTicketMetric[];
@@ -905,6 +907,7 @@ function TaskMetricsPanel({
   canExtendView?: boolean;
   canManageDepartmentVisibility?: boolean;
   onDepartmentVisibilityChanged?: () => void;
+  canImportDepartmentTasks?: boolean;
 }) {
   const freq = taskMetricsCadence;
   const isMonthly = freq === "MONTHLY";
@@ -1235,6 +1238,8 @@ function TaskMetricsPanel({
             loading={loading}
             canManageVisibility={canManageDepartmentVisibility}
             onVisibilityChanged={onDepartmentVisibilityChanged}
+            canImport={canImportDepartmentTasks}
+            onImportComplete={onDepartmentVisibilityChanged}
           />
         ) : (
           <>

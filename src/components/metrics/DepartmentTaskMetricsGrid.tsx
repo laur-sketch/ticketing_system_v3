@@ -1,7 +1,16 @@
 "use client";
 
-import { Building2, ChevronLeft, Eye, EyeOff, Layers, Settings2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Building2,
+  ChevronLeft,
+  Download,
+  Eye,
+  EyeOff,
+  Layers,
+  Upload,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { DepartmentMetricRow } from "@/lib/department-task-metrics";
 import type {
@@ -26,6 +35,9 @@ type DepartmentTaskMetricsGridProps = {
   /** SuperAdmin: manage which sections appear in Departments metrics. */
   canManageVisibility?: boolean;
   onVisibilityChanged?: () => void;
+  /** Admin+: import Task Board tasks from CSV into departments. */
+  canImport?: boolean;
+  onImportComplete?: () => void;
 };
 
 function segmentsForIncludedTask(task: TaskChecklistIncludedTask): TaskChecklistIncludedTaskSegment[] {
@@ -522,6 +534,8 @@ export function DepartmentTaskMetricsGrid({
   loading = false,
   canManageVisibility = false,
   onVisibilityChanged,
+  canImport = false,
+  onImportComplete,
 }: DepartmentTaskMetricsGridProps) {
   const [drillStack, setDrillStack] = useState<DepartmentMetricRow[]>([]);
   const [inspectView, setInspectView] = useState<DepartmentInspectView>("subsections");
@@ -532,6 +546,10 @@ export function DepartmentTaskMetricsGrid({
   const [visibilityLoading, setVisibilityLoading] = useState(false);
   const [visibilitySaving, setVisibilitySaving] = useState(false);
   const [visibilityError, setVisibilityError] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const inspected = drillStack.length > 0 ? drillStack[drillStack.length - 1]! : null;
   const includedTasks = inspected?.includedTasks ?? [];
@@ -665,6 +683,59 @@ export function DepartmentTaskMetricsGrid({
     setInspectView("segment");
   }
 
+  async function onImportFileSelected(file: File | null) {
+    if (!file || !canImport) return;
+    setImportBusy(true);
+    setImportError(null);
+    setImportMessage(null);
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      try {
+        form.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
+      } catch {
+        /* ignore */
+      }
+      const res = await fetch("/api/kpis/department-task-csv/import", {
+        method: "POST",
+        body: form,
+      });
+      const json = (await res.json().catch(() => null)) as {
+        error?: string;
+        created?: Array<{ mainTask: string }>;
+        skipped?: Array<{ mainTask: string; reason: string }>;
+        errors?: string[];
+        membershipsAdded?: number;
+      } | null;
+      if (!res.ok) {
+        const detail =
+          json?.error ||
+          (Array.isArray(json?.errors) && json.errors.length > 0 ? json.errors[0] : null) ||
+          "Import failed.";
+        setImportError(detail);
+        return;
+      }
+      const created = json?.created?.length ?? 0;
+      const skipped = json?.skipped?.length ?? 0;
+      const errCount = json?.errors?.length ?? 0;
+      const parts = [
+        `Created ${created} task${created === 1 ? "" : "s"}`,
+        skipped > 0 ? `skipped ${skipped}` : null,
+        errCount > 0 ? `${errCount} row error${errCount === 1 ? "" : "s"}` : null,
+      ].filter(Boolean);
+      setImportMessage(parts.join(" · "));
+      if (Array.isArray(json?.errors) && json.errors.length > 0 && created === 0) {
+        setImportError(json.errors.slice(0, 3).join(" "));
+      }
+      if (created > 0) onImportComplete?.();
+    } catch {
+      setImportError("Import failed.");
+    } finally {
+      setImportBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   const viewTabClass = (active: boolean) =>
     cn(
       "rounded-full border px-3 py-1 text-xs font-semibold",
@@ -673,10 +744,13 @@ export function DepartmentTaskMetricsGrid({
         : "border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20",
     );
 
+  const headerActionClass =
+    "inline-flex h-8 shrink-0 items-center gap-1.5 px-3 text-xs font-semibold leading-none text-zinc-700 transition hover:bg-zinc-100 hover:text-orange-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:hover:text-orange-300";
+
   return (
     <section className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
             Department sections
           </p>
@@ -686,49 +760,100 @@ export function DepartmentTaskMetricsGrid({
           {reportingPeriodLabel ? (
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
           ) : null}
-          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-500">
+          <p className="mt-1 max-w-2xl text-[11px] text-zinc-500 dark:text-zinc-500">
             Main donuts use org-chart section membership. Double-click a section to open subsections
             and member tasks; use SegmentView for checklist segments.
             {canManageVisibility
               ? " SuperAdmin can hide sections from this view for everyone."
               : ""}
           </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          {canManageVisibility ? (
-            <button
-              type="button"
-              onClick={() => {
-                setManageOpen(true);
-                void loadVisibility();
-              }}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-orange-300 hover:text-orange-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-orange-700 dark:hover:text-orange-300"
+
+          <div
+            className="mt-3 inline-flex max-w-full flex-wrap items-center overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"
+            role="group"
+            aria-label="Department data actions"
+          >
+            <a
+              href="/api/kpis/department-task-csv/sample"
+              download="department-task-import-sample.csv"
+              onClick={() => setImportError(null)}
+              className={headerActionClass}
             >
-              <Settings2 className="size-3.5" aria-hidden />
-              Hide sections
-              {hiddenIds.length > 0 ? (
-                <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] tabular-nums dark:bg-zinc-800">
-                  {hiddenIds.length}
-                </span>
-              ) : null}
-            </button>
-          ) : null}
-          {sections.length > 0 ? (
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 dark:border-zinc-700/80 dark:bg-zinc-900/50">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-                Org rollup
-              </p>
-              <p className="mt-1 text-2xl font-black tabular-nums text-zinc-900 dark:text-zinc-100">
-                {rollupPercent}%
-              </p>
-              <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-                {rollup.done}/{rollup.total} checklist items · {sections.length} main section
-                {sections.length === 1 ? "" : "s"}
-              </p>
-            </div>
-          ) : null}
+              <Download className="size-3.5 shrink-0" aria-hidden />
+              Sample CSV
+            </a>
+            {canImport ? (
+              <>
+                <span className="h-4 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700" aria-hidden />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="sr-only"
+                  tabIndex={-1}
+                  onChange={(e) => void onImportFileSelected(e.target.files?.[0] ?? null)}
+                />
+                <button
+                  type="button"
+                  disabled={importBusy}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={headerActionClass}
+                >
+                  <Upload className="size-3.5 shrink-0" aria-hidden />
+                  {importBusy ? "Importing…" : "Import CSV"}
+                </button>
+              </>
+            ) : null}
+            {canManageVisibility ? (
+              <>
+                <span className="h-4 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700" aria-hidden />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManageOpen(true);
+                    void loadVisibility();
+                  }}
+                  className={headerActionClass}
+                >
+                  <EyeOff className="size-3.5 shrink-0" aria-hidden />
+                  Hide sections
+                  {hiddenIds.length > 0 ? (
+                    <span className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] tabular-nums leading-none dark:bg-zinc-800">
+                      {hiddenIds.length}
+                    </span>
+                  ) : null}
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
+
+        {sections.length > 0 ? (
+          <div className="shrink-0 rounded-xl border border-zinc-200 bg-zinc-50/90 px-4 py-3 lg:min-w-[11rem] dark:border-zinc-700/80 dark:bg-zinc-900/50">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+              Org rollup
+            </p>
+            <p className="mt-1 text-2xl font-black tabular-nums text-zinc-900 dark:text-zinc-100">
+              {rollupPercent}%
+            </p>
+            <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+              {rollup.done}/{rollup.total} checklist items · {sections.length} main section
+              {sections.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        ) : null}
       </div>
+
+      {importError ? (
+        <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/30 dark:text-rose-100">
+          {importError}
+        </p>
+      ) : null}
+      {importMessage ? (
+        <p className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-500/30 dark:text-emerald-100">
+          {importMessage}
+        </p>
+      ) : null}
 
       {visibilityError ? (
         <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/30 dark:text-rose-100">
