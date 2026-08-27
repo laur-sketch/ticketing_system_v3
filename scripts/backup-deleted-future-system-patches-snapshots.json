@@ -1,0 +1,239 @@
+[
+  {
+    "id": "cms5feu0z00oltcqrweg7aztk",
+    "kpiMaintenanceId": "cmp80dr8p0007ogryqvecs89o",
+    "periodKey": "M:Asia/Taipei:2026-09-01",
+    "frequency": "MONTHLY",
+    "timeZone": "Asia/Taipei",
+    "total": 4,
+    "done": 0,
+    "missing": 4,
+    "percent": 0,
+    "fullyComplete": false,
+    "contributorProgress": [
+      {
+        "id": "cms3wqbsp00d5tcqrdp9mw7d6",
+        "done": 0,
+        "name": "Bernabe, Neziah Dizon",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpro89r002110lf736wh6es",
+        "done": 0,
+        "name": "Magsadia, John Laurence Sacramento",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpr1c8u000xj1cin55odq2m",
+        "done": 0,
+        "name": "Malubay, Reginald Araña",
+        "role": "Assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrppavso0007j1ciqg9euiux",
+        "done": 0,
+        "name": "Minoza, Kurt Jerelle",
+        "role": "Sub-assignee",
+        "total": 1
+      }
+    ],
+    "capturedAt": "2026-07-31T07:02:03.612Z"
+  },
+  {
+    "id": "cmru6hhsz0037cseb4wd23kdj",
+    "kpiMaintenanceId": "cmp80dr8p0007ogryqvecs89o",
+    "periodKey": "M:Asia/Taipei:2026-09-30",
+    "frequency": "MONTHLY",
+    "timeZone": "Asia/Taipei",
+    "total": 3,
+    "done": 1,
+    "missing": 2,
+    "percent": 33,
+    "fullyComplete": false,
+    "contributorProgress": [
+      {
+        "id": "cmrpro89r002110lf736wh6es",
+        "done": 1,
+        "name": "Magsadia, John Laurence Sacramento",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpr1c8u000xj1cin55odq2m",
+        "done": 0,
+        "name": "Malubay, Reginald Araña",
+        "role": "Assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrppavso0007j1ciqg9euiux",
+        "done": 0,
+        "name": "Minoza, Kurt Jerelle",
+        "role": "Sub-assignee",
+        "total": 1
+      }
+    ],
+    "capturedAt": "2026-07-21T04:53:32.387Z"
+  },
+  {
+    "id": "cms5ff2i800ovtcqrsr3frlfl",
+    "kpiMaintenanceId": "cmp80dr8p0007ogryqvecs89o",
+    "periodKey": "M:Asia/Taipei:2026-10-01",
+    "frequency": "MONTHLY",
+    "timeZone": "Asia/Taipei",
+    "total": 4,
+    "done": 1,
+    "missing": 3,
+    "percent": 25,
+    "fullyComplete": false,
+    "contributorProgress": [
+      {
+        "id": "cmrpro89r002110lf736wh6es",
+        "done": 1,
+        "name": "Magsadia, John Laurence Sacramento",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cms3wqbsp00d5tcqrdp9mw7d6",
+        "done": 0,
+        "name": "Bernabe, Neziah Dizon",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpr1c8u000xj1cin55odq2m",
+        "done": 0,
+        "name": "Malubay, Reginald Araña",
+        "role": "Assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrppavso0007j1ciqg9euiux",
+        "done": 0,
+        "name": "Minoza, Kurt Jerelle",
+        "role": "Sub-assignee",
+        "total": 1
+      }
+    ],
+    "capturedAt": "2026-07-29T01:49:03.728Z"
+  },
+  {
+    "id": "cmru6hrh7003fcsebn2aiyw5j",
+    "kpiMaintenanceId": "cmp80dr8p0007ogryqvecs89o",
+    "periodKey": "M:Asia/Taipei:2026-10-30",
+    "frequency": "MONTHLY",
+    "timeZone": "Asia/Taipei",
+    "total": 3,
+    "done": 1,
+    "missing": 2,
+    "percent": 33,
+    "fullyComplete": false,
+    "contributorProgress": [
+      {
+        "id": "cmrpr1c8u000xj1cin55odq2m",
+        "done": 1,
+        "name": "Malubay, Reginald Araña",
+        "role": "Assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpro89r002110lf736wh6es",
+        "done": 0,
+        "name": "Magsadia, John Laurence Sacramento",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrppavso0007j1ciqg9euiux",
+        "done": 0,
+        "name": "Minoza, Kurt Jerelle",
+        "role": "Sub-assignee",
+        "total": 1
+      }
+    ],
+    "capturedAt": "2026-07-21T04:53:44.923Z"
+  },
+  {
+    "id": "cms5ffdz300p5tcqrf24xksom",
+    "kpiMaintenanceId": "cmp80dr8p0007ogryqvecs89o",
+    "periodKey": "M:Asia/Taipei:2026-11-01",
+    "frequency": "MONTHLY",
+    "timeZone": "Asia/Taipei",
+    "total": 4,
+    "done": 0,
+    "missing": 4,
+    "percent": 0,
+    "fullyComplete": false,
+    "contributorProgress": [
+      {
+        "id": "cms3wqbsp00d5tcqrdp9mw7d6",
+        "done": 0,
+        "name": "Bernabe, Neziah Dizon",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpro89r002110lf736wh6es",
+        "done": 0,
+        "name": "Magsadia, John Laurence Sacramento",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpr1c8u000xj1cin55odq2m",
+        "done": 0,
+        "name": "Malubay, Reginald Araña",
+        "role": "Assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrppavso0007j1ciqg9euiux",
+        "done": 0,
+        "name": "Minoza, Kurt Jerelle",
+        "role": "Sub-assignee",
+        "total": 1
+      }
+    ],
+    "capturedAt": "2026-07-29T01:49:18.591Z"
+  },
+  {
+    "id": "cmrypim55001465d5zcpeibl3",
+    "kpiMaintenanceId": "cmp80dr8p0007ogryqvecs89o",
+    "periodKey": "M:Asia/Taipei:2027-03-30",
+    "frequency": "MONTHLY",
+    "timeZone": "Asia/Taipei",
+    "total": 3,
+    "done": 1,
+    "missing": 2,
+    "percent": 33,
+    "fullyComplete": false,
+    "contributorProgress": [
+      {
+        "id": "cmrpr1c8u000xj1cin55odq2m",
+        "done": 1,
+        "name": "Malubay, Reginald Araña",
+        "role": "Assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrpro89r002110lf736wh6es",
+        "done": 0,
+        "name": "Magsadia, John Laurence Sacramento",
+        "role": "Sub-assignee",
+        "total": 1
+      },
+      {
+        "id": "cmrppavso0007j1ciqg9euiux",
+        "done": 0,
+        "name": "Minoza, Kurt Jerelle",
+        "role": "Sub-assignee",
+        "total": 1
+      }
+    ],
+    "capturedAt": "2026-07-24T08:57:22.073Z"
+  }
+]

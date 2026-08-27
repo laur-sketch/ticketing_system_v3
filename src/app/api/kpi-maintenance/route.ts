@@ -89,6 +89,11 @@ import {
 } from "@/lib/it-project-subkpis";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { kpiRowInCompanyScope } from "@/lib/kpi-company-board-scope";
+import {
+  kpiRowInSectionAgentScope,
+  resolveViewerOrgChartSectionScope,
+  roleUsesOrgChartSectionBoardScope,
+} from "@/lib/org-chart-section-scope";
 import { isValidLatLng } from "@/lib/travel-order";
 import { normalizeDelayPenaltyFrequency } from "@/lib/delay-penalty-frequency";
 import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-efficiency-recompute";
@@ -216,6 +221,18 @@ export async function GET(req: Request) {
       kpiRowInCompanyScope(row, companyFilterId, companyAgentIdSet),
     );
   }
+
+  // Admin / Personnel: only tasks assigned within the viewer's org-chart section tree.
+  if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
+    const sectionScope = await resolveViewerOrgChartSectionScope(session.user.email);
+    const sectionAgentIds = new Set(sectionScope.agentIds);
+    if (perms.canAssignWork) {
+      rows = rows.filter((row) => kpiRowInSectionAgentScope(row, sectionAgentIds));
+    }
+    // Personnel already filtered to self below; section membership is enforced by
+    // only seeing their own assignments (they must be in the section to be assigned).
+  }
+
   const {
     kpiIdsWhereAgentIsTravelOrderTraveler,
     kpiIdsWithTravelOrders,
@@ -498,6 +515,8 @@ export async function GET(req: Request) {
     canCompleteUnassignedWork: isElevatedUserRole(session.user.role),
     canAssignOffline: isElevatedUserRole(session.user.role),
     canDeleteTask: session.user.role === "SuperAdmin",
+    /** SuperAdmin may edit the checklist of any running task, not just their own. */
+    canEditRunningTasks: session.user.role === "SuperAdmin",
     operatorAgentId: perms.operator?.id ?? null,
     operatorAgentName: perms.operator?.name ?? null,
     rosterCompanies: perms.canAssignWork

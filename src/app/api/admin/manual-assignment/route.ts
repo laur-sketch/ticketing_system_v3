@@ -17,7 +17,6 @@ import {
 } from "@/lib/payment-approval-db";
 import {
   applyItemRequisitionApprovalAssignees,
-  itemRequisitionAssigneeFieldForStep,
   ITEM_REQUISITION_APPROVAL_STEP_LABELS,
   itemRequisitionProceduralStatusLabel,
 } from "@/lib/item-requisition-approval";
@@ -205,22 +204,43 @@ export async function POST(req: Request) {
         }
       } else if (requestType === "ITEM_REQUISITION_SLIP") {
         const meta = await initItemRequisitionApprovalMetaIfNeeded(ticketId);
-        if (meta.proceduralStep !== "DONE") {
-          // Board drag assigns Canvassed By first; later drags assign Approved By.
-          const field = itemRequisitionAssigneeFieldForStep(meta.proceduralStep);
-          const nextMeta = applyItemRequisitionApprovalAssignees(meta, { [field]: agent.id });
+        if (meta.proceduralStep === "CANVASSED_BY") {
+          // Assignment Board assignee becomes Canvassed By.
+          const nextMeta = applyItemRequisitionApprovalAssignees(meta, {
+            canvassedByAgentId: agent.id,
+          });
           await saveItemRequisitionApprovalMeta(ticketId, nextMeta);
           const pending = itemRequisitionProceduralStatusLabel(nextMeta.proceduralStep);
-          const roleLabel = ITEM_REQUISITION_APPROVAL_STEP_LABELS[meta.proceduralStep];
           await logActivity(
             ticketId,
             "SYSTEM",
-            meta.proceduralStep === "CANVASSED_BY"
-              ? "Assigned as Canvassed By"
-              : `Assigned for ${roleLabel}`,
+            "Assigned as Canvassed By",
             pending
               ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
               : (updated.assignedAgent?.name ?? agent.name),
+          );
+        } else if (meta.proceduralStep === "APPROVED_BY") {
+          // Approved By is company-based (requestor company). Board assign only routes the ticket.
+          if (meta.approvedByAgentId && meta.approvedByAgentId !== agent.id) {
+            return NextResponse.json(
+              {
+                error:
+                  "Approved By is set from the requestor’s company. Assign this request to that Approved By person, or update Approved By in Ticket Controls.",
+              },
+              { status: 400 },
+            );
+          }
+          if (!meta.approvedByAgentId) {
+            const nextMeta = applyItemRequisitionApprovalAssignees(meta, {
+              approvedByAgentId: agent.id,
+            });
+            await saveItemRequisitionApprovalMeta(ticketId, nextMeta);
+          }
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            `Assigned for ${ITEM_REQUISITION_APPROVAL_STEP_LABELS.APPROVED_BY}`,
+            updated.assignedAgent?.name ?? agent.name,
           );
         }
       } else if (requestType === "FUND_TRANSFER_REQUEST") {

@@ -16,14 +16,15 @@ export async function GET(req: Request) {
   const pageRaw = Number.parseInt(searchParams.get("page") ?? "1", 10) || 1;
   let companyFilter = searchParams.get("company")?.trim() ?? "";
   const searchQuery = searchParams.get("q")?.trim() ?? "";
+  const roleFilter = searchParams.get("role")?.trim() ?? "";
 
   // Admins only see their assigned company (SuperAdmin keeps full company filter).
   const locked = await resolveAdminOnDutyCompanyFilter(session?.user?.role, session?.user?.email);
   if (locked) companyFilter = locked;
 
-  const cacheKey = `on-duty:${session?.user?.role ?? "anon"}:${pageRaw}:${pageSize}:${companyFilter}:${searchQuery.toLowerCase()}`;
+  const cacheKey = `on-duty:${session?.user?.role ?? "anon"}:${pageRaw}:${pageSize}:${companyFilter}:${searchQuery.toLowerCase()}:${roleFilter.toLowerCase()}`;
   const result = await withTtlCache(cacheKey, 10_000, () =>
-    loadOnDutySnapshot({ page: pageRaw, pageSize, companyFilter, searchQuery }),
+    loadOnDutySnapshot({ page: pageRaw, pageSize, companyFilter, searchQuery, roleFilter }),
   );
 
   // When Admin-scoped, only expose their company in the filter list.

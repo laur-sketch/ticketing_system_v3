@@ -156,6 +156,32 @@ select optgroup {
   background: var(--background);
 }
 
+/* Dark-theme native scrollbars inside pickers / overflow lists. */
+.picker-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #a1a1aa transparent;
+}
+html.dark .picker-scroll {
+  color-scheme: dark;
+  scrollbar-color: #71717a #09090b;
+}
+html.dark .picker-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+html.dark .picker-scroll::-webkit-scrollbar-track {
+  background: #09090b;
+  border-radius: 999px;
+}
+html.dark .picker-scroll::-webkit-scrollbar-thumb {
+  background: #52525b;
+  border-radius: 999px;
+  border: 2px solid #09090b;
+}
+html.dark .picker-scroll::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+
 /* Native date input + popup: contrast on light and dark surfaces. */
 input[type="date"].date-input {
   color-scheme: light;
@@ -242,6 +268,11 @@ input[type="date"].date-input-with-icon::-ms-reveal {
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--brand);
+}
+
+/* Small uppercase labels need a darker brand tone on white to pass contrast. */
+html:not(.dark) .stoic-label {
+  color: #c2410c;
 }
 
 .stoic-card {
@@ -813,6 +844,98 @@ input[type="date"].date-input-with-icon::-ms-reveal {
     background-color: var(--accent-blue) !important;
   }
 
+  /* Light-mode contrast: readable secondary text on white surfaces.
+     (Dark mode keeps the brighter zinc tokens via the .dark rules above.) */
+  html:not(.dark) .text-zinc-400 {
+    color: var(--muted-subtle) !important;
+  }
+
+  html:not(.dark) .text-zinc-500 {
+    color: var(--muted) !important;
+  }
+
+  html:not(.dark) ::placeholder {
+    color: var(--muted-subtle) !important;
+  }
+
+  /* Accent text in light mode: the 300/400/500 stops and the brand-orange remap
+     are bright-on-dark colors that fail AA on white, so use darker readable shades. */
+  html:not(.dark) .text-orange-300,
+  html:not(.dark) .text-orange-400,
+  html:not(.dark) .text-orange-500,
+  html:not(.dark) .text-orange-700,
+  html:not(.dark) .text-orange-800 {
+    color: #c2410c !important;
+  }
+
+  html:not(.dark) .text-amber-300,
+  html:not(.dark) .text-amber-400,
+  html:not(.dark) .text-amber-500,
+  html:not(.dark) .text-amber-600,
+  html:not(.dark) .text-amber-700 {
+    color: #b45309 !important;
+  }
+
+  html:not(.dark) .text-blue-200,
+  html:not(.dark) .text-blue-300,
+  html:not(.dark) .text-blue-400,
+  html:not(.dark) .text-blue-500,
+  html:not(.dark) .text-sky-300,
+  html:not(.dark) .text-sky-400,
+  html:not(.dark) .text-sky-500 {
+    color: #1d4ed8 !important;
+  }
+
+  html:not(.dark) .text-cyan-300,
+  html:not(.dark) .text-cyan-400,
+  html:not(.dark) .text-cyan-500,
+  html:not(.dark) .text-cyan-600,
+  html:not(.dark) .text-cyan-700,
+  html:not(.dark) .text-teal-300,
+  html:not(.dark) .text-teal-400,
+  html:not(.dark) .text-teal-500,
+  html:not(.dark) .text-teal-600,
+  html:not(.dark) .text-teal-700,
+  html:not(.dark) .text-emerald-300,
+  html:not(.dark) .text-emerald-400,
+  html:not(.dark) .text-emerald-500,
+  html:not(.dark) .text-emerald-600,
+  html:not(.dark) .text-emerald-700 {
+    color: #0f766e !important;
+  }
+
+  /* Dark zinc surfaces that stay dark in light mode (dark chips/dialogs, the
+     Executive reports page) keep their original bright zinc text. */
+  html:not(.dark) .bg-zinc-800 .text-zinc-400,
+  html:not(.dark) .bg-zinc-800\/60 .text-zinc-400,
+  html:not(.dark) .bg-zinc-800\/70 .text-zinc-400,
+  html:not(.dark) .bg-zinc-900 .text-zinc-400,
+  html:not(.dark) .bg-zinc-900\/40 .text-zinc-400,
+  html:not(.dark) .bg-zinc-900\/50 .text-zinc-400,
+  html:not(.dark) .bg-zinc-950 .text-zinc-400,
+  html:not(.dark) .bg-\[\#0a0b0d\] .text-zinc-400,
+  html:not(.dark) .bg-\[\#111214\] .text-zinc-400 {
+    color: #a1a1aa !important;
+  }
+
+  html:not(.dark) .bg-zinc-800 .text-zinc-500,
+  html:not(.dark) .bg-zinc-800\/60 .text-zinc-500,
+  html:not(.dark) .bg-zinc-800\/70 .text-zinc-500,
+  html:not(.dark) .bg-zinc-900 .text-zinc-500,
+  html:not(.dark) .bg-zinc-900\/40 .text-zinc-500,
+  html:not(.dark) .bg-zinc-900\/50 .text-zinc-500,
+  html:not(.dark) .bg-zinc-950 .text-zinc-500,
+  html:not(.dark) .bg-\[\#0a0b0d\] .text-zinc-500,
+  html:not(.dark) .bg-\[\#111214\] .text-zinc-500 {
+    color: #71717a !important;
+  }
+
+  /* Executive reports page keeps its bright accent text on dark cards. */
+  html:not(.dark) .bg-\[\#0a0b0d\] .text-orange-300,
+  html:not(.dark) .bg-\[\#0a0b0d\] .text-orange-400 {
+    color: #fdba74 !important;
+  }
+
 }
 
 @keyframes launchpad-glow {
@@ -849,8 +972,17 @@ html.dark .org-chart-flow {
   --org-line-strong: #a8a29e;
 }
 
+.org-chart-flow .react-flow__edges {
+  z-index: 0;
+}
+.org-chart-flow .react-flow__nodes {
+  z-index: 1;
+}
+
 .org-chart-flow .react-flow__edge-path {
   stroke: var(--org-line-strong);
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .org-chart-flow .react-flow__edge.selected .react-flow__edge-path,
@@ -862,6 +994,10 @@ html.dark .org-chart-flow {
   box-shadow: 0 0 0 2px rgb(249 115 22 / 0.85), 0 8px 24px rgb(249 115 22 / 0.2);
 }
 
+.org-chart-flow .react-flow__node.org-chart-drop-target > * {
+  box-shadow: 0 0 0 2px rgb(249 115 22 / 0.85), 0 8px 24px rgb(249 115 22 / 0.2);
+}
+
 .org-chart-flow .org-chart-picked {
   box-shadow: 0 0 0 2px rgb(249 115 22 / 0.7);
 }
@@ -869,4 +1005,22 @@ html.dark .org-chart-flow {
 .org-chart-flow .react-flow__node-sectionFrame {
   pointer-events: none;
   z-index: -1 !important;
+}
+
+/* Org chart: shift+click multi-selected boxes get an orange ring */
+.react-flow__node.selected [data-box-id] {
+  border-color: rgb(249 115 22 / 0.9);
+  box-shadow: 0 0 0 2px rgb(249 115 22 / 0.5);
+}
+
+/* Org chart: box picked in the Add/Remove panel */
+[data-box-id].org-chart-picked {
+  border-color: rgb(251 146 60 / 0.9);
+  box-shadow: 0 0 0 2px rgb(251 146 60 / 0.45);
+}
+
+/* Org chart: current drop target while dragging */
+[data-box-id].org-chart-drop-target {
+  border-color: rgb(249 115 22 / 0.95);
+  box-shadow: 0 0 0 3px rgb(249 115 22 / 0.55);
 }

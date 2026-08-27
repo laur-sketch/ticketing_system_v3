@@ -55,8 +55,10 @@ export function usePointerColumnDrag<T extends string>(options: {
     let best: { key: string; area: number } | null = null;
     for (const [key, el] of colRef.current) {
       const r = el.getBoundingClientRect();
+      const area = r.width * r.height;
+      // Skip collapsed / hidden targets (e.g. h-0 placeholders).
+      if (area < 4) continue;
       if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-        const area = r.width * r.height;
         if (!best || area < best.area) best = { key, area };
       }
     }

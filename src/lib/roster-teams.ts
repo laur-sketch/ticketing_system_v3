@@ -2,8 +2,10 @@ import { COMPANY_ROSTER, rosterTeamNameFilter, sortByRosterOrder } from "@/lib/c
 import { prisma } from "@/lib/prisma";
 
 const LEGACY_ACI_APMC_NAME = "ACI/APMC";
-/** Legacy queue labels; canonical roster name is MCHISI. */
+/** Legacy queue labels; canonical roster name is MCHISI LPG. */
 const LEGACY_MCONPINCO_NAMES = ["MCONPINCO", "M.CONPINCO", "M Conpinco"] as const;
+/** Legacy SBU label; canonical roster name is now MCHISI LPG (LPG company). */
+const LEGACY_MCHISI_NAME = "MCHISI";
 /** Legacy roster label; canonical roster name is now EAZZYGAS. */
 const LEGACY_EAZYGAZ_NAME = "EAZYGAZ";
 
@@ -53,7 +55,7 @@ async function reassignTeamReferences(fromTeamId: string, toTeamId: string): Pro
   });
 }
 
-/** One-time: legacy MCONPINCO / M.CONPINCO queue labels → roster MCHISI. */
+/** One-time: legacy MCONPINCO / M.CONPINCO queue labels → roster MCHISI LPG. */
 async function migrateLegacyMconpincoTeam(): Promise<void> {
   for (const legacyName of LEGACY_MCONPINCO_NAMES) {
     const legacy = await prisma.team.findFirst({
@@ -63,13 +65,13 @@ async function migrateLegacyMconpincoTeam(): Promise<void> {
     if (!legacy) continue;
 
     const canonical = await prisma.team.findFirst({
-      where: { name: "MCHISI" },
+      where: { name: "MCHISI LPG" },
       select: { id: true },
     });
     if (!canonical) {
       await prisma.team.update({
         where: { id: legacy.id },
-        data: { name: "MCHISI" },
+        data: { name: "MCHISI LPG" },
       });
       continue;
     }
@@ -77,6 +79,34 @@ async function migrateLegacyMconpincoTeam(): Promise<void> {
       await reassignTeamReferences(legacy.id, canonical.id);
       await prisma.team.delete({ where: { id: legacy.id } });
     }
+  }
+}
+
+/**
+ * One-time: legacy MCHISI SBU split → MCHISI LPG (existing records keep their
+ * data) + MCHISI FAMES (created fresh by the roster ensure loop).
+ */
+async function migrateLegacyMchisiSplit(): Promise<void> {
+  const legacy = await prisma.team.findFirst({
+    where: { name: LEGACY_MCHISI_NAME },
+    select: { id: true },
+  });
+  if (!legacy) return;
+
+  const lpg = await prisma.team.findFirst({
+    where: { name: "MCHISI LPG" },
+    select: { id: true },
+  });
+  if (!lpg) {
+    await prisma.team.update({
+      where: { id: legacy.id },
+      data: { name: "MCHISI LPG" },
+    });
+    return;
+  }
+  if (lpg.id !== legacy.id) {
+    await reassignTeamReferences(legacy.id, lpg.id);
+    await prisma.team.delete({ where: { id: legacy.id } });
   }
 }
 
@@ -105,7 +135,7 @@ async function migrateLegacyEazygazTeam(): Promise<void> {
   }
 }
 
-/** Merge duplicate Team rows that share a roster company name (e.g. two MCHISI). */
+/** Merge duplicate Team rows that share a roster company name (e.g. two MCHISI LPG). */
 async function dedupeRosterTeamsByName(): Promise<void> {
   for (const name of COMPANY_ROSTER) {
     const teams = await prisma.team.findMany({
@@ -142,6 +172,7 @@ async function dedupeRosterTeamsByName(): Promise<void> {
 export async function ensureRosterTeamsInDb(): Promise<void> {
   await migrateLegacyAciApmcTeam();
   await migrateLegacyMconpincoTeam();
+  await migrateLegacyMchisiSplit();
   await migrateLegacyEazygazTeam();
 
   for (const name of COMPANY_ROSTER) {

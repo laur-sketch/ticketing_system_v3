@@ -78,7 +78,7 @@ Optional (when granted **assignment-board** permission):
 |------|------|
 | Ticket Dashboard | `/` |
 | Create requests | `/admin/ticket-requests` |
-| Personnel | `/admin/personnel` |
+| Workforce | `/admin/workforce` |
 | Board | `/agent` (see board tabs below) |
 | Metrics & Reports | `/insights` |
 | Priority alerts | `/admin/escalation-triggers` |
@@ -155,9 +155,10 @@ Tabs (role-dependent):
 
 - Admin intake for tickets on behalf of users; links to assignment and board views.
 
-### Personnel (`/admin/personnel`)
+### Workforce (`/admin/workforce`)
 
-- Personnel registry, portal accounts, assignment readiness, account-request review.
+- **ListView** — personnel registry, portal accounts, assignment readiness, account-request review.
+- **Activity** — live personnel cards with On Duty / Offline status from today's HRIS clock-ins (updates every 10 seconds).
 
 ### Boards
 
@@ -181,7 +182,7 @@ Transfer requests are reviewed from the ticket workspace by the selected Admin/S
 
 ### Other admin paths
 
-- **`/admin/account-management`** — redirects to **`/admin/personnel`** for portal account administration.
+- **`/admin/account-management`** — redirects to **`/admin/workforce`** (ListView) for portal account administration.
 - **`/reports`** — Admin/SuperAdmin executive reporting: transfer pending, priority mix, status mix, top queues, recent closures, and SLA summary.
 - **`POST /api/sla/sweep`** — secured Admin SLA scan/report refresh endpoint.
 
@@ -231,7 +232,7 @@ Same pattern: current password required; automatic sign-out on success.
 
 ### Account requests
 
-Submit suspension, deletion, or password reset requests; Admin/SuperAdmin reviews them in Personnel/account workflows. Approved password reset requests set the portal password to the configured default reset password.
+Submit suspension, deletion, or password reset requests; Admin/SuperAdmin reviews them in Workforce/account workflows. Approved password reset requests set the portal password to the configured default reset password.
 
 ## 9) Troubleshooting
 
@@ -264,6 +265,6 @@ Submit suspension, deletion, or password reset requests; Admin/SuperAdmin review
 | `/insights` | Metrics & reports |
 | `/process` | Process / lifecycle reference |
 | `/reports` | Admin/SuperAdmin reporting |
-| `/admin/personnel` | Personnel admin |
+| `/admin/workforce` | Workforce (personnel registry + live activity) |
 | `/admin/escalation-triggers` | Priority alerts |
 | `/admin/account` | My Account |

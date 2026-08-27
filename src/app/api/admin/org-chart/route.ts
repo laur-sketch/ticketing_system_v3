@@ -161,30 +161,12 @@ export async function POST(req: Request) {
 
   const alreadyOnChart = await prismaPrimary.orgChartNode.findMany({
     where: { mergedSourceUserId: { in: mergedSourceUserIds } },
-    select: { mergedSourceUserId: true },
+    select: { id: true, mergedSourceUserId: true },
   });
-  const alreadySet = new Set(alreadyOnChart.map((n) => n.mergedSourceUserId));
-  const candidates = mergedSourceUserIds.filter((id) => !alreadySet.has(id));
-  if (candidates.length === 0) {
-    return NextResponse.json(
-      { error: "Those members are already on the chart." },
-      { status: 409 },
-    );
-  }
-
-  const snapshots = await Promise.all(
-    candidates.map(async (id) => [id, await snapshotPerson(id)] as const),
+  const alreadyByRosterId = new Map(
+    alreadyOnChart.map((n) => [n.mergedSourceUserId, n.id] as const),
   );
-  const missing = snapshots.filter(([, person]) => !person).map(([id]) => id);
-  const toCreate = snapshots.filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] =>
-    entry[1] != null,
-  );
-  if (toCreate.length === 0) {
-    return NextResponse.json(
-      { error: "Members were not found in the active roster." },
-      { status: 400 },
-    );
-  }
+  const candidates = mergedSourceUserIds.filter((id) => !alreadyByRosterId.has(id));
 
   let sectionId: string | null = null;
   if (body.sectionId !== undefined && body.sectionId !== null && body.sectionId !== "") {
@@ -198,34 +180,93 @@ export async function POST(req: Request) {
     }
   }
 
-  let order = await nextSortOrder(parentId);
-  const created = await prismaPrimary.$transaction(
-    toCreate.map(([mergedSourceUserId, person]) =>
-      prismaPrimary.orgChartNode.create({
-        data: {
-          mergedSourceUserId,
-          personName: person.personName,
-          personRole: person.personRole,
-          companyName: person.companyName,
-          parentId,
-          parentEitherOrLinkId,
-          sectionId,
-          sectionMemberships:
-            sectionId != null
-              ? {
-                  create: [{ sectionId }],
-                }
-              : undefined,
-          sortOrder: order++,
-        },
-      }),
-    ),
+  // Adding straight into a department: people already on the chart just get
+  // membership; only missing people need new nodes.
+  if (candidates.length === 0 && !sectionId) {
+    return NextResponse.json(
+      { error: "Those members are already on the chart." },
+      { status: 409 },
+    );
+  }
+
+  const snapshots = await Promise.all(
+    candidates.map(async (id) => [id, await snapshotPerson(id)] as const),
   );
+  const missing = snapshots.filter(([, person]) => !person).map(([id]) => id);
+  const toCreate = snapshots.filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] =>
+    entry[1] != null,
+  );
+  if (toCreate.length === 0 && alreadyOnChart.length === 0) {
+    return NextResponse.json(
+      { error: "Members were not found in the active roster." },
+      { status: 400 },
+    );
+  }
+  if (toCreate.length === 0 && sectionId == null) {
+    return NextResponse.json(
+      { error: "Those members are already on the chart." },
+      { status: 409 },
+    );
+  }
+
+  let order = await nextSortOrder(parentId);
+  const created =
+    toCreate.length > 0
+      ? await prismaPrimary.$transaction(
+          toCreate.map(([mergedSourceUserId, person]) =>
+            prismaPrimary.orgChartNode.create({
+              data: {
+                mergedSourceUserId,
+                personName: person.personName,
+                personRole: person.personRole,
+                companyName: person.companyName,
+                parentId,
+                parentEitherOrLinkId,
+                sectionId,
+                sectionMemberships:
+                  sectionId != null
+                    ? {
+                        create: [{ sectionId }],
+                      }
+                    : undefined,
+                sortOrder: order++,
+              },
+            }),
+          ),
+        )
+      : [];
+
+  let assignedExisting: string[] = [];
+  if (sectionId && alreadyOnChart.length > 0) {
+    await prismaPrimary.orgChartNodeSectionMembership.createMany({
+      data: alreadyOnChart.map((n) => ({ nodeId: n.id, sectionId })),
+      skipDuplicates: true,
+    });
+    assignedExisting = alreadyOnChart.map((n) => n.id);
+    // Keep primary sectionId label in sync for nodes that had none.
+    await prismaPrimary.orgChartNode.updateMany({
+      where: { id: { in: assignedExisting }, sectionId: null },
+      data: { sectionId },
+    });
+  }
+
+  if (created.length === 0 && assignedExisting.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          missing.length > 0
+            ? "Members were not found in the active roster."
+            : "Those members are already in this department (or on the chart).",
+      },
+      { status: missing.length > 0 ? 400 : 409 },
+    );
+  }
 
   return NextResponse.json(
     {
       created,
-      skippedAlreadyOnChart: [...alreadySet],
+      assignedExisting,
+      skippedAlreadyOnChart: sectionId ? [] : [...alreadyByRosterId.keys()],
       skippedMissingRoster: missing,
     },
     { status: 201 },
@@ -568,12 +609,44 @@ export async function DELETE(req: Request) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "Node id is required." }, { status: 400 });
 
-  const node = await prismaPrimary.orgChartNode.findUnique({
-    where: { id },
-    include: { children: { select: { id: true } } },
-  });
-  if (!node) return NextResponse.json({ error: "Node not found." }, { status: 404 });
+  try {
+    const node = await prismaPrimary.orgChartNode.findUnique({
+      where: { id },
+      include: { children: { select: { id: true } } },
+    });
+    if (!node) return NextResponse.json({ error: "Node not found." }, { status: 404 });
 
-  await prismaPrimary.orgChartNode.delete({ where: { id } });
-  return NextResponse.json({ removed: node.id, removedReports: node.children.length });
+    // Collect the full descendant tree and delete deepest-first so hierarchy FKs
+    // never block removal (works even if the DB cascade differs from the schema).
+    const toDelete: string[] = [];
+    const stack = [id];
+    const seen = new Set<string>();
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      toDelete.push(cur);
+      const kids = await prismaPrimary.orgChartNode.findMany({
+        where: { parentId: cur },
+        select: { id: true },
+      });
+      for (const k of kids) stack.push(k.id);
+    }
+    toDelete.reverse();
+
+    await prismaPrimary.$transaction(
+      toDelete.map((nodeId) => prismaPrimary.orgChartNode.delete({ where: { id: nodeId } })),
+    );
+
+    return NextResponse.json({
+      removed: node.id,
+      removedReports: Math.max(0, toDelete.length - 1),
+    });
+  } catch (e) {
+    console.error("[org-chart DELETE]", e);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Could not remove member from the chart." },
+      { status: 500 },
+    );
+  }
 }

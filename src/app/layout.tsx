@@ -49,7 +49,7 @@ export default async function RootLayout({
           <AuthProvider session={session}>
             <ServiceWorkerRegister />
             <GlobalButtonParticles />
-            <AppChrome>{children}</AppChrome>
+            <AppChrome initialRole={session?.user?.role}>{children}</AppChrome>
           </AuthProvider>
         </ThemeProvider>
       </body>

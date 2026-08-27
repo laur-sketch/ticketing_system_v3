@@ -44,7 +44,7 @@ export type PaymentApprovalMeta = PaymentApprovalAssignees & {
    */
   stepApproved: Partial<Record<PaymentApprovalAckStep, string>>;
   /**
-   * Intake chose “Let Accounting and Finance Handle it” — mode of payment is
+   * Intake chose “Let Bookkeeper and Accounting handle it” — mode of payment is
    * filled on ticket details at APPROVED BY ACCOUNTING instead of at create.
    */
   deferPaymentModeToAccounting?: boolean;

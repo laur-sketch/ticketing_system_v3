@@ -4,6 +4,13 @@ import { prisma } from "@/lib/prisma";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { customerTicketWhereBySessionEmail } from "@/lib/customer-pending-resolution";
 import { BRAND_TITLE } from "@/lib/brand";
+import { summarizeCustomerTicketStatuses } from "@/lib/dashboard-home";
+import {
+  DashboardQuickCreate,
+  DashboardRecentActivity,
+  DashboardSummaryCards,
+  type SummaryCard,
+} from "@/components/dashboard/DashboardHomeSections";
 import { TicketsKanbanBoard, type KanbanTicket } from "./TicketsKanbanBoard";
 
 const categories = [
@@ -54,7 +61,7 @@ export async function CustomerHomeDashboard({
       where: { ticket: ticketScope },
       orderBy: { createdAt: "desc" },
       take: 5,
-      include: { ticket: { select: { ticketNumber: true, title: true } } },
+      include: { ticket: { select: { id: true, ticketNumber: true, title: true } } },
     }),
   ]);
 
@@ -81,6 +88,54 @@ export async function CustomerHomeDashboard({
     };
   });
 
+  const statusSummary = summarizeCustomerTicketStatuses(tickets.map((ticket) => ticket.status));
+  const summaryCards: SummaryCard[] = [
+    { id: "open", label: "Open", value: statusSummary.open, href: "/my-tickets" },
+    {
+      id: "in-progress",
+      label: "In progress",
+      value: statusSummary.inProgress,
+      href: "/my-tickets",
+    },
+    {
+      id: "for-confirmation",
+      label: "For confirmation",
+      value: statusSummary.forConfirmation,
+      href: "/my-tickets",
+    },
+    { id: "closed", label: "Closed", value: statusSummary.closed, href: "/my-tickets" },
+  ];
+
+  const createActions = [
+    {
+      id: "issue",
+      label: "Create Issue/Concern",
+      href: "/tickets/new?type=ISSUE_CONCERN_TICKET",
+      subtitle: "Report a problem or concern",
+    },
+    {
+      id: "rfp",
+      label: "Create Request for Payment",
+      href: "/tickets/new?type=REQUEST_FOR_PAYMENT",
+      subtitle: "Submit an R.F.P.",
+    },
+    {
+      id: "my-tickets",
+      label: "View my requests",
+      href: "/my-tickets",
+      subtitle: "Track everything you've submitted",
+    },
+  ];
+
+  const recentActivity = activities.map((activity) => ({
+    id: activity.id,
+    ticketNumber: activity.ticket.ticketNumber,
+    title: activity.ticket.title,
+    summary: activity.summary,
+    createdAt: activity.createdAt.toISOString(),
+    href: `/tickets/${activity.ticket.id}`,
+  }));
+
   return (
     <main className="px-3 py-4 text-zinc-900 dark:text-zinc-100 sm:px-4 lg:px-4">
       <div className="mx-auto max-w-[1440px] space-y-5">
@@ -90,8 +145,11 @@ export async function CustomerHomeDashboard({
               {BRAND_TITLE} · Customer portal
             </p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-100 md:text-3xl">
-              Welcome back, {firstName}.
+              What do you need right now?
             </h1>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+              Welcome back, {firstName}. Track open requests and start new ones from here.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {canCreateTickets ? null : (
@@ -112,6 +170,10 @@ export async function CustomerHomeDashboard({
             </Link>
           </div>
         </section>
+
+        <DashboardSummaryCards cards={summaryCards} />
+
+        <DashboardQuickCreate actions={createActions} />
 
         <section className="grid gap-4 lg:grid-cols-[1fr,260px]">
           <div className="min-w-0 space-y-3">
@@ -135,24 +197,7 @@ export async function CustomerHomeDashboard({
               </p>
             </div>
 
-            <div className="rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
-              <h3 className="text-sm font-bold text-zinc-950 dark:text-zinc-100">Recent activity</h3>
-              <ul className="mt-4 space-y-3 text-sm">
-                {activities.length === 0 ? (
-                  <li className="text-zinc-500">No recent activity on your requests.</li>
-                ) : (
-                  activities.map((a) => (
-                    <li key={a.id} className="border-b border-zinc-200 pb-3 last:border-0 last:pb-0 dark:border-zinc-800">
-                      <p className="font-medium text-zinc-900 dark:text-zinc-200">{a.ticket.ticketNumber}</p>
-                      <p className="line-clamp-2 text-xs text-zinc-400">{a.summary}</p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        {a.createdAt.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
-                      </p>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
+            <DashboardRecentActivity items={recentActivity} />
           </div>
         </section>
 

@@ -84,7 +84,7 @@ export function TravelOrderOfflineBanner({ className }: { className?: string }) 
             Offline page
           </a>
         ) : null}
-        {online && pending > 0 ? (
+        {online && pending > 0 && !sync.running ? (
           <button
             type="button"
             disabled={sync.running}
@@ -97,6 +97,20 @@ export function TravelOrderOfflineBanner({ className }: { className?: string }) 
               <RefreshCw className="size-3" aria-hidden />
             )}
             Sync now
+          </button>
+        ) : pending > 0 ? (
+          <button
+            type="button"
+            disabled={sync.running}
+            onClick={() => void flushTravelOrderPendingQueue()}
+            className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-amber-950 hover:bg-white disabled:opacity-50 dark:bg-zinc-950/50 dark:text-amber-100"
+          >
+            {sync.running ? (
+              <Loader2 className="size-3 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-3" aria-hidden />
+            )}
+            Retry sync
           </button>
         ) : null}
       </div>

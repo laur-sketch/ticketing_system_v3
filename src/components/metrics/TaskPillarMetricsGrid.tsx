@@ -4,6 +4,8 @@ import type { LucideIcon } from "lucide-react";
 import {
   Cloud,
   Activity,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   FileText,
   Headphones,
@@ -11,8 +13,10 @@ import {
   Smile,
   Wrench,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { SimplePaginationBar } from "@/components/ui/SimplePaginationBar";
+import { DatePickerField } from "@/components/ui/DatePickerField";
 import { JOB_ORDER_REQUEST_PILLAR_TITLE } from "@/lib/it-task-pillar-titles";
 import type { TaskMetricsCadence } from "@/lib/task-metrics-range";
 import {
@@ -25,6 +29,7 @@ import type {
   TaskMetricsHelpdeskTickets,
   TaskMetricsUserSupportTickets,
 } from "@/lib/kpis";
+import type { TaskMetricsTaskType } from "@/lib/task-metrics-task-type";
 import {
   combinedPersonnelEfficiency,
   mergePersonnelRequestMetrics,
@@ -112,7 +117,493 @@ function donutSlicePath(
 }
 
 type DonutSegment = { key: string; label: string; value: number; color: string };
-const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
+
+/** ChartView y-axis: even efficiency ticks starting at 20% up to 100%. */
+const EFFICIENCY_TICKS = [100, 80, 60, 40, 20];
+
+function formatHistoryDate(date: string): string {
+  const [, month, day] = date.split("-");
+  return `${month}/${day}`;
+}
+
+const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+/** "March–August 2026" / "July 2026" / "March 2026–March 2027" from YYYY-MM pairs. */
+function formatMonthSpan(range: { fromYm: string; toYm: string }): string {
+  const from = range.fromYm.split("-").map(Number);
+  const to = range.toYm.split("-").map(Number);
+  if (from.length < 2 || to.length < 2 || !from[0] || !from[1] || !to[0] || !to[1]) {
+    return range.fromYm;
+  }
+  const [fy, fm] = from as [number, number];
+  const [ty, tm] = to as [number, number];
+  const fromName = MONTH_NAMES[fm - 1] ?? "";
+  const toName = MONTH_NAMES[tm - 1] ?? "";
+  if (fy === ty && fm === tm) return `${fromName} ${fy}`;
+  if (fy === ty) return `${fromName}–${toName} ${ty}`;
+  return `${fromName} ${fy}–${toName} ${ty}`;
+}
+
+/** One efficiency point on a ChartView monitor (inverted-aware). */
+type ChartPoint = {
+  date: string;
+  /** Displayed efficiency percent (inverted-aware for safe/uptime pillars). */
+  pct: number;
+  /** Positive bucket: done for normal checklists, safe for inverted pillars. */
+  done: number;
+  total: number;
+  contributors?: string[];
+};
+
+/** ChartView date-range finder row. */
+function ChartRangeFinder({
+  from,
+  to,
+  hasRange,
+  onFromChange,
+  onToChange,
+  onClear,
+}: {
+  from: string;
+  to: string;
+  hasRange: boolean;
+  onFromChange: (v: string) => void;
+  onToChange: (v: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 p-2.5 dark:border-zinc-700/80 dark:bg-zinc-900/50">
+      <label className="flex min-w-0 flex-col gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+        From
+        <DatePickerField
+          value={from}
+          max={to || undefined}
+          onChange={(e) => onFromChange(e.target.value)}
+          wrapperClassName="w-36"
+          shellClassName="h-9"
+        />
+      </label>
+      <label className="flex min-w-0 flex-col gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+        To
+        <DatePickerField
+          value={to}
+          min={from || undefined}
+          onChange={(e) => onToChange(e.target.value)}
+          wrapperClassName="w-36"
+          shellClassName="h-9"
+        />
+      </label>
+      {hasRange ? (
+        <button
+          type="button"
+          onClick={onClear}
+          className="ml-auto rounded-full border border-zinc-300 px-2.5 py-1.5 text-[10px] font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          Reset range
+        </button>
+      ) : (
+        <span className="ml-auto pb-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+          Filter charts by recorded date range
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** ChartView: per-subtask efficiency monitor — 2x2 grid with pagination. */
+function TaskEfficiencyMonitorChart({
+  tasks,
+  invert = false,
+  loading = false,
+  error = null,
+  recordedRange = null,
+  onRangeChange,
+}: {
+  tasks: TaskChecklistIncludedTask[];
+  /** Inverted (safe/uptime) recording: charts plot the unchecked/safe share. */
+  invert?: boolean;
+  /** True while a wider range is being fetched from the server. */
+  loading?: boolean;
+  error?: string | null;
+  /**
+   * DB-wide recorded snapshot span for this pillar. Shown as a hint when the
+   * current view has no data but older recorded data exists in the database.
+   */
+  recordedRange?: { fromYm: string; toYm: string } | null;
+  /** Fired when the range changes to a full from/to (or null when cleared). */
+  onRangeChange?: (range: { from: string; to: string } | null) => void;
+}) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const hasRange = Boolean(from || to);
+  const [viewMode, setViewMode] = useState<"grid" | "single">("grid");
+  const [singleIndex, setSingleIndex] = useState(0);
+
+  // Notify the parent to fetch the picked range from the server (a full from+to
+  // triggers a real refetch); clearing the range reverts to panel-period data.
+  useEffect(() => {
+    onRangeChange?.(from && to ? { from, to } : null);
+  }, [from, to, onRangeChange]);
+
+  const inRange = useCallback(
+    (date: string) => (!from || date >= from) && (!to || date <= to),
+    [from, to],
+  );
+
+  const withHistory = useMemo(() => {
+    return tasks
+      .map((task) => {
+        // Inverted recording is a per-task flag (checked = breach/downtime, so the
+        // chart plots the unchecked/safe share). Fall back to the pillar-level flag
+        // only for tasks that don't carry their own. This keeps e.g. the network
+        // performance / cybersecurity tasks on the safe/uptime method even when the
+        // inspected pillar itself isn't flagged inverted.
+        const taskInvert = task.invertedRecording ?? invert;
+        return {
+          task,
+          taskInvert,
+          points: (task.history ?? [])
+            .filter((p) => inRange(p.date))
+            .map((p) => {
+              const view = kpiChecklistMetricView(p, taskInvert);
+              const point: ChartPoint = {
+                date: p.date,
+                pct: Math.max(0, Math.min(100, Math.round(view.percent))),
+                done: view.positive,
+                total: view.total,
+              };
+              if (p.contributors && p.contributors.length > 0) {
+                point.contributors = p.contributors;
+              }
+              return point;
+            }),
+        };
+      })
+      .filter((entry) => entry.points.length > 0);
+  }, [tasks, inRange, invert]);
+
+  const [page, setPage] = useState(1);
+  const pageSize = 4;
+  const totalPages = Math.max(1, Math.ceil(withHistory.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  // Reset to the first item when data or the date range changes.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setPage(1);
+      setSingleIndex(0);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [from, to, withHistory.length]);
+  const pagedTasks = useMemo(
+    () => withHistory.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [withHistory, safePage, pageSize],
+  );
+  const safeSingleIndex = Math.min(
+    Math.max(0, singleIndex),
+    Math.max(0, withHistory.length - 1),
+  );
+  const singleEntry = withHistory[safeSingleIndex] ?? null;
+
+  const clearRange = () => {
+    setFrom("");
+    setTo("");
+  };
+
+  // All charted tasks inverted → label the legend as safe/uptime; mixed pillars
+  // keep the generic efficiency label and each inverted chart shows its own badge.
+  const everyInverted =
+    withHistory.length > 0 && withHistory.every((entry) => entry.taskInvert);
+
+  if (withHistory.length === 0) {
+    return (
+      <>
+        <ChartRangeFinder
+          from={from}
+          to={to}
+          hasRange={hasRange}
+          onFromChange={setFrom}
+          onToChange={setTo}
+          onClear={clearRange}
+        />
+        {loading ? (
+          <p className="mt-4 text-center text-xs font-semibold text-orange-700 dark:text-orange-300">
+            Loading charts for the selected range…
+          </p>
+        ) : error ? (
+          <p className="mt-4 rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-center text-xs text-rose-800 dark:text-rose-200">
+            {error}
+          </p>
+        ) : (
+          <div className="mt-4 space-y-2">
+            <p className="text-center text-xs text-zinc-500 dark:text-zinc-400">
+              {hasRange
+                ? "No recorded data for the selected date range."
+                : "No per-date history recorded for these tasks within the selected period."}
+            </p>
+            {recordedRange ? (
+              <p className="mx-auto max-w-sm rounded-lg border border-sky-300/50 bg-sky-500/10 px-3 py-2 text-center text-[11px] font-medium text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-200">
+                Data exists for {formatMonthSpan(recordedRange)}
+                {hasRange
+                  ? " — try a wider date range."
+                  : " — use the date range finder above to browse it."}
+              </p>
+            ) : null}
+          </div>
+        )}
+      </>
+    );
+  }
+  return (
+    <div className="mt-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
+        <span className="size-2.5 rounded-sm bg-emerald-500" aria-hidden />
+        {everyInverted
+          ? "Safe / uptime % (unchecked / total) per date"
+          : "Efficiency % (done / total) per date"}
+        <span className="ml-auto text-[10px] font-normal text-zinc-400 dark:text-zinc-500">
+          {withHistory.length} task{withHistory.length === 1 ? "" : "s"} with data
+        </span>
+        <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
+          <button
+            type="button"
+            onClick={() => setViewMode("grid")}
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition",
+              viewMode === "grid"
+                ? "bg-orange-600 text-white shadow-sm"
+                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+            )}
+          >
+            2×2
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("single")}
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition",
+              viewMode === "single"
+                ? "bg-orange-600 text-white shadow-sm"
+                : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+            )}
+          >
+            Single
+          </button>
+        </div>
+      </div>
+      <ChartRangeFinder
+        from={from}
+        to={to}
+        hasRange={hasRange}
+        onFromChange={setFrom}
+        onToChange={setTo}
+        onClear={clearRange}
+      />
+      {loading ? (
+        <p className="mt-3 text-xs font-semibold text-orange-700 dark:text-orange-300">
+          Loading charts for the selected range…
+        </p>
+      ) : error ? (
+        <p className="mt-3 rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-800 dark:text-rose-200">
+          {error}
+        </p>
+      ) : null}
+      <div className={cn(loading && "pointer-events-none opacity-60")}>
+      {viewMode === "single" && singleEntry ? (
+        <div className="mt-4">
+          <TaskEfficiencyChart
+            key={singleEntry.task.id}
+            task={singleEntry.task}
+            points={singleEntry.points}
+            invert={singleEntry.taskInvert}
+            large
+          />
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setSingleIndex((i) => Math.max(0, i - 1))}
+              disabled={safeSingleIndex <= 0}
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              <ChevronLeft className="size-4" aria-hidden />
+              Previous
+            </button>
+            <span className="text-[11px] font-semibold tabular-nums text-zinc-500 dark:text-zinc-400">
+              {safeSingleIndex + 1} of {withHistory.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSingleIndex((i) => Math.min(withHistory.length - 1, i + 1))}
+              disabled={safeSingleIndex >= withHistory.length - 1}
+              className="inline-flex items-center gap-1 rounded-full border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Next
+              <ChevronRight className="size-4" aria-hidden />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {pagedTasks.map(({ task, taskInvert, points }) => (
+              <TaskEfficiencyChart key={task.id} task={task} points={points} invert={taskInvert} />
+            ))}
+          </div>
+          {totalPages > 1 ? (
+            <div className="mt-3">
+              <SimplePaginationBar
+                page={safePage}
+                pageSize={pageSize}
+                total={withHistory.length}
+                onPageChange={setPage}
+                itemLabel="tasks"
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+      </div>
+    </div>
+  );
+}
+
+function TaskEfficiencyChart({
+  task,
+  points,
+  invert = false,
+  large = false,
+}: {
+  task: TaskChecklistIncludedTask;
+  points: ChartPoint[];
+  invert?: boolean;
+  /** Taller chart used by the single-chart view. */
+  large?: boolean;
+}) {
+  // The chart modal is wide enough for more x-axis labels, so denser date ranges
+  // (e.g. a full year of daily data) stay readable instead of thinning to ~8 labels.
+  const labelDivisor = large ? 16 : 12;
+  const labelEvery = points.length > labelDivisor ? Math.ceil(points.length / labelDivisor) : 1;
+  const totalRecords = task.history?.length ?? 0;
+  return (
+    <div className="rounded-xl border border-zinc-200/80 bg-white p-3 dark:border-zinc-700/80 dark:bg-zinc-900/60">
+      <div className="flex items-center gap-2 border-b border-zinc-200 pb-1.5 dark:border-zinc-800">
+        <p className="truncate text-[12px] font-semibold text-zinc-800 dark:text-zinc-100" title={task.title}>
+          {task.title}
+        </p>
+        <span
+          className="shrink-0 text-[9px] font-semibold tabular-nums text-zinc-500 dark:text-zinc-400"
+          title="Total recorded data points for this task"
+        >
+          {points.length === totalRecords || totalRecords === 0
+            ? `${points.length} record${points.length === 1 ? "" : "s"}`
+            : `${points.length} of ${totalRecords} records`}
+        </span>
+        {invert ? (
+          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+            inverted
+          </span>
+        ) : null}
+        <span className="ml-auto shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+          {task.frequency ?? "—"}
+        </span>
+      </div>
+      <div className="mt-2 flex">
+        <div className={cn("relative w-9 shrink-0", large ? "h-56" : "h-32")}>
+          {EFFICIENCY_TICKS.map((tick) => (
+            <span
+              key={tick}
+              className={cn(
+                "absolute right-1 -translate-y-1/2 font-medium tabular-nums text-zinc-500 dark:text-zinc-400",
+                large ? "text-[9px]" : "text-[8px]",
+              )}
+              style={{ top: `${100 - tick}%` }}
+            >
+              {tick}%
+            </span>
+          ))}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className={cn("relative", large ? "h-56" : "h-32")}>
+            {EFFICIENCY_TICKS.map((tick) => (
+              <div
+                key={tick}
+                className="absolute inset-x-0 border-t border-dashed border-zinc-200 dark:border-zinc-700/70"
+                style={{ top: `${100 - tick}%` }}
+              />
+            ))}
+            <div className="absolute inset-0 flex items-end gap-[1px] px-0.5">
+              {points.map((p) => (
+                <div
+                  key={p.date}
+                  className="group relative flex h-full flex-1 flex-col items-center justify-end"
+                >
+                  {/* Tooltip on hover */}
+                  <div className="pointer-events-none absolute bottom-full z-10 mb-1 hidden w-max max-w-36 rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-[10px] shadow-lg group-hover:block dark:border-zinc-700 dark:bg-zinc-900">
+                    <p className="font-semibold text-zinc-800 dark:text-zinc-100">{p.date}</p>
+                    <p className="text-zinc-600 dark:text-zinc-400">
+                      {p.pct}% · {p.done}/{p.total} {invert ? "safe" : "done"}
+                    </p>
+                    {task.assigneeName ? (
+                      <p className="text-zinc-500 dark:text-zinc-500">
+                        Assignee: {task.assigneeName}
+                      </p>
+                    ) : null}
+                    {p.contributors && p.contributors.length > 0 ? (
+                      <p className="text-zinc-500 dark:text-zinc-500">
+                        Contributions: {p.contributors.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                  <span
+                    className={cn(
+                      "font-semibold tabular-nums text-zinc-600 dark:text-zinc-400",
+                      large ? "text-[9px]" : "text-[8px]",
+                    )}
+                  >
+                    {p.pct}%
+                  </span>
+                  <div
+                    className={cn(
+                      "w-full rounded-t-sm bg-emerald-500 transition-all group-hover:bg-emerald-400",
+                      large ? "max-w-10" : "max-w-8",
+                    )}
+                    style={{ height: `max(2px, calc(${p.pct}% - 14px))` }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-1 flex gap-[1px] px-0.5">
+            {points.map((p, i) => (
+              <span
+                key={p.date}
+                className={cn(
+                  "flex-1 truncate text-center tabular-nums text-zinc-500 dark:text-zinc-400",
+                  large ? "text-[9px]" : "text-[8px]",
+                )}
+                title={p.date}
+              >
+                {i % labelEvery === 0 || i === points.length - 1 ? formatHistoryDate(p.date) : ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function PillarDonutCard({
   pillar,
@@ -163,7 +654,7 @@ function PillarDonutCard({
     <article
       role="button"
       tabIndex={0}
-      title="Double-click or double-tap to inspect data source"
+      title="Double-click or double-tap to view the tasks in this donut"
       onDoubleClick={onInspect}
       onKeyDown={(e) => {
         if (e.key === "Enter") onInspect();
@@ -194,7 +685,7 @@ function PillarDonutCard({
         </span>
       </div>
 
-      <div className="mt-4 flex flex-1 flex-col items-center">
+      <div className="mt-4 flex flex-1 flex-col items-center justify-center">
         <svg viewBox="0 0 100 100" className="mx-auto h-36 w-36" aria-hidden>
           {total === 0 ? (
             <>
@@ -283,6 +774,18 @@ const DEFAULT_CHECKLIST_PILLAR_CONFIG: ChecklistPillarConfig = {
 };
 
 const CHECKLIST_PILLAR_CONFIG: Partial<Record<string, ChecklistPillarConfig>> = {
+  CYBERSECURITY: {
+    positiveLabel: "Safe",
+    negativeLabel: "Breached",
+    metricName: "safe",
+    invertChecklist: true,
+  },
+  "NETWORK PERFORMANCE": {
+    positiveLabel: "Uptime",
+    negativeLabel: "Downtime",
+    metricName: "uptime",
+    invertChecklist: true,
+  },
   "DATA BACKUP": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   "SYSTEM MAINTENANCE": { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
   MONITORING: { positiveLabel: "Done", negativeLabel: "Failed", metricName: "done" },
@@ -364,52 +867,6 @@ function helpdeskRatioSegments(ht: TaskMetricsHelpdeskTickets): DonutSegment[] {
     { key: "closed", label: closedLabel, value: closed, color: SEG_COLORS_HELPDESK.closed },
     { key: "open", label: openLabel, value: open, color: SEG_COLORS_HELPDESK.remainder },
   ];
-}
-
-function spreadsheetColumnLabel(index: number): string {
-  let n = index + 1;
-  let label = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    label = String.fromCharCode(65 + rem) + label;
-    n = Math.floor((n - 1) / 26);
-  }
-  return label;
-}
-
-function monthTokenFromLabel(label: string): string {
-  const months = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  const compactMonths = label
-    .split(/[^A-Za-z]+/)
-    .filter((part) => months.some((month) => month.toLowerCase().startsWith(part.toLowerCase())))
-    .map((part) => {
-      const month = months.find((m) => m.toLowerCase().startsWith(part.toLowerCase()));
-      return month ? month.toUpperCase() : "";
-    })
-    .filter(Boolean);
-  const unique = [...new Set(compactMonths)];
-  if (unique.length === 0) return "";
-  if (unique.length === 1) return unique[0]!;
-  return `${unique[0]}-${unique[unique.length - 1]}`;
-}
-
-function csvDateLabelForCadence(cadence: TaskMetricsCadence, label: string): string {
-  if (cadence === "MONTHLY") return `Monthly: ${label}`;
-  if (cadence === "YEARLY") return `Yearly: ${label}`;
-  return label;
 }
 
 function PersonnelMetricStatBox({
@@ -603,6 +1060,60 @@ export function ContributorPersonalKpiCard({
   );
 }
 
+
+/** Average of each listed task's Total data recorded % (extended donut summary). */
+function averageIncludedTasksTotalDataRecorded(
+  tasks: readonly TaskChecklistIncludedTask[],
+): number | null {
+  const values: number[] = [];
+  for (const task of tasks) {
+    const pct =
+      task.totalDataRecordedPercent ??
+      task.recordedPercent ??
+      (task.total > 0 ? task.percent : null);
+    if (pct != null && Number.isFinite(pct)) values.push(pct);
+  }
+  if (values.length === 0) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+const IT_SALF_CSV_COLUMNS = ["DATE", "", "ALI", "ACI", "MCHISI", "AWIC", "EASYGAS", "EFF %"];
+
+function monthTokenFromLabel(label: string): string {
+  const months = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const compactMonths = label
+    .split(/[^A-Za-z]+/)
+    .filter((part) => months.some((month) => month.toLowerCase().startsWith(part.toLowerCase())))
+    .map((part) => {
+      const month = months.find((m) => m.toLowerCase().startsWith(part.toLowerCase()));
+      return month ? month.toUpperCase() : "";
+    })
+    .filter(Boolean);
+  const unique = [...new Set(compactMonths)];
+  if (unique.length === 0) return "";
+  if (unique.length === 1) return unique[0]!;
+  return `${unique[0]}-${unique[unique.length - 1]}`;
+}
+
+function csvDateLabelForCadence(cadence: TaskMetricsCadence, label: string): string {
+  if (cadence === "MONTHLY") return `Monthly: ${label}`;
+  if (cadence === "YEARLY") return `Yearly: ${label}`;
+  return label;
+}
+
 function csvLayoutRowsForPillar(args: {
   pillar: string;
   metricsCadence: TaskMetricsCadence;
@@ -676,42 +1187,6 @@ function csvLayoutRowsForPillar(args: {
   ];
 }
 
-/** Extended-view cells: render boolean TRUE/FALSE values as a check / cross instead of text. */
-function csvBooleanCellDisplay(cell: string): ReactNode {
-  const normalized = cell.trim().toUpperCase();
-  if (normalized === "TRUE") {
-    return (
-      <span aria-label="Done" title="Done" className="font-bold text-emerald-600 dark:text-emerald-400">
-        ✓
-      </span>
-    );
-  }
-  if (normalized === "FALSE") {
-    return (
-      <span aria-label="Not done" title="Not done" className="font-bold text-rose-600 dark:text-rose-400">
-        ✗
-      </span>
-    );
-  }
-  return cell;
-}
-
-/** Average of each listed task's Total data recorded % (extended donut summary). */
-function averageIncludedTasksTotalDataRecorded(
-  tasks: readonly TaskChecklistIncludedTask[],
-): number | null {
-  const values: number[] = [];
-  for (const task of tasks) {
-    const pct =
-      task.totalDataRecordedPercent ??
-      task.recordedPercent ??
-      (task.total > 0 ? task.percent : null);
-    if (pct != null && Number.isFinite(pct)) values.push(pct);
-  }
-  if (values.length === 0) return null;
-  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
-}
-
 function sourceDetailsForPillar(args: {
   pillar: string;
   metricsCadence: TaskMetricsCadence;
@@ -729,6 +1204,7 @@ function sourceDetailsForPillar(args: {
   showCsvPreview: boolean;
   notes: string[];
   includedTasks: TaskChecklistIncludedTask[];
+  recordedRange: { fromYm: string; toYm: string } | null;
   /** Same headline percent shown on the Task Metrics donut for this pillar. */
   donutPercent: number | null;
 } {
@@ -759,6 +1235,7 @@ function sourceDetailsForPillar(args: {
       showCsvPreview: false,
       notes: ["The headline percent is closed / (closed + open) for the selected cadence."],
       includedTasks: [],
+      recordedRange: null,
     };
   }
   if (pillar === "USER SUPPORT") {
@@ -791,6 +1268,7 @@ function sourceDetailsForPillar(args: {
       showCsvPreview: false,
       notes: ["This pillar reflects customer star ratings instead of request confirmation statuses."],
       includedTasks: [],
+      recordedRange: null,
     };
   }
   const agg = checklistPillars?.[pillar];
@@ -850,8 +1328,11 @@ function sourceDetailsForPillar(args: {
       "Past periods come from immutable snapshots; the active period uses live Task Board checkbox state.",
     ],
     includedTasks: agg?.includedTasks ?? [],
+    recordedRange: agg?.recordedRange ?? null,
   };
 }
+
+
 
 export function TaskPillarMetricsGrid({
   checklistPillars,
@@ -864,6 +1345,9 @@ export function TaskPillarMetricsGrid({
   preferPillarOrder = null,
   showEmptyPillars = false,
   canExtendView = false,
+  reportingTimeZone,
+  companyId,
+  taskType,
 }: {
   /** Checklist pillar metrics from snapshots (range-aware averages). */
   checklistPillars: TaskChecklistPillarMetrics | null;
@@ -871,6 +1355,12 @@ export function TaskPillarMetricsGrid({
   reportingPeriodLabel?: string;
   helpdeskTickets: TaskMetricsHelpdeskTickets | null;
   userSupportTickets: TaskMetricsUserSupportTickets | null;
+  /** IANA timezone used to scope the ChartView history refetch. */
+  reportingTimeZone?: string;
+  /** Company scope for the ChartView history refetch. */
+  companyId?: string;
+  /** Task-type scope for the ChartView history refetch. */
+  taskType?: TaskMetricsTaskType;
   includeChecklistPillars?: boolean;
   /** When false, hide Helpdesk / User Support ticket donuts (task-type filter). */
   includeTicketPillars?: boolean;
@@ -882,7 +1372,7 @@ export function TaskPillarMetricsGrid({
   canExtendView?: boolean;
 }) {
   const [inspectedPillar, setInspectedPillar] = useState<string | null>(null);
-  const [extendedView, setExtendedView] = useState(false);
+  const [detailView, setDetailView] = useState<"extended" | "chart">("extended");
   const inspected = inspectedPillar
     ? sourceDetailsForPillar({
         pillar: inspectedPillar,
@@ -898,6 +1388,75 @@ export function TaskPillarMetricsGrid({
   const totalDonutDataPercent = inspected
     ? averageIncludedTasksTotalDataRecorded(inspected.includedTasks)
     : null;
+  const inspectedInvert = inspectedPillar
+    ? checklistConfigForPillar(inspectedPillar).invertChecklist === true ||
+      isInvertedChecklistPillar(inspectedPillar)
+    : false;
+
+  /** ChartView: server-fetched tasks for the range picked in the date-range finder. */
+  const [chartOverride, setChartOverride] = useState<TaskChecklistIncludedTask[] | null>(null);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState<string | null>(null);
+  const chartRequestId = useRef(0);
+
+  // Drop a fetched range whenever the inspected donut changes or the modal closes,
+  // and invalidate any in-flight refetch from a previous pillar/range.
+  useEffect(() => {
+    chartRequestId.current += 1;
+    const id = window.setTimeout(() => {
+      setChartOverride(null);
+      setChartLoading(false);
+      setChartError(null);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [inspectedPillar]);
+
+  const loadChartRange = useCallback(
+    async (from: string, to: string) => {
+      if (!inspectedPillar) return;
+      const requestId = ++chartRequestId.current;
+      setChartLoading(true);
+      setChartError(null);
+      try {
+        const qs = new URLSearchParams({ from, to, helpdeskCadence: metricsCadence });
+        if (reportingTimeZone) qs.set("tz", reportingTimeZone);
+        if (companyId) qs.set("companyId", companyId);
+        if (taskType) qs.set("taskType", taskType);
+        const res = await fetch(`/api/kpis/task-metrics?${qs.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+        const json = (await res.json()) as { taskChecklistPillars?: TaskChecklistPillarMetrics };
+        const tasks = json.taskChecklistPillars?.[inspectedPillar]?.includedTasks ?? [];
+        if (requestId === chartRequestId.current) {
+          setChartOverride(tasks);
+        }
+      } catch {
+        if (requestId === chartRequestId.current) {
+          setChartError("Could not load chart data for the selected range.");
+        }
+      } finally {
+        if (requestId === chartRequestId.current) {
+          setChartLoading(false);
+        }
+      }
+    },
+    [inspectedPillar, metricsCadence, reportingTimeZone, companyId, taskType],
+  );
+
+  const handleChartRangeChange = useCallback(
+    (range: { from: string; to: string } | null) => {
+      if (!range) {
+        // Invalidate any in-flight refetch so a stale response cannot repopulate
+        // the chart after the user clears the range.
+        chartRequestId.current += 1;
+        setChartOverride(null);
+        setChartLoading(false);
+        setChartError(null);
+        return;
+      }
+      void loadChartRange(range.from, range.to);
+    },
+    [loadChartRange],
+  );
 
   const mainTaskPillars = Object.keys(checklistPillars ?? {})
     .filter((p) => p !== "HELPDESK SUPPORT" && p !== "USER SUPPORT")
@@ -936,7 +1495,7 @@ export function TaskPillarMetricsGrid({
               headline={headline}
               onInspect={() => {
                 setInspectedPillar(pillar);
-                setExtendedView(false);
+                setDetailView("extended");
               }}
             />
           );
@@ -955,7 +1514,7 @@ export function TaskPillarMetricsGrid({
               headline={headline}
               onInspect={() => {
                 setInspectedPillar(pillar);
-                setExtendedView(false);
+                setDetailView("extended");
               }}
             />
           );
@@ -999,27 +1558,28 @@ export function TaskPillarMetricsGrid({
             headline={headline}
             subLabel={subLabel}
             onInspect={() => {
-                setInspectedPillar(pillar);
-                setExtendedView(false);
-              }}
+              setInspectedPillar(pillar);
+              setDetailView("extended");
+            }}
           />
         );
       })}
       </div>
       {inspected ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-4"
           role="dialog"
           aria-modal="true"
-          onClick={() => {
-            setInspectedPillar(null);
-            setExtendedView(false);
-          }}
+          onClick={() => setInspectedPillar(null)}
         >
           <div
             className={cn(
-              "flex max-h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950",
-              extendedView && canShowExtendedTasks ? "max-w-3xl" : "max-w-lg",
+              "flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-950",
+              detailView === "chart"
+                ? "max-w-6xl"
+                : canShowExtendedTasks
+                  ? "max-w-3xl"
+                  : "max-w-lg",
             )}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1027,26 +1587,42 @@ export function TaskPillarMetricsGrid({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-300">
-                  {extendedView && canShowExtendedTasks ? "Tasks in this donut" : "Task metrics source"}
+                  Tasks in this donut
                 </p>
                 <h3 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">{inspected.title}</h3>
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
                 {canShowExtendedTasks ? (
-                  <button
-                    type="button"
-                    onClick={() => setExtendedView((v) => !v)}
-                    className="rounded-full border border-orange-300 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800 hover:bg-orange-100 dark:border-orange-500/40 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
-                  >
-                    {extendedView ? "Source summary" : "Extended view"}
-                  </button>
+                  <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
+                    <button
+                      type="button"
+                      onClick={() => setDetailView("extended")}
+                      className={cn(
+                        "rounded-full px-3 py-1 text-xs font-semibold transition",
+                        detailView === "extended"
+                          ? "bg-orange-600 text-white shadow-sm"
+                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                      )}
+                    >
+                      Extended view
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDetailView("chart")}
+                      className={cn(
+                        "rounded-full px-3 py-1 text-xs font-semibold transition",
+                        detailView === "chart"
+                          ? "bg-orange-600 text-white shadow-sm"
+                          : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                      )}
+                    >
+                      Chart view
+                    </button>
+                  </div>
                 ) : null}
                 <button
                   type="button"
-                  onClick={() => {
-                    setInspectedPillar(null);
-                    setExtendedView(false);
-                  }}
+                  onClick={() => setInspectedPillar(null)}
                   className="rounded-full border border-zinc-300 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                 >
                   Close
@@ -1055,7 +1631,21 @@ export function TaskPillarMetricsGrid({
             </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-            {extendedView && canShowExtendedTasks ? (
+            {!canShowExtendedTasks ? (
+              <p className="mt-4 rounded-xl bg-zinc-100 p-3 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+                No live Task Board rows are mapped to this donut within the selected reporting period.
+              </p>
+            ) : detailView === "chart" ? (
+              <TaskEfficiencyMonitorChart
+                key={inspectedPillar}
+                tasks={chartOverride ?? inspected.includedTasks}
+                invert={inspectedInvert}
+                loading={chartLoading}
+                error={chartError}
+                recordedRange={inspected.recordedRange}
+                onRangeChange={handleChartRangeChange}
+              />
+            ) : (
               <div className="mt-4 space-y-3">
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   Live Task Board rows currently mapped into this donut ({inspected.includedTasks.length}{" "}
@@ -1167,22 +1757,6 @@ export function TaskPillarMetricsGrid({
                   })}
                 </ul>
               </div>
-            ) : (
-              <>
-                <dl className="mt-4 divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
-                  {inspected.rows.map((row) => (
-                    <div key={row.label} className="grid gap-1 py-2 sm:grid-cols-[10rem_1fr]">
-                      <dt className="font-semibold text-zinc-600 dark:text-zinc-400">{row.label}</dt>
-                      <dd className="text-zinc-950 dark:text-zinc-100">{row.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <ul className="mt-4 space-y-1 rounded-xl bg-zinc-100 p-3 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-                  {inspected.notes.map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-                </ul>
-              </>
             )}
             </div>
           </div>

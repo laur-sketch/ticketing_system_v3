@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   BarChart3,
   Building2,
   Check,
@@ -44,6 +43,7 @@ type ShortcutDef = {
   label: string;
   icon: LucideIcon;
   adminOnly?: boolean;
+  superAdminOnly?: boolean;
 };
 
 type Props = {
@@ -60,6 +60,9 @@ const SHORTCUT_ID_ALIASES: Record<string, string> = {
   reports: "task-mr",
   assign: "a-board",
   requests: "r-board",
+  // Legacy ids merged into the Workforce shortcut.
+  people: "workforce",
+  activities: "workforce",
 };
 
 const SHORTCUT_CATALOG: ShortcutDef[] = [
@@ -69,9 +72,14 @@ const SHORTCUT_CATALOG: ShortcutDef[] = [
   { id: "r-board", href: "/agent?board=ticket", label: "r.board", icon: Ticket },
   { id: "m-requests", href: "/my-requests", label: "m.requests", icon: UserRound },
   { id: "tasks", href: "/agent/tasks", label: "Tasks", icon: CheckSquare },
-  { id: "people", href: "/admin/personnel", label: "People", icon: Users, adminOnly: true },
-  { id: "activities", href: "/admin/activities", label: "Activity", icon: Activity, adminOnly: true },
-  { id: "alerts", href: "/admin/escalation-triggers", label: "Alerts", icon: LifeBuoy, adminOnly: true },
+  { id: "workforce", href: "/admin/workforce", label: "Workforce", icon: Users, adminOnly: true },
+  {
+    id: "alerts",
+    href: "/admin/superadmin-settings",
+    label: "Settings",
+    icon: LifeBuoy,
+    superAdminOnly: true,
+  },
   { id: "request-mr", href: "/insights?tab=ticket-metrics", label: "Request M&R", icon: BarChart3 },
   { id: "task-mr", href: "/insights?tab=task-metrics", label: "Task M&R", icon: ClipboardList },
 ];
@@ -109,16 +117,20 @@ function shortcutsStorageKey(email: string, role: string) {
   return `sidebar-shortcuts:${email.trim().toLowerCase() || "anon"}:${role}`;
 }
 
-function catalogForRole(isAdmin: boolean): ShortcutDef[] {
-  return SHORTCUT_CATALOG.filter((item) => (item.adminOnly ? isAdmin : true));
+function catalogForRole(isAdmin: boolean, isSuperAdmin: boolean): ShortcutDef[] {
+  return SHORTCUT_CATALOG.filter((item) => {
+    if (item.superAdminOnly) return isSuperAdmin;
+    if (item.adminOnly) return isAdmin;
+    return true;
+  });
 }
 
 function defaultIds(isAdmin: boolean): string[] {
   return [...(isAdmin ? DEFAULT_ADMIN_IDS : DEFAULT_PERSONNEL_IDS)];
 }
 
-function normalizeIds(raw: unknown, isAdmin: boolean): string[] {
-  const allowed = new Set(catalogForRole(isAdmin).map((item) => item.id));
+function normalizeIds(raw: unknown, isAdmin: boolean, isSuperAdmin: boolean): string[] {
+  const allowed = new Set(catalogForRole(isAdmin, isSuperAdmin).map((item) => item.id));
   if (!Array.isArray(raw)) return defaultIds(isAdmin);
   const cleaned = raw
     .map((id) => (typeof id === "string" ? SHORTCUT_ID_ALIASES[id] ?? id : id))
@@ -128,12 +140,17 @@ function normalizeIds(raw: unknown, isAdmin: boolean): string[] {
   return cleaned.length > 0 ? cleaned : defaultIds(isAdmin);
 }
 
-function readStoredIds(email: string, role: string, isAdmin: boolean): string[] {
+function readStoredIds(
+  email: string,
+  role: string,
+  isAdmin: boolean,
+  isSuperAdmin: boolean,
+): string[] {
   if (typeof window === "undefined") return defaultIds(isAdmin);
   try {
     const raw = window.localStorage.getItem(shortcutsStorageKey(email, role));
     if (!raw) return defaultIds(isAdmin);
-    return normalizeIds(JSON.parse(raw) as unknown, isAdmin);
+    return normalizeIds(JSON.parse(raw) as unknown, isAdmin, isSuperAdmin);
   } catch {
     return defaultIds(isAdmin);
   }
@@ -149,20 +166,24 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
   const role = session?.user?.role ?? "Personnel";
   const email = session?.user?.email ?? "";
   const isAdmin = isElevatedPlatformRole(role) || role === "Admin";
+  const isSuperAdmin = role === "SuperAdmin";
   const [data, setData] = useState<SidebarSummary | null>(null);
   const [failed, setFailed] = useState(false);
   const [editing, setEditing] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>(() => defaultIds(isAdmin));
 
-  const available = useMemo(() => catalogForRole(isAdmin), [isAdmin]);
+  const available = useMemo(
+    () => catalogForRole(isAdmin, isSuperAdmin),
+    [isAdmin, isSuperAdmin],
+  );
   const availableById = useMemo(() => new Map(available.map((item) => [item.id, item])), [available]);
 
   useEffect(() => {
     queueMicrotask(() => {
-      setSelectedIds(readStoredIds(email, role, isAdmin));
+      setSelectedIds(readStoredIds(email, role, isAdmin, isSuperAdmin));
       setEditing(false);
     });
-  }, [email, role, isAdmin]);
+  }, [email, role, isAdmin, isSuperAdmin]);
 
   useEffect(() => {
     let stopped = false;
@@ -222,7 +243,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
   );
 
   function saveEdits() {
-    const next = normalizeIds(selectedIds, isAdmin);
+    const next = normalizeIds(selectedIds, isAdmin, isSuperAdmin);
     setSelectedIds(next);
     writeStoredIds(email, role, next);
     setEditing(false);
@@ -354,7 +375,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
                   {summary.onDutyCount > summary.onDutyPreview.length ? (
                     <li>
                       <Link
-                        href="/admin/activities"
+                        href="/admin/workforce?view=activity"
                         className="text-[10px] font-semibold text-orange-700 hover:underline dark:text-orange-300"
                       >
                         +{summary.onDutyCount - summary.onDutyPreview.length} more

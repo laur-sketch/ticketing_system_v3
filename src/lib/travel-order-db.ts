@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
 import {
+  agentIdsFromApprovalLevels,
   canApproveTravelOrderNow,
   canConfirmTravelOrderNow,
   getOperatorActionableApprovalLevel,
@@ -380,7 +381,13 @@ function mapOrderBase(
 async function hydrateApprovedByAgents(orders: TravelOrderRow[]): Promise<TravelOrderRow[]> {
   const flatIds = orders.flatMap((o) => o.approvedByAgentIds);
   const levelIds = orders.flatMap((o) =>
-    o.approvalLevels.flatMap((l) => [l.agentId, l.approvedByAgentId].filter(Boolean) as string[]),
+    o.approvalLevels.flatMap((l) =>
+      [
+        l.agentId,
+        l.approvedByAgentId,
+        ...(Array.isArray(l.alternateAgentIds) ? l.alternateAgentIds : []),
+      ].filter(Boolean) as string[],
+    ),
   );
   const travelerIds = orders.flatMap((o) => o.travelerAgentIds);
   const creatorIds = orders
@@ -396,13 +403,22 @@ async function hydrateApprovedByAgents(orders: TravelOrderRow[]): Promise<Travel
     const approvedByAgents = order.approvedByAgentIds
       .map((id) => byId.get(id))
       .filter(Boolean) as TravelOrderAgentRef[];
-    const approvalLevels: TravelOrderApprovalLevelDto[] = order.approvalLevels.map((lvl) => ({
-      ...lvl,
-      agent: lvl.agentId ? (byId.get(lvl.agentId) ?? null) : null,
-      approvedByAgent: lvl.approvedByAgentId
-        ? (byId.get(lvl.approvedByAgentId) ?? null)
-        : null,
-    }));
+    const approvalLevels: TravelOrderApprovalLevelDto[] = order.approvalLevels.map((lvl) => {
+      const alternateAgentIds = Array.isArray(lvl.alternateAgentIds)
+        ? lvl.alternateAgentIds.filter(Boolean)
+        : [];
+      return {
+        ...lvl,
+        alternateAgentIds,
+        alternateAgents: alternateAgentIds
+          .map((id) => byId.get(id))
+          .filter(Boolean) as TravelOrderAgentRef[],
+        agent: lvl.agentId ? (byId.get(lvl.agentId) ?? null) : null,
+        approvedByAgent: lvl.approvedByAgentId
+          ? (byId.get(lvl.approvedByAgentId) ?? null)
+          : null,
+      };
+    });
     const travelers = order.travelerAgentIds
       .map((id) => byId.get(id))
       .filter(Boolean) as TravelOrderAgentRef[];
@@ -429,7 +445,12 @@ export async function createTravelOrderWithLocations(input: {
   kpiMaintenanceId: string;
   orderRequest: string;
   approvedByAgentIds: string[];
-  approvalLevels?: Array<{ level?: number; agentId?: string | null; optional?: boolean }>;
+  approvalLevels?: Array<{
+    level?: number;
+    agentId?: string | null;
+    optional?: boolean;
+    alternateAgentIds?: string[] | null;
+  }>;
   confirmationByAgentId?: string | null;
   createdBy: string;
   createdByAgentId?: string | null;
@@ -459,9 +480,7 @@ export async function createTravelOrderWithLocations(input: {
   const status = input.status ?? "SUBMITTED";
   const now = new Date();
   const approvalLevels = normalizeApprovalLevelsForStore(input.approvalLevels ?? []);
-  const fromLevels = approvalLevels
-    .map((l) => l.agentId)
-    .filter((v): v is string => Boolean(v));
+  const fromLevels = agentIdsFromApprovalLevels(approvalLevels);
   const approvedByAgentIds = [
     ...new Set([
       ...(fromLevels.length > 0

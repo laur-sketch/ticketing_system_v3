@@ -25,10 +25,16 @@ import type { OrgChartSectionRow } from "./OrgChartSectionsPanel";
 import {
   eitherOrLinkLabel,
   encodeReportsToValue,
-  formatOrgChartLayerLabel,
+  formatOrgChartLevelLabel,
   orgChartLayerById,
   orgChartOptionLabel,
+  orgChartOutlineById,
+  orgChartPersonOutlineFromLayout,
+  buildOrgChartChildrenOf,
+  buildSectionTreeChildrenOf,
+  orgChartSectionsLayoutKey,
   sortOrgNodesByLayer,
+  type OrgChartLayoutOptions,
 } from "./org-chart-layers";
 
 const NODE_W = 248;
@@ -53,6 +59,12 @@ const ORG_EDGE_SHARED: Edge["style"] = {
   strokeWidth: 2,
   strokeDasharray: "6 4",
 };
+
+const DEFAULT_ORG_EDGE_OPTIONS = {
+  type: "smoothstep" as const,
+  pathOptions: ORG_STEP_PATH,
+  style: ORG_EDGE_NORMAL,
+} as unknown as DefaultEdgeOptions;
 
 export type OrgChartDiagramNode = OrgChartNode & {
   sectionMemberships?: Array<{
@@ -82,6 +94,8 @@ type OrgBoxData = {
   eitherOrParentOptions: Array<{ value: string; label: string }>;
   reportsToValue: string;
   nodeLayer: number;
+  outline: string;
+  outlineById: Map<string, string>;
   siblingIndex: number;
   siblingCount: number;
   busy: boolean;
@@ -126,8 +140,9 @@ function initials(name: string) {
 function groupManagersByLayer(
   managerOptions: OrgChartNode[],
   layerById: Map<string, number>,
+  outlineById?: Map<string, string>,
 ): ManagersByLayer {
-  const sorted = sortOrgNodesByLayer(managerOptions, layerById);
+  const sorted = sortOrgNodesByLayer(managerOptions, layerById, outlineById);
   const groups = new Map<number, OrgChartNode[]>();
   for (const m of sorted) {
     const layer = layerById.get(m.id) ?? 1;
@@ -146,6 +161,8 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
     eitherOrParentOptions,
     reportsToValue,
     nodeLayer,
+    outline,
+    outlineById,
     siblingIndex,
     siblingCount,
     busy,
@@ -158,13 +175,14 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
   } = data;
   const roleLine = [node.personRole, node.companyName].filter(Boolean).join(" · ") || "No role info";
   const locked = node.parentLocked;
+  const displayOutline = outlineById.get(node.id) ?? outline;
 
   return (
     <article
       data-box-id={node.id}
       style={{ minHeight: NODE_H }}
-      title={`${node.personName}\n${roleLine}${sectionLabel ? `\nDepartment: ${sectionLabel}` : ""}`}
-      className={`w-[248px] rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${
+      title={`${displayOutline} · ${node.personName}\n${roleLine}${sectionLabel ? `\nDepartment: ${sectionLabel}` : ""}`}
+      className={`relative w-[248px] rounded-xl border bg-white shadow-sm dark:bg-zinc-900 ${
         selected
           ? "border-orange-500/90 ring-2 ring-orange-500/45"
           : locked
@@ -220,6 +238,12 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
         style={{ top: ORG_PEER_HANDLE_TOP }}
         className="!h-0.5 !w-0.5 !opacity-0"
       />
+      <span
+        className="absolute -left-2 -top-2 z-10 min-w-[1.75rem] rounded-lg bg-orange-600 px-1.5 py-0.5 text-center text-[11px] font-bold tabular-nums leading-none text-white shadow-md ring-2 ring-white dark:ring-zinc-900"
+        title={`Chart position ${displayOutline}`}
+      >
+        {displayOutline}
+      </span>
       <div className="flex items-start gap-2.5 px-3 pt-3 pb-2">
         <span
           className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ring-2 ring-white/70 dark:ring-zinc-800 ${avatarColor(node.id)}`}
@@ -233,8 +257,8 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
           <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
             {roleLine}
           </p>
-          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700/90 dark:text-orange-300/90">
-            {formatOrgChartLayerLabel(nodeLayer)}
+          <p className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+            {formatOrgChartLevelLabel(nodeLayer)}
             {sectionLabel ? ` · ${sectionLabel}` : ""}
           </p>
         </div>
@@ -263,7 +287,7 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
       <div className="space-y-1.5 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
         <label className="block">
           <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-            Reports to · you are {formatOrgChartLayerLabel(nodeLayer)}
+            Reports to · you are {displayOutline} ({formatOrgChartLevelLabel(nodeLayer)})
           </span>
           <select
             value={reportsToValue}
@@ -273,7 +297,7 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
             onPointerDown={(e) => e.stopPropagation()}
             className="h-8 w-full cursor-pointer rounded-lg border border-zinc-300 bg-zinc-50 px-2 text-[11px] font-medium text-zinc-900 outline-none transition focus:border-orange-500/60 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 nodrag nopan"
           >
-            <option value="">— Top level ({formatOrgChartLayerLabel(1)}) —</option>
+            <option value="">— Top level ({formatOrgChartLevelLabel(1)}) —</option>
             {eitherOrParentOptions.length > 0 ? (
               <optgroup label="Shared either / or">
                 {eitherOrParentOptions.map((opt) => (
@@ -283,11 +307,15 @@ const OrgBox = memo(function OrgBox({ data }: NodeProps<OrgBoxNodeType>) {
                 ))}
               </optgroup>
             ) : null}
-            {managersByLayer.map(([layer, people]) => (
-              <optgroup key={`layer-${layer}`} label={formatOrgChartLayerLabel(layer)}>
+            {managersByLayer.map(([level, people]) => (
+              <optgroup key={`level-${level}`} label={formatOrgChartLevelLabel(level)}>
                 {people.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {orgChartOptionLabel(m, layer)}
+                    {orgChartOptionLabel(
+                      m,
+                      outlineById.get(m.id) ?? displayOutline,
+                      outlineById,
+                    )}
                   </option>
                 ))}
               </optgroup>
@@ -448,17 +476,12 @@ function sectionLabelForNode(
 }
 
 /** Angular (elbow) tree layout: children centered under their manager (horizontal siblings). */
-function computeLayout(nodes: OrgChartNode[]) {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const childrenOf = new Map<string | null, OrgChartNode[]>();
-  for (const n of nodes) {
-    const list = childrenOf.get(n.parentId) ?? [];
-    list.push(n);
-    childrenOf.set(n.parentId, list);
-  }
-  for (const list of childrenOf.values()) {
-    list.sort((a, b) => a.sortOrder - b.sortOrder);
-  }
+function computeLayout(
+  nodes: OrgChartDiagramNode[],
+  sections: OrgChartSectionRow[] = [],
+  layoutOptions?: OrgChartLayoutOptions,
+) {
+  const childrenOf = buildOrgChartChildrenOf(nodes, sections, layoutOptions);
 
   const widthOf = new Map<string, number>();
   function subtreeWidth(id: string): number {
@@ -486,7 +509,7 @@ function computeLayout(nodes: OrgChartNode[]) {
     return left + w;
   }
 
-  const roots = nodes.filter((n) => !n.parentId || !byId.has(n.parentId));
+  const roots = childrenOf.get(null) ?? [];
   let cursor = 0;
   for (const root of roots) {
     cursor = place(root.id, cursor, 0) + X_ROOT_GAP;
@@ -502,7 +525,6 @@ export type OrgChartEitherOrLinkRow = {
 
 const SECTION_NODE_W = 248;
 const SECTION_NODE_H = 156;
-const PERSON_ANCHOR_H = 72;
 const SECTION_X_GAP = 40;
 const SECTION_X_ROOT_GAP = 56;
 const SECTION_Y_GAP = 56;
@@ -514,15 +536,7 @@ type SectionBoxData = {
   subsectionCount: number;
 };
 
-type PersonAnchorData = {
-  personName: string;
-  personRole: string | null;
-  companyName: string | null;
-};
-
-type SectionTreeNodeType =
-  | Node<SectionBoxData, "sectionBox">
-  | Node<PersonAnchorData, "personAnchor">;
+type SectionTreeNodeType = Node<SectionBoxData, "sectionBox"> | OrgBoxNodeType;
 
 function personAnchorId(nodeId: string) {
   return `${PERSON_PREFIX}${nodeId}`;
@@ -532,26 +546,7 @@ function computeSectionTreeLayout(
   sections: OrgChartSectionRow[],
   peopleById: Map<string, OrgChartDiagramNode>,
 ) {
-  const byId = new Map(sections.map((s) => [s.id, s]));
-  /** Parent key: section id, person:<nodeId>, or null for top-level. */
-  const childrenOf = new Map<string | null, OrgChartSectionRow[]>();
-  const personParentIds = new Set<string>();
-
-  for (const s of sections) {
-    let parentKey: string | null = null;
-    if (s.reportsToNodeId) {
-      parentKey = personAnchorId(s.reportsToNodeId);
-      personParentIds.add(s.reportsToNodeId);
-    } else if (s.parentId && byId.has(s.parentId)) {
-      parentKey = s.parentId;
-    }
-    const list = childrenOf.get(parentKey) ?? [];
-    list.push(s);
-    childrenOf.set(parentKey, list);
-  }
-  for (const list of childrenOf.values()) {
-    list.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-  }
+  const { byParent: childrenOf, personParentIds } = buildSectionTreeChildrenOf(sections);
 
   const widthOf = new Map<string, number>();
   function subtreeWidth(id: string): number {
@@ -566,17 +561,18 @@ function computeSectionTreeLayout(
 
   const positions = new Map<string, { x: number; y: number }>();
 
-  function placeSection(id: string, left: number, depth: number): number {
+  function placeSection(id: string, left: number, y: number): number {
     const kids = childrenOf.get(id) ?? [];
     const w = widthOf.get(id) ?? subtreeWidth(id);
     const x = left + (w - SECTION_NODE_W) / 2;
-    positions.set(id, { x, y: depth * (SECTION_NODE_H + SECTION_Y_GAP) });
+    positions.set(id, { x, y });
+    const childY = y + SECTION_NODE_H + SECTION_Y_GAP;
     const childrenWidth =
       kids.reduce((sum, k) => sum + (widthOf.get(k.id) ?? SECTION_NODE_W), 0) +
       SECTION_X_GAP * Math.max(0, kids.length - 1);
     let childLeft = left + (w - childrenWidth) / 2;
     for (const kid of kids) {
-      childLeft = placeSection(kid.id, childLeft, depth + 1) + SECTION_X_GAP;
+      childLeft = placeSection(kid.id, childLeft, childY) + SECTION_X_GAP;
     }
     return left + w;
   }
@@ -594,8 +590,9 @@ function computeSectionTreeLayout(
       y: 0,
     });
     let childLeft = left + (w - childrenWidth) / 2;
+    const childY = NODE_H + SECTION_Y_GAP;
     for (const kid of kids) {
-      childLeft = placeSection(kid.id, childLeft, 1) + SECTION_X_GAP;
+      childLeft = placeSection(kid.id, childLeft, childY) + SECTION_X_GAP;
     }
     return left + w;
   }
@@ -627,10 +624,10 @@ const SectionBox = memo(function SectionBox({ data }: NodeProps<Node<SectionBoxD
   return (
     <article
       style={{ width: SECTION_NODE_W, minHeight: SECTION_NODE_H }}
-      className="cursor-pointer rounded-xl border border-zinc-200/90 bg-white shadow-sm transition hover:border-orange-400/70 hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-orange-500/50"
+      className="cursor-grab rounded-xl border border-zinc-200/90 bg-white shadow-sm transition hover:border-orange-400/70 hover:shadow-md active:cursor-grabbing dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-orange-500/50"
     >
       <Handle type="target" position={Position.Top} id="in" className="!h-0.5 !w-0.5 !opacity-0" />
-      <div className="flex h-full w-full flex-col p-3 text-left nodrag nopan">
+      <div className="flex h-full w-full flex-col p-3 text-left">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500">
@@ -661,7 +658,7 @@ const SectionBox = memo(function SectionBox({ data }: NodeProps<Node<SectionBoxD
           {subsectionCount > 0 ? ` · ${subsectionCount} sub` : ""}
         </p>
         <p className="mt-1 text-[10px] font-semibold text-orange-700 dark:text-orange-300">
-          Click to open members →
+          Drag to nest · Click to open →
         </p>
       </div>
       <Handle type="source" position={Position.Bottom} id="out" className="!h-0.5 !w-0.5 !opacity-0" />
@@ -669,30 +666,9 @@ const SectionBox = memo(function SectionBox({ data }: NodeProps<Node<SectionBoxD
   );
 });
 
-const PersonAnchorBox = memo(function PersonAnchorBox({
-  data,
-}: NodeProps<Node<PersonAnchorData, "personAnchor">>) {
-  const meta = [data.personRole, data.companyName].filter(Boolean).join(" · ");
-  return (
-    <article
-      style={{ width: SECTION_NODE_W, minHeight: PERSON_ANCHOR_H }}
-      className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm dark:border-zinc-700 dark:bg-zinc-900"
-    >
-      <Handle type="target" position={Position.Top} id="in" className="!h-0.5 !w-0.5 !opacity-0" />
-      <p className="truncate text-[13px] font-bold text-zinc-950 dark:text-zinc-50">
-        {data.personName}
-      </p>
-      {meta ? (
-        <p className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">{meta}</p>
-      ) : null}
-      <Handle type="source" position={Position.Bottom} id="out" className="!h-0.5 !w-0.5 !opacity-0" />
-    </article>
-  );
-});
-
 const sectionNodeTypes = {
   sectionBox: SectionBox,
-  personAnchor: PersonAnchorBox,
+  orgBox: OrgBox,
 };
 
 function SectionTreeCanvas({
@@ -700,21 +676,105 @@ function SectionTreeCanvas({
   nodes,
   memberCountBySection,
   childrenByParent,
+  eitherOrLinks,
+  busy,
   onOpenSection,
+  onReparentSection,
+  onSetSectionReportsTo,
+  onReparent,
+  onMove,
+  onRemove,
+  onToggleParentLock,
 }: {
   sections: OrgChartSectionRow[];
   nodes: OrgChartDiagramNode[];
   memberCountBySection: Map<string, number>;
   childrenByParent: Map<string | null, OrgChartSectionRow[]>;
+  eitherOrLinks: OrgChartEitherOrLinkRow[];
+  busy: boolean;
   onOpenSection: (sectionId: string) => void;
+  onReparentSection: (sectionId: string, newParentId: string | null) => void;
+  onSetSectionReportsTo: (sectionId: string, reportsToNodeId: string) => void;
+  onReparent: (id: string, parentId: string) => void;
+  onMove: (id: string, moveUp: boolean) => void;
+  onRemove: (id: string, reports: number) => void;
+  onToggleParentLock: (id: string, locked: boolean) => void;
 }) {
-  const { setViewport } = useReactFlow();
+  const { fitView } = useReactFlow();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const peopleById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const sectionById = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
+  const sectionNameById = useMemo(
+    () => new Map(sections.map((s) => [s.id, s.name])),
+    [sections],
+  );
+  const sectionsLayoutKey = useMemo(() => orgChartSectionsLayoutKey(sections), [sections]);
+  const layerById = useMemo(() => orgChartLayerById(nodes), [nodes]);
+  const childrenOf = useMemo(
+    () => buildOrgChartChildrenOf(nodes, sections),
+    [nodes, sections, sectionsLayoutKey],
+  );
+  const outlineById = useMemo(
+    () => orgChartPersonOutlineFromLayout(childrenOf),
+    [childrenOf],
+  );
+  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const { positions, personParentIds } = useMemo(
     () => computeSectionTreeLayout(sections, peopleById),
     [sections, peopleById],
   );
+
+  const descendants = useMemo(() => {
+    const result = new Map<string, Set<string>>();
+    const visit = (id: string): Set<string> => {
+      const set = new Set<string>();
+      for (const child of childrenOf.get(id) ?? []) {
+        set.add(child.id);
+        for (const d of visit(child.id)) set.add(d);
+      }
+      return set;
+    };
+    for (const n of nodes) result.set(n.id, visit(n.id));
+    return result;
+  }, [childrenOf, nodes]);
+
+  const siblingInfo = useMemo(() => {
+    const info = new Map<string, { index: number; count: number }>();
+    for (const list of childrenOf.values()) {
+      list.forEach((n, index) => info.set(n.id, { index, count: list.length }));
+    }
+    for (const n of nodes) {
+      if (!info.has(n.id)) info.set(n.id, { index: 0, count: 1 });
+    }
+    return info;
+  }, [childrenOf, nodes]);
+
+  const sharedKidsByPeer = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const link of eitherOrLinks) {
+      const count = (childrenOf.get(link.nodeAId) ?? []).length;
+      map.set(link.nodeBId, (map.get(link.nodeBId) ?? 0) + count);
+    }
+    return map;
+  }, [eitherOrLinks, childrenOf]);
+
+  const sectionTreeDescendants = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    function collect(id: string): Set<string> {
+      const cached = map.get(id);
+      if (cached) return cached;
+      const kids = childrenByParent.get(id) ?? [];
+      const set = new Set<string>();
+      for (const kid of kids) {
+        set.add(kid.id);
+        for (const d of collect(kid.id)) set.add(d);
+      }
+      map.set(id, set);
+      return set;
+    }
+    for (const s of sections) collect(s.id);
+    return map;
+  }, [sections, childrenByParent]);
 
   const diagramSize = useMemo(() => {
     let w = 0;
@@ -722,19 +782,19 @@ function SectionTreeCanvas({
     for (const [id, p] of positions) {
       const isPerson = id.startsWith(PERSON_PREFIX);
       w = Math.max(w, p.x + SECTION_NODE_W);
-      h = Math.max(h, p.y + (isPerson ? PERSON_ANCHOR_H : SECTION_NODE_H));
+      h = Math.max(h, p.y + (isPerson ? NODE_H : SECTION_NODE_H));
     }
     return { w: Math.max(w, 400), h: Math.max(h, 280) };
   }, [positions]);
 
-  const rfNodes = useMemo<SectionTreeNodeType[]>(() => {
+  const layoutNodes = useMemo<SectionTreeNodeType[]>(() => {
     const sectionNodes: SectionTreeNodeType[] = sections.map((section) => ({
       id: section.id,
       type: "sectionBox",
       position: positions.get(section.id) ?? { x: 0, y: 0 },
       width: SECTION_NODE_W,
       height: SECTION_NODE_H,
-      draggable: false,
+      draggable: !busy,
       selectable: true,
       data: {
         section,
@@ -742,24 +802,64 @@ function SectionTreeCanvas({
         subsectionCount: (childrenByParent.get(section.id) ?? []).length,
       },
     }));
-    const anchors: SectionTreeNodeType[] = [...personParentIds].map((personId) => {
+    const personNodes: OrgBoxNodeType[] = [...personParentIds].flatMap((personId) => {
       const person = peopleById.get(personId);
-      return {
-        id: personAnchorId(personId),
-        type: "personAnchor",
-        position: positions.get(personAnchorId(personId)) ?? { x: 0, y: 0 },
-        width: SECTION_NODE_W,
-        height: PERSON_ANCHOR_H,
-        draggable: false,
-        selectable: false,
-        data: {
-          personName: person?.personName ?? "Unknown person",
-          personRole: person?.personRole ?? null,
-          companyName: person?.companyName ?? null,
+      if (!person) return [];
+      const anchorKey = personAnchorId(personId);
+      const pos = positions.get(anchorKey);
+      if (!pos) return [];
+      const sibling = siblingInfo.get(personId) ?? { index: 0, count: 1 };
+      const managerOptions = nodes.filter(
+        (m) => m.id !== personId && !(descendants.get(personId)?.has(m.id) ?? false),
+      );
+      const eitherOrParentOptions = eitherOrLinks
+        .filter((link) => {
+          if (link.nodeAId === personId || link.nodeBId === personId) return false;
+          if (descendants.get(personId)?.has(link.nodeAId)) return false;
+          if (descendants.get(personId)?.has(link.nodeBId)) return false;
+          return true;
+        })
+        .map((link) => ({
+          value: encodeReportsToValue({ parentEitherOrLinkId: link.id }),
+          label: eitherOrLinkLabel(link, byId),
+        }));
+      return [
+        {
+          id: personId,
+          type: "orgBox",
+          position: pos,
+          width: NODE_W,
+          height: NODE_H,
+          draggable: false,
+          selectable: false,
+          zIndex: 2,
+          data: {
+            node: person,
+            kidsCount:
+              (childrenOf.get(personId) ?? []).length + (sharedKidsByPeer.get(personId) ?? 0),
+            managersByLayer: groupManagersByLayer(managerOptions, layerById, outlineById),
+            eitherOrParentOptions,
+            reportsToValue: encodeReportsToValue({
+              parentId: person.parentId,
+              parentEitherOrLinkId: person.parentEitherOrLinkId,
+            }),
+            nodeLayer: layerById.get(personId) ?? 1,
+            outline: outlineById.get(personId) ?? "1",
+            outlineById,
+            siblingIndex: sibling.index,
+            siblingCount: sibling.count,
+            busy,
+            selected: false,
+            sectionLabel: sectionLabelForNode(person, sectionNameById),
+            onReparent,
+            onMove,
+            onRemove,
+            onToggleParentLock,
+          },
         },
-      };
+      ];
     });
-    return [...anchors, ...sectionNodes];
+    return [...personNodes, ...sectionNodes];
   }, [
     sections,
     positions,
@@ -767,15 +867,35 @@ function SectionTreeCanvas({
     childrenByParent,
     personParentIds,
     peopleById,
+    busy,
+    outlineById,
+    layerById,
+    sectionNameById,
+    childrenOf,
+    descendants,
+    siblingInfo,
+    sharedKidsByPeer,
+    eitherOrLinks,
+    nodes,
+    byId,
+    onReparent,
+    onMove,
+    onRemove,
+    onToggleParentLock,
   ]);
+
+  const [liveNodes, setLiveNodes] = useState<SectionTreeNodeType[]>(layoutNodes);
+  useEffect(() => {
+    setLiveNodes(layoutNodes);
+  }, [layoutNodes]);
 
   const rfEdges = useMemo<Edge[]>(() => {
     const edges: Edge[] = [];
     for (const s of sections) {
       if (!positions.has(s.id)) continue;
       if (s.reportsToNodeId) {
-        const source = personAnchorId(s.reportsToNodeId);
-        if (!positions.has(source)) continue;
+        const source = s.reportsToNodeId;
+        if (!positions.has(personAnchorId(source))) continue;
         edges.push(
           orgStepEdge({
             id: `dept-person-edge-${s.id}`,
@@ -818,21 +938,105 @@ function SectionTreeCanvas({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (!rect.width || !rect.height || !diagramSize.w || !diagramSize.h) return;
-    const zoom = Math.min(
-      Math.min(rect.width / diagramSize.w, rect.height / diagramSize.h),
-      1.05,
+
+    function applyViewport() {
+      const target = containerRef.current;
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      fitView({ padding: 0.12, maxZoom: 1.05, duration: 0 });
+    }
+
+    applyViewport();
+    const ro = new ResizeObserver(() => applyViewport());
+    ro.observe(el);
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting && e.intersectionRatio > 0)) {
+          requestAnimationFrame(applyViewport);
+        }
+      },
+      { threshold: 0.01 },
     );
-    setViewport({
-      x: (rect.width - diagramSize.w * zoom) / 2,
-      y: Math.max(16, (rect.height - diagramSize.h * zoom) / 2),
-      zoom,
+    io.observe(el);
+    return () => {
+      ro.disconnect();
+      io.disconnect();
+    };
+  }, [fitView, layoutKey, diagramSize]);
+
+  const draggingIdRef = useRef<string | null>(null);
+  const didDragRef = useRef(false);
+  const overIdRef = useRef<string | null>(null);
+  const nodeElsRef = useRef<Map<string, DOMRect>>(new Map());
+
+  function measureNodeRects() {
+    const el = containerRef.current;
+    if (!el) return;
+    const next = new Map<string, DOMRect>();
+    for (const wrapper of el.querySelectorAll<HTMLElement>(".react-flow__node")) {
+      const id = wrapper.getAttribute("data-id");
+      if (id) next.set(id, wrapper.getBoundingClientRect());
+    }
+    nodeElsRef.current = next;
+  }
+
+  function nodeAtScreenPoint(clientX: number, clientY: number): string | null {
+    let hit: string | null = null;
+    for (const [id, r] of nodeElsRef.current) {
+      if (id === draggingIdRef.current) continue;
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        hit = id;
+      }
+    }
+    return hit;
+  }
+
+  function setDropTargetClass(nextId: string | null) {
+    const el = containerRef.current;
+    if (!el) return;
+    const prev = overIdRef.current;
+    if (prev === nextId) return;
+    if (prev) {
+      el.querySelector(`[data-id="${prev}"]`)?.classList.remove("org-chart-drop-target");
+    }
+    if (nextId) {
+      el.querySelector(`[data-id="${nextId}"]`)?.classList.add("org-chart-drop-target");
+    }
+    overIdRef.current = nextId;
+  }
+
+  function isEligibleSectionTarget(draggingId: string, targetId: string) {
+    if (targetId === draggingId) return false;
+    if (personParentIds.has(targetId)) return true;
+    if (sectionTreeDescendants.get(draggingId)?.has(targetId)) return false;
+    const dragging = sectionById.get(draggingId);
+    if (!dragging) return false;
+    // Already nested under this department (and not via a person reports-to).
+    if (dragging.parentId === targetId && !dragging.reportsToNodeId) return false;
+    return true;
+  }
+
+  const onNodesChange = useCallback((changes: NodeChange<SectionTreeNodeType>[]) => {
+    setLiveNodes((current) => {
+      if (draggingIdRef.current) {
+        const positionChanges = changes.filter((change) => change.type === "position");
+        if (positionChanges.length > 0) {
+          return applyNodeChanges(positionChanges, current);
+        }
+      }
+      const otherChanges = changes.filter((change) => change.type !== "position");
+      if (otherChanges.length === 0) return current;
+      return applyNodeChanges(otherChanges, current);
     });
-  }, [setViewport, layoutKey, diagramSize]);
+  }, []);
 
   const handleNodeClick = useCallback(
     (_event: unknown, node: Node) => {
+      if (didDragRef.current) {
+        didDragRef.current = false;
+        return;
+      }
       if (node.type === "sectionBox" && !node.id.startsWith(PERSON_PREFIX)) {
         onOpenSection(node.id);
       }
@@ -841,28 +1045,63 @@ function SectionTreeCanvas({
   );
 
   return (
-    <div className="relative h-[640px] w-full org-chart-flow">
+    <div className="relative h-[640px] w-full min-h-[640px] org-chart-flow">
       <div
         ref={containerRef}
         className="h-full w-full overflow-hidden rounded-2xl border border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-950/40"
       >
         <ReactFlow
-          nodes={rfNodes}
+          nodes={liveNodes}
           edges={rfEdges}
           nodeTypes={sectionNodeTypes}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeClick}
-          defaultEdgeOptions={
-            {
-              type: "smoothstep",
-              pathOptions: ORG_STEP_PATH,
-              style: ORG_EDGE_NORMAL,
-            } as unknown as DefaultEdgeOptions
-          }
+          onNodesChange={onNodesChange}
+          onNodeDragStart={(_, node) => {
+            if (node.type !== "sectionBox" || busy) return;
+            draggingIdRef.current = node.id;
+            didDragRef.current = false;
+            setDropTargetClass(null);
+            measureNodeRects();
+          }}
+          onNodeDrag={(event, node) => {
+            if (!draggingIdRef.current) return;
+            didDragRef.current = true;
+            const cx = "clientX" in event ? event.clientX : 0;
+            const cy = "clientY" in event ? event.clientY : 0;
+            const hit = nodeAtScreenPoint(cx, cy);
+            const next =
+              hit && isEligibleSectionTarget(node.id, hit) ? hit : null;
+            setDropTargetClass(next);
+          }}
+          onNodeDragStop={(_, node) => {
+            const target = overIdRef.current;
+            const draggingId = draggingIdRef.current;
+            draggingIdRef.current = null;
+            setDropTargetClass(null);
+            setLiveNodes(layoutNodes);
+            if (!draggingId || !target || !didDragRef.current) return;
+            if (!isEligibleSectionTarget(draggingId, target)) return;
+            if (personParentIds.has(target)) {
+              onSetSectionReportsTo(draggingId, target);
+              return;
+            }
+            onReparentSection(draggingId, target);
+          }}
+          onInit={(instance) => {
+            requestAnimationFrame(() => {
+              const el = containerRef.current;
+              if (!el) return;
+              const rect = el.getBoundingClientRect();
+              if (!rect.width || !rect.height) return;
+              instance.fitView({ padding: 0.12, maxZoom: 1.05, duration: 0 });
+            });
+          }}
+          defaultEdgeOptions={DEFAULT_ORG_EDGE_OPTIONS}
           minZoom={0.05}
           maxZoom={2.5}
           nodesConnectable={false}
-          nodesDraggable={false}
+          nodesDraggable={!busy}
           edgesReconnectable={false}
           deleteKeyCode={null}
           elementsSelectable={false}
@@ -901,11 +1140,14 @@ export function OrgChartDiagram({
   onCreateEitherOr,
   onRemoveEitherOr,
   onOpenEitherOrPicker,
+  onReparentSection,
+  onSetSectionReportsTo,
   bulkReportsTo = "",
   onBulkReportsToChange,
   onBulkApply,
   bulkReportsToOptions,
   bulkMovableCount = 0,
+  onRemoveSelected,
 }: {
   nodes: OrgChartDiagramNode[];
   /** Org-chart departments — top-level browse shows these (+ heads) instead of every person. */
@@ -924,33 +1166,27 @@ export function OrgChartDiagram({
   onCreateEitherOr?: (nodeAId: string, nodeBId: string) => void;
   onRemoveEitherOr?: (linkId: string) => void;
   onOpenEitherOrPicker?: (prefillA?: string, prefillB?: string) => void;
+  /** Nest a department under another (or clear parent via Manage departments). */
+  onReparentSection?: (sectionId: string, newParentId: string | null) => void;
+  /** Point a department at a person on the chart (reports-to). */
+  onSetSectionReportsTo?: (sectionId: string, reportsToNodeId: string) => void;
   bulkReportsTo?: string;
   onBulkReportsToChange?: (value: string) => void;
   onBulkApply?: () => void;
   bulkReportsToOptions?: BulkReportsToOptions;
   bulkMovableCount?: number;
+  /** Remove one or more selected chart members (panel + overlay). */
+  onRemoveSelected?: (ids: string[]) => void;
 }) {
   const [drillStack, setDrillStack] = useState<string[]>([]);
   const currentSectionId = drillStack.length > 0 ? drillStack[drillStack.length - 1]! : null;
 
   const childrenByParent = useMemo(() => {
-    const map = new Map<string | null, OrgChartSectionRow[]>();
-    for (const s of sections) {
-      const list = map.get(s.parentId) ?? [];
-      list.push(s);
-      map.set(s.parentId, list);
-    }
-    for (const list of map.values()) {
-      list.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-    }
-    return map;
+    const { byParent } = buildSectionTreeChildrenOf(sections);
+    return byParent as Map<string | null, OrgChartSectionRow[]>;
   }, [sections]);
 
   const sectionById = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
-
-  const rootSections = useMemo(() => {
-    return sections.filter((s) => !s.parentId || !sectionById.has(s.parentId));
-  }, [sections, sectionById]);
 
   const currentSection = currentSectionId ? sectionById.get(currentSectionId) ?? null : null;
   const childSections = currentSectionId
@@ -961,6 +1197,13 @@ export function OrgChartDiagram({
     if (!currentSectionId) return [];
     return scopeNodesForSectionView(nodes, currentSectionId, childrenByParent);
   }, [nodes, currentSectionId, childrenByParent]);
+
+  const scopedSectionIds = useMemo(() => {
+    if (!currentSectionId) return undefined;
+    return new Set(collectSectionSubtreeIds(currentSectionId, childrenByParent));
+  }, [currentSectionId, childrenByParent]);
+
+  const hierarchyLayerById = useMemo(() => orgChartLayerById(nodes), [nodes]);
 
   const scopedEitherOrLinks = useMemo(() => {
     if (!currentSectionId) return [];
@@ -1014,6 +1257,7 @@ export function OrgChartDiagram({
         <ReactFlowProvider>
           <OrgChartCanvas
             nodes={nodes}
+            sections={sections}
             busy={busy}
             onReparent={onReparent}
             onReparentMany={onReparentMany}
@@ -1033,6 +1277,8 @@ export function OrgChartDiagram({
             onBulkApply={onBulkApply}
             bulkReportsToOptions={bulkReportsToOptions}
             bulkMovableCount={bulkMovableCount}
+            onRemoveSelected={onRemoveSelected}
+            hierarchyLayerById={hierarchyLayerById}
           />
         </ReactFlowProvider>
       </div>
@@ -1043,11 +1289,10 @@ export function OrgChartDiagram({
     return (
       <div className="space-y-3">
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          Department org chart — each box is a department and its head. Lines connect parent
-          departments (or a person a department reports to). Click a department to open its
-          members.
+          Department org chart — each box is a department and its head. Drag a department onto
+          another to nest it. Click a department to open its members.
         </p>
-        {rootSections.length === 0 ? (
+        {sections.length === 0 ? (
           <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
             No departments yet. Use Manage departments to create one.
           </p>
@@ -1058,7 +1303,15 @@ export function OrgChartDiagram({
               nodes={nodes}
               memberCountBySection={memberCountBySection}
               childrenByParent={childrenByParent}
+              eitherOrLinks={eitherOrLinks}
+              busy={busy}
               onOpenSection={handleOpenSection}
+              onReparentSection={onReparentSection ?? (() => {})}
+              onSetSectionReportsTo={onSetSectionReportsTo ?? (() => {})}
+              onReparent={onReparent}
+              onMove={onMove}
+              onRemove={onRemove}
+              onToggleParentLock={onToggleParentLock}
             />
           </ReactFlowProvider>
         )}
@@ -1160,6 +1413,10 @@ export function OrgChartDiagram({
           <ReactFlowProvider>
             <OrgChartCanvas
               nodes={scopedNodes}
+              allNodesForOutline={nodes}
+              sections={sections}
+              scopeSectionIds={scopedSectionIds}
+              scopeRootSectionId={currentSectionId}
               busy={busy}
               onReparent={onReparent}
               onReparentMany={onReparentMany}
@@ -1179,6 +1436,7 @@ export function OrgChartDiagram({
               onBulkApply={onBulkApply}
               bulkReportsToOptions={bulkReportsToOptions}
               bulkMovableCount={bulkMovableCount}
+              onRemoveSelected={onRemoveSelected}
             />
           </ReactFlowProvider>
         )}
@@ -1189,6 +1447,8 @@ export function OrgChartDiagram({
 
 function OrgChartCanvas({
   nodes,
+  allNodesForOutline,
+  sections = [],
   busy,
   onReparent,
   onReparentMany,
@@ -1208,8 +1468,19 @@ function OrgChartCanvas({
   onBulkApply,
   bulkReportsToOptions,
   bulkMovableCount = 0,
+  onRemoveSelected,
+  hierarchyLayerById,
+  scopeSectionIds,
+  scopeRootSectionId,
 }: {
   nodes: OrgChartDiagramNode[];
+  /** Full chart members for scoped outline prefix (dept head stays at company 1.n). */
+  allNodesForOutline?: OrgChartDiagramNode[];
+  sections?: OrgChartSectionRow[];
+  /** Section ids in the current department view (includes nested sub-departments). */
+  scopeSectionIds?: Set<string>;
+  /** Root department when drilled into a section (drives sub-dept sort order). */
+  scopeRootSectionId?: string | null;
   busy: boolean;
   onReparent: (id: string, parentId: string) => void;
   onReparentMany: (ids: string[], parentId: string) => void;
@@ -1229,10 +1500,37 @@ function OrgChartCanvas({
   onBulkApply?: () => void;
   bulkReportsToOptions?: BulkReportsToOptions;
   bulkMovableCount?: number;
+  onRemoveSelected?: (ids: string[]) => void;
+  /** Full-chart level map (preferred over computing from scoped layout nodes). */
+  hierarchyLayerById?: Map<string, number>;
 }) {
-  const { setViewport } = useReactFlow();
+  const { fitView } = useReactFlow();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { positions, childrenOf } = useMemo(() => computeLayout(nodes), [nodes]);
+  const sectionsLayoutKey = useMemo(
+    () => orgChartSectionsLayoutKey(sections),
+    [sections],
+  );
+  const layoutOptions = useMemo<OrgChartLayoutOptions | undefined>(
+    () =>
+      scopeSectionIds && scopeSectionIds.size > 0 && scopeRootSectionId
+        ? {
+            sectionIdsInScope: scopeSectionIds,
+            scopeRootSectionId,
+            allNodesForOutline: allNodesForOutline ?? nodes,
+          }
+        : undefined,
+    [scopeSectionIds, scopeRootSectionId, allNodesForOutline, nodes],
+  );
+  const { positions, childrenOf, outlineById } = useMemo(() => {
+    const layout = computeLayout(nodes, sections, layoutOptions);
+    const outlineById = layoutOptions?.scopeRootSectionId
+      ? orgChartOutlineById(nodes, sections, layoutOptions)
+      : orgChartPersonOutlineFromLayout(layout.childrenOf);
+    return {
+      ...layout,
+      outlineById,
+    };
+  }, [nodes, sections, sectionsLayoutKey, layoutOptions]);
 
   const diagramSize = useMemo(() => {
     let w = 0;
@@ -1307,8 +1605,10 @@ function OrgChartCanvas({
     return true;
   }
 
-  const layerById = useMemo(() => orgChartLayerById(nodes), [nodes]);
-
+  const layerById = useMemo(
+    () => hierarchyLayerById ?? orgChartLayerById(nodes),
+    [hierarchyLayerById, nodes],
+  );
   const layoutNodes = useMemo<DiagramNode[]>(() => {
     const byId = new Map(nodes.map((n) => [n.id, n]));
     const sharedKidsByPeer = new Map<string, number>();
@@ -1352,13 +1652,15 @@ function OrgChartCanvas({
           node: n,
           kidsCount:
             (childrenOf.get(n.id) ?? []).length + (sharedKidsByPeer.get(n.id) ?? 0),
-          managersByLayer: groupManagersByLayer(managerOptions, layerById),
+          managersByLayer: groupManagersByLayer(managerOptions, layerById, outlineById),
           eitherOrParentOptions,
           reportsToValue: encodeReportsToValue({
             parentId: n.parentId,
             parentEitherOrLinkId: n.parentEitherOrLinkId,
           }),
           nodeLayer: layerById.get(n.id) ?? 1,
+          outline: outlineById.get(n.id) ?? "1",
+          outlineById,
           siblingIndex: sibling.index,
           siblingCount: sibling.count,
           busy,
@@ -1379,6 +1681,7 @@ function OrgChartCanvas({
     descendants,
     siblingInfo,
     layerById,
+    outlineById,
     busy,
     selectedIds,
     sectionNameById,
@@ -1481,27 +1784,44 @@ function OrgChartCanvas({
 
   const layoutKey = useMemo(
     () =>
-      nodes
-        .map((n) => `${n.id}:${n.parentId}:${n.parentEitherOrLinkId ?? ""}:${n.parentLocked}:${n.sortOrder}`)
-        .join("|"),
-    [nodes],
+      `${sectionsLayoutKey}::${nodes
+        .map(
+          (n) =>
+            `${n.id}:${n.parentId}:${n.parentEitherOrLinkId ?? ""}:${n.parentLocked}:${n.sortOrder}`,
+        )
+        .join("|")}`,
+    [nodes, sectionsLayoutKey],
   );
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (!rect.width || !rect.height || !diagramSize.w || !diagramSize.h) return;
-    const zoom = Math.min(
-      Math.min(rect.width / diagramSize.w, rect.height / diagramSize.h),
-      1.05,
+
+    function applyViewport() {
+      const target = containerRef.current;
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      fitView({ padding: 0.12, maxZoom: 1.05, duration: 0 });
+    }
+
+    applyViewport();
+    const ro = new ResizeObserver(() => applyViewport());
+    ro.observe(el);
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting && e.intersectionRatio > 0)) {
+          requestAnimationFrame(applyViewport);
+        }
+      },
+      { threshold: 0.01 },
     );
-    setViewport({
-      x: (rect.width - diagramSize.w * zoom) / 2,
-      y: (rect.height - diagramSize.h * zoom) / 2,
-      zoom,
-    });
-  }, [setViewport, layoutKey, diagramSize]);
+    io.observe(el);
+    return () => {
+      ro.disconnect();
+      io.disconnect();
+    };
+  }, [fitView, layoutKey, diagramSize]);
 
   useEffect(() => {
     const alive = new Set(nodes.map((n) => n.id));
@@ -1595,7 +1915,34 @@ function OrgChartCanvas({
   }, [eitherOrLinks, selectedPair]);
 
   return (
-    <div className="relative h-[640px] w-full org-chart-flow">
+    <div className="relative h-[640px] w-full min-h-[640px] org-chart-flow">
+      {selectedIds.size >= 1 && onRemoveSelected ? (
+        <div
+          className={`absolute left-3 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-rose-300/90 bg-white/95 px-3 py-2 shadow-md backdrop-blur-sm dark:border-rose-800 dark:bg-zinc-900/95 ${
+            selectedIds.size >= 2 && bulkReportsToOptions && onBulkApply && onBulkReportsToChange
+              ? "top-[4.75rem]"
+              : "top-3"
+          }`}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 rounded-lg border-rose-300 px-3 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onRemoveSelected([...selectedIds]);
+            }}
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            {selectedIds.size > 1 ? `Remove ${selectedIds.size}` : "Remove member"}
+          </Button>
+        </div>
+      ) : null}
       {selectedIds.size >= 2 && bulkReportsToOptions && onBulkApply && onBulkReportsToChange ? (
         <div
           className="absolute inset-x-3 top-3 z-20 rounded-xl border border-orange-300/90 bg-white/95 px-3 py-2.5 shadow-md backdrop-blur-sm dark:border-orange-800 dark:bg-zinc-900/95"
@@ -1610,7 +1957,7 @@ function OrgChartCanvas({
             onChange={onBulkReportsToChange}
             onApply={onBulkApply}
             busy={busy}
-            options={bulkReportsToOptions}
+            options={{ ...bulkReportsToOptions, outlineById }}
           />
         </div>
       ) : null}
@@ -1669,13 +2016,16 @@ function OrgChartCanvas({
         nodes={liveNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
-        defaultEdgeOptions={
-          {
-            type: "smoothstep",
-            pathOptions: ORG_STEP_PATH,
-            style: ORG_EDGE_NORMAL,
-          } as unknown as DefaultEdgeOptions
-        }
+        onInit={(instance) => {
+          requestAnimationFrame(() => {
+            const el = containerRef.current;
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+            instance.fitView({ padding: 0.12, maxZoom: 1.05, duration: 0 });
+          });
+        }}
+        defaultEdgeOptions={DEFAULT_ORG_EDGE_OPTIONS}
         minZoom={0.05}
         maxZoom={2.5}
         nodesConnectable={false}
@@ -1683,6 +2033,7 @@ function OrgChartCanvas({
         deleteKeyCode={null}
         elementsSelectable={false}
         selectNodesOnDrag={false}
+        nodeDragThreshold={5}
         onlyRenderVisibleElements
         elevateNodesOnSelect={false}
         autoPanOnNodeDrag={false}
@@ -1706,6 +2057,8 @@ function OrgChartCanvas({
             if (n?.parentLocked) dragSet.delete(id);
           }
           if (dragSet.size === 0) return;
+          // Keep panel Remove in sync even when a tiny drag swallows onNodeClick.
+          updateSelection(dragSet);
           draggingRef.current = true;
           dragIdsRef.current = dragSet;
           setDropTargetClass(null);

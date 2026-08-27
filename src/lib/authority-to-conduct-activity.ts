@@ -37,6 +37,8 @@ export const ACA_COMPANY_FORM_PREFIXES: Record<string, string> = {
   AWIC: "AWIC",
   "AMALGATED WORLD IMPORT": "AWIC",
   MCHISI: "MCHISI",
+  "MCHISI LPG": "MCHISI",
+  "MCHISI FAMES": "MCHISI FAMES",
   MCHSI: "MCHSI",
   "M.CONPINCO": "MCHSI",
   "M.CONPINCO HOME IMPROVEMENT SUPERCENTER, INC.": "MCHSI",
@@ -116,7 +118,9 @@ export function formatAcaRequestTitle(
 
 export function formatAcaRequestDescription(fields: AcaRequestFields): string {
   const lines = [
-    `Department/Store: ${fields.departmentStore.trim()}`,
+    ...(fields.departmentStore.trim()
+      ? [`Department/Store: ${fields.departmentStore.trim()}`]
+      : []),
     `Category: ${fields.category.trim()}`,
     `Nature of Request: ${fields.natureOfRequest.trim()}`,
     `Estimated Cost: ${formatAcaPeso(fields.estimatedCost) || fields.estimatedCost.trim()}`,

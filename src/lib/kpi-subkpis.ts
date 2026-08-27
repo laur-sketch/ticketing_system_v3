@@ -5,7 +5,17 @@ import {
 } from "@/lib/delay-penalty-frequency";
 import { normalizePersonName } from "@/lib/person-name";
 import { DateTime } from "luxon";
-import { itProjectAllItems, isItProjectEnvelope, parseItProjectSubKpis, wrapItProjectSubKpis } from "@/lib/it-project-subkpis";
+import {
+  itProjectAllItems,
+  isItProjectEnvelope,
+  parseItProjectSubKpis,
+  wrapItProjectSubKpis,
+} from "@/lib/it-project-subkpis";
+import {
+  kpiHasDistinctMainTask,
+  kpiMainTaskLabel,
+  type KpiMainTaskRecord,
+} from "@/lib/kpi-main-task";
 import {
   parseTaskScreenshotMetaList,
   type TaskScreenshotMetaItem,
@@ -450,9 +460,11 @@ export function aggregateKpiChecklistProgress(
 /**
  * Cybersecurity / network: checked on the task board = breach or downtime;
  * unchecked items are neutral (safe / uptime), not counted as incidents.
- * @deprecated Both pillars now use normal checklist semantics (checked = done).
  */
-export const INVERTED_CHECKLIST_PILLARS = new Set<string>([]);
+export const INVERTED_CHECKLIST_PILLARS = new Set<string>([
+  "CYBERSECURITY",
+  "NETWORK PERFORMANCE",
+]);
 
 /** @deprecated Use {@link isInvertedChecklistPillar} — frequency is ignored. */
 export const DAILY_INVERTED_CHECKLIST_PILLARS = INVERTED_CHECKLIST_PILLARS;
@@ -863,6 +875,31 @@ export function getPillarCompletionRequirements(raw: unknown): SubKpiCompletionR
 export function isPillarOnlyTask(raw: unknown): boolean {
   if (collectAllSubKpiItems(normalizeSubKpis(raw)).length > 0) return false;
   return getPillarCompletionRequirements(raw) != null;
+}
+
+/** Task completion is a single main-task row (pillar envelope or one legacy sub-task). */
+export function isMainTaskOnlyRecord(
+  raw: unknown,
+  opts: Pick<KpiMainTaskRecord, "title" | "mainTask"> = {},
+): boolean {
+  if (isPillarOnlyTask(raw)) return true;
+  const norm = normalizeSubKpis(raw);
+  if (norm.segmented) return false;
+  const items = collectAllSubKpiItems(norm);
+  if (items.length !== 1) return false;
+  if (!kpiHasDistinctMainTask(opts)) return true;
+  const label = kpiMainTaskLabel(opts).trim().toLowerCase();
+  return items[0].title.trim().toLowerCase() === label;
+}
+
+/** Checklist item for the main-task checkbox (virtual pillar row or single legacy item). */
+export function mainTaskCheckboxItem(raw: unknown, taskTitle?: string): SubKpiItem | null {
+  const virtual = pillarVirtualSubKpiItem(raw, taskTitle);
+  if (virtual) return virtual;
+  const norm = normalizeSubKpis(raw);
+  if (norm.segmented) return null;
+  const items = collectAllSubKpiItems(norm);
+  return items.length === 1 ? items[0] : null;
 }
 
 /** Virtual checklist row when completion is stored on the task pillar (no sub-tasks). */

@@ -40,6 +40,7 @@ const next = require("next");
 const { Server } = require("socket.io");
 const { PrismaClient: PrimaryClient } = require("@prisma/client/primary");
 const { PrismaClient: AuthClient } = require("@prisma/client/auth");
+const { startRedisJobs, stopRedisJobs } = require("./scripts/redis-jobs.cjs");
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOSTNAME || "0.0.0.0";
@@ -143,7 +144,7 @@ async function runConfirmationReminderJob() {
 
 app
   .prepare()
-  .then(() => {
+  .then(async () => {
     const server = http.createServer({ maxHeaderSize }, (req, res) => {
       handle(req, res);
     });
@@ -157,28 +158,50 @@ app
     const timer = setInterval(() => {
       void emitRealtimeSnapshot(io);
     }, 3000);
-    const confirmationReminderTimer = setInterval(() => {
-      void runConfirmationReminderJob();
-    }, 15 * 60 * 1000);
-    const hrisSyncTimer = setInterval(() => {
-      void runHrisSyncJob();
-    }, 30 * 60 * 1000);
-    const portalMergedSyncTimer = setInterval(() => {
-      void runPortalMergedSyncJob();
-    }, 30 * 60 * 1000);
-    server.listen(port, host, () => {
-      // Keep this log minimal: cPanel surfaces startup logs in app logs.
-      console.log(`Ticket System listening on http://${host}:${port}`);
-      setTimeout(() => void runConfirmationReminderJob(), 60 * 1000);
-      setTimeout(() => void runHrisSyncJob(), 120 * 1000);
-      // Offset from the HRIS job so the two syncs do not overlap at startup.
-      setTimeout(() => void runPortalMergedSyncJob(), 5 * 60 * 1000);
+
+    // Prefer BullMQ (Redis) for background jobs; keep timer fallback if Redis is down.
+    const jobHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    const redisJobs = await startRedisJobs({
+      internalJobKey,
+      jobHost,
+      port,
     });
+    const useRedisJobs = redisJobs.started;
+
+    let confirmationReminderTimer = null;
+    let hrisSyncTimer = null;
+    let portalMergedSyncTimer = null;
+    const bootTimeouts = [];
+    if (!useRedisJobs) {
+      confirmationReminderTimer = setInterval(() => {
+        void runConfirmationReminderJob();
+      }, 15 * 60 * 1000);
+      hrisSyncTimer = setInterval(() => {
+        void runHrisSyncJob();
+      }, 30 * 60 * 1000);
+      portalMergedSyncTimer = setInterval(() => {
+        void runPortalMergedSyncJob();
+      }, 30 * 60 * 1000);
+      server.listen(port, host, () => {
+        console.log(`Ticket System listening on http://${host}:${port} (timer jobs)`);
+        bootTimeouts.push(setTimeout(() => void runConfirmationReminderJob(), 60 * 1000));
+        bootTimeouts.push(setTimeout(() => void runHrisSyncJob(), 120 * 1000));
+        // Offset from the HRIS job so the two syncs do not overlap at startup.
+        bootTimeouts.push(setTimeout(() => void runPortalMergedSyncJob(), 5 * 60 * 1000));
+      });
+    } else {
+      server.listen(port, host, () => {
+        console.log(`Ticket System listening on http://${host}:${port} (Redis jobs)`);
+      });
+    }
+
     const shutdown = async () => {
       clearInterval(timer);
-      clearInterval(confirmationReminderTimer);
-      clearInterval(hrisSyncTimer);
-      clearInterval(portalMergedSyncTimer);
+      if (confirmationReminderTimer) clearInterval(confirmationReminderTimer);
+      if (hrisSyncTimer) clearInterval(hrisSyncTimer);
+      if (portalMergedSyncTimer) clearInterval(portalMergedSyncTimer);
+      for (const t of bootTimeouts) clearTimeout(t);
+      if (useRedisJobs) await stopRedisJobs();
       await prisma.$disconnect();
       await prismaAuth.$disconnect();
       io.close();

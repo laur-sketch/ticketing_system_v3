@@ -32,7 +32,9 @@ import {
   isTravelOrderConfirmReady,
   MAX_TRAVEL_ORDER_ATTACHMENTS,
   TRAVEL_ORDER_STATUS,
+  sortTravelOrderLevelsByDisplayLayer,
   travelOrderApprovedByLabel,
+  travelOrderApprovalLayerLabel,
   travelOrderHasGatePass,
   travelOrderLocationVisitStatus,
   travelOrderLocationVisitStatusLabel,
@@ -1207,6 +1209,8 @@ export function TravelOrderSummaryPanel({
                           isApprovalLevelOptional(
                             levels.find((l) => l.level === order.rejectedAtLevel),
                           ),
+                          order.rejectedAtLevel,
+                          levels.length,
                         )}`
                       : order.rejectedByAgent
                         ? " at confirmation"
@@ -1843,7 +1847,13 @@ export function TravelOrderSummaryPanel({
                       order.status === TRAVEL_ORDER_STATUS.SUBMITTED &&
                       unlockedLevels.length > 0
                         ? ` · waiting on ${unlockedLevels
-                            .map((l) => travelOrderApprovedByLabel(isApprovalLevelOptional(l)))
+                            .map((l) =>
+                              travelOrderApprovedByLabel(
+                                isApprovalLevelOptional(l),
+                                l.level,
+                                levels.length,
+                              ),
+                            )
                             .join(", ")}`
                         : null}
                       {hierarchical &&
@@ -1856,6 +1866,8 @@ export function TravelOrderSummaryPanel({
                             isApprovalLevelOptional(
                               levels.find((l) => l.level === order.rejectedAtLevel),
                             ),
+                            order.rejectedAtLevel,
+                            levels.length,
                           )}`
                         : null}
                       {hierarchical &&
@@ -1867,13 +1879,9 @@ export function TravelOrderSummaryPanel({
                     </p>
 
                     {hierarchical ? (
-                      <div
-                        className={cn(
-                          travelOrderApprovalGridClass(levels.length),
-                          "rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/40",
-                        )}
-                      >
-                        {levels.map((lvl) => {
+                      <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-700 dark:bg-zinc-900/40">
+                        {sortTravelOrderLevelsByDisplayLayer(levels).map((lvl, index) => {
+                          const totalLevels = levels.length;
                           const done = Boolean(lvl.approvedAt);
                           const optional = isApprovalLevelOptional(lvl);
                           const declinedHere =
@@ -1905,10 +1913,13 @@ export function TravelOrderSummaryPanel({
                                   ? "text-sky-700 dark:text-sky-300"
                                   : "text-zinc-400 dark:text-zinc-600";
                           return (
-                            <div
-                              key={`${order.id}-lvl-${lvl.level}`}
-                              className="min-w-0 self-start"
-                            >
+                            <div key={`${order.id}-lvl-${lvl.level}`}>
+                              {index > 0 ? (
+                                <p className="mb-2 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400">
+                                  then {travelOrderApprovalLayerLabel(lvl.level, totalLevels)}
+                                </p>
+                              ) : null}
+                              <div className="min-w-0 rounded-lg border border-zinc-200 bg-white/80 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-950/50">
                               <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                                 <span
                                   className={
@@ -1917,7 +1928,7 @@ export function TravelOrderSummaryPanel({
                                       : "text-zinc-500 dark:text-zinc-500"
                                   }
                                 >
-                                  {travelOrderApprovedByLabel(optional)}
+                                  {travelOrderApprovedByLabel(optional, lvl.level, totalLevels)}
                                 </span>
                               </p>
                               <p
@@ -1965,13 +1976,104 @@ export function TravelOrderSummaryPanel({
                                     isApprovalLevelOptional(
                                       levels.find((l) => l.level === order.rejectedAtLevel),
                                     ),
+                                    order.rejectedAtLevel,
+                                    totalLevels,
                                   )}
                                 </p>
                               ) : (
                                 <p className="mt-0.5 text-[11px] text-zinc-500">
-                                  Waiting for previous required approval(s)
+                                  Waiting for lower layer(s)
                                 </p>
                               )}
+                              {canApproveThis &&
+                              actionableLevel &&
+                              actionableLevel.level === lvl.level ? (
+                                <div className="mt-2 space-y-2">
+                                  <div className="flex flex-col gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busyKey === `approve-${order.id}` ||
+                                        busyKey === `reject-${order.id}` ||
+                                        declineDraft?.orderId === order.id
+                                      }
+                                      onClick={() => void approveOrder(order)}
+                                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      {busyKey === `approve-${order.id}` ? (
+                                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                      ) : null}
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busyKey === `approve-${order.id}` ||
+                                        busyKey === `reject-${order.id}`
+                                      }
+                                      onClick={() =>
+                                        setDeclineDraft({
+                                          orderId: order.id,
+                                          asConfirmer: false,
+                                          reason: "",
+                                        })
+                                      }
+                                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-200"
+                                    >
+                                      Do not approve
+                                    </button>
+                                  </div>
+                                  {declineDraft?.orderId === order.id &&
+                                  !declineDraft.asConfirmer ? (
+                                    <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
+                                      <label className="block space-y-1">
+                                        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-rose-800 dark:text-rose-300">
+                                          Why are you declining?
+                                        </span>
+                                        <textarea
+                                          value={declineDraft.reason}
+                                          onChange={(e) =>
+                                            setDeclineDraft((prev) =>
+                                              prev ? { ...prev, reason: e.target.value } : prev,
+                                            )
+                                          }
+                                          rows={3}
+                                          maxLength={2000}
+                                          placeholder="Explain why this travel order is not approved…"
+                                          className="w-full rounded-lg border border-rose-400/40 bg-white px-2.5 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-rose-500 dark:border-rose-500/30 dark:bg-zinc-950 dark:text-zinc-100"
+                                        />
+                                      </label>
+                                      <div className="flex flex-wrap gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={
+                                            busyKey === `reject-${order.id}` ||
+                                            !declineDraft.reason.trim()
+                                          }
+                                          onClick={() =>
+                                            void rejectOrder(order, false, declineDraft.reason)
+                                          }
+                                          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          {busyKey === `reject-${order.id}` ? (
+                                            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                          ) : null}
+                                          Submit decline
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={busyKey === `reject-${order.id}`}
+                                          onClick={() => setDeclineDraft(null)}
+                                          className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              </div>
                             </div>
                           );
                         })}
@@ -1984,7 +2086,15 @@ export function TravelOrderSummaryPanel({
                         )}
                       >
                         {flatApprovers.length > 0 ? (
-                          flatApprovers.map((agent) => (
+                          flatApprovers.map((agent, index) => {
+                            const showApproveUnderName =
+                              canApproveThis &&
+                              (agent.id === operatorAgentId ||
+                                (!operatorAgentId && index === 0) ||
+                                (operatorAgentId != null &&
+                                  !flatApprovers.some((a) => a.id === operatorAgentId) &&
+                                  index === 0));
+                            return (
                             <div key={`${order.id}-approver-${agent.id}`} className="min-w-0 self-start">
                               <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">
                                 Approver
@@ -1998,8 +2108,95 @@ export function TravelOrderSummaryPanel({
                               >
                                 {agent.name}
                               </p>
+                              {showApproveUnderName ? (
+                                <div className="mt-2 space-y-2">
+                                  <div className="flex flex-col gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busyKey === `approve-${order.id}` ||
+                                        busyKey === `reject-${order.id}` ||
+                                        declineDraft?.orderId === order.id
+                                      }
+                                      onClick={() => void approveOrder(order)}
+                                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      {busyKey === `approve-${order.id}` ? (
+                                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                      ) : null}
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busyKey === `approve-${order.id}` ||
+                                        busyKey === `reject-${order.id}`
+                                      }
+                                      onClick={() =>
+                                        setDeclineDraft({
+                                          orderId: order.id,
+                                          asConfirmer: false,
+                                          reason: "",
+                                        })
+                                      }
+                                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-200"
+                                    >
+                                      Do not approve
+                                    </button>
+                                  </div>
+                                  {declineDraft?.orderId === order.id &&
+                                  !declineDraft.asConfirmer ? (
+                                    <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
+                                      <label className="block space-y-1">
+                                        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-rose-800 dark:text-rose-300">
+                                          Why are you declining?
+                                        </span>
+                                        <textarea
+                                          value={declineDraft.reason}
+                                          onChange={(e) =>
+                                            setDeclineDraft((prev) =>
+                                              prev ? { ...prev, reason: e.target.value } : prev,
+                                            )
+                                          }
+                                          rows={3}
+                                          maxLength={2000}
+                                          placeholder="Explain why this travel order is not approved…"
+                                          className="w-full rounded-lg border border-rose-400/40 bg-white px-2.5 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-rose-500 dark:border-rose-500/30 dark:bg-zinc-950 dark:text-zinc-100"
+                                        />
+                                      </label>
+                                      <div className="flex flex-wrap gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={
+                                            busyKey === `reject-${order.id}` ||
+                                            !declineDraft.reason.trim()
+                                          }
+                                          onClick={() =>
+                                            void rejectOrder(order, false, declineDraft.reason)
+                                          }
+                                          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          {busyKey === `reject-${order.id}` ? (
+                                            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                          ) : null}
+                                          Submit decline
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={busyKey === `reject-${order.id}`}
+                                          onClick={() => setDeclineDraft(null)}
+                                          className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
-                          ))
+                            );
+                          })
                         ) : (
                           <div className="min-w-0 self-start">
                             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">
@@ -2008,6 +2205,25 @@ export function TravelOrderSummaryPanel({
                             <p className="mt-1 text-sm font-medium text-zinc-400 dark:text-zinc-600">
                               —
                             </p>
+                            {canApproveThis ? (
+                              <div className="mt-2 flex flex-col gap-1.5">
+                                <button
+                                  type="button"
+                                  disabled={
+                                    busyKey === `approve-${order.id}` ||
+                                    busyKey === `reject-${order.id}` ||
+                                    declineDraft?.orderId === order.id
+                                  }
+                                  onClick={() => void approveOrder(order)}
+                                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {busyKey === `approve-${order.id}` ? (
+                                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                                  ) : null}
+                                  Approve travel order
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </div>
@@ -2023,86 +2239,6 @@ export function TravelOrderSummaryPanel({
                       </p>
                     ) : null}
                   </div>
-
-                  {canApproveThis ? (
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={
-                            busyKey === `approve-${order.id}` ||
-                            busyKey === `reject-${order.id}` ||
-                            declineDraft?.orderId === order.id
-                          }
-                          onClick={() => void approveOrder(order)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {busyKey === `approve-${order.id}` ? (
-                            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                          ) : null}
-                          {hierarchical && actionableLevel
-                            ? `Approve · ${travelOrderApprovedByLabel(isApprovalLevelOptional(actionableLevel))}`
-                            : "Approve travel order"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={
-                            busyKey === `approve-${order.id}` || busyKey === `reject-${order.id}`
-                          }
-                          onClick={() =>
-                            setDeclineDraft({ orderId: order.id, asConfirmer: false, reason: "" })
-                          }
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-rose-200"
-                        >
-                          Do not approve
-                        </button>
-                      </div>
-                      {declineDraft?.orderId === order.id && !declineDraft.asConfirmer ? (
-                        <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/5 p-2.5">
-                          <label className="block space-y-1">
-                            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-rose-800 dark:text-rose-300">
-                              Why are you declining?
-                            </span>
-                            <textarea
-                              value={declineDraft.reason}
-                              onChange={(e) =>
-                                setDeclineDraft((prev) =>
-                                  prev ? { ...prev, reason: e.target.value } : prev,
-                                )
-                              }
-                              rows={3}
-                              maxLength={2000}
-                              placeholder="Explain why this travel order is not approved…"
-                              className="w-full rounded-lg border border-rose-400/40 bg-white px-2.5 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-rose-500 dark:border-rose-500/30 dark:bg-zinc-950 dark:text-zinc-100"
-                            />
-                          </label>
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled={
-                                busyKey === `reject-${order.id}` || !declineDraft.reason.trim()
-                              }
-                              onClick={() => void rejectOrder(order, false, declineDraft.reason)}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {busyKey === `reject-${order.id}` ? (
-                                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                              ) : null}
-                              Submit decline
-                            </button>
-                            <button
-                              type="button"
-                              disabled={busyKey === `reject-${order.id}`}
-                              onClick={() => setDeclineDraft(null)}
-                              className="inline-flex items-center rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
 
                   <div className="space-y-1.5 border-t border-zinc-200 pt-3 dark:border-zinc-700">
                     <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-orange-800 dark:text-orange-200">

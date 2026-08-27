@@ -194,7 +194,7 @@ export async function PATCH(req: Request) {
       where: { name: { equals: merged.company_name.trim(), mode: "insensitive" } },
       select: { id: true },
     });
-    // loose match for HRIS names like MCONPINCO vs MCHISI is left to SuperAdmin company picker
+    // loose match for HRIS names like MCONPINCO vs MCHISI LPG is left to SuperAdmin company picker
     if (team || companyKey) {
       if (team) {
         await prismaPrimary.portalAccount.update({

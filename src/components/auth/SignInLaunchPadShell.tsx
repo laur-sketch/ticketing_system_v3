@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { BrandLogo } from "@/components/BrandLogo";
+import { FaqLaunchControl } from "@/components/faq/FaqLaunchControl";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { usePhilippineTimeSync } from "@/hooks/usePhilippineTimeSync";
 import { formatPhilippineBarClock } from "@/lib/philippine-time";
-import { BRAND_TITLE } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 
 export const launchPadLabelClass =
@@ -94,18 +94,16 @@ export function SignInLaunchPadShell({
       <header className="relative z-20 flex w-full shrink-0 items-center justify-between border-b border-zinc-200/80 bg-white/90 px-5 py-2.5 backdrop-blur-sm dark:border-white/5 dark:bg-[#050505]/95">
         <Link href="/signin" className="inline-flex items-center gap-2.5">
           <BrandLogo width={52} className="h-auto max-h-9 w-[52px]" />
-          <span className="hidden text-sm font-semibold tracking-tight text-zinc-900 dark:text-white sm:inline">
-            {BRAND_TITLE}
-          </span>
         </Link>
         <nav className="flex items-center gap-3 text-sm font-medium sm:gap-6">
           <ThemeToggle />
           <Link
             href="/process"
-            className="hidden text-zinc-600 transition-colors hover:text-zinc-950 dark:text-gray-300 dark:hover:text-white sm:inline"
+            className="text-zinc-600 transition-colors hover:text-zinc-950 dark:text-gray-300 dark:hover:text-white"
           >
             Support
           </Link>
+          <FaqLaunchControl className="cursor-pointer border-0 bg-transparent p-0 font-medium text-zinc-600 transition-colors hover:text-zinc-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ff6b00] dark:text-gray-300 dark:hover:text-white" />
         </nav>
       </header>
 
@@ -114,11 +112,6 @@ export function SignInLaunchPadShell({
           <div className="inline-block animate-[launchpad-float_6s_ease-in-out_infinite]">
             <LaunchPadClock />
           </div>
-          <h1 className="mx-auto mt-8 max-w-2xl text-3xl font-bold leading-tight tracking-tight text-zinc-900 dark:text-white sm:text-4xl">
-            The command center for
-            <br />
-            modern support.
-          </h1>
         </div>
 
         <div

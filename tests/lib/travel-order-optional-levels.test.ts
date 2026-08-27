@@ -10,6 +10,17 @@ import {
   isApprovalLevelUnlocked,
   normalizeApprovalLevelsForStore,
   parseApprovalLevels,
+  sortTravelOrderLevelsByDisplayLayer,
+  travelOrderApprovalDisplayLayer,
+  travelOrderApprovalSeatCountFromRequestorLayer,
+  travelOrderApprovedByLabel,
+  travelOrderOrgChartLayersInApprovalPath,
+  travelOrderRecommendedOptionalForSeat,
+  buildTravelOrderRecommendedPath,
+  buildApprovalLevelsFromOrgChartPath,
+  travelOrderDraftToFieldAssignmentPayload,
+  emptyTravelOrderDraft,
+  emptyTravelLocation,
   type TravelOrderApprovalLevelStored,
 } from "@/lib/travel-order";
 
@@ -163,5 +174,118 @@ describe("optional approval levels", () => {
       canConfirmTravelOrderNow("admin-other", order, { canAssignWork: true }),
     ).toBe(false);
     expect(canConfirmTravelOrderNow("confirmer-1", order, { canAssignWork: true })).toBe(true);
+  });
+});
+
+describe("inverted approval layer display", () => {
+  it("maps the last sequence seat to Layer 2", () => {
+    expect(travelOrderApprovalDisplayLayer(1, 2)).toBe(3);
+    expect(travelOrderApprovalDisplayLayer(2, 2)).toBe(2);
+    expect(travelOrderApprovalDisplayLayer(1, 3)).toBe(4);
+    expect(travelOrderApprovalDisplayLayer(3, 3)).toBe(2);
+  });
+
+  it("sorts Layer 2 (final approver) first", () => {
+    const sorted = sortTravelOrderLevelsByDisplayLayer([
+      { level: 1 },
+      { level: 2 },
+    ]);
+    expect(sorted.map((l) => l.level)).toEqual([2, 1]);
+    expect(travelOrderApprovedByLabel(false, 1, 2)).toMatch(/^Layer 3/);
+    expect(travelOrderApprovedByLabel(false, 2, 2)).toMatch(/^Layer 2/);
+  });
+
+  it("sizes the chain from the layer above the requestor up to Layer 2", () => {
+    expect(travelOrderApprovalSeatCountFromRequestorLayer(4)).toBe(2);
+    expect(travelOrderApprovalSeatCountFromRequestorLayer(3)).toBe(1);
+    expect(travelOrderApprovalSeatCountFromRequestorLayer(2)).toBe(0);
+    expect(travelOrderApprovalSeatCountFromRequestorLayer(1)).toBe(0);
+    expect(travelOrderApprovalSeatCountFromRequestorLayer(null)).toBe(0);
+    expect(travelOrderApprovalSeatCountFromRequestorLayer(undefined)).toBe(0);
+    expect(travelOrderApprovalDisplayLayer(1, 2)).toBe(3);
+    expect(travelOrderApprovalDisplayLayer(2, 2)).toBe(2);
+  });
+});
+
+describe("offline create payload", () => {
+  it("rebuilds field-assignment form fields from a draft", () => {
+    const payload = travelOrderDraftToFieldAssignmentPayload({
+      mainTaskName: "Site visit",
+      scopedCompanyTeamId: "co-1",
+      draft: {
+        ...emptyTravelOrderDraft(),
+        orderRequest: "Site visit",
+        confirmationByAgentId: "c1",
+        vehicle: "PERSONAL",
+        approvalLevels: [{ level: 1, agentId: "a1", optional: false }],
+        locations: [emptyTravelLocation({ label: "HQ" })],
+      },
+    });
+    expect(payload.mainTask).toBe("Site visit");
+    expect(payload.confirmationByAgentId).toBe("c1");
+    expect(payload.approvalLevels).toContain("a1");
+    expect(payload.scopedCompanyTeamId).toBe("co-1");
+    expect(payload.locationsJson).toContain("HQ");
+  });
+});
+
+describe("org-chart recommended approval path", () => {
+  it("lists layers from the seat above the requestor up to Layer 2", () => {
+    expect(travelOrderOrgChartLayersInApprovalPath(5)).toEqual([4, 3, 2]);
+    expect(travelOrderOrgChartLayersInApprovalPath(3)).toEqual([2]);
+    expect(travelOrderOrgChartLayersInApprovalPath(2)).toEqual([]);
+  });
+
+  it("marks middle seats optional when the chain has 3+ layers", () => {
+    expect(travelOrderRecommendedOptionalForSeat(1, 3)).toBe(false);
+    expect(travelOrderRecommendedOptionalForSeat(2, 3)).toBe(true);
+    expect(travelOrderRecommendedOptionalForSeat(3, 3)).toBe(false);
+    expect(travelOrderRecommendedOptionalForSeat(1, 2)).toBe(false);
+  });
+
+  it("fills seats from the org-chart ancestor path", () => {
+    const seats = buildTravelOrderRecommendedPath({
+      requestorOrgLayer: 5,
+      ancestors: [
+        {
+          orgChartLayer: 4,
+          agentId: "mgr4",
+          agentName: "Manager Four",
+          mergedSourceUserId: "m4",
+        },
+        {
+          orgChartLayer: 2,
+          agentId: "mgr2",
+          agentName: "Manager Two",
+          mergedSourceUserId: "m2",
+        },
+      ],
+    });
+    expect(seats).toHaveLength(3);
+    expect(seats[0]).toMatchObject({
+      sequenceLevel: 1,
+      orgChartLayer: 4,
+      agentId: "mgr4",
+      recommendedOptional: false,
+    });
+    expect(seats[1]).toMatchObject({
+      sequenceLevel: 2,
+      orgChartLayer: 3,
+      agentId: null,
+      recommendedOptional: true,
+    });
+    expect(seats[2]).toMatchObject({
+      sequenceLevel: 3,
+      orgChartLayer: 2,
+      agentId: "mgr2",
+      recommendedOptional: false,
+    });
+
+    const levels = buildApprovalLevelsFromOrgChartPath(seats);
+    expect(levels.map((l) => ({ level: l.level, agentId: l.agentId, optional: l.optional }))).toEqual([
+      { level: 1, agentId: "mgr4", optional: false },
+      { level: 2, agentId: "", optional: true },
+      { level: 3, agentId: "mgr2", optional: false },
+    ]);
   });
 });

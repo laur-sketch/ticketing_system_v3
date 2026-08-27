@@ -10,6 +10,10 @@ import {
   resolveAdminOnDutyCompanyFilter,
   resolveStaffCompanyTeamId,
 } from "@/lib/staff-company-scope";
+import {
+  roleUsesOrgChartSectionBoardScope,
+  sectionScopedTicketWhere,
+} from "@/lib/org-chart-section-scope";
 import { countTaskBoardLanes } from "@/lib/task-board-lane-counts";
 import { withTtlCache } from "@/lib/ttl-cache";
 
@@ -36,17 +40,25 @@ async function buildSidebarSummary(input: {
 }): Promise<SidebarSummary> {
   const isSuperAdmin = isElevatedUserRole(input.role);
   const isPersonnel = input.role === "Personnel";
-  const scopedCompanyTeamId =
-    isSuperAdmin || isPersonnel ? null : await resolveStaffCompanyTeamId(input.email);
-  const personnelAgent = isPersonnel
-    ? await findSessionAgentId({ email: input.email, name: input.name })
-    : null;
+  const sessionAgent =
+    isPersonnel || input.role === "Admin"
+      ? await findSessionAgentId({ email: input.email, name: input.name })
+      : null;
 
-  const ticketScope: Prisma.TicketWhereInput = isPersonnel
-    ? await personnelRequestBoardWhere(personnelAgent?.id)
-    : isSuperAdmin
-      ? {}
-      : { teamId: scopedCompanyTeamId ?? "__none__" };
+  let ticketScope: Prisma.TicketWhereInput;
+  if (isSuperAdmin) {
+    ticketScope = {};
+  } else if (roleUsesOrgChartSectionBoardScope(input.role)) {
+    ticketScope = await sectionScopedTicketWhere({
+      email: input.email,
+      agentId: sessionAgent?.id,
+    });
+  } else if (isPersonnel) {
+    ticketScope = await personnelRequestBoardWhere(sessionAgent?.id);
+  } else {
+    const scopedCompanyTeamId = await resolveStaffCompanyTeamId(input.email);
+    ticketScope = { teamId: scopedCompanyTeamId ?? "__none__" };
+  }
 
   const countStatus = (status: TicketStatus) =>
     prisma.ticket.count({ where: { status, ...ticketScope } });
@@ -61,8 +73,8 @@ async function buildSidebarSummary(input: {
       countStatus("OPEN"),
       countStatus("IN_PROGRESS"),
       countForConfirmation(),
-      personnelAgent?.id
-        ? isAgentOnDutyFromMergedDb(personnelAgent.id)
+      sessionAgent?.id
+        ? isAgentOnDutyFromMergedDb(sessionAgent.id)
         : Promise.resolve(false),
       countTaskBoardLanes({
         role: input.role,

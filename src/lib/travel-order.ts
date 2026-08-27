@@ -49,6 +49,8 @@ export type TravelOrderApprovalLevelDraft = {
    * must still approve.
    */
   optional?: boolean;
+  /** Either/or peers — any one of agentId or these may approve this seat. */
+  alternateAgentIds?: string[];
 };
 
 export type TravelOrderDraft = {
@@ -204,6 +206,9 @@ export type TravelOrderApprovalLevelDto = {
   approvedByAgent: TravelOrderAgentRef | null;
   /** Optional levels can early-complete the chain and do not block later required levels. */
   optional?: boolean;
+  /** Either/or peers who may also approve this seat. */
+  alternateAgentIds?: string[];
+  alternateAgents?: TravelOrderAgentRef[];
 };
 
 export type TravelOrderLocationDto = {
@@ -411,6 +416,40 @@ export function emptyTravelOrderDraft(): TravelOrderDraft {
   };
 }
 
+/** Fill missing fields so controlled inputs never see `undefined`. */
+export function normalizeTravelOrderDraft(raw: TravelOrderDraft | null | undefined): TravelOrderDraft {
+  const base = emptyTravelOrderDraft();
+  if (!raw || typeof raw !== "object") return base;
+  const locations = Array.isArray(raw.locations) && raw.locations.length > 0
+    ? raw.locations.map((loc) => emptyTravelLocation(loc))
+    : base.locations;
+  return {
+    orderRequest: raw.orderRequest ?? "",
+    approvedByAgentIds: Array.isArray(raw.approvedByAgentIds) ? raw.approvedByAgentIds : [],
+    approvalLevels: Array.isArray(raw.approvalLevels)
+      ? raw.approvalLevels.map((lvl) => ({
+          level: lvl.level,
+          agentId: lvl.agentId ?? "",
+          optional: lvl.optional === true,
+          alternateAgentIds: Array.isArray(lvl.alternateAgentIds)
+            ? lvl.alternateAgentIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+            : [],
+        }))
+      : [],
+    confirmationByAgentId: raw.confirmationByAgentId ?? "",
+    additionalTravelerAgentIds: Array.isArray(raw.additionalTravelerAgentIds)
+      ? raw.additionalTravelerAgentIds
+      : [],
+    exemptRequesterFromTravelers: raw.exemptRequesterFromTravelers === true,
+    vehicle: raw.vehicle ?? "",
+    driverPresent: raw.driverPresent === true,
+    driverAgentId: raw.driverAgentId ?? "",
+    driverLicenseNo: raw.driverLicenseNo ?? "",
+    locations,
+    gatePass: emptyGatePassDraft(raw.gatePass),
+  };
+}
+
 export function buildEmptyApprovalLevels(count: number): TravelOrderApprovalLevelDraft[] {
   const n = Math.max(0, Math.min(20, Math.floor(count)));
   return Array.from({ length: n }, (_, i) => ({
@@ -425,9 +464,167 @@ export function approvalLevelsAllowOptional(levelCount: number): boolean {
   return levelCount >= 3;
 }
 
+/** Most senior org-chart layer that can approve a travel order (Layer 1 is excluded). */
+export const TRAVEL_ORDER_APPROVAL_TOP_ORG_LAYER = 2;
+
+/** How many hierarchical seats to create when the requestor sits on this org-chart
+ *  layer (Layer 1 = top). The chain starts at the layer immediately above the requestor
+ *  and runs up to Layer 2. Returns 0 if they are on Layer 1 or Layer 2, or not on the chart. */
+export function travelOrderApprovalSeatCountFromRequestorLayer(
+  requestorOrgLayer: number | null | undefined,
+): number {
+  if (typeof requestorOrgLayer !== "number" || !Number.isFinite(requestorOrgLayer)) {
+    return 0;
+  }
+  const layer = Math.floor(requestorOrgLayer);
+  if (layer <= TRAVEL_ORDER_APPROVAL_TOP_ORG_LAYER) return 0;
+  return Math.max(0, Math.min(20, layer - TRAVEL_ORDER_APPROVAL_TOP_ORG_LAYER));
+}
+
+/**
+ * Org-chart layers in the recommended approval path, ordered by approval sequence
+ * (immediate manager first → Layer 2 last).
+ */
+export function travelOrderOrgChartLayersInApprovalPath(
+  requestorOrgLayer: number | null | undefined,
+): number[] {
+  const seats = travelOrderApprovalSeatCountFromRequestorLayer(requestorOrgLayer);
+  if (seats < 1 || typeof requestorOrgLayer !== "number") return [];
+  const start = Math.floor(requestorOrgLayer) - 1;
+  return Array.from({ length: seats }, (_, i) => start - i);
+}
+
+/**
+ * Recommended optional flag: with 3+ seats, middle layers are optional;
+ * the immediate manager (first) and Layer 2 (last) stay required.
+ */
+export function travelOrderRecommendedOptionalForSeat(
+  sequenceLevel: number,
+  totalSeats: number,
+): boolean {
+  if (!approvalLevelsAllowOptional(totalSeats)) return false;
+  return sequenceLevel > 1 && sequenceLevel < totalSeats;
+}
+
+export type TravelOrderOrgChartPathSeat = {
+  /** Approval sequence (1 = first to act). */
+  sequenceLevel: number;
+  /** Org-chart layer this seat represents (Layer 2+). */
+  orgChartLayer: number;
+  recommendedOptional: boolean;
+  agentId: string | null;
+  agentName: string | null;
+  mergedSourceUserId: string | null;
+  /** Either/or peers linked on the org chart — any one may approve this seat. */
+  alternateAgents: Array<{
+    agentId: string | null;
+    agentName: string | null;
+    mergedSourceUserId: string;
+  }>;
+};
+
+export type TravelOrderOrgChartAncestor = {
+  orgChartLayer: number;
+  agentId: string | null;
+  agentName: string | null;
+  mergedSourceUserId: string;
+  alternateAgents?: Array<{
+    agentId: string | null;
+    agentName: string | null;
+    mergedSourceUserId: string;
+  }>;
+};
+
+/** Build recommended seats from requestor layer + ancestors already walked up the chart. */
+export function buildTravelOrderRecommendedPath(opts: {
+  requestorOrgLayer: number | null | undefined;
+  ancestors: readonly TravelOrderOrgChartAncestor[];
+}): TravelOrderOrgChartPathSeat[] {
+  const layers = travelOrderOrgChartLayersInApprovalPath(opts.requestorOrgLayer);
+  if (layers.length === 0) return [];
+
+  const byLayer = new Map<number, TravelOrderOrgChartAncestor>();
+  for (const ancestor of opts.ancestors) {
+    if (!byLayer.has(ancestor.orgChartLayer)) {
+      byLayer.set(ancestor.orgChartLayer, ancestor);
+    }
+  }
+
+  const total = layers.length;
+  return layers.map((orgChartLayer, index) => {
+    const sequenceLevel = index + 1;
+    const hit = byLayer.get(orgChartLayer);
+    return {
+      sequenceLevel,
+      orgChartLayer,
+      recommendedOptional: travelOrderRecommendedOptionalForSeat(sequenceLevel, total),
+      agentId: hit?.agentId ?? null,
+      agentName: hit?.agentName ?? null,
+      mergedSourceUserId: hit?.mergedSourceUserId ?? null,
+      alternateAgents: hit?.alternateAgents ?? [],
+    };
+  });
+}
+
+export function buildApprovalLevelsFromOrgChartPath(
+  seats: readonly TravelOrderOrgChartPathSeat[],
+): TravelOrderApprovalLevelDraft[] {
+  return seats.map((seat) => ({
+    level: seat.sequenceLevel,
+    agentId: seat.agentId?.trim() || "",
+    optional: seat.recommendedOptional,
+    alternateAgentIds: seat.alternateAgents
+      .map((a) => a.agentId?.trim() || "")
+      .filter(Boolean)
+      .filter((id) => id !== (seat.agentId?.trim() || "")),
+  }));
+}
+
+/** Org-chart-style layer label. Sequence 1 is the first approver; with `totalLevels`
+ *  that maps inverted onto the chart (last seat = Layer 2 — Layer 1 is never in the chain). */
+export function travelOrderApprovalDisplayLayer(
+  sequenceLevel: number,
+  totalLevels: number,
+): number {
+  const total = Math.max(1, Math.floor(totalLevels));
+  const seq = Math.max(1, Math.floor(sequenceLevel));
+  return total - seq + TRAVEL_ORDER_APPROVAL_TOP_ORG_LAYER;
+}
+
+export function travelOrderApprovalLayerLabel(
+  sequenceLevel: number,
+  totalLevels?: number,
+): string {
+  const n =
+    typeof totalLevels === "number" && Number.isFinite(totalLevels) && totalLevels >= 1
+      ? travelOrderApprovalDisplayLayer(sequenceLevel, totalLevels)
+      : Math.max(TRAVEL_ORDER_APPROVAL_TOP_ORG_LAYER, Math.floor(sequenceLevel));
+  return `Level ${n}`;
+}
+
+/** Level 2 (last / senior travel-order seat) first, then Level 3, … — org-chart order. */
+export function sortTravelOrderLevelsByDisplayLayer<T extends { level: number }>(
+  levels: readonly T[],
+): T[] {
+  const total = levels.length;
+  return [...levels].sort(
+    (a, b) =>
+      travelOrderApprovalDisplayLayer(a.level, total) -
+      travelOrderApprovalDisplayLayer(b.level, total),
+  );
+}
+
 /** Display label for a hierarchical approval seat (UI uppercases this). */
-export function travelOrderApprovedByLabel(optional?: boolean): string {
-  return optional ? "Approved By: (Optional)" : "Approved By: (Required)";
+export function travelOrderApprovedByLabel(
+  optional?: boolean,
+  sequenceLevel?: number,
+  totalLevels?: number,
+): string {
+  const seat = optional ? "Approved By (Optional)" : "Approved By (Required)";
+  if (typeof sequenceLevel === "number" && Number.isFinite(sequenceLevel) && sequenceLevel >= 1) {
+    return `${travelOrderApprovalLayerLabel(sequenceLevel, totalLevels)} · ${seat}`;
+  }
+  return seat;
 }
 
 export function isValidLatLng(lat: unknown, lng: unknown): lat is number {
@@ -468,7 +665,7 @@ export function validateTravelOrderDraft(draft: TravelOrderDraft): string | null
   if (draft.approvalLevels.length > 0) {
     for (const lvl of draft.approvalLevels) {
       if (!lvl.agentId.trim()) {
-        return `Assign an approver for ${travelOrderApprovedByLabel(lvl.optional === true)}.`;
+        return `Assign an approver for ${travelOrderApprovedByLabel(lvl.optional === true, lvl.level, draft.approvalLevels.length)}.`;
       }
     }
   } else if (draft.approvedByAgentIds.length === 0) {
@@ -549,6 +746,7 @@ export type TravelOrderApprovalLevelStored = {
   approvedAt: string | null;
   approvedByAgentId: string | null;
   optional?: boolean;
+  alternateAgentIds?: string[];
 };
 
 type ApprovalLevelLike = {
@@ -557,10 +755,33 @@ type ApprovalLevelLike = {
   approvedAt?: string | null;
   approvedByAgentId?: string | null;
   optional?: boolean;
+  alternateAgentIds?: string[] | null;
 };
 
 export function isApprovalLevelOptional(level: ApprovalLevelLike | null | undefined): boolean {
   return Boolean(level?.optional);
+}
+
+export function approvalLevelAssigneeIds(
+  level: { agentId?: string | null; alternateAgentIds?: string[] | null } | null | undefined,
+): string[] {
+  if (!level) return [];
+  const primary =
+    typeof level.agentId === "string" && level.agentId.trim() ? level.agentId.trim() : "";
+  const alts = Array.isArray(level.alternateAgentIds)
+    ? level.alternateAgentIds
+        .map((id) => (typeof id === "string" ? id.trim() : ""))
+        .filter(Boolean)
+    : [];
+  return [...new Set([primary, ...alts].filter(Boolean))];
+}
+
+export function isApprovalLevelAssignee(
+  level: { agentId?: string | null; alternateAgentIds?: string[] | null } | null | undefined,
+  operatorAgentId: string | null | undefined,
+): boolean {
+  if (!operatorAgentId) return false;
+  return approvalLevelAssigneeIds(level).includes(operatorAgentId);
 }
 
 export function parseApprovalLevels(raw: unknown): TravelOrderApprovalLevelStored[] {
@@ -581,25 +802,62 @@ export function parseApprovalLevels(raw: unknown): TravelOrderApprovalLevelStore
     const approvedAt =
       typeof r.approvedAt === "string" && r.approvedAt.trim() ? r.approvedAt.trim() : null;
     const optional = r.optional === true;
-    out.push({ level, agentId, approvedAt, approvedByAgentId, optional });
+    const alternateAgentIds = Array.isArray(r.alternateAgentIds)
+      ? [
+          ...new Set(
+            r.alternateAgentIds
+              .map((id) => (typeof id === "string" ? id.trim() : ""))
+              .filter(Boolean)
+              .filter((id) => id !== agentId),
+          ),
+        ]
+      : [];
+    out.push({
+      level,
+      agentId,
+      approvedAt,
+      approvedByAgentId,
+      optional,
+      ...(alternateAgentIds.length > 0 ? { alternateAgentIds } : {}),
+    });
   }
   return out.sort((a, b) => a.level - b.level);
 }
 
 export function normalizeApprovalLevelsForStore(
-  levels: Array<{ level?: number; agentId?: string | null; optional?: boolean }>,
+  levels: Array<{
+    level?: number;
+    agentId?: string | null;
+    optional?: boolean;
+    alternateAgentIds?: string[] | null;
+  }>,
 ): TravelOrderApprovalLevelStored[] {
   const normalized = levels
-    .map((row, index) => ({
-      level:
-        typeof row.level === "number" && Number.isFinite(row.level)
-          ? Math.floor(row.level)
-          : index + 1,
-      agentId: typeof row.agentId === "string" && row.agentId.trim() ? row.agentId.trim() : null,
-      approvedAt: null as string | null,
-      approvedByAgentId: null as string | null,
-      optional: row.optional === true,
-    }))
+    .map((row, index) => {
+      const agentId =
+        typeof row.agentId === "string" && row.agentId.trim() ? row.agentId.trim() : null;
+      const alternateAgentIds = Array.isArray(row.alternateAgentIds)
+        ? [
+            ...new Set(
+              row.alternateAgentIds
+                .map((id) => (typeof id === "string" ? id.trim() : ""))
+                .filter(Boolean)
+                .filter((id) => id !== agentId),
+            ),
+          ]
+        : [];
+      return {
+        level:
+          typeof row.level === "number" && Number.isFinite(row.level)
+            ? Math.floor(row.level)
+            : index + 1,
+        agentId,
+        approvedAt: null as string | null,
+        approvedByAgentId: null as string | null,
+        optional: row.optional === true,
+        ...(alternateAgentIds.length > 0 ? { alternateAgentIds } : {}),
+      };
+    })
     .filter((row) => row.level >= 1)
     .sort((a, b) => a.level - b.level);
   const allowOptional = approvalLevelsAllowOptional(normalized.length);
@@ -610,15 +868,74 @@ export function normalizeApprovalLevelsForStore(
 }
 
 export function agentIdsFromApprovalLevels(
-  levels: Array<{ agentId?: string | null }>,
+  levels: Array<{ agentId?: string | null; alternateAgentIds?: string[] | null }>,
 ): string[] {
   return [
-    ...new Set(
-      levels
-        .map((l) => (typeof l.agentId === "string" ? l.agentId.trim() : ""))
-        .filter(Boolean),
-    ),
+    ...new Set(levels.flatMap((l) => approvalLevelAssigneeIds(l))),
   ];
+}
+
+/** Rebuild the field-assignment POST fields from a saved offline draft (queue recovery). */
+export function travelOrderDraftToFieldAssignmentPayload(input: {
+  draft: TravelOrderDraft;
+  mainTaskName: string;
+  scopedCompanyTeamId?: string | null;
+}): Record<string, string> {
+  const d = input.draft;
+  const hierarchical = d.approvalLevels.length > 0;
+  const approvedByAgentIds = hierarchical
+    ? agentIdsFromApprovalLevels(d.approvalLevels)
+    : d.approvedByAgentIds;
+  const mainTask = input.mainTaskName.trim();
+  const payload: Record<string, string> = {
+    title: mainTask.replace(/\s+/g, " ").toUpperCase() || "FIELD ASSIGNMENT",
+    mainTask,
+    orderRequest: d.orderRequest.trim(),
+    approvedByAgentIds: JSON.stringify(approvedByAgentIds),
+    confirmationByAgentId: d.confirmationByAgentId.trim(),
+    additionalTravelerAgentIds: JSON.stringify(d.additionalTravelerAgentIds ?? []),
+    exemptRequesterFromTravelers: d.exemptRequesterFromTravelers ? "1" : "0",
+    vehicle: d.vehicle.trim(),
+    driverPresent: d.driverPresent ? "1" : "0",
+    driverAgentId: d.driverPresent ? d.driverAgentId.trim() : "",
+    driverLicenseNo: d.driverPresent ? d.driverLicenseNo.trim() : "",
+    locationsJson: JSON.stringify(
+      d.locations.map((loc) => ({
+        label: loc.label.trim(),
+        latitude: null,
+        longitude: null,
+        remarks: null,
+      })),
+    ),
+    gatePassJson: JSON.stringify({
+      included: d.gatePass.included === true,
+      estDepartureAt: d.gatePass.estDepartureAt.trim() || null,
+      estArrivalAt: d.gatePass.estArrivalAt.trim() || null,
+      actualDepartureStartedAt: null,
+      actualDepartureStartedLatitude: null,
+      actualDepartureStartedLongitude: null,
+      actualDepartureEndedAt: null,
+      actualDepartureEndedLatitude: null,
+      actualDepartureEndedLongitude: null,
+      startGuardOnDuty: "",
+      endGuardOnDuty: "",
+    }),
+  };
+  if (approvedByAgentIds[0]) payload.approvedByAgentId = approvedByAgentIds[0];
+  if (hierarchical) {
+    payload.approvalLevels = JSON.stringify(
+      d.approvalLevels.map((lvl) => ({
+        level: lvl.level,
+        agentId: lvl.agentId,
+        optional: lvl.optional === true,
+        ...(Array.isArray(lvl.alternateAgentIds) && lvl.alternateAgentIds.length > 0
+          ? { alternateAgentIds: lvl.alternateAgentIds }
+          : {}),
+      })),
+    );
+  }
+  if (input.scopedCompanyTeamId) payload.scopedCompanyTeamId = input.scopedCompanyTeamId;
+  return payload;
 }
 
 export function hasHierarchicalApprovals(
@@ -696,7 +1013,7 @@ export function getOperatorActionableApprovalLevel(
 ): TravelOrderApprovalLevelStored | TravelOrderApprovalLevelDto | null {
   const unlocked = getUnlockedIncompleteLevels(levels);
   if (!unlocked.length || !operatorAgentId) return null;
-  return unlocked.find((l) => l.agentId === operatorAgentId) ?? null;
+  return unlocked.find((l) => isApprovalLevelAssignee(l, operatorAgentId)) ?? null;
 }
 
 export function isDesignatedApprover(
@@ -704,14 +1021,15 @@ export function isDesignatedApprover(
   order: {
     approvedByAgentId?: string | null;
     approvedByAgentIds?: string[] | null;
-    approvalLevels?: Array<{ agentId?: string | null }> | null;
+    approvalLevels?: Array<{
+      agentId?: string | null;
+      alternateAgentIds?: string[] | null;
+    }> | null;
   },
 ): boolean {
   if (!operatorAgentId) return false;
   if (hasHierarchicalApprovals(order.approvalLevels)) {
-    return (order.approvalLevels ?? []).some(
-      (l) => typeof l.agentId === "string" && l.agentId === operatorAgentId,
-    );
+    return (order.approvalLevels ?? []).some((l) => isApprovalLevelAssignee(l, operatorAgentId));
   }
   const ids = parseApprovedByAgentIds(order.approvedByAgentIds, order.approvedByAgentId);
   return ids.includes(operatorAgentId);

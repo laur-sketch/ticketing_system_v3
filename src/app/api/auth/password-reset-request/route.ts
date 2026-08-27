@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 const GENERIC_OK = {
   ok: true,
@@ -29,6 +30,19 @@ export async function POST(req: Request) {
   const reason = body.reason?.trim() || null;
   if (!identifier) {
     return NextResponse.json({ error: "Enter your username or email." }, { status: 400 });
+  }
+
+  const ip = clientIp(req);
+  const lim = await rateLimit({
+    key: `pwreset:${ip}:${identifier.toLowerCase()}`,
+    limit: 5,
+    windowSeconds: 15 * 60,
+  });
+  if (!lim.allowed) {
+    return NextResponse.json(
+      { error: "Too many reset requests. Try again in a few minutes." },
+      { status: 429 },
+    );
   }
 
   const portal = await prisma.portalAccount.findFirst({

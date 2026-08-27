@@ -138,11 +138,11 @@ export default async function EmailActionPage({
   }
 
   return (
-    <main className="mx-auto max-w-xl px-4 py-12 text-zinc-100">
-      <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-6">
-        <h1 className="text-xl font-semibold text-zinc-100">{title}</h1>
-        <p className="mt-2 text-sm text-zinc-300">{message}</p>
-        <p className="mt-4 text-xs text-zinc-500">Ticket: {ticket.ticketNumber}</p>
+    <main className="mx-auto max-w-xl px-4 py-12 text-zinc-900 dark:text-zinc-100">
+      <article className="rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#0b1220] p-6">
+        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{title}</h1>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">{message}</p>
+        <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">Ticket: {ticket.ticketNumber}</p>
         <div className="mt-5">
           <Link href="/signin" className="text-sm font-semibold text-orange-300 hover:underline">
             Open portal

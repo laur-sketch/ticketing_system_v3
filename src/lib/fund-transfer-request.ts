@@ -27,8 +27,12 @@ export function formatFundTransferRequestTitle(
 }
 
 export function formatFundTransferRequestDescription(fields: FundTransferRequestFields): string {
-  const lines = [
-    `Requesting department/business unit: ${fields.requestingDepartmentBusinessUnit.trim()}`,
+  const lines: string[] = [];
+  const dept = fields.requestingDepartmentBusinessUnit.trim();
+  if (dept) {
+    lines.push(`Requesting department: ${dept}`);
+  }
+  lines.push(
     `Fund transfer amount: ${fields.fundTransferAmount.trim()}`,
     `From account name: ${fields.fromAccountName.trim()}`,
     `From account number: ${fields.fromAccountNumber.trim()}`,
@@ -36,7 +40,7 @@ export function formatFundTransferRequestDescription(fields: FundTransferRequest
     `To account number: ${fields.toAccountNumber.trim()}`,
     `Bank name: ${fields.bankName.trim()}`,
     `Bank address: ${fields.bankAddress.trim()}`,
-  ];
+  );
   const reason = (fields.reason ?? "").trim();
   if (reason) {
     lines.push("", "Reason for the transfer / special instruction:", reason);
@@ -83,7 +87,7 @@ export function parseFundTransferRequestDescription(
   if (!raw) return null;
   const requestingDepartmentBusinessUnit = fieldFromDescription(
     raw,
-    "Requesting department/business unit",
+    "Requesting department",
   );
   const fundTransferAmount = fieldFromDescription(raw, "Fund transfer amount");
   const fromAccountName = fieldFromDescription(raw, "From account name");
@@ -122,11 +126,8 @@ export function parseFundTransferRequestDescription(
 export function validateFundTransferRequestFields(
   fields: FundTransferRequestFields,
 ): { ok: true } | { ok: false; error: string } {
-  if (!fields.requestingDepartmentBusinessUnit.trim()) {
-    return { ok: false, error: "Requesting department/business unit is required." };
-  }
   if (fields.requestingDepartmentBusinessUnit.trim().length > 200) {
-    return { ok: false, error: "Requesting department/business unit is too long." };
+    return { ok: false, error: "Requesting department is too long." };
   }
   if (!fields.fundTransferAmount.trim()) {
     return { ok: false, error: "Fund transfer amount is required." };

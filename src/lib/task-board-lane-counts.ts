@@ -15,6 +15,11 @@ import {
 import { prisma } from "@/lib/prisma";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import {
+  kpiRowInSectionAgentScope,
+  resolveViewerOrgChartSectionScope,
+  roleUsesOrgChartSectionBoardScope,
+} from "@/lib/org-chart-section-scope";
 import type { Prisma } from "@prisma/client/primary";
 
 export type TaskBoardLaneCounts = {
@@ -58,7 +63,16 @@ export async function countTaskBoardLanes(input: {
   const nowMs = Date.now();
 
   let where: Prisma.KpiMaintenanceWhereInput = {};
-  if (!isSuperAdmin && !isPersonnel) {
+  let sectionAgentIdSet: Set<string> | null = null;
+
+  if (roleUsesOrgChartSectionBoardScope(input.role) && !isPersonnel) {
+    const sectionScope = await resolveViewerOrgChartSectionScope(input.email);
+    if (sectionScope.agentIds.length === 0) {
+      return { current: 0, done: 0, delayed: 0 };
+    }
+    sectionAgentIdSet = new Set(sectionScope.agentIds);
+    where = { assignedAgentId: { in: sectionScope.agentIds } };
+  } else if (!isSuperAdmin && !isPersonnel) {
     const scopedCompanyTeamId = await resolveStaffCompanyTeamId(input.email);
     if (!scopedCompanyTeamId) {
       return { current: 0, done: 0, delayed: 0 };
@@ -89,6 +103,10 @@ export async function countTaskBoardLanes(input: {
       assignedAgentId: true,
     },
   });
+
+  if (sectionAgentIdSet) {
+    rows = rows.filter((row) => kpiRowInSectionAgentScope(row, sectionAgentIdSet!));
+  }
 
   if (isPersonnel) {
     if (!operator?.id) return { current: 0, done: 0, delayed: 0 };

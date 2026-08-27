@@ -214,8 +214,8 @@ export async function loadAcaTicketIdsForCurrentStepAssignee(
 }
 
 /**
- * Prisma where fragment: Personnel sees own assignments + procedural requests
- * awaiting their current role (RFP / IRS / FTR / ACA) + pending transfers to them.
+ * Prisma where fragment: Personnel Request Board shows own assignments + pending
+ * transfers to them. Procedural approval seats live on Needs My Approval instead.
  */
 export async function personnelRequestBoardWhere(
   agentId: string | null | undefined,
@@ -223,21 +223,11 @@ export async function personnelRequestBoardWhere(
   if (!agentId) {
     return { assignedAgentId: "__none__" };
   }
-  const [rfpIds, irsIds, ftrIds, joIds, acaIds, transferIds] = await Promise.all([
-    loadRfpTicketIdsForCurrentStepAssignee(agentId),
-    loadIrsTicketIdsForCurrentStepAssignee(agentId),
-    loadFtrTicketIdsForCurrentStepAssignee(agentId),
-    loadJobOrderTicketIdsForCurrentStepAssignee(agentId),
-    loadAcaTicketIdsForCurrentStepAssignee(agentId),
-    loadTicketIdsPendingTransferToAgent(agentId),
-  ]);
-  const extraIds = [
-    ...new Set([...rfpIds, ...irsIds, ...ftrIds, ...joIds, ...acaIds, ...transferIds]),
-  ];
-  if (extraIds.length === 0) {
+  const transferIds = await loadTicketIdsPendingTransferToAgent(agentId);
+  if (transferIds.length === 0) {
     return { assignedAgentId: agentId };
   }
   return {
-    OR: [{ assignedAgentId: agentId }, { id: { in: extraIds } }],
+    OR: [{ assignedAgentId: agentId }, { id: { in: transferIds } }],
   };
 }

@@ -138,7 +138,7 @@ Daily task metrics exclude Sundays from working-day averages.
 
 - Full personnel, priority alerts, board access, task definition, and reporting.
 - Review account suspension/deletion/password-reset requests (notifications → **`/admin/account`**).
-- Manage portal accounts from **`/admin/personnel`** (the old **`/admin/account-management`** path redirects there), including staff account creation, role/designated-company updates, roster sync, duplicate-agent reconciliation, and staff assignment colors.
+- Manage portal accounts from **`/admin/workforce`** → **ListView** (the old **`/admin/account-management`** path redirects there), including staff account creation, role/designated-company updates, roster sync, duplicate-agent reconciliation, and staff assignment colors.
 - SLA sweep and deployment operations per runbook.
 
 ## 7) Transfer and SLA SOP

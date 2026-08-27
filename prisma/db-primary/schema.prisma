@@ -276,6 +276,8 @@ model OrgChartSection {
   nodes         OrgChartNode[]
   memberships   OrgChartNodeSectionMembership[]
   roles         OrgChartSectionRole[]
+  requestorTickets Ticket[] @relation("TicketRequestorSection")
+  sendToTickets    Ticket[] @relation("TicketSendToSection")
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
 
@@ -391,6 +393,12 @@ model Ticket {
   contactPhone        String?          @map("contact_phone")
   teamId              String?          @map("team_id")
   team                Team?            @relation(fields: [teamId], references: [id])
+  /// RFP intake: requestor's org-chart section (Noted By roster scope).
+  requestorOrgChartSectionId String?   @map("requestor_org_chart_section_id")
+  requestorOrgChartSection   OrgChartSection? @relation("TicketRequestorSection", fields: [requestorOrgChartSectionId], references: [id], onDelete: SetNull)
+  /// RFP intake: send-to org-chart section (Bookkeeper roster scope).
+  orgChartSectionId   String?          @map("org_chart_section_id")
+  orgChartSection     OrgChartSection? @relation("TicketSendToSection", fields: [orgChartSectionId], references: [id], onDelete: SetNull)
   assignedAgentId     String?          @map("assigned_agent_id")
   assignedAgent       Agent?           @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
   firstResponseDueAt  DateTime         @map("first_response_due_at")
@@ -434,6 +442,8 @@ model Ticket {
   @@index([assignedAgentId, updatedAt])
   @@index([teamId, status])
   @@index([teamId, createdAt])
+  @@index([orgChartSectionId])
+  @@index([requestorOrgChartSectionId])
   @@index([resolutionDueAt, status])
   @@index([resolvedAt])
   @@index([closedAt])

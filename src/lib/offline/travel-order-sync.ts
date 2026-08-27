@@ -1,5 +1,6 @@
 import {
   enqueuePendingOp,
+  listOfflineDrafts,
   listPendingOps,
   markPendingOp,
   saveOfflineDraft,
@@ -8,7 +9,7 @@ import {
   type OfflineTravelOrderDraft,
   type PendingTravelOrderOp,
 } from "@/lib/offline/travel-order-offline-db";
-import type { TravelOrderDto } from "@/lib/travel-order";
+import { travelOrderDraftToFieldAssignmentPayload, type TravelOrderDto } from "@/lib/travel-order";
 
 export const TRAVEL_ORDER_SYNC_TAG = "travel-order-sync";
 
@@ -47,29 +48,83 @@ export function getTravelOrderSyncProgress(): TravelOrderSyncProgress {
   return { ...progress };
 }
 
-/** Brief forced-offline window after a real network failure (navigator.onLine is often stale). */
+/** Brief forced-offline window after a real disconnect (navigator.onLine is often stale). */
 let forcedOfflineUntilMs = 0;
+/** Successful network proof — overrides a stale navigator.onLine === false. */
+let confirmedOnlineUntilMs = 0;
+let forcedOfflineTimer: ReturnType<typeof setTimeout> | null = null;
 const CONNECTIVITY_EVENT = "travel-order-connectivity";
 
-export function noteTravelOrderConnectivityLoss(holdMs = 20_000): void {
-  forcedOfflineUntilMs = Date.now() + holdMs;
+function clearForcedOfflineTimer() {
+  if (forcedOfflineTimer != null) {
+    clearTimeout(forcedOfflineTimer);
+    forcedOfflineTimer = null;
+  }
+}
+
+function emitConnectivity() {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(CONNECTIVITY_EVENT));
   }
 }
 
-export function noteTravelOrderConnectivityOk(): void {
-  if (forcedOfflineUntilMs === 0) return;
-  forcedOfflineUntilMs = 0;
+export function noteTravelOrderConnectivityLoss(holdMs = 8_000): void {
+  forcedOfflineUntilMs = Date.now() + holdMs;
+  confirmedOnlineUntilMs = 0;
+  clearForcedOfflineTimer();
+  emitConnectivity();
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event(CONNECTIVITY_EVENT));
+    forcedOfflineTimer = setTimeout(() => {
+      forcedOfflineTimer = null;
+      if (Date.now() >= forcedOfflineUntilMs) {
+        forcedOfflineUntilMs = 0;
+        emitConnectivity();
+        if (typeof navigator === "undefined" || navigator.onLine) {
+          void flushTravelOrderPendingQueue();
+        }
+      }
+    }, holdMs + 50);
   }
+}
+
+export function noteTravelOrderConnectivityOk(): void {
+  const shouldNotify =
+    forcedOfflineUntilMs > 0 ||
+    (typeof navigator !== "undefined" && navigator.onLine === false);
+  forcedOfflineUntilMs = 0;
+  confirmedOnlineUntilMs = Date.now() + 60_000;
+  clearForcedOfflineTimer();
+  if (shouldNotify) emitConnectivity();
 }
 
 export function isBrowserOnline(): boolean {
   if (typeof navigator === "undefined") return true;
   if (Date.now() < forcedOfflineUntilMs) return false;
+  if (Date.now() < confirmedOnlineUntilMs) return true;
   return navigator.onLine;
+}
+
+/** Lightweight check that can recover from a stale navigator.onLine = false. */
+export async function probeTravelOrderConnectivity(): Promise<boolean> {
+  if (typeof fetch === "undefined") return isBrowserOnline();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch("/api/time/philippines", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: ctrl.signal,
+    });
+    if (res.ok) {
+      noteTravelOrderConnectivityOk();
+      return true;
+    }
+  } catch {
+    /* probe failed — keep current online guess */
+  } finally {
+    clearTimeout(timer);
+  }
+  return isBrowserOnline();
 }
 
 /** True for fetch/TypeError/abort failures that should fall back to Dexie queue. */
@@ -93,7 +148,7 @@ export function isTravelOrderNetworkFailure(err: unknown): boolean {
 export async function fetchTravelOrderWithTimeout(
   input: RequestInfo | URL,
   init?: RequestInit,
-  timeoutMs = 3500,
+  timeoutMs = 12_000,
 ): Promise<Response> {
   const ctrl = new AbortController();
   const external = init?.signal;
@@ -108,7 +163,9 @@ export async function fetchTravelOrderWithTimeout(
     noteTravelOrderConnectivityOk();
     return res;
   } catch (err) {
-    if (isTravelOrderNetworkFailure(err)) {
+    const deviceSaysOnline = typeof navigator === "undefined" || navigator.onLine;
+    // Timeouts on a live link are slow-server, not offline — don't trap the whole UI.
+    if (isTravelOrderNetworkFailure(err) && !deviceSaysOnline) {
       noteTravelOrderConnectivityLoss();
     }
     throw err;
@@ -148,7 +205,7 @@ export async function requestTravelOrderBackgroundSync(): Promise<void> {
   } catch {
     /* Background Sync unsupported — fall through to immediate flush when online. */
   }
-  if (isBrowserOnline()) {
+  if (isBrowserOnline() || (typeof navigator !== "undefined" && navigator.onLine)) {
     void flushTravelOrderPendingQueue();
   }
 }
@@ -173,6 +230,7 @@ async function flushCreateOp(op: Extract<PendingTravelOrderOp, { kind: "create-f
   const res = await fetch("/api/kpi-maintenance/field-assignment", {
     method: "POST",
     body: form,
+    credentials: "same-origin",
   });
   const body = (await res.json().catch(() => ({}))) as {
     error?: string;
@@ -254,17 +312,43 @@ async function flushOne(op: PendingTravelOrderOp): Promise<void> {
   await travelOrderOfflineDb.pendingOps.delete(op.id);
 }
 
+async function ensurePendingCreateOpsFromDrafts(): Promise<void> {
+  const pendingDrafts = await listOfflineDrafts("pending");
+  const ops = await listPendingOps();
+  const queuedLocalIds = new Set(
+    ops
+      .filter((op): op is Extract<PendingTravelOrderOp, { kind: "create-field-assignment" }> =>
+        op.kind === "create-field-assignment",
+      )
+      .map((op) => op.localDraftId),
+  );
+  for (const draft of pendingDrafts) {
+    if (draft.serverTravelOrderId || queuedLocalIds.has(draft.localId)) continue;
+    await enqueuePendingOp({
+      kind: "create-field-assignment",
+      localDraftId: draft.localId,
+      payload: travelOrderDraftToFieldAssignmentPayload({
+        draft: draft.draft,
+        mainTaskName: draft.mainTaskName,
+        scopedCompanyTeamId: draft.scopedCompanyTeamId,
+      }),
+    });
+  }
+}
+
 let flushPromise: Promise<TravelOrderSyncProgress> | null = null;
 
 /** Flush Dexie pending ops to the network. Idempotent / coalesced. */
 export async function flushTravelOrderPendingQueue(): Promise<TravelOrderSyncProgress> {
   if (flushPromise) return flushPromise;
   flushPromise = (async () => {
-    if (!isBrowserOnline()) {
+    const online = isBrowserOnline() || (await probeTravelOrderConnectivity());
+    if (!online) {
       progress = { ...progress, running: false, lastError: "Still offline." };
       emit();
       return progress;
     }
+    await ensurePendingCreateOpsFromDrafts();
     const ops = await listPendingOps();
     progress = {
       running: true,

@@ -16,6 +16,12 @@ import {
   resolveAgentDesignatedCompanyId,
   resolveStaffCompanyTeamId,
 } from "@/lib/staff-company-scope";
+import {
+  kpiRowInSectionAgentScope,
+  resolveViewerOrgChartSectionScope,
+  roleUsesOrgChartSectionBoardScope,
+  sectionScopedTicketWhere,
+} from "@/lib/org-chart-section-scope";
 import { isPersonnelGuardPortalRole } from "@/lib/staff-role";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { loadHrisAssignableStaff } from "@/lib/hris-staff-roster";
@@ -47,6 +53,15 @@ async function buildTicketWhere(session: Session, query: string): Promise<Prisma
   ];
 
   const whereBase: Prisma.TicketWhereInput = {};
+
+  if (roleUsesOrgChartSectionBoardScope(role)) {
+    const sectionScope = await sectionScopedTicketWhere({
+      email: session.user.email,
+      agentId: operator?.id,
+    });
+    whereBase.AND = [sectionScope, { OR: searchOr }];
+    return whereBase;
+  }
 
   if (role === "Personnel") {
     Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
@@ -121,7 +136,14 @@ async function searchTasks(
   if (!q) return [];
 
   let where: Prisma.KpiMaintenanceWhereInput = canAssignWork ? {} : {};
-  if (canAssignWork && companyTeamId) {
+  let sectionAgentIds: Set<string> | null = null;
+
+  if (canAssignWork && roleUsesOrgChartSectionBoardScope(session.user.role)) {
+    const sectionScope = await resolveViewerOrgChartSectionScope(session.user.email);
+    if (sectionScope.agentIds.length === 0) return [];
+    sectionAgentIds = new Set(sectionScope.agentIds);
+    where = { assignedAgentId: { in: sectionScope.agentIds } };
+  } else if (canAssignWork && companyTeamId) {
     const agentIds = await loadAgentIdsForCompanyTeam(companyTeamId);
     const companyScopeOr: Prisma.KpiMaintenanceWhereInput[] = [
       { assignedAgentId: null, scopedCompanyTeamId: companyTeamId },
@@ -145,6 +167,7 @@ async function searchTasks(
   });
 
   const filtered = rows.filter((row) => {
+    if (sectionAgentIds && !kpiRowInSectionAgentScope(row, sectionAgentIds)) return false;
     if (!canAssignWork && operatorId) {
       const visible =
         row.assignedAgentId === operatorId || hasSubKpiAssignedTo(row.subKpis, operatorId);

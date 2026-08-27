@@ -12,7 +12,7 @@ import {
   type AccessCapabilityId,
   type AccessControlConfig,
 } from "@/lib/access-controls";
-import { formatOrgChartLayerLabel } from "@/app/admin/superadmin-settings/org-chart-layers";
+import { formatOrgChartLevelLabel } from "@/app/admin/superadmin-settings/org-chart-layers";
 import type { PortalRole } from "@/lib/staff-role";
 import { cn } from "@/lib/cn";
 
@@ -184,15 +184,15 @@ export function AccessControlsPanel({
               </h2>
             </div>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-              Configure what each portal role can access, and optional grants by org-chart layer
-              (Layer 1 = top of the chart). Role permissions are the base; layer toggles are
-              additional grants for people on that layer. Saving stores the matrix for SuperAdmin
+              Configure what each portal role can access, and optional grants by org-chart level
+              (Level 1 = top of the chart). Role permissions are the base; level toggles are
+              additional grants for people on that level. Saving stores the matrix for SuperAdmin
               review — wire enforcement as a follow-up if needed.
             </p>
             {maxOrgLayer > 0 ? (
               <p className="mt-1 text-[11px] text-zinc-500">
-                Org chart currently reaches {formatOrgChartLayerLabel(maxOrgLayer)}. Matrix shows
-                through {formatOrgChartLayerLabel(configuredMaxLayer)}.
+                Org chart currently reaches {formatOrgChartLevelLabel(maxOrgLayer)}. Matrix shows
+                through {formatOrgChartLevelLabel(configuredMaxLayer)}.
               </p>
             ) : null}
           </div>
@@ -234,7 +234,7 @@ export function AccessControlsPanel({
                 className="rounded-full px-3 py-1.5 text-xs data-[state=active]:bg-zinc-900 data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-zinc-900"
               >
                 <Layers className="mr-1.5 inline h-3.5 w-3.5" />
-                By org chart layer
+                By org chart level
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -329,7 +329,7 @@ export function AccessControlsPanel({
                       key={layer}
                       className="min-w-[6.5rem] px-3 py-3 text-center text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-300"
                     >
-                      {formatOrgChartLayerLabel(Number(layer))}
+                      {formatOrgChartLevelLabel(Number(layer))}
                     </th>
                   ))}
                 </tr>
@@ -361,7 +361,7 @@ export function AccessControlsPanel({
                                 type="checkbox"
                                 checked={on}
                                 disabled={busy}
-                                aria-label={`${formatOrgChartLayerLabel(Number(layer))}: ${cap.label}`}
+                                aria-label={`${formatOrgChartLevelLabel(Number(layer))}: ${cap.label}`}
                                 onChange={() => toggleLayer(layer, cap.id)}
                                 className="h-4 w-4 cursor-pointer rounded border-zinc-300 text-orange-600 focus:ring-orange-500/30 disabled:cursor-not-allowed"
                               />
@@ -376,7 +376,7 @@ export function AccessControlsPanel({
             </table>
             <p className="border-t border-zinc-100 px-4 py-3 text-[11px] text-zinc-500 dark:border-zinc-800">
               Checked cells grant the capability to members currently sitting on that org-chart
-              layer, in addition to their portal role.
+              level, in addition to their portal role.
             </p>
           </div>
         )}

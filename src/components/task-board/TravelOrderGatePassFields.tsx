@@ -88,7 +88,7 @@ export function TravelOrderGatePassFields({
           </span>
           <input
             type="datetime-local"
-            value={value.estDepartureAt}
+            value={value.estDepartureAt ?? ""}
             disabled={disabled}
             onChange={(e) => patch({ estDepartureAt: e.target.value })}
             className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
@@ -103,7 +103,7 @@ export function TravelOrderGatePassFields({
           </span>
           <input
             type="datetime-local"
-            value={value.estArrivalAt}
+            value={value.estArrivalAt ?? ""}
             disabled={disabled}
             onChange={(e) => patch({ estArrivalAt: e.target.value })}
             className="mt-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
@@ -159,7 +159,7 @@ export function TravelOrderGatePassFields({
                 Guard on Duty
                 <input
                   type="text"
-                  value={value.startGuardOnDuty}
+                  value={value.startGuardOnDuty ?? ""}
                   disabled={(disabled && !allowActualCapture) || ended}
                   onChange={(e) => patch({ startGuardOnDuty: e.target.value })}
                   placeholder="Name of guard on duty…"
@@ -211,7 +211,7 @@ export function TravelOrderGatePassFields({
                 Guard on Duty
                 <input
                   type="text"
-                  value={value.endGuardOnDuty}
+                  value={value.endGuardOnDuty ?? ""}
                   disabled={(disabled && !allowActualCapture) || !started}
                   onChange={(e) => patch({ endGuardOnDuty: e.target.value })}
                   placeholder="Name of guard on duty…"

@@ -35,8 +35,6 @@ export function AcaIntakeFields({
   onCategoryChange,
   natureOfRequest,
   onNatureOfRequestChange,
-  departmentStore,
-  onDepartmentStoreChange,
   estimatedCost,
   onEstimatedCostChange,
   budgetAmount,
@@ -70,8 +68,6 @@ export function AcaIntakeFields({
   onCategoryChange: (v: string) => void;
   natureOfRequest: string;
   onNatureOfRequestChange: (v: string) => void;
-  departmentStore: string;
-  onDepartmentStoreChange: (v: string) => void;
   estimatedCost: string;
   onEstimatedCostChange: (v: string) => void;
   budgetAmount: string;
@@ -154,18 +150,6 @@ export function AcaIntakeFields({
             </optgroup>
           ))}
         </Select>
-      </label>
-
-      <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-        Department / Store
-        <Input
-          required
-          maxLength={200}
-          value={departmentStore}
-          onChange={(e) => onDepartmentStoreChange(e.target.value)}
-          placeholder="e.g. IT Dept., Main Store"
-          className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-        />
       </label>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

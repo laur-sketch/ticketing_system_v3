@@ -27,6 +27,7 @@ import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticke
 import { isAdminPortalRole } from "@/lib/staff-role";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { resolveAgentIdForPositionCode, resolveMergedSourceUserIdForSessionEmail } from "@/lib/approval-position-resolver";
 import {
   adminOutsideCompanyScope,
   isAcaBoardVisibleAssignee,
@@ -2169,14 +2170,39 @@ export async function PATCH(
         const stamped = applyItemRequisitionApprovalAssignees(meta, {
           canvassedByAgentId: ticket.assignedAgentId,
         });
-        const advanced = completeItemRequisitionApprovalStep(stamped);
+        let advanced = completeItemRequisitionApprovalStep(stamped);
+
+        // Approved By comes from the requestor's company position when not already set.
+        if (!advanced.approvedByAgentId) {
+          const requestorCompanyId =
+            ticket.teamId ??
+            (await resolveStaffCompanyTeamId(ticket.contactEmail)) ??
+            null;
+          const requestorMergedSourceUserId = await resolveMergedSourceUserIdForSessionEmail(
+            ticket.contactEmail,
+          );
+          const approvedByAgentId = await resolveAgentIdForPositionCode({
+            code: "RS_APPROVED_BY",
+            companyTeamId: requestorCompanyId,
+            requestorMergedSourceUserId,
+          });
+          if (approvedByAgentId) {
+            advanced = applyItemRequisitionApprovalAssignees(advanced, { approvedByAgentId });
+          }
+        }
+
         await saveItemRequisitionApprovalMeta(id, advanced);
+        const nextBoardAssigneeId =
+          advanced.approvedByAgentId ?? currentItemRequisitionStepBoardAssigneeId(advanced);
         const updated = await prisma.ticket.update({
           where: { id },
           data: {
             description,
             status: "IN_PROGRESS",
             resolvedAt: null,
+            ...(nextBoardAssigneeId && nextBoardAssigneeId !== ticket.assignedAgentId
+              ? { assignedAgent: { connect: { id: nextBoardAssigneeId } } }
+              : {}),
           },
           include: { team: true, assignedAgent: true },
         });
@@ -2196,12 +2222,21 @@ export async function PATCH(
         if (pending) {
           await logActivity(id, "SYSTEM", "Item requisition approval pending", pending);
         }
-        await logActivity(
-          id,
-          "SYSTEM",
-          "Next approval available",
-          "Use Ticket Controls → Select Approved By to choose who will approve this request.",
-        );
+        if (advanced.approvedByAgentId) {
+          await logActivity(
+            id,
+            "SYSTEM",
+            "Assigned to Approved By",
+            "Approved By is taken from the requestor’s company. Request moved to that assignee’s board.",
+          );
+        } else {
+          await logActivity(
+            id,
+            "SYSTEM",
+            "Next approval available",
+            "No Approved By position found for the requestor’s company. Use Ticket Controls → Select Approved By.",
+          );
+        }
         return NextResponse.json({
           ...(await ticketJsonWithAssigneeColor(updated)),
           itemRequisitionApprovalMeta: advanced,

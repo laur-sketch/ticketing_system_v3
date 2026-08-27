@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
+import { AssigneeAvatar } from "@/components/agent-assignee-search";
 import { cn } from "@/lib/cn";
 import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import type { OnDutyAgentSnapshot } from "@/lib/load-on-duty-snapshot";
@@ -19,6 +20,16 @@ type Props = {
   /** When set, always filter to this company (Admin company scope). */
   lockedCompanyFilter?: string | null;
   className?: string;
+  /** Shared search bar query from the parent page. When set, this replaces the
+   *  panel's own search input (hidden) and drives the API `q` param instead. */
+  externalSearchQuery?: string;
+  /** Company filter chip from the parent Workforce search bar. When set, this
+   *  replaces the panel's own company dropdown (hidden) and drives the API
+   *  `company` param instead. */
+  externalCompanyFilter?: string;
+  /** Role filter chip from the parent Workforce search bar (normalized role,
+   *  e.g. "Admin"). Drives the API `role` param. */
+  externalRoleFilter?: string;
 };
 
 function isAgentOnDuty(agent: OnDutyAgentSnapshot): boolean {
@@ -29,6 +40,42 @@ function isAgentOnDuty(agent: OnDutyAgentSnapshot): boolean {
 
 function dutyLabel(agent: OnDutyAgentSnapshot): "On Duty" | "Offline" {
   return isAgentOnDuty(agent) ? "On Duty" : "Offline";
+}
+
+/** Compact role label for the on-duty card badge. */
+function roleBadgeLabel(role: string | undefined): string {
+  if (!role) return "";
+  switch (role) {
+    case "SuperAdmin":
+      return "Super Admin";
+    case "HighAdmin":
+      return "High Admin";
+    case "Personnel-Guard":
+      return "Personnel Guard";
+    case "Customer":
+      return "Customer";
+    default:
+      return role;
+  }
+}
+
+/** Badge tone by role so Admin vs Personnel reads instantly. */
+function roleBadgeClass(role: string | undefined): string {
+  switch (role) {
+    case "SuperAdmin":
+    case "HighAdmin":
+      return "bg-violet-100 text-violet-800 dark:bg-violet-950/60 dark:text-violet-300";
+    case "Admin":
+      return "bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300";
+    case "Personnel":
+      return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300";
+    case "Personnel-Guard":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300";
+    case "Customer":
+      return "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+    default:
+      return "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+  }
 }
 
 export function OnDutyPanel({
@@ -43,6 +90,9 @@ export function OnDutyPanel({
   showCompanyFilter = false,
   lockedCompanyFilter = null,
   className,
+  externalSearchQuery,
+  externalCompanyFilter,
+  externalRoleFilter,
 }: Props) {
   const lockedCompany = lockedCompanyFilter?.trim() || "";
   const [agents, setAgents] = useState<OnDutyAgentSnapshot[]>(initialAgents);
@@ -58,8 +108,11 @@ export function OnDutyPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const canPrev = page > 1;
   const canNext = page < pages;
-  const effectiveCompanyFilter = lockedCompany || companyFilter;
-  const showFilters = showCompanyFilter || Boolean(lockedCompany);
+  // Parent-level company chip wins; the panel's own dropdown (hidden) and the
+  // admin lock are only used when no external filter drives this view.
+  const effectiveCompanyFilter =
+    externalCompanyFilter !== undefined ? externalCompanyFilter : lockedCompany || companyFilter;
+  const showFilters = (showCompanyFilter || Boolean(lockedCompany)) && externalCompanyFilter === undefined;
 
   useEffect(() => {
     const next = searchInput.trim();
@@ -72,9 +125,24 @@ export function OnDutyPanel({
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
+  // Parent-level shared search bar: debounce its keystrokes into searchQuery
+  // (same cadence as the in-panel input) so the on-duty API isn't hit on every
+  // character, and trim so whitespace-only input never becomes a `q` param.
+  useEffect(() => {
+    if (externalSearchQuery === undefined) return;
+    const next = externalSearchQuery.trim();
+    const timer = window.setTimeout(() => {
+      setSearchQuery((prev) => {
+        if (prev === next) return prev;
+        return next;
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [externalSearchQuery]);
+
   useEffect(() => {
     setPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, effectiveCompanyFilter, externalRoleFilter]);
 
   const endpoint = useMemo(() => {
     const params = new URLSearchParams({
@@ -83,8 +151,9 @@ export function OnDutyPanel({
     });
     if (effectiveCompanyFilter) params.set("company", effectiveCompanyFilter);
     if (searchQuery) params.set("q", searchQuery);
+    if (externalRoleFilter) params.set("role", externalRoleFilter);
     return `/api/dashboard/on-duty?${params.toString()}`;
-  }, [page, pageSize, effectiveCompanyFilter, searchQuery]);
+  }, [page, pageSize, effectiveCompanyFilter, searchQuery, externalRoleFilter]);
 
   useEffect(() => {
     let stopped = false;
@@ -133,14 +202,16 @@ export function OnDutyPanel({
     setPage(1);
   }
 
-  const filtersActive = Boolean(effectiveCompanyFilter || searchQuery);
+  const filtersActive = Boolean(effectiveCompanyFilter || searchQuery || externalRoleFilter);
   const emptyMessage = filtersActive
     ? "No personnel match the current filters."
     : "No personnel linked from the merge database.";
 
+  // 5×3 layout: 5 columns × 3 rows per page. Falls back to fewer columns on
+  // narrow screens so cards stay readable.
   const cardGridClass =
     variant === "cards"
-      ? "mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+      ? "mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5"
       : "mt-4 space-y-3";
 
   return (
@@ -188,17 +259,19 @@ export function OnDutyPanel({
                 </select>
               </label>
             ) : null}
-            <label className="flex min-w-[12rem] flex-1 flex-col gap-1 sm:max-w-xs">
-              <span className={authLabelClass}>Search by name or email</span>
-              <input
-                type="search"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Name or email…"
-                className={cn(authInputClass, "py-2 text-xs")}
-                autoComplete="off"
-              />
-            </label>
+            {externalSearchQuery === undefined ? (
+              <label className="flex min-w-[12rem] flex-1 flex-col gap-1 sm:max-w-xs">
+                <span className={authLabelClass}>Search by name or email</span>
+                <input
+                  type="search"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Name or email…"
+                  className={cn(authInputClass, "py-2 text-xs")}
+                  autoComplete="off"
+                />
+              </label>
+            ) : null}
           </div>
           <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
             {filtersActive
@@ -225,9 +298,19 @@ export function OnDutyPanel({
                   key={agent.id}
                   className="flex flex-col rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
+                  <div className="flex items-start gap-3">
+                    <AssigneeAvatar agent={agent} className="size-10" />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        <span className="truncate">{agent.name}</span>
+                        <span
+                          className={cn(
+                            "inline-block size-2 shrink-0 rounded-full",
+                            onDuty ? "bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-600",
+                          )}
+                          title={label}
+                        />
+                      </p>
                       <p className="mt-1 truncate text-xs text-zinc-600 dark:text-zinc-500">
                         {agent.companyName || "General Queue"}
                       </p>
@@ -235,15 +318,19 @@ export function OnDutyPanel({
                         <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-500">{agent.email}</p>
                       ) : null}
                     </div>
-                    <span
-                      className={cn(
-                        "mt-0.5 inline-block size-2.5 shrink-0 rounded-full",
-                        onDuty ? "bg-emerald-500" : "bg-zinc-400 dark:bg-zinc-600",
-                      )}
-                      title={label}
-                    />
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2">
+                    {agent.role ? (
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                          roleBadgeClass(agent.role),
+                        )}
+                        title={`Role: ${agent.role}`}
+                      >
+                        {roleBadgeLabel(agent.role)}
+                      </span>
+                    ) : null}
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
@@ -271,6 +358,7 @@ export function OnDutyPanel({
             agents.map((agent) => {
               const onDuty = isAgentOnDuty(agent);
               const label = dutyLabel(agent);
+              const roleLabel = roleBadgeLabel(agent.role);
               return (
                 <div
                   key={agent.id}
@@ -280,21 +368,35 @@ export function OnDutyPanel({
                     <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{agent.name}</p>
                     <p className="truncate text-xs text-zinc-600 dark:text-zinc-500">
                       {agent.companyName || "General Queue"}
+                      {agent.role ? ` · ${roleLabel}` : ""}
                       {" · "}
                       {agent.lastActivity ?? (onDuty ? "Clocked in today" : "No clock-in today")}
                     </p>
                   </div>
-                  <span
-                    className={cn(
-                      "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                      onDuty
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                        : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-                    )}
-                    title={label}
-                  >
-                    {label}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {roleLabel ? (
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                          roleBadgeClass(agent.role),
+                        )}
+                        title={`Role: ${agent.role}`}
+                      >
+                        {roleLabel}
+                      </span>
+                    ) : null}
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                        onDuty
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                          : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
+                      )}
+                      title={label}
+                    >
+                      {label}
+                    </span>
+                  </div>
                 </div>
               );
             })

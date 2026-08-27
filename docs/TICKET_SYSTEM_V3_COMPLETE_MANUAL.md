@@ -242,7 +242,7 @@ Admins define tasks on **Task Board** (`/agent?board=kpi`), not the Insights Tas
 
 - **`/`** — Ticket dashboard (on-duty, activity, priority stack).  
 - **`/admin/ticket-requests`** — Create requests on behalf of users.  
-- **`/admin/personnel`** — Personnel registry and assignment readiness.  
+- **`/admin/workforce`** — Workforce: personnel registry (ListView) and live personnel activity cards (Activity).  
 - **`/admin/manual-assignment`** — Assignment board (drag to personnel lanes).  
 - **`/agent?board=company`** — Company board.  
 - **`/agent?board=ticket`** — Ticket board.  
@@ -259,7 +259,7 @@ Admins define tasks on **Task Board** (`/agent?board=kpi`), not the Insights Tas
 
 ### 7.3 Accounts  
 
-- **`/admin/account-management`** — Redirects to **`/admin/personnel`**. Portal account administration is handled in Personnel, including account creation, role/designated-company updates, roster sync, duplicate-agent reconciliation, assignment colors, and request review.
+- **`/admin/account-management`** — Redirects to **`/admin/workforce`** (ListView). Portal account administration is handled in Workforce, including account creation, role/designated-company updates, roster sync, duplicate-agent reconciliation, assignment colors, and request review.
 
 ---
 
@@ -329,9 +329,9 @@ Suspension, deletion, or password reset requests may be submitted for admin revi
 | `/insights` | Metrics & reports |
 | `/process` | Process / lifecycle info |
 | `/reports` | Admin/SuperAdmin executive reporting |
-| `/admin/personnel` | Personnel admin |
+| `/admin/workforce` | Workforce (personnel registry + live activity) |
 | `/admin/escalation-triggers` | Priority alerts |
-| `/admin/account-management` | Redirects to Personnel portal-account admin |
+| `/admin/account-management` | Redirects to Workforce portal-account admin |
 | `/admin/account` | My Account & security |
 | `/api/brand/logo` | Current brand logo asset |
 

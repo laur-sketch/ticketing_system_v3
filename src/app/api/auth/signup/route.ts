@@ -13,6 +13,7 @@ import {
 } from "@/lib/portal-account";
 import { prisma } from "@/lib/prisma";
 import { ensureRosterTeamsInDb } from "@/lib/roster-teams";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 const INTENT_MAX_AGE = 15 * 60;
 
@@ -26,6 +27,15 @@ function validUsername(username: string) {
 
 export async function POST(req: Request) {
   try {
+    const ip = clientIp(req);
+    const lim = await rateLimit({ key: `signup:${ip}`, limit: 5, windowSeconds: 15 * 60 });
+    if (!lim.allowed) {
+      return NextResponse.json(
+        { error: "Too many signup attempts. Try again in a few minutes." },
+        { status: 429 },
+      );
+    }
+
     await ensureRosterTeamsInDb();
 
     const body = (await req.json()) as {

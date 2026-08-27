@@ -47,6 +47,18 @@ export function matchesRegistryCompanyFilter(companyId: string | null | undefine
   return companyId === filter;
 }
 
+/** Match a roster row against a company *name* (not id) — used by the
+ *  Workforce shared Company chip so the ListView and the on-duty Activity
+ *  view filter on the same canonical company name. */
+export function matchesRegistryCompanyNameFilter(
+  companyName: string | null | undefined,
+  filter: string,
+): boolean {
+  if (!filter) return true;
+  if (filter === NO_COMPANY_FILTER) return !companyName;
+  return (companyName ?? "").trim().toLowerCase() === filter.trim().toLowerCase();
+}
+
 /** Case-insensitive substring match on name and/or email (and optional username). */
 export function matchesRegistrySearchFilter(
   row: { name?: string | null; email?: string | null; username?: string | null },

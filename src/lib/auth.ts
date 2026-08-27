@@ -17,6 +17,7 @@ import { applyOAuthSignupIntent, readOAuthSignupIntentFromCookies, clearOAuthSig
 import { syncOAuthUser } from "@/lib/auth/sync-oauth-user";
 import { compactSessionPicture, SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
 import { sanitizeCallbackUrl } from "@/lib/session-expiry";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   SESSION_JWT_MAX_AGE_SECONDS,
   computeSessionExpiresAt,
@@ -155,6 +156,13 @@ export const authOptions: NextAuthOptions = {
         const loginId = credentials?.username?.trim() ?? "";
         const password = credentials?.password ?? "";
         if (!loginId || !password) return null;
+
+        const loginLim = await rateLimit({
+          key: `login:${loginId.toLowerCase()}`,
+          limit: 10,
+          windowSeconds: 15 * 60,
+        });
+        if (!loginLim.allowed) return null;
 
         const sessionFromPortal = (portal: {
           id: string;

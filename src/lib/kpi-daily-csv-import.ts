@@ -9,7 +9,7 @@ import { wrapForPersist, type SubKpiItem } from "@/lib/kpi-subkpis";
 import { computePeriodKey } from "@/lib/kpi-recurrence";
 import { prisma } from "@/lib/prisma";
 
-export const IT_SALF_DAILY_COMPANY_COLUMNS = ["ALI", "ACI", "MCHISI", "AWIC", "EASYGAS"] as const;
+export const IT_SALF_DAILY_COMPANY_COLUMNS = ["ALI", "ACI", "MCHISI LPG", "AWIC", "EASYGAS"] as const;
 
 const PILLAR_FROM_FILENAME: Array<{ match: RegExp; pillar: ItTaskPillarTitle }> = [
   { match: /data\s*backup/i, pillar: "DATA BACKUP" },

@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, GripVertical, ListChecks, Maximize2, X } from "lucide-react";
+import { ChevronDown, GripVertical, ListChecks, Maximize2, Pencil, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { AgentAssigneeSearch, AssigneeAvatar, type AssigneeSearchAgent } from "@/components/agent-assignee-search";
 import { normalizePersonName } from "@/lib/person-name";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import {
@@ -36,7 +37,7 @@ import {
   type ItProjectPhase,
 } from "@/lib/it-project-subkpis";
 import { ProjectTimelineKanban } from "@/components/task-board/ProjectTimelineKanban";
-import { kpiHasDistinctMainTask, kpiMainTaskLabel } from "@/lib/kpi-main-task";
+import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   kpiChecklistMetricView,
@@ -49,10 +50,11 @@ import {
   getTaskPriority,
   getTaskTargetDueDate,
   isPillarOnlyTask,
+  isMainTaskOnlyRecord,
+  mainTaskCheckboxItem,
   isFieldAssignmentTask,
   isProjectTask,
   normalizeSubKpis,
-  pillarVirtualSubKpiItem,
   pillarScreenshotUploadEnabled,
   pillarScreenshotsEnabled,
   subKpiAssignedAgentId,
@@ -123,15 +125,12 @@ import {
   offlineDraftAsListItem,
 } from "@/lib/offline/travel-order-offline-db";
 import { isPlatformSuperAdminPortalRole } from "@/lib/staff-role";
-import { isBrowserOnline, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure } from "@/lib/offline/travel-order-sync";
+import { isBrowserOnline, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure, flushTravelOrderPendingQueue, subscribeTravelOrderConnectivity } from "@/lib/offline/travel-order-sync";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
 type KpiBoardStatus = "CURRENT" | "DONE" | "DELAYED";
 
-const ASSIGNMENT_COMPANY_ALL = "ALL";
 const ASSIGNMENT_NO_COMPANY = "__NO_COMPANY__";
-const ASSIGNMENT_COMPANY_DROP_PREFIX = "__COMPANY__:";
-const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
 
 function subTaskStatusLabel(s: SubKpiItem, nowMs: number, timeZone: string): string {
   if (isItProjectSubTaskDelayed(s, nowMs, timeZone)) return "Delayed";
@@ -352,21 +351,16 @@ type AssignableAgent = {
   /** From merged DB clock-in today (Asia/Manila). */
   isOnDuty?: boolean;
   dutyStatus?: "ON_DUTY" | "OFFLINE";
+  profileImage?: string | null;
+  profileImageZoom?: number | null;
+  profileImagePosX?: number | null;
+  profileImagePosY?: number | null;
 };
 
 function agentIsOnDuty(agent: AssignableAgent): boolean {
   if (typeof agent.isOnDuty === "boolean") return agent.isOnDuty;
   return agent.dutyStatus === "ON_DUTY";
 }
-
-type CompanyFilterOption = {
-  id: string;
-  name: string;
-};
-
-type AssignmentCompanyOption = CompanyFilterOption & {
-  agentCount: number;
-};
 
 type TaskScheduleDraft = {
   isRecurring: boolean;
@@ -409,36 +403,6 @@ function assignmentCompanyName(agent: AssignableAgent): string {
   return agent.assignmentCompany?.name?.trim() || "No assigned company";
 }
 
-function assignmentRoleLabel(agent: AssignableAgent): "Admin" | "Personnel" {
-  return agent.portalRole === "Admin" || agent.headPrivileges ? "Admin" : "Personnel";
-}
-
-function sortAssignmentAgentsByRole(list: AssignableAgent[]): AssignableAgent[] {
-  return [...list].sort((a, b) => {
-    const roleDiff = (assignmentRoleLabel(a) === "Admin" ? 0 : 1) - (assignmentRoleLabel(b) === "Admin" ? 0 : 1);
-    if (roleDiff !== 0) return roleDiff;
-    return a.name.localeCompare(b.name);
-  });
-}
-
-function assignmentCompanyDropTarget(companyId: string): string {
-  return `${ASSIGNMENT_COMPANY_DROP_PREFIX}${companyId}`;
-}
-
-function assignmentCompanyIdFromTarget(target: string | null): string | null {
-  if (!target?.startsWith(ASSIGNMENT_COMPANY_DROP_PREFIX)) return null;
-  return target.slice(ASSIGNMENT_COMPANY_DROP_PREFIX.length);
-}
-
-function assignmentUserDropTarget(agentId: string): string {
-  return `${ASSIGNMENT_USER_DROP_PREFIX}${agentId}`;
-}
-
-function assignmentUserIdFromTarget(target: string | null): string | null {
-  if (!target?.startsWith(ASSIGNMENT_USER_DROP_PREFIX)) return null;
-  return target.slice(ASSIGNMENT_USER_DROP_PREFIX.length);
-}
-
 function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
   const seen = new Set<string>();
   const out: AssignableAgent[] = [];
@@ -455,21 +419,18 @@ function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
 export function AgentKpiKanbanFlow({
   companyFilterTeamId = null,
   assignedAgentFilterId = null,
-  companyFilterOptions = [],
-  currentCompanyFilter = "ALL",
   showAdminTaskManagement = false,
   focusTaskId = null,
   fromJobOrderTicketId = null,
   sessionRole = null,
+  searchQuery = "",
+  categoryFilter = "all",
+  frequencyFilter = "all",
 }: {
   /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
   companyFilterTeamId?: string | null;
   /** When set, narrows the task board to this main assignee. */
   assignedAgentFilterId?: string | null;
-  /** Company choices shown inside the Task Assignment Board. */
-  companyFilterOptions?: CompanyFilterOption[];
-  /** Current company query value. */
-  currentCompanyFilter?: string;
   /** SuperAdmin / Admin: KPI definition form (moved from Request Metrics and Reports). */
   showAdminTaskManagement?: boolean;
   /** Open this task's details once rows are loaded (e.g. notification deep link). */
@@ -478,6 +439,12 @@ export function AgentKpiKanbanFlow({
   fromJobOrderTicketId?: string | null;
   /** Portal role of the signed-in user (SSR). SuperAdmin-only gates use this. */
   sessionRole?: string | null;
+  /** Free-text search (matched against task title). */
+  searchQuery?: string;
+  /** Task Board category filter: all | task | project | field. */
+  categoryFilter?: string;
+  /** Frequency filter: all or a TASK_FREQUENCY_DONUT_KEYS value (ONE-OFF, DAILY, ...). */
+  frequencyFilter?: string;
 } = {}) {
   const isSuperAdmin = isPlatformSuperAdminPortalRole(sessionRole);
   const [rows, setRows] = useState<KpiRecord[]>([]);
@@ -488,16 +455,17 @@ export function AgentKpiKanbanFlow({
   const [canCompleteUnassignedWork, setCanCompleteUnassignedWork] = useState(false);
   const [canAssignOffline, setCanAssignOffline] = useState(false);
   const [canDeleteTask, setCanDeleteTask] = useState(false);
+  const [canEditRunningTasks, setCanEditRunningTasks] = useState(false);
   const [operatorAgentId, setOperatorAgentId] = useState<string | null>(null);
   const [operatorAgentName, setOperatorAgentName] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** Card id whose inline assignee search is open (toggled by clicking the assignee field). */
+  const [editingAssigneeId, setEditingAssigneeId] = useState<string | null>(null);
+  /** Sub-task key ("<recordId>:<subKpiId>") whose inline assignee search is open. */
+  const [editingSubAssigneeKey, setEditingSubAssigneeKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tz, setTz] = useState(DEFAULT_TIME_ZONE);
   const [nowMs, setNowMs] = useState(0);
-  const [assignmentCompanyId, setAssignmentCompanyId] = useState(
-    currentCompanyFilter !== ASSIGNMENT_COMPANY_ALL ? currentCompanyFilter : ASSIGNMENT_COMPANY_ALL,
-  );
-  const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
   const [openSubtaskDrawers, setOpenSubtaskDrawers] = useState<Set<string>>(() => new Set());
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   /** Segment filter in Full Task Details (`ALL` = every segment). */
@@ -517,7 +485,6 @@ export function AgentKpiKanbanFlow({
   const [fromJobOrderId, setFromJobOrderId] = useState<string | null>(
     fromJobOrderTicketId?.trim() || null,
   );
-  const [assignmentBoardOpen, setAssignmentBoardOpen] = useState(false);
   const [travelOrdersOpen, setTravelOrdersOpen] = useState(false);
   const [createTravelOrderOpen, setCreateTravelOrderOpen] = useState(false);
   const [resumeTravelOrderDraftId, setResumeTravelOrderDraftId] = useState<string | null>(null);
@@ -531,7 +498,6 @@ export function AgentKpiKanbanFlow({
     travelOrderId: string | null;
     title: string;
   } | null>(null);
-  const [taskCategoryFilter, setTaskCategoryFilter] = useState<TaskBoardCategory>("all");
   const [mobileLane, setMobileLane] = useState<KpiBoardStatus>("CURRENT");
   const [laneRegisterKey, setLaneRegisterKey] = useState(0);
   const [subAssigneePeersByMainId, setSubAssigneePeersByMainId] = useState<Record<string, AssignableAgent[]>>({});
@@ -626,6 +592,7 @@ export function AgentKpiKanbanFlow({
       canCompleteUnassignedWork?: boolean;
       canAssignOffline?: boolean;
       canDeleteTask?: boolean;
+      canEditRunningTasks?: boolean;
       operatorAgentId?: string | null;
       operatorAgentName?: string | null;
     };
@@ -635,6 +602,7 @@ export function AgentKpiKanbanFlow({
     setCanCompleteUnassignedWork(Boolean(payload.canCompleteUnassignedWork));
     setCanAssignOffline(Boolean(payload.canAssignOffline));
     setCanDeleteTask(Boolean(payload.canDeleteTask));
+    setCanEditRunningTasks(Boolean(payload.canEditRunningTasks));
     if (typeof payload.operatorAgentId === "string" && payload.operatorAgentId.trim()) {
       setOperatorAgentId(payload.operatorAgentId);
     }
@@ -696,6 +664,29 @@ export function AgentKpiKanbanFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyFilterTeamId]);
 
+  /** Close the inline assignee editors (main + sub-task) when clicking outside of them (or pressing Escape). */
+  useEffect(() => {
+    if (!editingAssigneeId && !editingSubAssigneeKey) return;
+    function onDocMousedown(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("[data-assignee-editor]")) return;
+      setEditingAssigneeId(null);
+      setEditingSubAssigneeKey(null);
+    }
+    function onDocKeydown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setEditingAssigneeId(null);
+        setEditingSubAssigneeKey(null);
+      }
+    }
+    document.addEventListener("mousedown", onDocMousedown);
+    document.addEventListener("keydown", onDocKeydown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMousedown);
+      document.removeEventListener("keydown", onDocKeydown);
+    };
+  }, [editingAssigneeId, editingSubAssigneeKey]);
+
   useEffect(() => {
     const mainIds = [...new Set(rows.map((row) => row.assignedAgent?.id).filter(Boolean))] as string[];
     for (const mainId of mainIds) {
@@ -721,27 +712,33 @@ export function AgentKpiKanbanFlow({
     if (focusedTaskOpenedRef.current === id) return;
     if (!rows.some((row) => row.id === id)) return;
     focusedTaskOpenedRef.current = id;
-    setActiveTaskId(id);
-    setDetailSegmentFilter("ALL");
-    if (showAdminTaskManagement) {
-      const task = rows.find((row) => row.id === id);
-      setScheduleDraft(task ? taskToScheduleDraft(task) : null);
-    } else {
-      setScheduleDraft(null);
-    }
+    queueMicrotask(() => {
+      setActiveTaskId(id);
+      setDetailSegmentFilter("ALL");
+      if (showAdminTaskManagement) {
+        const task = rows.find((row) => row.id === id);
+        setScheduleDraft(task ? taskToScheduleDraft(task) : null);
+      } else {
+        setScheduleDraft(null);
+      }
+    });
   }, [focusTaskId, rows, showAdminTaskManagement]);
 
   useEffect(() => {
     const joId = fromJobOrderTicketId?.trim() || null;
-    setFromJobOrderId(joId);
-    if (joId && (showAdminTaskManagement || canAssignWork)) {
-      setTaskManagementOpen(true);
-    }
+    queueMicrotask(() => {
+      setFromJobOrderId(joId);
+      if (joId && (showAdminTaskManagement || canAssignWork)) {
+        setTaskManagementOpen(true);
+      }
+    });
   }, [fromJobOrderTicketId, showAdminTaskManagement, canAssignWork]);
 
   function openActiveTask(taskId: string) {
     setActiveTaskId(taskId);
     setDetailSegmentFilter("ALL");
+    setEditingAssigneeId(null);
+    setEditingSubAssigneeKey(null);
     if (!showAdminTaskManagement) {
       setScheduleDraft(null);
       return;
@@ -759,8 +756,10 @@ export function AgentKpiKanbanFlow({
 
   useEffect(() => {
     if (!activeTaskId) {
-      setTaskAuditLog([]);
-      setTaskAuditLoading(false);
+      queueMicrotask(() => {
+        setTaskAuditLog([]);
+        setTaskAuditLoading(false);
+      });
       return;
     }
     let cancelled = false;
@@ -826,6 +825,35 @@ export function AgentKpiKanbanFlow({
     };
   }
 
+  function tasksPendingCount(p: ReturnType<typeof progress>): number {
+    if (p.inverted) return p.negative;
+    return p.missing;
+  }
+
+  function shouldShowTasksPendingBadge(
+    r: KpiRecord,
+    p: ReturnType<typeof progress>,
+    itProject: boolean,
+    incLate: number,
+  ): boolean {
+    if (itProject && incLate > 0) return false;
+    if (
+      statusOf(r) === "DELAYED" &&
+      r.isRecurring === false &&
+      accruedPenaltyForRecord(r) > 0
+    ) {
+      return false;
+    }
+    if (p.total === 0) return false;
+    if (p.inverted) return p.negative > 0;
+    return p.missing > 0 && p.done < p.total;
+  }
+
+  function tasksPendingBadgeLabel(p: ReturnType<typeof progress>): string {
+    const count = tasksPendingCount(p);
+    return count === 1 ? "Tasks Pending" : `${count} Tasks Pending`;
+  }
+
   function periodEnd(r: KpiRecord) {
     if (r.isRecurring === false) {
       return nonRecurringTaskDelayDeadline(r.subKpis, tz) ?? nonRecurringDeadline(r);
@@ -878,6 +906,7 @@ export function AgentKpiKanbanFlow({
     // SuperAdmin / HighAdmin may edit any running task, even when
     // the card is assigned to other personnel.
     if (canCompleteUnassignedWork) return true;
+    if (canEditRunningTasks) return true;
     const main = r.assignedAgent;
     if (!main) return false;
     if (operatorAgentId && main.id === operatorAgentId) return true;
@@ -1280,30 +1309,6 @@ export function AgentKpiKanbanFlow({
     }
   }
 
-  async function patchSubKpiSchedule(
-    recordId: string,
-    subKpiId: string,
-    schedule: { dueDate?: string | null; actualDate?: string | null; startDate?: string | null },
-  ) {
-    setBusyId(recordId);
-    setError(null);
-    try {
-      const res = await fetch(`/api/kpi-maintenance?tz=${encodeURIComponent(tz)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: recordId, subKpiSchedule: { subKpiId, ...schedule } }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setError(body.error ?? "Could not update sub-task dates.");
-        return;
-      }
-      await load();
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   async function patchSubKpiLifecycle(recordId: string, subKpiId: string, action: "start" | "end") {
     setBusyId(recordId);
     setError(null);
@@ -1477,7 +1482,7 @@ export function AgentKpiKanbanFlow({
   function penaltyContextForRecord(r: KpiRecord): SubKpiPenaltyContext {
     const recurring = r.isRecurring !== false;
     return {
-      nowMs: Date.now(),
+      nowMs,
       timeZone: tz,
       frequency: r.frequency,
       isRecurring: recurring,
@@ -1744,11 +1749,18 @@ export function AgentKpiKanbanFlow({
     if (companyFilterTeamId && companyFilterTeamId !== "ALL") {
       list = list.filter((row) => Boolean(row.assignedAgent?.id));
     }
-    if (taskCategoryFilter !== "all") {
-      list = list.filter((row) => taskBoardCategoryOf(row) === taskCategoryFilter);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((row) => (row.title ?? "").toLowerCase().includes(q));
+    }
+    if (categoryFilter !== "all") {
+      list = list.filter((row) => taskBoardCategoryOf(row) === categoryFilter);
+    }
+    if (frequencyFilter !== "all") {
+      list = list.filter((row) => boardLayoutSectionKey(row) === frequencyFilter);
     }
     return list;
-  }, [rows, companyFilterTeamId, taskCategoryFilter, nowMs, tz]);
+  }, [rows, companyFilterTeamId, searchQuery, categoryFilter, frequencyFilter, nowMs, tz]);
   const hasBoardRows = boardRows.length > 0;
   const laneCounts = useMemo(() => {
     const counts: Record<KpiBoardStatus, number> = { CURRENT: 0, DONE: 0, DELAYED: 0 };
@@ -1828,7 +1840,7 @@ export function AgentKpiKanbanFlow({
       if (localItems.length > 0 || cached.length > 0 || savedDrafts.length > 0) {
         setCompanyTravelOrders([...localItems, ...cached, ...savedDrafts]);
         setCompanyTravelOrdersError(
-          isTravelOrderNetworkFailure(err) || !isBrowserOnline()
+          typeof navigator !== "undefined" && !navigator.onLine
             ? "Showing cached travel orders (offline)."
             : "Showing cached travel orders (network error).",
         );
@@ -1849,7 +1861,15 @@ export function AgentKpiKanbanFlow({
 
   useEffect(() => {
     if (!travelOrdersOpen) return;
-    void reloadCompanyTravelOrders();
+    let cancelled = false;
+    void (async () => {
+      try {
+        await flushTravelOrderPendingQueue();
+      } catch {
+        /* keep going — list still loads from cache / server */
+      }
+      if (!cancelled) void reloadCompanyTravelOrders();
+    })();
     // Warm SW page/shell caches while online so a later offline reload can recover.
     if (typeof navigator !== "undefined" && navigator.onLine) {
       const worker = navigator.serviceWorker?.controller;
@@ -1861,19 +1881,63 @@ export function AgentKpiKanbanFlow({
         () => null,
       );
     }
+    const unsub = subscribeTravelOrderConnectivity(() => {
+      if (!isBrowserOnline()) return;
+      void flushTravelOrderPendingQueue().then(() => {
+        if (!cancelled) void reloadCompanyTravelOrders();
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [travelOrdersOpen, reloadCompanyTravelOrders]);
-  const unassignedRows = useMemo(() => rows.filter((r) => !r.assignedAgent?.id), [rows]);
-  const assignedCountByAgent = useMemo(
-    () =>
-      new Map(
-        agents.map((a) => [a.id, rows.filter((r) => r.assignedAgent?.id === a.id).length] as const),
-      ),
-    [agents, rows],
-  );
   const agentNameById = useMemo(() => {
     const all = [...agents, ...allAssignableAgents, ...Object.values(subAssigneePeersByMainId).flat()];
     return new Map(dedupeAssignableAgents(all).map((a) => [a.id, a.name] as const));
   }, [agents, allAssignableAgents, subAssigneePeersByMainId]);
+
+  /** Search candidates: page-scoped list when a company filter is active, full roster otherwise. */
+  const assigneeCandidates = useMemo(() => {
+    if (companyFilterTeamId && companyFilterTeamId !== "ALL") {
+      return dedupeAssignableAgents([
+        ...agents,
+        ...allAssignableAgents.filter((a) => a.assignmentCompany?.id === companyFilterTeamId),
+        ...Object.values(subAssigneePeersByMainId)
+          .flat()
+          .filter((a) => a.assignmentCompany?.id === companyFilterTeamId),
+      ]);
+    }
+    return dedupeAssignableAgents([...allAssignableAgents, ...agents, ...Object.values(subAssigneePeersByMainId).flat()]);
+  }, [agents, allAssignableAgents, subAssigneePeersByMainId, companyFilterTeamId]);
+
+  /**
+   * Company lock: once a task is assigned to a user with an assigned company,
+   * only personnel from that same company may be assigned (main task or sub-tasks).
+   * The current assignee stays visible even when offline or outside the roster.
+   */
+  function companyLockedCandidatesFor(r: KpiRecord): { candidates: AssigneeSearchAgent[]; lockNote: string | null } {
+    const mainId = r.assignedAgent?.id ?? null;
+    const main = mainId ? (assigneeCandidates.find((a) => a.id === mainId) ?? null) : null;
+    const mainCompany = main ? assignmentCompanyKey(main) : null;
+    const locked = Boolean(main && mainCompany && mainCompany !== ASSIGNMENT_NO_COMPANY);
+    let list = locked
+      ? assigneeCandidates.filter((a) => assignmentCompanyKey(a) === mainCompany)
+      : assigneeCandidates;
+    if (mainId && !list.some((a) => a.id === mainId) && main) {
+      list = [...list, main];
+    }
+    if (!canAssignOffline && mainId) {
+      const withCurrent = list.filter((a) => agentIsOnDuty(a) || a.id === mainId);
+      if (withCurrent.length > 0) list = withCurrent;
+    } else if (!canAssignOffline) {
+      list = list.filter((a) => agentIsOnDuty(a));
+    }
+    return {
+      candidates: list,
+      lockNote: locked && mainCompany ? `Locked to ${assignmentCompanyName(main!)} personnel` : null,
+    };
+  }
 
   function subKpiAssigneeLabel(s: SubKpiItem) {
     const id = subKpiAssignedAgentId(s);
@@ -2015,51 +2079,73 @@ export function AgentKpiKanbanFlow({
     }
 
     const mainAssigneeId = r.assignedAgent?.id;
-    const mainAssignee = mainAssigneeId
-      ? allAssignableAgents.find((a) => a.id === mainAssigneeId) ??
-        agents.find((a) => a.id === mainAssigneeId) ??
-        null
+    const { candidates: companyScopedAgents, lockNote } = companyLockedCandidatesFor(r);
+    const subTaskCandidates = companyScopedAgents.filter((a) => a.id !== mainAssigneeId);
+    const assignedStillVisible = assignedId && !subTaskCandidates.some((a) => a.id === assignedId);
+    const assignedAgentObj = assignedId
+      ? assigneeCandidates.find((a) => a.id === assignedId) ?? null
       : null;
-    const mainCompanyId = mainAssignee ? assignmentCompanyKey(mainAssignee) : null;
-    let companyScopedAgents = mainCompanyId
-      ? allAssignableAgents.filter((a) => assignmentCompanyKey(a) === mainCompanyId && a.id !== mainAssigneeId)
-      : [];
-    if (companyScopedAgents.length === 0 && mainAssigneeId) {
-      companyScopedAgents = subAssigneePeersByMainId[mainAssigneeId] ?? [];
-    }
-    const assignableScoped = canAssignOffline
-      ? companyScopedAgents
-      : companyScopedAgents.filter((a) => agentIsOnDuty(a));
-    const assignedStillVisible = assignedId && !assignableScoped.some((a) => a.id === assignedId);
+    const candidateList =
+      assignedStillVisible && assignedAgentObj ? [...subTaskCandidates, assignedAgentObj] : subTaskCandidates;
+    const editing = editingSubAssigneeKey === `${r.id}:${s.id}`;
+    const assigneeName = s.assignedAgentName?.trim() || "Unassigned";
     return (
       <div className="mt-2 flex flex-col gap-1.5">
         {assistanceBadge}
-        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-          Sub Task assignee
-          <select
-            value={assignedId}
-            disabled={busyId === r.id || (!r.assignedAgent?.id && !assignedId)}
-            onChange={(e) => void assignSubKpi(r.id, s.id, e.target.value)}
-            className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-          >
-            <option value="">Unassigned</option>
-            {assignedStillVisible ? (
-              <option value={assignedId}>
-                {agentNameById.get(assignedId) ?? s.assignedAgentName ?? "Current assignee"} (current)
-              </option>
-            ) : null}
-            {assignableScoped.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} · {agentIsOnDuty(a) ? "On Duty" : "Offline"}
-              </option>
-            ))}
-          </select>
-          {!r.assignedAgent?.id ? (
-            <span className="text-[10px] font-medium normal-case tracking-normal text-zinc-500 dark:text-zinc-500">
-              Assign the main task first to show personnel from that company.
-            </span>
-          ) : null}
-        </label>
+        <div className="flex flex-col gap-1">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+            Sub Task assignee
+          </p>
+          {editing ? (
+            <div className="flex w-56 max-w-full min-w-0 flex-col gap-1" data-assignee-editor>
+              <AgentAssigneeSearch
+                key={`sub-assignee-${r.id}-${s.id}-${assignedId}`}
+                value={assignedId}
+                agents={candidateList}
+                placeholder={s.assignedAgentName?.trim() || "Search sub-task assignee…"}
+                allowClear
+                disabled={busyId === r.id}
+                autoFocus
+                inputClassName="rounded-none border-0 border-b border-dashed border-zinc-400 bg-transparent pb-0.5 pt-0 pr-2 focus:border-orange-500 dark:border-zinc-500 dark:bg-transparent"
+                onSelect={(agentId) => {
+                  void assignSubKpi(r.id, s.id, agentId);
+                  setEditingSubAssigneeKey(null);
+                }}
+              />
+              {lockNote ? (
+                <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500">{lockNote}</p>
+              ) : null}
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-assignee-editor
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditingAssigneeId(null);
+                setEditingSubAssigneeKey(`${r.id}:${s.id}`);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="group inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900"
+              title="Click to change sub-task assignee"
+              aria-label="Change sub-task assignee"
+            >
+              {assignedAgentObj ? <AssigneeAvatar agent={assignedAgentObj} className="size-4" /> : null}
+              <span
+                className={cn(
+                  "min-w-0 truncate font-semibold underline-offset-4 transition group-hover:underline group-hover:decoration-zinc-400 group-hover:decoration-dotted dark:group-hover:decoration-zinc-500",
+                  assignedId ? "text-zinc-700 dark:text-zinc-300" : "text-zinc-400 dark:text-zinc-500",
+                )}
+              >
+                {assigneeName}
+              </span>
+              <Pencil
+                className="size-3 shrink-0 text-zinc-400 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 pointer-coarse:opacity-60 dark:text-zinc-500"
+                aria-hidden
+              />
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -2532,7 +2618,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderTaskLevelDailyPenaltyField(r: KpiRecord) {
-    const virtual = pillarVirtualSubKpiItem(r.subKpis, taskLabel(r));
+    const virtual = mainTaskCheckboxItem(r.subKpis, taskLabel(r));
     if (!virtual) return null;
     const ctx = penaltyContextForRecord(r);
     const accrued = subKpiAccruedPenalty(virtual, ctx);
@@ -2586,7 +2672,70 @@ export function AgentKpiKanbanFlow({
     );
   }
 
-  function renderNonItSubKpiCard(r: KpiRecord, s: SubKpiItem, showPriority = true, pillarOnlyMode = false) {
+  function renderPillarMainTaskCheckboxInline(
+    r: KpiRecord,
+    s: SubKpiItem,
+    hidePendingStatusBadge = false,
+  ) {
+    const subEditable = canEditSubKpi(r, s);
+    const subCompletable = canCompleteSubKpi(r, s);
+    const completionRequirements = resolveSubKpiCompletionRequirements(s);
+    const finished = subKpiRequirementsMet(s);
+    const showCheckbox =
+      subEditable && busyId !== r.id && subKpiRequiresCheckbox(completionRequirements);
+    const invertedRecording = taskUsesInvertedRecording({ title: r.title, subKpis: r.subKpis });
+    const statusBadge = invertedRecording
+      ? finished && !hidePendingStatusBadge
+        ? (
+            <span
+              className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+            >
+              Flagged
+            </span>
+          )
+        : null
+      : finished || !hidePendingStatusBadge
+        ? (
+            <span
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                finished
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              {finished ? "Finished" : "Pending"}
+            </span>
+          )
+        : null;
+
+    if (!showCheckbox && !statusBadge) return null;
+
+    return (
+      <div className="flex shrink-0 items-center gap-2">
+        {showCheckbox ? (
+          <input
+            type="checkbox"
+            className="size-4 shrink-0"
+            checked={finished}
+            disabled={!subCompletable}
+            onChange={() => void toggleSubKpi(r.id, s.id, finished)}
+            aria-label={`Mark ${taskLabel(r)} as ${finished ? "pending" : "done"}`}
+          />
+        ) : null}
+        {statusBadge}
+      </div>
+    );
+  }
+
+  function renderNonItSubKpiCard(
+    r: KpiRecord,
+    s: SubKpiItem,
+    showPriority = true,
+    pillarOnlyMode = false,
+    hidePendingStatusBadge = false,
+    skipPillarCheckbox = false,
+  ) {
     const subEditable = canEditSubKpi(r, s);
     const subCompletable = canCompleteSubKpi(r, s);
     const canManageSubTasks = showAdminTaskManagement;
@@ -2611,20 +2760,39 @@ export function AgentKpiKanbanFlow({
         name: operatorAgentName,
       });
     const hidePillarTitle = pillarOnlyMode && !kpiHasDistinctMainTask(r);
+    const invertedRecording = taskUsesInvertedRecording({ title: r.title, subKpis: r.subKpis });
+    const pillarOnlyExtras =
+      needsScreenshotsForCheckbox ||
+      needsNumericalForCheckbox ||
+      needsScreenshotUploadForCheckbox ||
+      progressMismatchWarning ||
+      (!completionRequirements.checkbox && completionRequirements.screenshots && !finished) ||
+      (!completionRequirements.checkbox && completionRequirements.screenshotUpload && !finished) ||
+      (!completionRequirements.checkbox && completionRequirements.numerical && !finished) ||
+      (pillarOnlyMode && !recurring && canManageSubTasks);
+    if (pillarOnlyMode && skipPillarCheckbox && !pillarOnlyExtras) {
+      return null;
+    }
     return (
       <div
         key={s.id}
         className={cn(
-          "rounded-lg border border-zinc-200/80 bg-white/60 dark:border-zinc-700 dark:bg-zinc-950/40",
-          // Pillar-only main-task checkbox is a single compact row — avoid subtask card padding.
-          pillarOnlyMode ? "px-2.5 py-1.5" : "p-3",
-          finished && "border-emerald-300/70 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-950/20",
+          pillarOnlyMode
+            ? pillarOnlyExtras
+              ? "space-y-2"
+              : "flex flex-wrap items-center justify-between gap-2"
+            : "rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40",
+          !pillarOnlyMode &&
+            finished &&
+            "border-emerald-300/70 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-950/20",
         )}
       >
+        {!(pillarOnlyMode && skipPillarCheckbox) ? (
         <div
           className={cn(
             "flex flex-wrap justify-between gap-2",
             pillarOnlyMode ? "items-center" : "items-start",
+            pillarOnlyMode && !pillarOnlyExtras && "w-full",
           )}
         >
           <div
@@ -2694,18 +2862,33 @@ export function AgentKpiKanbanFlow({
                 Remove
               </button>
             ) : null}
-            <span
-              className={cn(
-                "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
-                finished
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-              )}
-            >
-              {finished ? "Finished" : "Pending"}
-            </span>
+            {invertedRecording
+              ? finished && !hidePendingStatusBadge
+                ? (
+                    <span
+                      className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+                    >
+                      Flagged
+                    </span>
+                  )
+                : null
+              : finished || !hidePendingStatusBadge
+                ? (
+                    <span
+                      className={cn(
+                        "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                        finished
+                          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                          : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                      )}
+                    >
+                      {finished ? "Finished" : "Pending"}
+                    </span>
+                  )
+                : null}
           </div>
         </div>
+        ) : null}
         {!pillarOnlyMode && s.description ? (
           <p className="mt-1 whitespace-pre-wrap text-xs text-zinc-600 dark:text-zinc-400">
             {s.description}
@@ -3257,7 +3440,7 @@ export function AgentKpiKanbanFlow({
   }
 
   function renderAddSubTaskPanel(r: KpiRecord) {
-    if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title) || isPillarOnlyTask(r.subKpis)) {
+    if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title) || isMainTaskOnlyRecord(r.subKpis, { title: r.title, mainTask: r.mainTask })) {
       return null;
     }
     const normalized = normalizeSubKpis(r.subKpis);
@@ -3368,18 +3551,34 @@ export function AgentKpiKanbanFlow({
     );
   }
 
-  function renderTaskSubtaskContent(r: KpiRecord, opts?: { segmentFilter?: string }) {
+  function renderTaskSubtaskContent(
+    r: KpiRecord,
+    opts?: {
+      segmentFilter?: string;
+      hideSubtaskPendingBadge?: boolean;
+      hidePillarMainCheckbox?: boolean;
+    },
+  ) {
     const segmentFilter = opts?.segmentFilter?.trim() || "ALL";
+    const hideSubtaskPendingBadge = opts?.hideSubtaskPendingBadge ?? false;
+    const hidePillarMainCheckbox = opts?.hidePillarMainCheckbox ?? false;
     const itProject = isTimelineProjectRecord(r);
     const normalized = normalizeSubKpis(r.subKpis);
     const itProjectData = itProject ? parseItProjectSubKpis(r.subKpis, r.itProjectPhase) : null;
-    if (!itProject && isPillarOnlyTask(r.subKpis)) {
-      const virtual = pillarVirtualSubKpiItem(r.subKpis, taskLabel(r));
-      if (virtual) {
+    if (!itProject && isMainTaskOnlyRecord(r.subKpis, { title: r.title, mainTask: r.mainTask })) {
+      const checkboxItem = mainTaskCheckboxItem(r.subKpis, taskLabel(r));
+      if (checkboxItem) {
         return (
           <div className="space-y-2">
             {renderTaskSeekAssistanceButton(r, [], { stopPropagation: true })}
-            {renderNonItSubKpiCard(r, virtual, false, true)}
+            {renderNonItSubKpiCard(
+              r,
+              checkboxItem,
+              false,
+              true,
+              hideSubtaskPendingBadge,
+              hidePillarMainCheckbox,
+            )}
           </div>
         );
       }
@@ -3421,7 +3620,9 @@ export function AgentKpiKanbanFlow({
             {seg.items.length === 0 ? (
               <p className="px-1 py-2 text-[11px] text-zinc-500 dark:text-zinc-400">No sub-tasks yet.</p>
             ) : (
-              seg.items.map((s) => renderNonItSubKpiCard(r, s, showSubtaskPriority))
+              seg.items.map((s) =>
+                renderNonItSubKpiCard(r, s, showSubtaskPriority, false, hideSubtaskPendingBadge),
+              )
             )}
           </div>
         </div>
@@ -3452,112 +3653,12 @@ export function AgentKpiKanbanFlow({
     return (
       <div className="space-y-2">
         {renderTaskSeekAssistanceButton(r, checklistItems, { stopPropagation: true })}
-        {checklistItems.map((s: SubKpiItem) => renderNonItSubKpiCard(r, s, showSubtaskPriority))}
+        {checklistItems.map((s: SubKpiItem) =>
+          renderNonItSubKpiCard(r, s, showSubtaskPriority, false, hideSubtaskPendingBadge),
+        )}
       </div>
     );
   }
-
-  const assignLaneDrag = usePointerColumnDrag<string>({
-    onDrop: (id, targetId) => {
-      setDragRevealCompanyId(null);
-      const companyId = assignmentCompanyIdFromTarget(targetId);
-      if (companyId) {
-        setAssignmentCompanyId(companyId);
-        return;
-      }
-      const userId = assignmentUserIdFromTarget(targetId) ?? targetId;
-      if (userId && userId !== "__UNASSIGNED__") {
-        const userAgent =
-          agents.find((agent) => agent.id === userId) ??
-          allAssignableAgents.find((agent) => agent.id === userId);
-        if (userAgent && !agentIsOnDuty(userAgent) && !canAssignOffline) {
-          window.alert(`${userAgent.name} is Offline (no clock-in today). Only On Duty personnel can be assigned.`);
-          return;
-        }
-      }
-      void assignKpi(id, userId);
-    },
-    onHover: (targetId) => {
-      const companyId = assignmentCompanyIdFromTarget(targetId);
-      if (companyId) {
-        setDragRevealCompanyId((prev) => (prev === companyId ? prev : companyId));
-        return;
-      }
-      const userId = assignmentUserIdFromTarget(targetId);
-      if (userId) {
-        const userAgent = agents.find((agent) => agent.id === userId);
-        if (userAgent) {
-          const userCompanyId = assignmentCompanyKey(userAgent);
-          setDragRevealCompanyId((prev) => (prev === userCompanyId ? prev : userCompanyId));
-          return;
-        }
-      }
-      setDragRevealCompanyId(null);
-    },
-    onDragEnd: () => setDragRevealCompanyId(null),
-    disabled: busyId != null || !canAssignWork,
-    activationDistance: 12,
-  });
-
-  const assignmentCompanyOptions = useMemo<AssignmentCompanyOption[]>(() => {
-    const agentCountByCompany = new Map<string, number>();
-    const nameByCompany = new Map<string, string>();
-    const rosterCompanyIds = new Set(companyFilterOptions.map((team) => team.id));
-
-    for (const team of companyFilterOptions) {
-      nameByCompany.set(team.id, team.name);
-    }
-
-    for (const agent of agents) {
-      if (!canAssignOffline && !agentIsOnDuty(agent)) continue;
-      const key = assignmentCompanyKey(agent);
-      if (key === ASSIGNMENT_NO_COMPANY) continue;
-      if (rosterCompanyIds.size > 0 && !rosterCompanyIds.has(key)) continue;
-      agentCountByCompany.set(key, (agentCountByCompany.get(key) ?? 0) + 1);
-      if (!nameByCompany.has(key)) nameByCompany.set(key, assignmentCompanyName(agent));
-    }
-
-    const options: AssignmentCompanyOption[] = [];
-    for (const [id, name] of nameByCompany) {
-      const agentCount = agentCountByCompany.get(id) ?? 0;
-      if (agentCount > 0) {
-        options.push({ id, name, agentCount });
-      }
-    }
-
-    return options.sort((a, b) => {
-      const rosterA = companyFilterOptions.findIndex((team) => team.id === a.id);
-      const rosterB = companyFilterOptions.findIndex((team) => team.id === b.id);
-      if (rosterA !== -1 || rosterB !== -1) {
-        const orderA = rosterA === -1 ? Number.MAX_SAFE_INTEGER : rosterA;
-        const orderB = rosterB === -1 ? Number.MAX_SAFE_INTEGER : rosterB;
-        return orderA - orderB;
-      }
-      return a.name.localeCompare(b.name);
-    });
-  }, [agents, canAssignOffline, companyFilterOptions]);
-
-  const activeAssignmentCompanyId =
-    dragRevealCompanyId ??
-    (!assignLaneDrag.draggingItemId && assignmentCompanyId !== ASSIGNMENT_COMPANY_ALL ? assignmentCompanyId : null);
-  const agentsByAssignmentCompany = useMemo(() => {
-    const grouped = new Map<string, AssignableAgent[]>();
-    for (const agent of agents) {
-      const key = assignmentCompanyKey(agent);
-      const list = grouped.get(key);
-      if (list) list.push(agent);
-      else grouped.set(key, [agent]);
-    }
-    for (const [key, list] of grouped) {
-      grouped.set(
-        key,
-        sortAssignmentAgentsByRole(
-          [...list].sort((a, b) => Number(agentIsOnDuty(b)) - Number(agentIsOnDuty(a))),
-        ),
-      );
-    }
-    return grouped;
-  }, [agents]);
 
   const kpiStatusDrag = usePointerColumnDrag<KpiBoardStatus>({
     onDrop: (id, col) => void move(id, col),
@@ -3566,225 +3667,109 @@ export function AgentKpiKanbanFlow({
     onDragEnd: () => setLaneRegisterKey((key) => key + 1),
   });
 
-  const activeTask = activeTaskId ? rows.find((row) => row.id === activeTaskId) ?? null : null;
-
-  function renderAssignmentBoard() {
+  /**
+   * Inline assignee search rendered IN PLACE of the assignee field while editing:
+   * an underline-style input showing the current assignee name. The roster dropdown
+   * is portaled above the card, so it is never clipped by the card's overflow-hidden.
+   */
+  function assigneeSearchFor(r: KpiRecord) {
+    const currentId = r.assignedAgent?.id ?? "";
+    const { candidates, lockNote } = companyLockedCandidatesFor(r);
     return (
-      <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-[0_10px_34px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:bg-[#080808] dark:shadow-[0_14px_40px_rgba(0,0,0,0.28)]">
-        <div className="grid gap-3 p-3 md:grid-cols-[minmax(16rem,0.7fr)_minmax(0,1.8fr)] lg:p-4">
-          <div
-            ref={canUnassignWork ? assignLaneDrag.registerColumn("__UNASSIGNED__") : undefined}
-            className={cn(
-              "rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 transition dark:border-zinc-800 dark:bg-zinc-950/50",
-              canUnassignWork &&
-                assignLaneDrag.hoverColumn === "__UNASSIGNED__" &&
-                "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
-            )}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
-                  Unassigned
-                </p>
-                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-500">Drop here to clear assignment.</p>
-              </div>
-              <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                {unassignedRows.length}
-              </span>
-            </div>
-            <div className="max-h-[min(42dvh,24rem)] space-y-1.5 overflow-y-auto pr-1">
-              {unassignedRows.length === 0 ? (
-                <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/70 px-3 py-6 text-center dark:border-zinc-700 dark:bg-zinc-900/30">
-                  <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">No unassigned tasks.</p>
-                </div>
-              ) : null}
-              {unassignedRows.map((r) => (
-                <div
-                  key={`unassigned-${r.id}`}
-                  {...assignLaneDrag.getCardPointerProps(r.id, { getLabel: () => taskLabel(r) })}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open details for ${taskLabel(r)}`}
-                  onClick={(e) => {
-                    const target = e.target as HTMLElement;
-                    if (target.closest("a,button,input,select,textarea,label")) return;
-                    openActiveTask(r.id);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openActiveTask(r.id);
-                    }
-                  }}
-                  className={cn(
-                    "cursor-pointer touch-pan-y select-none rounded-lg border border-zinc-300 bg-zinc-50 px-2.5 py-2.5 text-sm transition hover:border-orange-400 hover:bg-white dark:border-zinc-700 dark:bg-zinc-950/40 dark:hover:border-orange-700 dark:hover:bg-zinc-950/70 sm:py-2",
-                    assignLaneDrag.draggingItemId === r.id && "opacity-60 ring-1 ring-orange-400/40",
-                    busyId === r.id && "pointer-events-none opacity-50",
-                  )}
-                >
-                  <div className="flex items-start gap-1.5">
-                    <GripVertical className="mt-0.5 size-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden />
-                    <div className="min-w-0 flex-1">
-                      <p
-                        className={cn(
-                          "line-clamp-2 leading-snug",
-                          isFieldAssignmentRecord(r) &&
-                            "inline-flex max-w-full rounded-md border border-orange-400/45 bg-orange-500/10 px-1.5 py-0.5 text-xs font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100",
-                        )}
-                      >
-                        {taskLabel(r)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="min-w-0">
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/50">
-              <div className="flex flex-col gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
-                    Personnel group
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                    {canAssignOffline
-                      ? "SuperAdmin can assign On Duty or Offline personnel. Drag over a company, then drop on a person."
-                      : "Only On Duty personnel (merged DB clock-in today) can receive tasks. Drag over a company, then drop on a person."}
-                  </p>
-                </div>
-              </div>
-              {assignmentCompanyOptions.length > 0 ? (
-                <div className="mt-3 grid gap-2 xl:grid-cols-2">
-                  {assignmentCompanyOptions.map((company) => {
-                    const targetId = assignmentCompanyDropTarget(company.id);
-                    const isSelected = assignmentCompanyId === company.id;
-                    const isRevealed = activeAssignmentCompanyId === company.id;
-                    const companyAgents = (agentsByAssignmentCompany.get(company.id) ?? []).filter(
-                      (agent) => canAssignOffline || agentIsOnDuty(agent),
-                    );
-                    const adminAgents = companyAgents.filter((agent) => assignmentRoleLabel(agent) === "Admin");
-                    const personnelAgents = companyAgents.filter(
-                      (agent) => assignmentRoleLabel(agent) === "Personnel",
-                    );
-                    return (
-                      <div
-                        key={`company-drop-${company.id}`}
-                        ref={assignLaneDrag.registerColumn(targetId)}
-                        className={cn(
-                          "touch-pan-y rounded-xl border border-zinc-200 bg-white p-2 transition dark:border-zinc-800 dark:bg-zinc-900/40",
-                          isSelected &&
-                            "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
-                          isRevealed &&
-                            "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900",
-                        )}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAssignmentCompanyId((current) =>
-                              current === company.id ? ASSIGNMENT_COMPANY_ALL : company.id,
-                            );
-                          }}
-                          aria-pressed={isSelected}
-                          aria-expanded={isRevealed}
-                          className="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg px-2 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-950/60"
-                        >
-                          <span className="min-w-0 truncate text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                            {company.name}
-                          </span>
-                          <span className="flex shrink-0 items-center gap-1">
-                            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                              {company.agentCount}
-                            </span>
-                            <ChevronDown
-                              className={cn(
-                                "size-3.5 text-zinc-500 transition-transform dark:text-zinc-400",
-                                isRevealed && "rotate-180",
-                              )}
-                              aria-hidden
-                            />
-                          </span>
-                        </button>
-                        {isRevealed ? (
-                          <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
-                            <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-orange-700 dark:text-orange-300">
-                              {canAssignOffline
-                                ? "Drop on admin or personnel"
-                                : "Drop on On Duty admin or personnel"}
-                            </p>
-                            <div className="max-h-[min(44dvh,20rem)] space-y-3 overflow-y-auto pr-1 sm:max-h-60">
-                              {companyAgents.length === 0 ? (
-                                <p className="rounded-md border border-dashed border-zinc-300 px-2 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-                                  {canAssignOffline
-                                    ? "No assignable users in this company."
-                                    : "No On Duty users in this company."}
-                                </p>
-                              ) : null}
-                              {[
-                                { label: "Admins", list: adminAgents },
-                                { label: "Personnel", list: personnelAgents },
-                              ].map((group) =>
-                                group.list.length > 0 ? (
-                                  <div key={`${company.id}-${group.label}`} className="space-y-1">
-                                    <p className="px-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                                      {group.label}
-                                    </p>
-                                    {group.list.map((agent) => {
-                                      const userTargetId = assignmentUserDropTarget(agent.id);
-                                      const isUserHovered = assignLaneDrag.hoverColumn === userTargetId;
-                                      return (
-                                        <div
-                                          key={`company-user-${company.id}-${agent.id}`}
-                                          ref={assignLaneDrag.registerColumn(userTargetId)}
-                                          role="option"
-                                          aria-selected={isUserHovered}
-                                          className={cn(
-                                            "rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 text-left transition dark:border-zinc-800 dark:bg-zinc-900/50 sm:py-1.5",
-                                            isUserHovered &&
-                                              "border-orange-400 bg-orange-50 ring-2 ring-orange-500/50 dark:border-orange-700 dark:bg-orange-950/30",
-                                          )}
-                                        >
-                                          <div className="flex items-center justify-between gap-2">
-                                            <div className="min-w-0">
-                                              <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                                                {agent.name}
-                                              </p>
-                                              <span
-                                                className={cn(
-                                                  "mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
-                                                  agentIsOnDuty(agent)
-                                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                                    : "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-                                                )}
-                                              >
-                                                {agentIsOnDuty(agent) ? "On Duty" : "Offline"}
-                                              </span>
-                                            </div>
-                                            <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                                              {assignedCountByAgent.get(agent.id) ?? 0}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                ) : null,
-                              )}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
+      <div className="flex w-56 max-w-full min-w-0 flex-col gap-1" data-assignee-editor>
+        <AgentAssigneeSearch
+          key={`assignee-${r.id}-${currentId}`}
+          value={currentId}
+          agents={candidates}
+          placeholder={r.assignedAgent?.name ?? "Search assignee…"}
+          allowClear={canUnassignWork}
+          disabled={busyId === r.id}
+          autoFocus
+          inputClassName="rounded-none border-0 border-b border-dashed border-zinc-400 bg-transparent pb-0.5 pt-0 pr-2 focus:border-orange-500 dark:border-zinc-500 dark:bg-transparent"
+          onSelect={(agentId) => {
+            void assignKpi(r.id, agentId);
+            setEditingAssigneeId(null);
+          }}
+        />
+        {lockNote ? (
+          <p className="truncate text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{lockNote}</p>
+        ) : null}
       </div>
     );
   }
+
+  /**
+   * Avatar shown in the card's Assignee line. Resolves the assigned agent from the
+   * search roster so the profile photo (if any) renders next to the name.
+   */
+  function assigneeAvatarFor(r: KpiRecord) {
+    const id = r.assignedAgent?.id;
+    if (!id) return null;
+    const agent = assigneeCandidates.find((a) => a.id === id) ?? null;
+    if (!agent) return null;
+    return <AssigneeAvatar agent={agent} className="size-5" />;
+  }
+
+  /**
+   * Card assignee line: avatar + the assignee's full name. The name wraps instead of
+   * truncating so it stays readable even on narrow board cards. When `canEdit` is set,
+   * the whole field is clickable — there is no separate edit button — and clicking it
+   * swaps the field for an inline assignee search (edit in place). The edit affordance
+   * is a dotted underline under the name: revealed on hover / focus for mouse users,
+   * always visible (subtle) on touch devices where hover does not exist.
+   */
+  function assigneeLine(r: KpiRecord, opts?: { canEdit?: boolean; editing?: boolean }) {
+    const avatar = assigneeAvatarFor(r);
+    const name = r.assignedAgent?.name?.trim() || "Unassigned";
+    const canEdit = opts?.canEdit ?? false;
+    const editing = opts?.editing ?? false;
+
+    if (!canEdit) {
+      return (
+        <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          {avatar}
+          <span className="min-w-0 font-semibold text-zinc-700 dark:text-zinc-300" title={name}>
+            {name}
+          </span>
+        </span>
+      );
+    }
+
+    // Edit in place: the search input replaces the field itself (no separate card below).
+    if (editing) {
+      return assigneeSearchFor(r);
+    }
+
+    return (
+      <button
+        type="button"
+        data-assignee-editor
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditingSubAssigneeKey(null);
+          setEditingAssigneeId((current) => (current === r.id ? null : r.id));
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="group inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md px-1 py-0.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900"
+        title="Click to change assignee"
+        aria-label="Change assignee"
+      >
+        {avatar}
+        <span
+          className="min-w-0 font-semibold text-zinc-700 underline-offset-4 transition group-hover:underline group-hover:decoration-zinc-400 group-hover:decoration-dotted dark:text-zinc-300 dark:group-hover:decoration-zinc-500"
+          title={name}
+        >
+          {name}
+        </span>
+        <Pencil
+          className="size-3 shrink-0 text-zinc-400 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 pointer-coarse:opacity-60 dark:text-zinc-500"
+          aria-hidden
+        />
+      </button>
+    );
+  }
+
+  const activeTask = activeTaskId ? rows.find((row) => row.id === activeTaskId) ?? null : null;
 
   function renderTaskScheduleEditor(r: KpiRecord) {
     if (!showAdminTaskManagement || isItProjectImplementationPillar(r.title) || !scheduleDraft) return null;
@@ -3896,6 +3881,7 @@ export function AgentKpiKanbanFlow({
     );
   }
 
+
   function renderActiveTaskModal() {
     if (!activeTask) return null;
     const editable = canEditChecklist(activeTask);
@@ -3903,9 +3889,9 @@ export function AgentKpiKanbanFlow({
     const end = periodEnd(activeTask);
     const itProject = isTimelineProjectRecord(activeTask);
     const normalized = normalizeSubKpis(activeTask.subKpis);
-    const pillarOnly = !itProject && isPillarOnlyTask(activeTask.subKpis);
+    const mainTaskOnly = !itProject && isMainTaskOnlyRecord(activeTask.subKpis, { title: activeTask.title, mainTask: activeTask.mainTask });
     const fieldAssignment = isFieldAssignmentRecord(activeTask);
-    const checklistItems = pillarOnly
+    const checklistItems = mainTaskOnly
       ? collectChecklistProgressItems(activeTask.subKpis, taskLabel(activeTask))
       : collectAllSubKpiItems(normalized);
     const auditLookupItems = itProject
@@ -3922,6 +3908,11 @@ export function AgentKpiKanbanFlow({
     const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
     const activeLane = statusOf(activeTask);
     const mainRingStroke = laneProgressStrokeClass(activeLane, itProject);
+    const incLate = incompleteOverdueMs(activeTask);
+    const showPendingBadge = shouldShowTasksPendingBadge(activeTask, p, itProject, incLate);
+    const mainTaskItem = mainTaskOnly
+      ? mainTaskCheckboxItem(activeTask.subKpis, taskLabel(activeTask))
+      : null;
 
     return createPortal(
       <div
@@ -3940,7 +3931,7 @@ export function AgentKpiKanbanFlow({
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400">
                 Full Task Details
               </p>
-              <h3 className="mt-1 truncate text-xl font-bold text-zinc-950 dark:text-zinc-50">
+              <h3 className="mt-1 flex min-w-0 items-center gap-x-2 text-xl font-bold text-zinc-950 dark:text-zinc-50">
                 {fieldAssignment ? (
                   <span className="inline-flex max-w-full items-center rounded-md border border-orange-400/50 bg-orange-500/10 px-2.5 py-1 text-sm font-semibold text-orange-900 dark:border-orange-500/35 dark:bg-orange-500/15 dark:text-orange-100">
                     <span className="truncate">
@@ -3949,8 +3940,13 @@ export function AgentKpiKanbanFlow({
                     </span>
                   </span>
                 ) : (
-                  taskLabel(activeTask)
+                  <span className="min-w-0 truncate">{taskLabel(activeTask)}</span>
                 )}
+                {showPendingBadge ? (
+                  <span className="shrink-0 rounded-full border border-amber-400/60 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:text-amber-200">
+                    {tasksPendingBadgeLabel(p)}
+                  </span>
+                ) : null}
               </h3>
               <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                 {fieldAssignment ? (
@@ -3961,7 +3957,10 @@ export function AgentKpiKanbanFlow({
                       : activeTask.assignedAgent?.name ?? "—"}
                   </>
                 ) : (
-                  <>Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"}</>
+                  <span className="inline-flex items-center gap-1.5">
+                    {assigneeAvatarFor(activeTask)}
+                    <span>Assigned to {activeTask.assignedAgent?.name ?? "Unassigned"}</span>
+                  </span>
                 )}{" "}
                 · {taskTypeBadgeLabel(activeTask, itProject)}
               </p>
@@ -4010,6 +4009,14 @@ export function AgentKpiKanbanFlow({
               {!fieldAssignment ? (
               <div className="flex items-center gap-3">
                 <ChecklistProgressRing percent={mainBarPct} strokeClassName={mainRingStroke} size={56} />
+                {mainTaskItem ? (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    {renderPillarMainTaskCheckboxInline(activeTask, mainTaskItem, showPendingBadge)}
+                  </div>
+                ) : null}
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                     {itProjectProgress ? "Project progress" : "Progress"}
@@ -4034,7 +4041,7 @@ export function AgentKpiKanbanFlow({
                   <dd className="mt-0.5 text-zinc-800 dark:text-zinc-200">
                     {fieldAssignment
                       ? "Field Assignment — tracked via Travel Order"
-                      : pillarOnly
+                      : mainTaskOnly
                       ? activeTask.isRecurring !== false
                         ? end
                           ? `Complete the main task this cycle. Next period starts ${end.toLocaleString(undefined, { timeZone: tz })}.`
@@ -4217,7 +4224,7 @@ export function AgentKpiKanbanFlow({
                 <>
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
                     <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      {pillarOnly ? "Main task completion" : "Sub Tasks"}
+                      {mainTaskOnly ? "Main task completion" : "Sub Tasks"}
                     </h4>
                     <div className="flex flex-wrap items-center gap-2">
                       {!itProject && normalized.segmented ? (
@@ -4266,6 +4273,8 @@ export function AgentKpiKanbanFlow({
                   <div className="space-y-2">
                     {renderTaskSubtaskContent(activeTask, {
                       segmentFilter: detailSegmentFilter,
+                      hideSubtaskPendingBadge: showPendingBadge,
+                      hidePillarMainCheckbox: Boolean(mainTaskItem),
                     })}
                   </div>
                   {renderAddSubTaskPanel(activeTask)}
@@ -4279,9 +4288,10 @@ export function AgentKpiKanbanFlow({
     );
   }
 
+
+
   return (
     <section className="mt-3 min-w-0 space-y-3 md:space-y-4">
-      <PointerDragGhostLayer ghost={assignLaneDrag.ghost} />
       <PointerDragGhostLayer ghost={kpiStatusDrag.ghost} />
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap gap-2">
@@ -4294,15 +4304,6 @@ export function AgentKpiKanbanFlow({
               Add Task
             </button>
           ) : null}
-          {canAssignWork ? (
-            <button
-              type="button"
-              onClick={() => setAssignmentBoardOpen(true)}
-              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-800 transition hover:border-orange-500/40 hover:bg-orange-500/10 hover:text-orange-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-orange-500/40 dark:hover:bg-orange-500/10 dark:hover:text-orange-100 sm:px-4"
-            >
-              Assignment board
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={() => setTravelOrdersOpen(true)}
@@ -4312,19 +4313,6 @@ export function AgentKpiKanbanFlow({
             Travel Orders
           </button>
         </div>
-        <label className="flex min-w-0 items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-500 sm:flex-col sm:items-stretch sm:gap-1">
-          <span className="shrink-0">Category</span>
-          <select
-            value={taskCategoryFilter}
-            onChange={(e) => setTaskCategoryFilter(e.target.value as TaskBoardCategory)}
-            className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 sm:min-w-[11rem] sm:flex-none"
-          >
-            <option value="all">All categories</option>
-            <option value="task">Task</option>
-            <option value="project">Project</option>
-            <option value="field">Field Assignment</option>
-          </select>
-        </label>
       </div>
       <div className="hidden md:block">
         <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
@@ -4418,11 +4406,11 @@ export function AgentKpiKanbanFlow({
       ) : null}
       {!hasBoardRows ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-          {taskCategoryFilter !== "all"
+          {categoryFilter !== "all"
             ? `No ${
-                taskCategoryFilter === "field"
+                categoryFilter === "field"
                   ? "Field Assignment"
-                  : taskCategoryFilter === "project"
+                  : categoryFilter === "project"
                     ? "Project"
                     : "Task"
               } cards match this filter.`
@@ -4516,15 +4504,29 @@ export function AgentKpiKanbanFlow({
                         itProject && itProjectData
                           ? itProjectAggregatedProgressFromRaw(r.subKpis, r.itProjectPhase)
                           : null;
-                      const checklistItems = isPillarOnlyTask(r.subKpis)
+                      const checklistItems = isMainTaskOnlyRecord(r.subKpis, { title: r.title, mainTask: r.mainTask })
                         ? collectChecklistProgressItems(r.subKpis, taskLabel(r))
                         : collectAllSubKpiItems(normalized);
-                      const pillarOnly = !itProject && isPillarOnlyTask(r.subKpis);
+                      const mainTaskOnly =
+                        !itProject &&
+                        isMainTaskOnlyRecord(r.subKpis, { title: r.title, mainTask: r.mainTask });
                       const fieldAssignment = isFieldAssignmentRecord(r);
+                      const mainTaskItem =
+                        mainTaskOnly && !fieldAssignment
+                          ? mainTaskCheckboxItem(r.subKpis, taskLabel(r))
+                          : null;
+                      // Pending indicator shown beside the task name (normal + inverted recording).
+                      const showPendingBadge = shouldShowTasksPendingBadge(r, p, itProject, incLate);
+                      const pendingBadgeLabel = tasksPendingBadgeLabel(p);
+                      const pendingBadge = showPendingBadge ? (
+                        <span className="shrink-0 rounded-full border border-amber-400/60 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-500/40 dark:text-amber-200">
+                          {pendingBadgeLabel}
+                        </span>
+                      ) : null;
                       const mainBarPct = itProjectProgress ? itProjectProgress.averagePercent : p.pct;
                       const mainRingStroke = laneProgressStrokeClass(col, itProject);
                       const drawerAllowed = canOpenSubtaskDrawer(r, checklistItems);
-                      const showSubtaskDrawerToggle = drawerAllowed && !pillarOnly;
+                      const showSubtaskDrawerToggle = drawerAllowed && !mainTaskOnly;
                       const drawerOpen = openSubtaskDrawers.has(r.id);
                       return (
                         <div
@@ -4572,15 +4574,38 @@ export function AgentKpiKanbanFlow({
                                       ? r.travelOrderSummary.travelers.join(", ")
                                       : r.assignedAgent?.name ?? "—"}
                                   </p>
+                                  {canAssignWork ? (
+                                    <div className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                                      {assigneeLine(r, { canEdit: canAssignWork, editing: editingAssigneeId === r.id })}
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : mainTaskOnly || kpiHasDistinctMainTask(r) ? (
+                                <>
+                                  <div className="flex min-w-0 items-center gap-x-1.5">
+                                    <p className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                      {taskLabel(r)}
+                                    </p>
+                                    {pendingBadge}
+                                  </div>
+                                  <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                    {kpiPillarLabel(r).toLowerCase() !== taskLabel(r).toLowerCase() ? (
+                                      <>{kpiPillarLabel(r)} · </>
+                                    ) : null}
+                                    {assigneeLine(r, { canEdit: canAssignWork, editing: editingAssigneeId === r.id })}
+                                  </div>
                                 </>
                               ) : (
                                 <>
-                                  <p className="truncate text-sm font-bold uppercase tracking-wide text-zinc-900 dark:text-zinc-50">
-                                    {taskLabel(r)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">
-                                    Assigned: {r.assignedAgent?.name ?? "Unassigned"}
-                                  </p>
+                                  <div className="flex min-w-0 items-center gap-x-1.5">
+                                    <p className="min-w-0 truncate text-sm font-bold uppercase tracking-wide text-zinc-900 dark:text-zinc-50">
+                                      {taskLabel(r)}
+                                    </p>
+                                    {pendingBadge}
+                                  </div>
+                                  <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                                    {assigneeLine(r, { canEdit: canAssignWork, editing: editingAssigneeId === r.id })}
+                                  </div>
                                 </>
                               )}
                               {(r.linkedJobOrders?.length ?? 0) > 0 ? (
@@ -4599,9 +4624,9 @@ export function AgentKpiKanbanFlow({
                               Segmented
                             </span>
                           ) : null}
-                          {canAssignWork && !pillarOnly ? (
+                          {canAssignWork && editingAssigneeId === r.id && !mainTaskOnly ? (
                             <p className="mt-2 hidden text-[11px] text-zinc-600 dark:text-zinc-400 md:block">
-                              Reassign the card through lanes above, or assign individual sub-tasks below.
+                              Pick the assignee above, or assign individual sub-tasks below.
                             </p>
                           ) : null}
                           {itProject && r.itProjectPhase?.trim() ? (
@@ -4633,6 +4658,18 @@ export function AgentKpiKanbanFlow({
                                 percent={mainBarPct}
                                 strokeClassName={mainRingStroke}
                               />
+                              {mainTaskItem ? (
+                                <div
+                                  onClick={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                >
+                                  {renderPillarMainTaskCheckboxInline(
+                                    r,
+                                    mainTaskItem,
+                                    showPendingBadge,
+                                  )}
+                                </div>
+                              ) : null}
                               <div className="min-w-0 flex-1">
                                 <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
                                   <span className="md:hidden">Progress</span>
@@ -4669,10 +4706,10 @@ export function AgentKpiKanbanFlow({
                                         : (
                                             <>
                                               <span className="md:hidden">
-                                                {p.done}/{p.total} finished · {p.missing} pending
+                                                {p.done}/{p.total} finished
                                               </span>
                                               <span className="hidden md:inline">
-                                                {p.done}/{p.total} finished · {p.missing} pending
+                                                {p.done}/{p.total} finished
                                               </span>
                                             </>
                                           )
@@ -4690,7 +4727,7 @@ export function AgentKpiKanbanFlow({
                                 <p className="mt-1 hidden text-[11px] leading-snug text-zinc-600 dark:text-zinc-400 md:block">
                                   {itProject
                                     ? "Choosing an actual date marks the sub-task complete and sets status to On time or Delayed based on the due date."
-                                    : pillarOnly
+                                    : mainTaskOnly
                                       ? r.isRecurring !== false
                                         ? end
                                           ? `Complete the main task this cycle. Next period starts ${end.toLocaleString(undefined, { timeZone: tz })} (${tz}).`
@@ -4721,27 +4758,24 @@ export function AgentKpiKanbanFlow({
                                 Delay penalty accrued: {accruedPenaltyForRecord(r)}
                               </p>
                             ) : p.inverted
-                              ? p.negative > 0 && p.positive < p.total ? (
+                              ? !showPendingBadge && p.negative > 0 && p.positive < p.total ? (
                                   <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
                                     {p.negative} flagged item{p.negative === 1 ? "" : "s"}
                                   </p>
                                 ) : null
-                              : p.missing > 0 && p.done < p.total ? (
-                                  <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-                                    {pillarOnly
-                                      ? "Main task pending"
-                                      : `${p.missing} pending task${p.missing === 1 ? "" : "s"}`}
-                                  </p>
-                                ) : null}
+                              : null}
                           </div>
                           )}
-                          {pillarOnly && !fieldAssignment ? (
+                          {mainTaskOnly && !fieldAssignment ? (
                             <div
-                              className="mt-3 space-y-2"
+                              className="mt-2 space-y-2"
                               onClick={(e) => e.stopPropagation()}
                               onPointerDown={(e) => e.stopPropagation()}
                             >
-                              {renderTaskSubtaskContent(r)}
+                              {renderTaskSubtaskContent(r, {
+                                hideSubtaskPendingBadge: showPendingBadge,
+                                hidePillarMainCheckbox: Boolean(mainTaskItem),
+                              })}
                               {renderPillarScreenshotFields(r, editable)}
                             </div>
                           ) : null}
@@ -4764,12 +4798,12 @@ export function AgentKpiKanbanFlow({
                                 {drawerOpen ? "Close Sub Tasks" : "Open Sub Tasks"}
                               </button>
                             ) : null}
-                            {!itProject && !pillarOnly && !drawerOpen
+                            {!itProject && !mainTaskOnly && !drawerOpen
                               ? renderTaskSeekAssistanceButton(r, checklistItems, {
                                   stopPropagation: true,
                                 })
                               : null}
-                            {!itProject && !pillarOnly ? (
+                            {!itProject && !mainTaskOnly ? (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -4812,10 +4846,10 @@ export function AgentKpiKanbanFlow({
                               Full details
                             </button>
                           </div>
-                          {!pillarOnly && drawerOpen && !itProject ? renderPillarScreenshotFields(r, editable) : null}
-                          {!pillarOnly && drawerOpen ? (
+                          {!mainTaskOnly && drawerOpen && !itProject ? renderPillarScreenshotFields(r, editable) : null}
+                          {!mainTaskOnly && drawerOpen ? (
                             <div className="mt-3 space-y-2">
-                              {renderTaskSubtaskContent(r)}
+                              {renderTaskSubtaskContent(r, { hideSubtaskPendingBadge: showPendingBadge })}
                               {renderAddSubTaskPanel(r)}
                             </div>
                           ) : null}
@@ -4849,15 +4883,6 @@ export function AgentKpiKanbanFlow({
           }}
           onMaintenanceRecordsUpdated={() => void load()}
         />
-      </TaskBoardPopup>
-      <TaskBoardPopup
-        open={assignmentBoardOpen}
-        title="Task assignment board"
-        description="Drag a task over a company to reveal users, then release over an admin or personnel. Screenshots remain available inside eligible task cards."
-        onClose={() => setAssignmentBoardOpen(false)}
-        size="xl"
-      >
-        {renderAssignmentBoard()}
       </TaskBoardPopup>
       <TaskBoardPopup
         open={travelOrdersOpen}
@@ -4970,7 +4995,7 @@ export function AgentKpiKanbanFlow({
                       {isDraft ? "DRAFT" : pendingSync ? "PENDING SYNC" : order.status}
                     </span>
                   </button>
-                  {isDraft && isSuperAdmin ? (
+                  {(isDraft || pendingSync) ? (
                     <button
                       type="button"
                       onClick={() => void removeDraftTravelOrder(order.id)}
@@ -4979,9 +5004,17 @@ export function AgentKpiKanbanFlow({
                           ? "shrink-0 self-center rounded-xl border border-rose-400 bg-rose-600 px-2.5 py-3 text-[11px] font-bold text-white hover:bg-rose-500"
                           : "shrink-0 self-center rounded-xl border border-rose-300 bg-white px-2.5 py-3 text-[11px] font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-500/40 dark:bg-zinc-950 dark:text-rose-300 dark:hover:bg-rose-950/30"
                       }
-                      title="Remove this draft travel order (stored on this device)"
+                      title={
+                        pendingSync
+                          ? "Discard this offline queue item (stored on this device)"
+                          : "Remove this draft travel order (stored on this device)"
+                      }
                     >
-                      {confirmRemoveDraftId === order.id ? "Confirm remove?" : "Remove draft"}
+                      {confirmRemoveDraftId === order.id
+                        ? "Confirm remove?"
+                        : pendingSync
+                          ? "Discard"
+                          : "Remove draft"}
                     </button>
                   ) : null}
                 </li>

@@ -54,17 +54,17 @@ export function EmailVerificationClient({
   }
 
   return (
-    <main className="mx-auto max-w-2xl space-y-4 px-4 py-10 text-zinc-100">
-      <article className="rounded-2xl border border-zinc-800 bg-[#0b1220] p-6">
-        <p className="text-sm text-zinc-200">Greeting, {greetingName}</p>
-        <p className="mt-4 text-sm text-zinc-200">
+    <main className="mx-auto max-w-2xl space-y-4 px-4 py-10 text-zinc-900 dark:text-zinc-100">
+      <article className="rounded-2xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-[#0b1220] p-6">
+        <p className="text-sm text-zinc-700 dark:text-zinc-200">Greeting, {greetingName}</p>
+        <p className="mt-4 text-sm text-zinc-700 dark:text-zinc-200">
           Your ticket ({ticketNumber})
           <br />
           ({title})
           <br />
           is for your confirmation (resolution proposed).
         </p>
-        <p className="mt-4 text-sm text-zinc-300">
+        <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-300">
           Please choose whether you verify or do not verify this resolution:
         </p>
 
@@ -83,7 +83,7 @@ export function EmailVerificationClient({
                 type="button"
                 disabled={busy}
                 onClick={() => setRejected(true)}
-                className="rounded-lg border border-rose-400 px-4 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-900/30 disabled:opacity-60"
+                className="rounded-lg border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60 dark:border-rose-400 dark:text-rose-100 dark:hover:bg-rose-900/30"
               >
                 Do not verify
               </button>
@@ -93,13 +93,13 @@ export function EmailVerificationClient({
 
         {rejected && !verified && !rated && !rejectSubmitted ? (
           <div className="mt-4 space-y-2">
-            <label className="block text-sm text-zinc-300">
+            <label className="block text-sm text-zinc-600 dark:text-zinc-300">
               Reason (required)
               <textarea
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 rows={4}
-                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
             </label>
             <button
@@ -114,17 +114,17 @@ export function EmailVerificationClient({
         ) : null}
 
         {rejectSubmitted ? (
-          <div className="mt-5 rounded-xl border border-emerald-600/40 bg-emerald-950/20 p-4">
-            <p className="text-sm font-semibold text-emerald-300">Reason received</p>
-            <p className="mt-1 text-sm text-zinc-200">
+          <div className="mt-5 rounded-xl border border-emerald-600/40 bg-emerald-500/10 p-4 dark:bg-emerald-950/20">
+            <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Reason received</p>
+            <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-200">
               Your ticket was marked as not verified and has been reopened with status <strong>OPEN</strong>.
             </p>
           </div>
         ) : null}
 
         {verified ? (
-          <div className="mt-5 rounded-xl border border-zinc-700 bg-zinc-900/40 p-4">
-            <p className="text-sm text-zinc-200">star rating becomes available only after verification</p>
+          <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-100/70 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
+            <p className="text-sm text-zinc-700 dark:text-zinc-200">star rating becomes available only after verification</p>
             <div className="mt-3 flex gap-2">
               {[1, 2, 3, 4, 5].map((v) => (
                 <button
@@ -132,20 +132,20 @@ export function EmailVerificationClient({
                   type="button"
                   onClick={() => setStars(v)}
                   className={`rounded-md px-3 py-1.5 text-lg ${
-                    v <= stars ? "bg-amber-500/20 text-amber-200" : "bg-zinc-950 text-zinc-500"
+                    v <= stars ? "bg-amber-500/20 text-amber-700 dark:text-amber-200" : "bg-zinc-100 text-zinc-500 dark:bg-zinc-950"
                   }`}
                 >
                   ★
                 </button>
               ))}
             </div>
-            <label className="mt-3 block text-sm text-zinc-300">
+            <label className="mt-3 block text-sm text-zinc-600 dark:text-zinc-300">
               Comment (optional)
               <textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={3}
-                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               />
             </label>
             <button
@@ -160,7 +160,7 @@ export function EmailVerificationClient({
         ) : null}
 
         {rated ? <p className="mt-3 text-sm text-orange-300">Ticket is fully resolved and closed.</p> : null}
-        {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+        {error ? <p className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p> : null}
       </article>
     </main>
   );

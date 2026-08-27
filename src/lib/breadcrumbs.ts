@@ -12,7 +12,7 @@ const ROUTE_LABELS: Record<string, string> = {
   admin: "Administration",
   workforce: "User / Position management",
   "manual-assignment": "Assignment Board",
-  "superadmin-settings": "Settings",
+  "superadmin-settings": "SuperAdmin Settings",
   account: "My account",
   "my-requests": "My Requests",
   "travel-orders": "Travel Orders",
@@ -89,21 +89,10 @@ export function buildStaffBreadcrumbs(
   }
 
   if (parts[0] === "agent" && parts[1] === "approvals") {
-    return [
-      home,
-      { label: "My Work", href: "/agent" },
-      { label: "Needs My Approval", href: "/agent/approvals" },
-    ];
+    return [home, { label: "My Work", href: "/agent" }, { label: "My Assigned", href: "/agent" }];
   }
 
   if (parts[0] === "agent") {
-    if (params.get("view") === "approvals") {
-      return [
-        home,
-        { label: "My Work", href: "/agent" },
-        { label: "Needs My Approval", href: "/agent/approvals" },
-      ];
-    }
     if (params.get("assigned") === "UNASSIGNED") {
       return [home, { label: "Boards", href: "/agent" }, { label: "Unassigned" }];
     }

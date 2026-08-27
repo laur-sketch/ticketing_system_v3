@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Link2, PlusSquare } from "lucide-react";
 
 type ProjectOption = {
   id: string;
@@ -79,7 +80,7 @@ export function JobOrderProjectLinkPanel({
         projectRequest?: ProjectRequest;
       };
       if (!res.ok) {
-        setError(data.error ?? "Could not load project link options.");
+        setError(data.error ?? "Could not load task link options.");
         return;
       }
       setLinkedProject(data.linkedProject ?? null);
@@ -92,7 +93,7 @@ export function JobOrderProjectLinkPanel({
         setSelectedAdminId(data.projectRequest.targetAdminAgentId);
       }
     } catch {
-      setError("Could not load project link options.");
+      setError("Could not load task link options.");
     } finally {
       setLoading(false);
     }
@@ -122,7 +123,7 @@ export function JobOrderProjectLinkPanel({
 
   async function linkSelected() {
     if (!selectedId) {
-      setError("Select a project to link.");
+      setError("Select a task to link.");
       return;
     }
     setBusy(true);
@@ -138,7 +139,7 @@ export function JobOrderProjectLinkPanel({
     };
     setBusy(false);
     if (!res.ok) {
-      setError(data.error ?? "Could not link project.");
+      setError(data.error ?? "Could not link task.");
       return;
     }
     setLinkedProject(data.linkedProject ?? null);
@@ -157,7 +158,7 @@ export function JobOrderProjectLinkPanel({
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     setBusy(false);
     if (!res.ok) {
-      setError(data.error ?? "Could not unlink project.");
+      setError(data.error ?? "Could not unlink task.");
       return;
     }
     setLinkedProject(null);
@@ -167,7 +168,7 @@ export function JobOrderProjectLinkPanel({
 
   async function requestProject() {
     if (!selectedAdminId) {
-      setError("Select a company Admin to create the Task Project.");
+      setError("Select a company Admin to create the task.");
       return;
     }
     setBusy(true);
@@ -186,7 +187,7 @@ export function JobOrderProjectLinkPanel({
     };
     setBusy(false);
     if (!res.ok) {
-      setError(data.error ?? "Could not submit Task Project request.");
+      setError(data.error ?? "Could not submit task request.");
       return;
     }
     setProjectRequest(data.projectRequest ?? { pending: true });
@@ -223,36 +224,25 @@ export function JobOrderProjectLinkPanel({
   })();
 
   return (
-    <div className="mt-4 rounded-xl border border-orange-400/30 bg-orange-500/[0.06] p-3 sm:p-4 dark:border-orange-500/25 dark:bg-orange-500/10">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-orange-900 dark:text-orange-200">
-            Related Task Board project
-          </p>
-          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            {canCreateProject
-              ? "Link this Job Order to an existing project, or create one from these details."
-              : canRequestProject
-                ? "Link an existing project, or request a company Admin to create a Task Project."
-                : "Link this Job Order to an existing Task Board project."}
-          </p>
-        </div>
-        {canCreateProject && !linkedProject ? (
-          <Link
-            href={createHref}
-            className="inline-flex shrink-0 items-center rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-orange-500"
-          >
-            Create Related Project
-          </Link>
-        ) : null}
+    <div className="rounded-xl border border-orange-400/35 bg-orange-500/[0.07] p-3 sm:p-4 dark:border-orange-500/30 dark:bg-orange-500/10">
+      <div className="space-y-1">
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-orange-900 dark:text-orange-200">
+          Link to a Task Board task
+        </p>
+        <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+          Approvals are complete. Create a new Task Board task from this Job Order, or link an
+          existing project task.
+        </p>
       </div>
 
       {loading ? (
-        <p className="mt-3 text-xs text-zinc-500">Loading projects…</p>
+        <p className="mt-3 text-xs text-zinc-500">Loading task options…</p>
       ) : linkedProject ? (
         <div className="mt-3 space-y-2">
-          <div className="rounded-lg border border-zinc-200 bg-white/80 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950/50">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Linked project</p>
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 dark:border-emerald-500/25">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+              Linked task
+            </p>
             <p className="mt-0.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {linkedProject.displayName}
             </p>
@@ -275,11 +265,21 @@ export function JobOrderProjectLinkPanel({
             onClick={() => void unlink()}
             className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:border-rose-400/50 hover:text-rose-700 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
           >
-            Unlink project
+            Unlink task
           </button>
         </div>
       ) : (
         <div className="mt-3 space-y-3">
+          {canCreateProject ? (
+            <Link
+              href={createHref}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-orange-600 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-500"
+            >
+              <PlusSquare className="size-4 shrink-0" aria-hidden />
+              Create new task
+            </Link>
+          ) : null}
+
           {projectRequest.pending ? (
             <div
               className={`rounded-lg border px-3 py-2 ${
@@ -289,20 +289,21 @@ export function JobOrderProjectLinkPanel({
               }`}
             >
               <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-                Task Project request pending
+                New task request pending
               </p>
               <p className="mt-0.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                 {isTargetedAdmin
-                  ? `${projectRequest.requestedByAgentName?.trim() || "Personnel"} asked you to create a Task Project for this Job Order.`
+                  ? `${projectRequest.requestedByAgentName?.trim() || "Personnel"} asked you to create a Task Board task for this Job Order.`
                   : `Requested from ${projectRequest.targetAdminAgentName?.trim() || "company Admin"}.`}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {isTargetedAdmin || canCreateProject ? (
                   <Link
                     href={createHref}
-                    className="inline-flex rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-orange-500"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-orange-500"
                   >
-                    Create Task Project
+                    <PlusSquare className="size-3.5" aria-hidden />
+                    Create new task
                   </Link>
                 ) : null}
                 {canRequestProject || canCreateProject ? (
@@ -320,7 +321,10 @@ export function JobOrderProjectLinkPanel({
           ) : canRequestProject && !canCreateProject ? (
             <div className="space-y-2 rounded-lg border border-zinc-200 bg-white/60 p-3 dark:border-zinc-700 dark:bg-zinc-950/40">
               <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-                Request Task Project
+                Request a new task
+              </p>
+              <p className="text-xs text-zinc-500">
+                Ask a company Admin to create and link a Task Board task from this Job Order.
               </p>
               <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
                 Company Admin
@@ -349,30 +353,34 @@ export function JobOrderProjectLinkPanel({
                 onClick={() => void requestProject()}
                 className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-50"
               >
-                Request Task Project
+                Request new task
               </button>
             </div>
           ) : null}
 
-          <div className="space-y-2">
+          <div className="space-y-2 border-t border-orange-400/20 pt-3 dark:border-orange-500/20">
+            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
+              <Link2 className="size-3.5" aria-hidden />
+              Or link an existing task
+            </p>
             <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-              Search projects
+              Search
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Type to filter by name…"
+                placeholder="Filter by name…"
                 className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
               />
             </label>
             <label className="block text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
-              Select project
+              Task
               <select
                 value={selectedId}
                 onChange={(e) => setSelectedId(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
               >
-                <option value="">Choose a project…</option>
+                <option value="">Choose a task…</option>
                 {filteredProjects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.displayName}
@@ -386,9 +394,9 @@ export function JobOrderProjectLinkPanel({
             </label>
             {filteredProjects.length === 0 ? (
               <p className="text-xs text-zinc-500">
-                No matching projects for this company.
+                No matching Task Board projects for this company.
                 {canCreateProject
-                  ? " Use Create Related Project to start one."
+                  ? " Use Create new task to start one."
                   : canRequestProject
                     ? " Request a company Admin to create one."
                     : ""}
@@ -398,9 +406,9 @@ export function JobOrderProjectLinkPanel({
               type="button"
               disabled={busy || !selectedId}
               onClick={() => void linkSelected()}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
             >
-              Link selected project
+              Link selected task
             </button>
           </div>
         </div>

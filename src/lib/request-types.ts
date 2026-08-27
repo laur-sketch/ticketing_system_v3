@@ -51,6 +51,27 @@ export function parseRequestTypeId(value: unknown): RequestTypeId {
   return isRequestTypeId(value) ? value : DEFAULT_REQUEST_TYPE;
 }
 
+/**
+ * Recommended destination department name for intake “Send request to (department)”.
+ * Matched against Manage departments names (case-insensitive).
+ */
+export function recommendedSendToDepartmentName(
+  requestType: RequestTypeId | null | undefined,
+): string | null {
+  switch (requestType) {
+    case "ITEM_REQUISITION_SLIP":
+      return "PROCUREMENT";
+    case "FUND_TRANSFER_REQUEST":
+      return "FINANCE";
+    case "REQUEST_FOR_PAYMENT":
+      return "ACCOUNTING";
+    case "JOB_ORDER":
+      return "GENERAL SERVICES";
+    default:
+      return null;
+  }
+}
+
 export function requestTypeLabel(id: string | null | undefined): string {
   const found = REQUEST_TYPES.find((t) => t.id === id);
   return found?.label ?? (id?.trim() || "ISSUE/CONCERN TICKET");

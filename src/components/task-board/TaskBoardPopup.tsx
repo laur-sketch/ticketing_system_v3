@@ -53,7 +53,7 @@ export function TaskBoardPopup({
     >
       <div
         className={cn(
-          "flex max-h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-surface",
+          "flex max-h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-surface dark:scheme-dark",
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}
@@ -76,7 +76,7 @@ export function TaskBoardPopup({
             <X className="size-4" aria-hidden />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">{children}</div>
+        <div className="picker-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">{children}</div>
       </div>
     </div>,
     document.body,

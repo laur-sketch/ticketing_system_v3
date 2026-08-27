@@ -118,7 +118,6 @@ const NAV_ACTION_KEYWORDS: Record<string, string[]> = {
   home: ["home", "dashboard", "main"],
   create: ["create", "new", "request", "intake"],
   "my-assigned": ["my work", "assigned", "queue", "my assigned"],
-  "needs-approval": ["approve", "approval", "pending", "needs my approval"],
   "my-requests": ["my requests", "submitted"],
   "assignment-board": ["assignment", "board", "triage", "manual"],
   "task-board": ["tasks", "kanban", "kpi", "task board"],
@@ -126,8 +125,13 @@ const NAV_ACTION_KEYWORDS: Record<string, string[]> = {
   unassigned: ["unassigned", "triage"],
   kpi: ["metrics", "reports", "insights", "kpi"],
   process: ["process", "sop", "guide", "controls"],
-  settings: ["settings", "org chart", "superadmin"],
-  workforce: ["workforce", "users", "positions", "personnel"],
+  settings: ["settings", "org chart", "superadmin", "superadmin settings", "priority alerts", "access controls", "faq"],
+  "superadmin-settings": ["superadmin", "settings", "priority alerts", "access controls", "faq", "escalation"],
+  workforce: ["workforce", "users", "positions", "personnel", "activities"],
+  "priority-alerts": ["alerts", "priority", "escalation"],
+  sectioning: ["sections", "sectioning", "departments", "either or", "link relations", "org chart"],
+  "access-controls": ["access", "permissions", "roles", "controls"],
+  faq: ["faq", "help", "sign-in"],
   account: ["account", "profile", "my account"],
 };
 

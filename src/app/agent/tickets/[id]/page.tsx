@@ -57,7 +57,31 @@ export default async function AgentTicketPage({
   });
   if (!ticket) notFound();
 
-  const ticketForWorkspace = ticket;
+  const rfpSectionRows = await prisma.$queryRaw<
+    Array<{ org_chart_section_id: string | null; requestor_org_chart_section_id: string | null }>
+  >`
+    SELECT org_chart_section_id, requestor_org_chart_section_id
+    FROM tickets
+    WHERE id = ${id}
+    LIMIT 1
+  `;
+  const rfpOrgChartSectionId = rfpSectionRows[0]?.org_chart_section_id ?? null;
+  const rfpRequestorOrgChartSectionId =
+    rfpSectionRows[0]?.requestor_org_chart_section_id ?? null;
+  const rfpSectionName = rfpOrgChartSectionId
+    ? (
+        await prisma.orgChartSection.findUnique({
+          where: { id: rfpOrgChartSectionId },
+          select: { name: true },
+        })
+      )?.name ?? null
+    : null;
+
+  const ticketForWorkspace = {
+    ...ticket,
+    orgChartSectionId: rfpOrgChartSectionId,
+    requestorOrgChartSectionId: rfpRequestorOrgChartSectionId,
+  };
   const requestorEmail = (ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail ?? "").trim();
   const requestorAccount = requestorEmail
     ? await prisma.portalAccount.findFirst({
@@ -79,11 +103,33 @@ export default async function AgentTicketPage({
     null;
   const branchActivity = ticketForWorkspace.activities.find((a) => a.summary === "Branch");
   const branch = branchActivity?.detail?.trim() ?? null;
+  const requestingCompanyActivity = ticketForWorkspace.activities.find(
+    (a) => a.summary === "Requesting company",
+  );
+  const requestingCompany = requestingCompanyActivity?.detail?.trim() ?? null;
   const departmentActivity = ticketForWorkspace.activities.find(
     (a) =>
-      a.summary === "Department" || a.summary === "Requesting department/business unit",
+      a.summary === "Department" ||
+      a.summary === "Section" ||
+      a.summary === "Requesting department" ||
+      a.summary === "Requesting department/business unit",
   );
-  const department = departmentActivity?.detail?.trim() ?? null;
+  const sendToDepartmentActivity =
+    ticketForWorkspace.activities
+      .find(
+        (a) =>
+          a.summary === "Send request to department" ||
+          a.summary === "Send request to section",
+      )
+      ?.detail?.trim() ?? null;
+  const rfpRequestorSectionName = rfpRequestorOrgChartSectionId
+    ? (
+        await prisma.orgChartSection.findUnique({
+          where: { id: rfpRequestorOrgChartSectionId },
+          select: { name: true },
+        })
+      )?.name ?? null
+    : null;
   const requestTypeActivity = ticketForWorkspace.activities.find((a) => a.summary === "Request type");
   const requestTypeId =
     "requestType" in ticketForWorkspace &&
@@ -93,6 +139,8 @@ export default async function AgentTicketPage({
   const isPaymentRequest =
     requestTypeId === "REQUEST_FOR_PAYMENT" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("REQUEST FOR PAYMENT");
+  const department =
+    departmentActivity?.detail?.trim() ?? rfpRequestorSectionName ?? null;
   const isRequisitionRequest =
     requestTypeId === "ITEM_REQUISITION_SLIP" ||
     (requestTypeActivity?.detail?.trim().toUpperCase() ?? "").includes("ITEM REQUISITION");
@@ -350,11 +398,10 @@ export default async function AgentTicketPage({
               ticketForWorkspace.requestorEmail ?? ticketForWorkspace.contactEmail ?? "—"
             }
             company={requestorCompanyName ?? "Not assigned"}
+            requestingCompany={requestingCompany}
             branch={branch ?? "—"}
-            sendRequestTo={ticketForWorkspace.team?.name ?? "—"}
-            departmentLabel={
-              isFundTransferRequest ? "Requesting department/business unit" : "Department"
-            }
+            sendRequestTo={rfpSectionName ?? sendToDepartmentActivity ?? "—"}
+            departmentLabel="Requesting department"
             department={department ?? "—"}
             requestType={requestTypeLabelText}
             proceduralStatus={proceduralStatusLabel}

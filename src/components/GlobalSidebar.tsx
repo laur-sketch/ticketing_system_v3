@@ -12,12 +12,15 @@ import {
   CheckSquare,
   Gauge,
   GitBranch,
+  HelpCircle,
   Home,
+  Layers,
   LayoutDashboard,
   LifeBuoy,
   LogOut,
   Menu,
   PlusSquare,
+  Shield,
   Ticket,
   UserCircle,
   UserRound,
@@ -38,7 +41,7 @@ type NavItem =
 
 function linksForRole(role: string | undefined): NavItem[] {
   if (isElevatedPlatformRole(role)) {
-    return [
+    const items: NavItem[] = [
       { kind: "link", href: "/", label: "Dashboard" },
       {
         kind: "group",
@@ -52,13 +55,15 @@ function linksForRole(role: string | undefined): NavItem[] {
         kind: "group",
         label: "Management",
         children: [
-          { href: "/admin/personnel", label: "Personnel" },
-          { href: "/admin/activities", label: "Activities" },
-          { href: "/admin/escalation-triggers", label: "Priority alerts" },
+          { href: "/admin/workforce", label: "Workforce" },
+          ...(role === "SuperAdmin"
+            ? [{ href: "/admin/superadmin-settings", label: "SuperAdmin Settings" }]
+            : []),
         ],
       },
       { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
     ];
+    return items;
   }
   if (role === "Admin") {
     return [
@@ -74,11 +79,7 @@ function linksForRole(role: string | undefined): NavItem[] {
       {
         kind: "group",
         label: "Management",
-        children: [
-          { href: "/admin/personnel", label: "Personnel" },
-          { href: "/admin/activities", label: "Activities" },
-          { href: "/admin/escalation-triggers", label: "Priority alerts" },
-        ],
+        children: [{ href: "/admin/workforce", label: "Workforce" }],
       },
       { kind: "group", label: "Reports", children: [{ href: "/insights", label: "Metrics & Reports" }] },
     ];
@@ -117,8 +118,14 @@ function iconForLink(label: string) {
   if (key.includes("metric")) return Gauge;
   if (key.includes("analytics")) return BarChart3;
   if (key.includes("report")) return Activity;
+  if (key.includes("workforce")) return Users;
   if (key.includes("personnel")) return Users;
   if (key.includes("activities")) return Activity;
+  if (key.includes("org chart") || key.includes("organization")) return GitBranch;
+  if (key.includes("section")) return Layers;
+  if (key.includes("superadmin")) return Shield;
+  if (key.includes("settings")) return Shield;
+  if (key === "faq") return HelpCircle;
   if (key.includes("my account")) return UserCircle;
   if (key.includes("account")) return UserCircle;
   if (key.includes("escalation") || key.includes("priority")) return LifeBuoy;
@@ -131,8 +138,12 @@ function iconForLink(label: string) {
   return Home;
 }
 
-function navChildActive(pathname: string, _searchParams: URLSearchParams | null, child: NavChild): boolean {
-  return navLinkActive(pathname, child.href);
+function navChildActive(
+  pathname: string,
+  searchParams: URLSearchParams | null,
+  child: NavChild,
+): boolean {
+  return navLinkActive(pathname, child.href, searchParams);
 }
 
 function NavLinkRow({
@@ -312,19 +323,19 @@ function SidebarProfileFooter({
   );
 }
 
-export function GlobalSidebar() {
+export function GlobalSidebar({ initialRole }: { initialRole?: string }) {
   return (
     <Suspense fallback={null}>
-      <GlobalSidebarInner />
+      <GlobalSidebarInner initialRole={initialRole} />
     </Suspense>
   );
 }
 
-function GlobalSidebarInner() {
+function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { data } = useSession();
-  const role = data?.user?.role;
+  const role = data?.user?.role ?? initialRole;
   const roleLabel = role === "HighAdmin" || role === "SuperAdmin" ? role : role ?? "Staff";
   const userName = data?.user?.name ?? data?.user?.email ?? "Account";
   const userEmail = data?.user?.email ?? "";

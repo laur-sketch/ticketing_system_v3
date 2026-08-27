@@ -13,6 +13,7 @@ import {
   PORTAL_REGISTRY_PAGE_SIZE,
   accountStatusClass,
   matchesRegistryCompanyFilter,
+  matchesRegistryCompanyNameFilter,
   matchesRegistryRoleFilter,
   matchesRegistrySearchFilter,
   portalRegistryRoleLabel,
@@ -44,6 +45,10 @@ export function PersonnelClient({
   scopeUnavailable,
   scopedCompanyName,
   secondaryDatabaseName = "mergeddatabase-dev",
+  embedded = false,
+  externalSearchQuery,
+  externalRoleFilter,
+  externalCompanyFilter,
 }: {
   initialTeams: Team[];
   initialPersonnel: PersonnelRosterRow[];
@@ -52,6 +57,15 @@ export function PersonnelClient({
   scopeUnavailable: boolean;
   scopedCompanyName: string | null;
   secondaryDatabaseName?: string;
+  /** Renders just the registry content, without the page shell, for embedding. */
+  embedded?: boolean;
+  /** Shared search bar query from the parent Workforce page. When set, this
+   *  replaces the registry's own search input (hidden) for the embedded view. */
+  externalSearchQuery?: string;
+  /** Role filter chip from the parent Workforce search bar (registry role). */
+  externalRoleFilter?: string;
+  /** Company filter chip from the parent Workforce search bar (team id). */
+  externalCompanyFilter?: string;
 }) {
   const isAdminCompanyView = viewerMode === "admin";
   const [, setTeams] = useState<Team[]>(initialTeams);
@@ -84,6 +98,10 @@ export function PersonnelClient({
   const [registryRoleFilter, setRegistryRoleFilter] = useState("");
   const [registryCompanyFilter, setRegistryCompanyFilter] = useState("");
   const [registrySearchQuery, setRegistrySearchQuery] = useState("");
+  // Prefer the parent's shared search bar; fall back to the in-bar controls.
+  const effectiveSearchQuery = externalSearchQuery ?? registrySearchQuery;
+  const effectiveRoleFilter = externalRoleFilter ?? registryRoleFilter;
+  const effectiveCompanyFilter = externalCompanyFilter ?? registryCompanyFilter;
 
   const { data: session, status: sessionStatus } = useSession();
   const canManagePortalAccounts = isElevatedPlatformRole(session?.user?.role);
@@ -92,26 +110,36 @@ export function PersonnelClient({
     () =>
       personnel.filter(
         (row) =>
-          matchesRegistryRoleFilter(row.staffRole, registryRoleFilter) &&
-          matchesRegistryCompanyFilter(row.teamId, registryCompanyFilter) &&
-          matchesRegistrySearchFilter(row, registrySearchQuery),
+          matchesRegistryRoleFilter(row.staffRole, effectiveRoleFilter) &&
+          // The external Workforce company chip carries the canonical company
+          // *name* (matching the on-duty view); the internal registry bar still
+          // carries team ids.
+          (externalCompanyFilter !== undefined
+            ? matchesRegistryCompanyNameFilter(row.teamName, effectiveCompanyFilter)
+            : matchesRegistryCompanyFilter(row.teamId, effectiveCompanyFilter)) &&
+          matchesRegistrySearchFilter(row, effectiveSearchQuery),
       ),
-    [personnel, registryRoleFilter, registryCompanyFilter, registrySearchQuery],
+    [personnel, effectiveRoleFilter, effectiveCompanyFilter, effectiveSearchQuery, externalCompanyFilter],
   );
 
   const filteredPortalAccounts = useMemo(
     () =>
       portalAccounts.filter(
         (a) =>
-          matchesRegistryRoleFilter(a.role, registryRoleFilter) &&
-          matchesRegistryCompanyFilter(a.staffDesignatedCompanyId, registryCompanyFilter) &&
-          matchesRegistrySearchFilter(a, registrySearchQuery),
+          matchesRegistryRoleFilter(a.role, effectiveRoleFilter) &&
+          (externalCompanyFilter !== undefined
+            ? matchesRegistryCompanyNameFilter(
+                a.staffDesignatedCompany?.name ?? null,
+                effectiveCompanyFilter,
+              )
+            : matchesRegistryCompanyFilter(a.staffDesignatedCompanyId, effectiveCompanyFilter)) &&
+          matchesRegistrySearchFilter(a, effectiveSearchQuery),
       ),
-    [portalAccounts, registryRoleFilter, registryCompanyFilter, registrySearchQuery],
+    [portalAccounts, effectiveRoleFilter, effectiveCompanyFilter, effectiveSearchQuery, externalCompanyFilter],
   );
 
   const registryFiltersActive = Boolean(
-    registryRoleFilter || registryCompanyFilter || registrySearchQuery.trim(),
+    effectiveRoleFilter || effectiveCompanyFilter || effectiveSearchQuery.trim(),
   );
 
   function handleRegistryRoleFilterChange(value: string) {
@@ -470,21 +498,32 @@ export function PersonnelClient({
     return filteredPortalAccounts.slice(start, start + PORTAL_REGISTRY_PAGE_SIZE);
   }, [filteredPortalAccounts, portalRegistryPageClamped]);
 
+  // Embedded render uses a div so the Workforce page shell stays the only <main>.
+  const ShellTag: "main" | "div" = embedded ? "div" : "main";
   return (
-    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 sm:px-4 md:py-5">
-      <div className="mx-auto max-w-[min(100%,1600px)] space-y-4">
-        <header className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 md:p-5">
-          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-400/95">
-            {BRAND_TITLE} · Admin console
-          </p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Personnel registry</h1>
-          <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">
-            Showing HRIS employees from {secondaryDatabaseName} · progress synced from ticketing
-          </p>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-            {/* Portal account create / agent merge kept off — roster is mergedatabase SoT */}
-          </div>
-        </header>
+    <ShellTag
+      className={cn(
+        "bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100",
+        embedded
+          ? "min-h-0 px-0 py-0"
+          : "min-h-[calc(100vh-56px)] px-3 py-4 sm:px-4 md:py-5",
+      )}
+    >
+      <div className={cn("space-y-4", embedded ? "" : "mx-auto max-w-[min(100%,1600px)]")}>
+        {embedded ? null : (
+          <header className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 md:p-5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-400/95">
+              {BRAND_TITLE} · Admin console
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white md:text-3xl">Personnel registry</h1>
+            <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">
+              Showing HRIS employees from {secondaryDatabaseName} · progress synced from ticketing
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+              {/* Portal account create / agent merge kept off — roster is mergedatabase SoT */}
+            </div>
+          </header>
+        )}
 
         {createOk ? (
           <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.08] px-3 py-2 text-xs text-emerald-900 dark:text-emerald-100/90">
@@ -680,13 +719,16 @@ export function PersonnelClient({
               <section className="space-y-3">
                 <RegistryFiltersBar
                   showCompanyFilter={false}
+                  hideSearch={externalSearchQuery !== undefined}
+                  hideRoleFilter={externalRoleFilter !== undefined}
+                  hideCompanyFilter={externalCompanyFilter !== undefined}
                   totalCount={personnel.length}
                   filteredCount={filteredPersonnel.length}
                   registryRoleFilter={registryRoleFilter}
                   onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
                   registryCompanyFilter={registryCompanyFilter}
                   onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
-                  registrySearchQuery={registrySearchQuery}
+                  registrySearchQuery={effectiveSearchQuery}
                   onRegistrySearchQueryChange={handleRegistrySearchQueryChange}
                   rosterCompanies={rosterCompanies}
                   registryFiltersActive={registryFiltersActive}
@@ -787,13 +829,16 @@ export function PersonnelClient({
 
             <RegistryFiltersBar
               showCompanyFilter
+              hideSearch={externalSearchQuery !== undefined}
+              hideRoleFilter={externalRoleFilter !== undefined}
+              hideCompanyFilter={externalCompanyFilter !== undefined}
               totalCount={personnel.length}
               filteredCount={filteredPersonnel.length}
               registryRoleFilter={registryRoleFilter}
               onRegistryRoleFilterChange={handleRegistryRoleFilterChange}
               registryCompanyFilter={registryCompanyFilter}
               onRegistryCompanyFilterChange={handleRegistryCompanyFilterChange}
-              registrySearchQuery={registrySearchQuery}
+              registrySearchQuery={effectiveSearchQuery}
               onRegistrySearchQueryChange={handleRegistrySearchQueryChange}
               rosterCompanies={rosterCompanies}
               registryFiltersActive={registryFiltersActive}
@@ -908,6 +953,6 @@ export function PersonnelClient({
           </>
         )}
       </div>
-    </main>
+    </ShellTag>
   );
 }

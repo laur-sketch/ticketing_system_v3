@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
-import { loadPersonnelAccountsPayload } from "@/lib/personnel-accounts-data";
+import { orgChartLayerById } from "./org-chart-layers";
 import { SuperAdminSettingsClient } from "./ui";
 
 export const dynamic = "force-dynamic";
@@ -17,97 +17,29 @@ export default async function SuperAdminSettingsPage({
 
   const params = await searchParams;
   const tabParam = Array.isArray(params.tab) ? params.tab[0] : params.tab;
-  // Legacy ?tab=positions redirects into the org chart (Positions UI removed).
+  // Legacy ?tab=orgchart / ?tab=sections / ?tab=positions → Workforce → Org.
+  // Chart, which now owns the chart, sectioning, and positions UI.
+  if (tabParam === "orgchart" || tabParam === "sections" || tabParam === "positions") {
+    redirect("/admin/workforce?view=sections");
+  }
   const initialTab =
-    tabParam === "orgchart" || tabParam === "positions"
-      ? "orgchart"
-      : tabParam === "access"
-        ? "access"
-        : tabParam === "faq"
-          ? "faq"
-          : "alerts";
+    tabParam === "access" ? "access" : tabParam === "faq" ? "faq" : "alerts";
 
-  const [triggers, orgNodes, orgSections, eitherOrLinks, roster] = await Promise.all([
+  const [triggers, orgLayerNodes] = await Promise.all([
     prisma.escalationTrigger.findMany({ orderBy: { priority: "asc" } }),
-    prisma.orgChartNode.findMany({
-      include: {
-        sectionMemberships: {
-          select: {
-            sectionId: true,
-            roleId: true,
-            role: { select: { id: true, label: true } },
-          },
-          orderBy: { createdAt: "asc" },
-        },
-      },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-    }),
-    prisma.orgChartSection.findMany({
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      include: {
-        companyTeam: { select: { id: true, name: true } },
-        headNode: {
-          select: {
-            id: true,
-            personName: true,
-            personRole: true,
-            companyName: true,
-          },
-        },
-        reportsToNode: {
-          select: {
-            id: true,
-            personName: true,
-            personRole: true,
-            companyName: true,
-          },
-        },
-        roles: {
-          select: { id: true, label: true, sortOrder: true },
-          orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
-        },
-        _count: { select: { memberships: true } },
-      },
-    }),
-    prisma.orgChartEitherOrLink.findMany({
-      orderBy: { createdAt: "asc" },
-    }),
-    loadPersonnelAccountsPayload({
-      role: session.user.role,
-      email: session.user.email,
-    }),
+    // Only the edges are needed: the access matrix labels the deepest layer.
+    prisma.orgChartNode.findMany({ select: { id: true, parentId: true } }),
   ]);
+
+  const layerById = orgChartLayerById(orgLayerNodes);
+  let maxOrgLayer = 1;
+  for (const layer of layerById.values()) maxOrgLayer = Math.max(maxOrgLayer, layer);
 
   return (
     <SuperAdminSettingsClient
       initialTab={initialTab}
       initialTriggers={triggers}
-      initialOrgNodes={orgNodes}
-      initialOrgSections={orgSections.map((s) => ({
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        sortOrder: s.sortOrder,
-        parentId: s.parentId,
-        companyTeamId: s.companyTeamId,
-        companyName: s.companyTeam?.name ?? null,
-        headNodeId: s.headNodeId,
-        headName: s.headNode?.personName ?? null,
-        headRole: s.headNode?.personRole ?? null,
-        headCompanyName: s.headNode?.companyName ?? null,
-        reportsToNodeId: s.reportsToNodeId,
-        reportsToName: s.reportsToNode?.personName ?? null,
-        reportsToRole: s.reportsToNode?.personRole ?? null,
-        reportsToCompanyName: s.reportsToNode?.companyName ?? null,
-        roles: s.roles,
-        memberCount: s._count.memberships,
-      }))}
-      initialEitherOrLinks={eitherOrLinks.map((l) => ({
-        id: l.id,
-        nodeAId: l.nodeAId,
-        nodeBId: l.nodeBId,
-      }))}
-      roster={roster.personnel}
+      maxOrgLayer={maxOrgLayer}
     />
   );
 }

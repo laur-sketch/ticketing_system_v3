@@ -9,6 +9,7 @@ export type TicketRequestMetaDetailsProps = {
   contactName: string;
   email: string;
   company: string;
+  requestingCompany?: string | null;
   branch: string;
   sendRequestTo: string;
   departmentLabel: string;
@@ -39,6 +40,7 @@ export function TicketRequestMetaDetails({
   contactName,
   email,
   company,
+  requestingCompany,
   branch,
   sendRequestTo,
   departmentLabel,
@@ -87,11 +89,14 @@ export function TicketRequestMetaDetails({
           <MetaLine label={preparedByLabel} value={contactName} valueClassName="break-words" />
           <MetaLine label="Email" value={email} valueClassName="break-all" />
           <MetaLine label="Company" value={company} />
+          {requestingCompany?.trim() ? (
+            <MetaLine label="Requesting company" value={requestingCompany.trim()} />
+          ) : null}
           <MetaLine label="Branch" value={branch} />
         </div>
         <div className="min-w-0 space-y-1">
-          <MetaLine label="Send request to" value={sendRequestTo} />
           <MetaLine label={departmentLabel} value={department} />
+          <MetaLine label="Send request to (department)" value={sendRequestTo} />
           <MetaLine label="Request type" value={requestType} />
           {proceduralStatus ? (
             <p className="text-xs font-medium uppercase tracking-[0.12em] text-amber-400/90">

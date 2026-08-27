@@ -11,6 +11,7 @@ export type CachedAgent = {
   id: string;
   name: string;
   email?: string | null;
+  orgChartLayer?: number | null;
   cachedAt: string;
 };
 
@@ -206,6 +207,14 @@ export async function saveOfflineDraft(
   const now = new Date().toISOString();
   const localId = input.localId ?? newLocalId("todraft");
   const existing = await travelOrderOfflineDb.drafts.get(localId);
+  // Autosave must never demote a queued create back to an editable draft.
+  if (
+    existing &&
+    (existing.syncStatus === "pending" || existing.syncStatus === "synced") &&
+    (input.syncStatus ?? "pending") === "draft"
+  ) {
+    return existing;
+  }
   const row: OfflineTravelOrderDraft = {
     localId,
     serverTravelOrderId: input.serverTravelOrderId ?? existing?.serverTravelOrderId ?? null,
@@ -275,6 +284,8 @@ export function offlineDraftAsListItem(draft: OfflineTravelOrderDraft): TravelOr
       agentId: lvl.agentId,
       agent: null,
       optional: lvl.optional === true,
+      alternateAgentIds: Array.isArray(lvl.alternateAgentIds) ? lvl.alternateAgentIds : [],
+      alternateAgents: [],
       approvedAt: null,
       approvedByAgentId: null,
       approvedByAgent: null,

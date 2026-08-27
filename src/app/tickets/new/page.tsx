@@ -17,6 +17,7 @@ import {
   DEFAULT_REQUEST_TYPE,
   isIssueConcernTicket,
   parseRequestTypeId,
+  recommendedSendToDepartmentName,
   requestTypeLabel,
   type RequestTypeId,
 } from "@/lib/request-types";
@@ -53,6 +54,15 @@ import { AcaIntakeFields } from "@/components/tickets/AcaIntakeFields";
 import { FileText, Paperclip, Plus, Trash2 } from "lucide-react";
 import { acaRecommendedByUsesRequestorCompanyLock, resolveAcaAuthority } from "@/lib/aca-authority-matrix";
 import { parseAcaAmountNumber } from "@/lib/authority-to-conduct-activity";
+import {
+  findOrgChartSectionByName,
+  orgChartMajorDepartments,
+  orgChartSectionOptionText,
+  orgChartSubDepartments,
+  resolveSendToDepartmentSelection,
+  type OrgChartSectionOption,
+} from "@/lib/org-chart-section-display";
+import { IntakeApprovalRecommendationGuide } from "@/components/tickets/IntakeApprovalRecommendationGuide";
 
 function todayIsoDate() {
   const d = new Date();
@@ -104,7 +114,6 @@ function NewTicketPageInner() {
   const isRequisitionRequest = activeRequestType === "ITEM_REQUISITION_SLIP";
   const isFundTransferRequest = activeRequestType === "FUND_TRANSFER_REQUEST";
   const isJobOrderRequest = activeRequestType === "JOB_ORDER";
-  const usesCompanyScopedApprovers = isPaymentRequest || isAcaRequest;
   const [requisitionItems, setRequisitionItems] = useState<RequisitionLineItem[]>([
     emptyRequisitionLineItem(0),
   ]);
@@ -127,6 +136,23 @@ function NewTicketPageInner() {
   const [approvalAgents, setApprovalAgents] = useState<
     Array<{ id: string; name: string; email: string }>
   >([]);
+  const [bookkeeperApprovalAgents, setBookkeeperApprovalAgents] = useState<
+    Array<{ id: string; name: string; email: string }>
+  >([]);
+  const [orgChartSectionOptions, setOrgChartSectionOptions] = useState<
+    OrgChartSectionOption[]
+  >([]);
+  const [requestorSectionOptions, setRequestorSectionOptions] = useState<
+    OrgChartSectionOption[]
+  >([]);
+  const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [selectedRequestorOrgChartSectionId, setSelectedRequestorOrgChartSectionId] = useState("");
+  const [selectedSendToMajorDepartmentId, setSelectedSendToMajorDepartmentId] = useState("");
+  const [selectedSendToSubDepartmentId, setSelectedSendToSubDepartmentId] = useState("");
+  const selectedSendToOrgChartSectionId =
+    selectedSendToSubDepartmentId.trim() || selectedSendToMajorDepartmentId.trim();
+  const [useCustomRequestingCompany, setUseCustomRequestingCompany] = useState(false);
+  const [selectedRequestingCompanyTeamId, setSelectedRequestingCompanyTeamId] = useState("");
   const [paymentAssignees, setPaymentAssignees] = useState({
     notedByAgentId: "",
     approvedByAgentId: "",
@@ -163,8 +189,6 @@ function NewTicketPageInner() {
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [staffDesignatedCompany, setStaffDesignatedCompany] = useState<{ id: string; name: string } | null>(null);
   const [staffDesignatedLoading, setStaffDesignatedLoading] = useState(false);
-  const [paymentSendToCompanyId, setPaymentSendToCompanyId] = useState("");
-  const [acaDepartmentStore, setAcaDepartmentStore] = useState("");
   const [acaCategory, setAcaCategory] = useState("");
   const [acaNatureOfRequest, setAcaNatureOfRequest] = useState("");
   const [acaEstimatedCost, setAcaEstimatedCost] = useState("");
@@ -243,6 +267,8 @@ function NewTicketPageInner() {
                 ? null
                 : issueConcernIntakeLockMessage(j.pendingConfirmation?.ticketNumber),
         });
+      } catch {
+        // Network/HMR failures — leave defaults; gate still opens in finally.
       } finally {
         if (!cancelled) setIntakeGateReady(true);
       }
@@ -258,12 +284,17 @@ function NewTicketPageInner() {
     async function loadCompanies() {
       if (sessionStatus !== "authenticated") return;
       setCompaniesLoading(true);
-      const res = await fetch("/api/public/companies", { cache: "no-store" });
-      setCompaniesLoading(false);
-      if (!res.ok || cancelled) return;
-      const list = (await res.json().catch(() => [])) as { id: string; name: string }[];
-      if (cancelled || !Array.isArray(list)) return;
-      setCompanyTeams(list);
+      try {
+        const res = await fetch("/api/public/companies", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const list = (await res.json().catch(() => [])) as { id: string; name: string }[];
+        if (cancelled || !Array.isArray(list)) return;
+        setCompanyTeams(list);
+      } catch {
+        if (!cancelled) setCompanyTeams([]);
+      } finally {
+        if (!cancelled) setCompaniesLoading(false);
+      }
     }
     void loadCompanies();
     return () => {
@@ -289,8 +320,10 @@ function NewTicketPageInner() {
         setStaffDesignatedCompany(
           id ? { id, name: name || id } : null,
         );
+      } catch {
+        if (!cancelled) setStaffDesignatedCompany(null);
       } finally {
-        setStaffDesignatedLoading(false);
+        if (!cancelled) setStaffDesignatedLoading(false);
       }
     }
     void loadStaffDesignatedCompany();
@@ -399,14 +432,115 @@ function NewTicketPageInner() {
   const isRequestorIntakeLockRole = isTicketRequestorRole(session?.user?.role);
 
   useEffect(() => {
-    if (!isStaffRequestorIntake || !staffDesignatedCompany?.id) return;
-    setSelectedCompanyTeamId((prev) => prev || staffDesignatedCompany.id);
-  }, [isStaffRequestorIntake, staffDesignatedCompany?.id]);
+    if (!isStaffRequestorIntake) {
+      setOrgChartSectionOptions([]);
+      setRequestorSectionOptions([]);
+      setSelectedRequestorOrgChartSectionId("");
+      setSelectedSendToMajorDepartmentId("");
+      setSelectedSendToSubDepartmentId("");
+      setUseCustomRequestingCompany(false);
+      setSelectedRequestingCompanyTeamId("");
+      return;
+    }
+    let cancelled = false;
+    setSectionsLoading(true);
+    void (async () => {
+      try {
+        const [allRes, mineRes] = await Promise.all([
+          fetch("/api/org-chart-sections", { cache: "no-store" }),
+          fetch("/api/me/org-chart-sections", { cache: "no-store" }),
+        ]);
+        if (cancelled) return;
+        const allJson = allRes.ok
+          ? ((await allRes.json()) as {
+              sections?: OrgChartSectionOption[];
+            })
+          : { sections: [] };
+        const mineJson = mineRes.ok
+          ? ((await mineRes.json()) as {
+              sections?: OrgChartSectionOption[];
+              defaultSectionId?: string | null;
+            })
+          : { sections: [], defaultSectionId: null };
+        const allSections = Array.isArray(allJson.sections) ? allJson.sections : [];
+        const mineSections = Array.isArray(mineJson.sections) ? mineJson.sections : [];
+        setOrgChartSectionOptions(allSections);
+        setRequestorSectionOptions(mineSections.length > 0 ? mineSections : allSections);
+        setSelectedRequestorOrgChartSectionId((prev) => {
+          if (
+            prev &&
+            (mineSections.some((s) => s.id === prev) || allSections.some((s) => s.id === prev))
+          ) {
+            return prev;
+          }
+          const def =
+            typeof mineJson.defaultSectionId === "string" ? mineJson.defaultSectionId.trim() : "";
+          if (def) return def;
+          return mineSections[0]?.id ?? "";
+        });
+      } finally {
+        if (!cancelled) setSectionsLoading(false);
+      }
+    })().catch(() => {
+      if (cancelled) return;
+      setOrgChartSectionOptions([]);
+      setRequestorSectionOptions([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isStaffRequestorIntake, sessionStatus]);
+
+  const sendToMajorDepartments = useMemo(
+    () => orgChartMajorDepartments(orgChartSectionOptions),
+    [orgChartSectionOptions],
+  );
+  const sendToSubDepartments = useMemo(
+    () =>
+      orgChartSubDepartments(orgChartSectionOptions, selectedSendToMajorDepartmentId),
+    [orgChartSectionOptions, selectedSendToMajorDepartmentId],
+  );
+  const recommendedSendToName = useMemo(
+    () => recommendedSendToDepartmentName(activeRequestType),
+    [activeRequestType],
+  );
+
+  useEffect(() => {
+    if (!isStaffRequestorIntake || orgChartSectionOptions.length === 0) return;
+    const recommendedName = recommendedSendToDepartmentName(activeRequestType);
+    if (!recommendedName) {
+      setSelectedSendToMajorDepartmentId("");
+      setSelectedSendToSubDepartmentId("");
+      return;
+    }
+    const match = findOrgChartSectionByName(orgChartSectionOptions, recommendedName);
+    if (!match) {
+      setSelectedSendToMajorDepartmentId("");
+      setSelectedSendToSubDepartmentId("");
+      return;
+    }
+    const selection = resolveSendToDepartmentSelection(orgChartSectionOptions, match.id);
+    setSelectedSendToMajorDepartmentId(selection.majorId);
+    setSelectedSendToSubDepartmentId(selection.subId);
+  }, [isStaffRequestorIntake, activeRequestType, orgChartSectionOptions]);
+
+  useEffect(() => {
+    if (!isPaymentRequest) {
+      setUseCustomRequestingCompany(false);
+      setSelectedRequestingCompanyTeamId("");
+    }
+  }, [isPaymentRequest]);
+
+  const bookkeeperCompanyTeamId = useMemo(() => {
+    if (useCustomRequestingCompany) return selectedRequestingCompanyTeamId.trim();
+    return staffDesignatedCompany?.id?.trim() ?? "";
+  }, [useCustomRequestingCompany, selectedRequestingCompanyTeamId, staffDesignatedCompany?.id]);
 
   useEffect(() => {
     if (!canSetIntakeAssignees) {
       setRequestorApprovalAgents([]);
       setApprovalAgents([]);
+      setBookkeeperApprovalAgents([]);
       return;
     }
     let cancelled = false;
@@ -429,33 +563,73 @@ function NewTicketPageInner() {
       return Array.isArray(rows) ? rows : [];
     }
 
+    async function loadSectionAgents(sectionId: string | null | undefined) {
+      const id = (sectionId ?? "").trim();
+      if (!id) return [] as Array<{ id: string; name: string; email: string }>;
+      const res = await fetch(`/api/agents?section=${encodeURIComponent(id)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: string; name: string; email: string }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
+    async function loadSectionAndCompanyAgents(
+      sectionId: string | null | undefined,
+      companyTeamId: string | null | undefined,
+    ) {
+      const section = (sectionId ?? "").trim();
+      const company = (companyTeamId ?? "").trim();
+      if (!section || !company) {
+        return [] as Array<{ id: string; name: string; email: string }>;
+      }
+      const params = new URLSearchParams({ section, company });
+      const res = await fetch(`/api/agents?${params.toString()}`, { cache: "no-store" });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: string; name: string; email: string }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
     void (async () => {
       if (isPaymentRequest) {
-        const [requestorRows, anyRows] = await Promise.all([
-          loadCompanyAgents(staffDesignatedCompany?.id),
+        const [requestorRows, anyRows, bookkeeperRows] = await Promise.all([
+          loadSectionAgents(selectedRequestorOrgChartSectionId),
           loadAnyCompanyAgents(),
+          loadSectionAndCompanyAgents(
+            selectedSendToOrgChartSectionId,
+            bookkeeperCompanyTeamId,
+          ),
         ]);
         if (cancelled) return;
         setRequestorApprovalAgents(requestorRows);
-        // Approved By is cross-company; Bookkeeper / Accounting are assigned later on the ticket.
         setApprovalAgents(anyRows);
+        setBookkeeperApprovalAgents(bookkeeperRows);
         return;
       }
       if (isJobOrderRequest || isFundTransferRequest) {
-        const rows = await loadAnyCompanyAgents();
+        const sectionId = selectedSendToOrgChartSectionId.trim();
+        const rows = sectionId
+          ? await loadSectionAgents(sectionId)
+          : await loadAnyCompanyAgents();
         if (cancelled) return;
         setApprovalAgents(rows);
         setRequestorApprovalAgents([]);
+        setBookkeeperApprovalAgents([]);
         return;
       }
-      const rows = await loadCompanyAgents(selectedCompanyTeamId);
+      const sectionId = selectedSendToOrgChartSectionId.trim();
+      const rows = sectionId
+        ? await loadSectionAgents(sectionId)
+        : await loadCompanyAgents(selectedCompanyTeamId);
       if (cancelled) return;
       setApprovalAgents(rows);
       setRequestorApprovalAgents([]);
+      setBookkeeperApprovalAgents([]);
     })().catch(() => {
       if (cancelled) return;
       setRequestorApprovalAgents([]);
       setApprovalAgents([]);
+      setBookkeeperApprovalAgents([]);
     });
 
     return () => {
@@ -467,6 +641,9 @@ function NewTicketPageInner() {
     isJobOrderRequest,
     isFundTransferRequest,
     selectedCompanyTeamId,
+    selectedRequestorOrgChartSectionId,
+    selectedSendToOrgChartSectionId,
+    bookkeeperCompanyTeamId,
     staffDesignatedCompany?.id,
   ]);
 
@@ -475,6 +652,7 @@ function NewTicketPageInner() {
     if (!isPaymentRequest) return;
     const requestorIds = new Set(requestorApprovalAgents.map((a) => a.id));
     const anyIds = new Set(approvalAgents.map((a) => a.id));
+    const bookkeeperIds = new Set(bookkeeperApprovalAgents.map((a) => a.id));
     setPaymentAssignees((prev) => {
       const next = {
         ...prev,
@@ -484,15 +662,19 @@ function NewTicketPageInner() {
           prev.approvedByAgentId && anyIds.has(prev.approvedByAgentId)
             ? prev.approvedByAgentId
             : "",
-        accountingAgentId: "",
+        accountingAgentId:
+          prev.accountingAgentId && bookkeeperIds.has(prev.accountingAgentId)
+            ? prev.accountingAgentId
+            : "",
         financeAgentId: "",
       };
       return next.notedByAgentId === prev.notedByAgentId &&
-        next.approvedByAgentId === prev.approvedByAgentId
+        next.approvedByAgentId === prev.approvedByAgentId &&
+        next.accountingAgentId === prev.accountingAgentId
         ? prev
         : next;
     });
-  }, [isPaymentRequest, requestorApprovalAgents, approvalAgents]);
+  }, [isPaymentRequest, requestorApprovalAgents, approvalAgents, bookkeeperApprovalAgents]);
   /** Issue/Concern only — other request types stay creatable. */
   const issueConcernLocked =
     isRequestorIntakeLockRole && intakeGateReady && !intake.canCreateIssueConcern;
@@ -542,6 +724,11 @@ function NewTicketPageInner() {
     setLetAccountingHandlePaymentMode(false);
     setSkipPaymentNotedBy(false);
     setSkipPaymentApprovedBy(false);
+    setSelectedRequestorOrgChartSectionId("");
+    setSelectedSendToMajorDepartmentId("");
+    setSelectedSendToSubDepartmentId("");
+    setUseCustomRequestingCompany(false);
+    setSelectedRequestingCompanyTeamId("");
     setRequisitionItems([emptyRequisitionLineItem(0)]);
     setPurposeOfRequest("");
     setScreenshots([]);
@@ -752,9 +939,6 @@ function NewTicketPageInner() {
       const deliveryOfCheckValue = String(form.get("deliveryOfCheck") || "").trim();
       const bankNameAccountNumber = String(form.get("bankNameAccountNumber") || "").trim();
       const fundTransferAmount = String(form.get("fundTransferAmount") || "").trim();
-      const requestingDepartmentBusinessUnit = String(
-        form.get("requestingDepartmentBusinessUnit") || "",
-      ).trim();
       const fromAccountName = String(form.get("fromAccountName") || "").trim();
       const fromAccountNumber = String(form.get("fromAccountNumber") || "").trim();
       const toAccountName = String(form.get("toAccountName") || "").trim();
@@ -770,7 +954,7 @@ function NewTicketPageInner() {
         }
         if (!letAccountingHandlePaymentMode) {
           if (!modeOfPaymentValue) {
-            setError("Mode of payment is required, or check Let Accounting and Finance Handle it.");
+            setError("Mode of payment is required, or check Let Bookkeeper and Accounting handle it.");
             setLoading(false);
             return;
           }
@@ -800,7 +984,7 @@ function NewTicketPageInner() {
         }
       } else if (isFundTransferRequest) {
         const fundCheck = validateFundTransferRequestFields({
-          requestingDepartmentBusinessUnit,
+          requestingDepartmentBusinessUnit: "",
           fundTransferAmount,
           fromAccountName,
           fromAccountNumber,
@@ -831,10 +1015,7 @@ function NewTicketPageInner() {
           return;
         }
       } else if (isAcaRequest) {
-        const departmentStore =
-          acaDepartmentStore.trim() || String(form.get("department") || "").trim();
         if (
-          !departmentStore ||
           !acaCategory.trim() ||
           !acaNatureOfRequest.trim() ||
           !acaEstimatedCost.trim() ||
@@ -892,21 +1073,41 @@ function NewTicketPageInner() {
         return;
       }
 
+      if (isStaffRequestorIntake) {
+        if (!selectedRequestorOrgChartSectionId.trim() || !selectedSendToOrgChartSectionId.trim()) {
+          setError("Requesting department and Send request to (department) are required.");
+          setLoading(false);
+          return;
+        }
+      }
+
       if (canSetIntakeAssignees) {
         if (isPaymentRequest) {
-          const { notedByAgentId, approvedByAgentId } = paymentAssignees;
+          const { notedByAgentId, approvedByAgentId, accountingAgentId } = paymentAssignees;
           if (
             (!skipPaymentNotedBy && !notedByAgentId) ||
-            (!skipPaymentApprovedBy && !approvedByAgentId)
+            (!skipPaymentApprovedBy && !approvedByAgentId) ||
+            (!letAccountingHandlePaymentMode && !accountingAgentId)
           ) {
             setError(
               [
                 skipPaymentNotedBy ? null : "Noted By",
                 skipPaymentApprovedBy ? null : "Approved By",
+                letAccountingHandlePaymentMode ? null : "Prepared by Bookkeeper",
               ]
                 .filter(Boolean)
                 .join(", ") + " are required.",
             );
+            setLoading(false);
+            return;
+          }
+          const roleIds = [
+            ...(skipPaymentNotedBy ? [] : [notedByAgentId]),
+            ...(skipPaymentApprovedBy ? [] : [approvedByAgentId]),
+            ...(letAccountingHandlePaymentMode ? [] : [accountingAgentId]),
+          ].filter(Boolean);
+          if (new Set(roleIds).size !== roleIds.length) {
+            setError("Each approval role must be a different person.");
             setLoading(false);
             return;
           }
@@ -985,7 +1186,6 @@ function NewTicketPageInner() {
       const appendFundTransferFields = (target: FormData | Record<string, unknown>) => {
         if (!isFundTransferRequest) return;
         if (target instanceof FormData) {
-          target.append("requestingDepartmentBusinessUnit", requestingDepartmentBusinessUnit);
           target.append("fundTransferAmount", fundTransferAmount);
           target.append("fromAccountName", fromAccountName);
           target.append("fromAccountNumber", fromAccountNumber);
@@ -994,7 +1194,6 @@ function NewTicketPageInner() {
           target.append("bankName", bankName);
           target.append("bankAddress", bankAddress);
         } else {
-          target.requestingDepartmentBusinessUnit = requestingDepartmentBusinessUnit;
           target.fundTransferAmount = fundTransferAmount;
           target.fromAccountName = fromAccountName;
           target.fromAccountNumber = fromAccountNumber;
@@ -1024,6 +1223,28 @@ function NewTicketPageInner() {
         }
       };
 
+      const appendRequestingCompanyField = (target: FormData | Record<string, unknown>) => {
+        if (!isPaymentRequest || !useCustomRequestingCompany) return;
+        const id = selectedRequestingCompanyTeamId.trim();
+        if (!id) return;
+        if (target instanceof FormData) {
+          target.append("requestingCompanyTeamId", id);
+        } else {
+          target.requestingCompanyTeamId = id;
+        }
+      };
+
+      const appendSectionFields = (target: FormData | Record<string, unknown>) => {
+        if (!isStaffRequestorIntake) return;
+        if (target instanceof FormData) {
+          target.append("requestorOrgChartSectionId", selectedRequestorOrgChartSectionId.trim());
+          target.append("orgChartSectionId", selectedSendToOrgChartSectionId.trim());
+        } else {
+          target.requestorOrgChartSectionId = selectedRequestorOrgChartSectionId.trim();
+          target.orgChartSectionId = selectedSendToOrgChartSectionId.trim();
+        }
+      };
+
       const appendApprovalAssignees = (target: FormData | Record<string, unknown>) => {
         if (!canSetIntakeAssignees) return;
         const assignees = isPaymentRequest
@@ -1034,12 +1255,9 @@ function NewTicketPageInner() {
         const cleaned = Object.fromEntries(
           Object.entries(assignees).filter(([key, v]) => {
             if (typeof v !== "string" || !v.trim()) return false;
-            // Bookkeeper / Accounting seats are assigned later on the ticket, not at intake.
-            if (
-              isPaymentRequest &&
-              (key === "accountingAgentId" || key === "financeAgentId")
-            ) {
-              return false;
+            if (isPaymentRequest) {
+              if (key === "financeAgentId") return false;
+              if (key === "accountingAgentId" && letAccountingHandlePaymentMode) return false;
             }
             return true;
           }),
@@ -1058,15 +1276,12 @@ function NewTicketPageInner() {
 
       const appendAcaFields = (target: FormData | Record<string, unknown>) => {
         if (!isAcaRequest) return;
-        const departmentStore =
-          acaDepartmentStore.trim() || String(form.get("department") || "").trim();
         const submittedByName =
           String(form.get("contactName") || "").trim() ||
           session?.user?.name?.trim() ||
           "";
         const approvingJson = JSON.stringify(acaApprovingAgentIds);
         if (target instanceof FormData) {
-          target.append("department", departmentStore);
           target.append("acaCategory", acaCategory.trim());
           target.append("acaNatureOfRequest", acaNatureOfRequest.trim());
           target.append("acaEstimatedCost", acaEstimatedCost.trim());
@@ -1084,7 +1299,6 @@ function NewTicketPageInner() {
           target.append("acaApprovingAgentIds", approvingJson);
           target.append("issue", acaDescription.trim());
         } else {
-          target.department = departmentStore;
           target.acaCategory = acaCategory.trim();
           target.acaNatureOfRequest = acaNatureOfRequest.trim();
           target.acaEstimatedCost = acaEstimatedCost.trim();
@@ -1115,19 +1329,13 @@ function NewTicketPageInner() {
         appendRequisitionFields(fd);
         appendFundTransferFields(fd);
         appendJobOrderFields(fd);
+        appendSectionFields(fd);
+        appendRequestingCompanyField(fd);
         appendApprovalAssignees(fd);
         appendAcaFields(fd);
         if (isCustomer) {
           fd.append("requestToCompanySbu", String(form.get("requestToCompanySbu") || "").trim());
           fd.append("branch", String(form.get("branch") || "").trim());
-          fd.append(
-            "department",
-            isFundTransferRequest
-              ? requestingDepartmentBusinessUnit
-              : isAcaRequest
-                ? acaDepartmentStore.trim()
-                : String(form.get("department") || "").trim(),
-          );
           fd.append("assignedCompanyText", String(form.get("assignedCompanyText") || "").trim());
           if (googleOAuthCustomer) {
             fd.append("customerOrgRole", String(form.get("customerOrgRole") || "").trim() || "Personnel");
@@ -1135,16 +1343,7 @@ function NewTicketPageInner() {
         } else if (isStaffRequestorIntake) {
           fd.append("contactName", String(form.get("contactName") || "").trim());
           fd.append("contactEmail", String(form.get("contactEmail") || "").trim());
-          fd.append("companyTeamId", String(form.get("companyTeamId") || "").trim());
           fd.append("branch", String(form.get("branch") || "").trim());
-          fd.append(
-            "department",
-            isFundTransferRequest
-              ? requestingDepartmentBusinessUnit
-              : isAcaRequest
-                ? acaDepartmentStore.trim()
-                : String(form.get("department") || "").trim(),
-          );
         } else {
           fd.append("companyTeamId", String(form.get("companyTeamId") || ""));
           fd.append("contactName", String(form.get("contactName") || "").trim());
@@ -1166,16 +1365,13 @@ function NewTicketPageInner() {
         appendRequisitionFields(payload);
         appendFundTransferFields(payload);
         appendJobOrderFields(payload);
+        appendSectionFields(payload);
+        appendRequestingCompanyField(payload);
         appendApprovalAssignees(payload);
         appendAcaFields(payload);
         if (isCustomer) {
           payload.requestToCompanySbu = String(form.get("requestToCompanySbu") || "").trim();
           payload.branch = String(form.get("branch") || "").trim();
-          payload.department = isFundTransferRequest
-            ? requestingDepartmentBusinessUnit
-            : isAcaRequest
-              ? acaDepartmentStore.trim()
-              : String(form.get("department") || "").trim();
           payload.assignedCompanyText = String(form.get("assignedCompanyText") || "").trim();
           if (googleOAuthCustomer) {
             payload.customerOrgRole = String(form.get("customerOrgRole") || "").trim() || "Personnel";
@@ -1183,13 +1379,7 @@ function NewTicketPageInner() {
         } else if (isStaffRequestorIntake) {
           payload.contactName = String(form.get("contactName") || "").trim();
           payload.contactEmail = String(form.get("contactEmail") || "").trim();
-          payload.companyTeamId = String(form.get("companyTeamId") || "").trim();
           payload.branch = String(form.get("branch") || "").trim();
-          payload.department = isFundTransferRequest
-            ? requestingDepartmentBusinessUnit
-            : isAcaRequest
-              ? acaDepartmentStore.trim()
-              : String(form.get("department") || "").trim();
         } else {
           payload.companyTeamId = String(form.get("companyTeamId") || "");
           payload.contactName = String(form.get("contactName") || "").trim();
@@ -1349,17 +1539,95 @@ function NewTicketPageInner() {
                 </label>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <span className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                      Company
-                    </span>
-                    <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100">
-                      {staffDesignatedLoading
-                        ? "Loading…"
-                        : staffDesignatedCompany?.name?.trim() || "Not yet assigned"}
-                    </div>
+                  <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+                    <label
+                      htmlFor="intake-requestor-section"
+                      className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                    >
+                      Requesting department
+                    </label>
+                    <select
+                      id="intake-requestor-section"
+                      name="requestorOrgChartSectionId"
+                      required
+                      value={selectedRequestorOrgChartSectionId}
+                      onChange={(e) => setSelectedRequestorOrgChartSectionId(e.target.value)}
+                      disabled={sectionsLoading}
+                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      <option value="">
+                        {sectionsLoading ? "Loading departments…" : "Select requesting department"}
+                      </option>
+                      {requestorSectionOptions.map((section) => (
+                        <option key={section.id} value={section.id}>
+                          {orgChartSectionOptionText(section)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-
+                  <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+                    <label
+                      htmlFor="intake-send-request-to-department"
+                      className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                    >
+                      Send request to (department)
+                    </label>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <select
+                        id="intake-send-request-to-department"
+                        required
+                        value={selectedSendToMajorDepartmentId}
+                        onChange={(e) => {
+                          setSelectedSendToMajorDepartmentId(e.target.value);
+                          setSelectedSendToSubDepartmentId("");
+                        }}
+                        disabled={sectionsLoading}
+                        className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      >
+                        <option value="">
+                          {sectionsLoading ? "Loading departments…" : "Select a department"}
+                        </option>
+                        {sendToMajorDepartments.map((section) => (
+                          <option key={section.id} value={section.id}>
+                            {section.name}
+                          </option>
+                        ))}
+                      </select>
+                      {sendToSubDepartments.length > 0 ? (
+                        <select
+                          id="intake-send-request-to-sub-department"
+                          aria-label="Send request to sub-department"
+                          value={selectedSendToSubDepartmentId}
+                          onChange={(e) => setSelectedSendToSubDepartmentId(e.target.value)}
+                          disabled={sectionsLoading || !selectedSendToMajorDepartmentId}
+                          className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                        >
+                          <option value="">Whole department (no sub-department)</option>
+                          {sendToSubDepartments.map((section) => (
+                            <option key={section.id} value={section.id}>
+                              {orgChartSectionOptionText(section)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : null}
+                    </div>
+                    <input
+                      type="hidden"
+                      name="orgChartSectionId"
+                      value={selectedSendToOrgChartSectionId}
+                    />
+                    {recommendedSendToName ? (
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                        Recommended for {requestTypeLabel(activeRequestType!)}:{" "}
+                        <span className="font-medium text-orange-700 dark:text-orange-300">
+                          {recommendedSendToName}
+                        </span>
+                        {findOrgChartSectionByName(orgChartSectionOptions, recommendedSendToName)
+                          ? null
+                          : " (not found in Manage departments yet)"}
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="flex min-w-0 flex-col gap-1.5">
                     <label
                       htmlFor="intake-branch"
@@ -1376,66 +1644,67 @@ function NewTicketPageInner() {
                       className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <label
-                      htmlFor="intake-send-request-to"
-                      className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
-                    >
-                      Send request to:
-                    </label>
-                    <select
-                      id="intake-send-request-to"
-                      name="companyTeamId"
-                      required
-                      value={selectedCompanyTeamId}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setSelectedCompanyTeamId(next);
-                        if (usesCompanyScopedApprovers) {
-                          setPaymentSendToCompanyId(next);
-                        }
-                      }}
-                      disabled={companiesLoading}
-                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    >
-                      <option value="">
-                        {companiesLoading ? "Loading companies..." : "Select a company/SBU"}
-                      </option>
-                      {sendRequestToOptions.map((team) => (
-                        <option key={team.id} value={team.id}>
-                          {team.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {!isAcaRequest ? (
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <label
-                      htmlFor={isFundTransferRequest ? "intake-requesting-department" : "intake-department"}
-                      className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
-                    >
-                      {isFundTransferRequest
-                        ? "Requesting department/business unit"
-                        : "Department"}
-                    </label>
-                    <input
-                      id={isFundTransferRequest ? "intake-requesting-department" : "intake-department"}
-                      name={
-                        isFundTransferRequest
-                          ? "requestingDepartmentBusinessUnit"
-                          : "department"
-                      }
-                      required={isFundTransferRequest}
-                      maxLength={isFundTransferRequest ? 200 : 120}
-                      placeholder="e.g. IT, Finance, Operations"
-                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    />
-                  </div>
-                  ) : null}
+                  {isPaymentRequest ? (
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <label className="flex h-5 cursor-pointer select-none items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={useCustomRequestingCompany}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setUseCustomRequestingCompany(checked);
+                            if (!checked) {
+                              setSelectedRequestingCompanyTeamId("");
+                              setPaymentAssignees((prev) => ({
+                                ...prev,
+                                accountingAgentId: "",
+                              }));
+                            }
+                          }}
+                          className="size-3.5 accent-orange-600"
+                        />
+                        Use different requesting company
+                      </label>
+                      {useCustomRequestingCompany ? (
+                        <select
+                          id="intake-requesting-company"
+                          name="requestingCompanyTeamId"
+                          value={selectedRequestingCompanyTeamId}
+                          onChange={(e) => setSelectedRequestingCompanyTeamId(e.target.value)}
+                          disabled={companiesLoading}
+                          className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                        >
+                          <option value="">
+                            {companiesLoading ? "Loading companies…" : "Select requesting company"}
+                          </option>
+                          {sendRequestToOptions.map((team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                          {staffDesignatedLoading
+                            ? "Loading…"
+                            : staffDesignatedCompany?.name?.trim()
+                              ? `Uses your company — ${staffDesignatedCompany.name}`
+                              : "Uses your assigned company"}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <span className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        Company
+                      </span>
+                      <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100">
+                        {staffDesignatedLoading
+                          ? "Loading…"
+                          : staffDesignatedCompany?.name?.trim() || "Not yet assigned"}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -1514,7 +1783,7 @@ function NewTicketPageInner() {
                   </label>
                 ) : null}
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-1">
                   <div className="flex min-w-0 flex-col gap-1.5">
                     <label
                       htmlFor="intake-customer-send-to"
@@ -1529,37 +1798,6 @@ function NewTicketPageInner() {
                       rows={2}
                       placeholder="Type the company or SBU you are requesting (e.g. AGC, ALI, or IT support)."
                       className="box-border min-h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    />
-                  </div>
-
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <label
-                      htmlFor={
-                        isFundTransferRequest
-                          ? "intake-customer-requesting-department"
-                          : "intake-customer-department"
-                      }
-                      className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
-                    >
-                      {isFundTransferRequest
-                        ? "Requesting department/business unit"
-                        : "Department"}
-                    </label>
-                    <input
-                      id={
-                        isFundTransferRequest
-                          ? "intake-customer-requesting-department"
-                          : "intake-customer-department"
-                      }
-                      name={
-                        isFundTransferRequest
-                          ? "requestingDepartmentBusinessUnit"
-                          : "department"
-                      }
-                      required={isFundTransferRequest}
-                      maxLength={isFundTransferRequest ? 200 : 120}
-                      placeholder="e.g. IT, Finance, Operations"
-                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
                     />
                   </div>
                 </div>
@@ -1625,17 +1863,21 @@ function NewTicketPageInner() {
                       if (checked) {
                         setModeOfPayment("");
                         setDeliveryOfCheck("");
+                        setPaymentAssignees((prev) => ({
+                          ...prev,
+                          accountingAgentId: "",
+                        }));
                       }
                     }}
                     className="mt-0.5 size-4 shrink-0 rounded border-zinc-300 text-orange-600 focus:ring-orange-500"
                   />
                   <span>
-                    <span className="font-medium">Let Accounting and Finance Handle it</span>
+                    <span className="font-medium">Let Bookkeeper and Accounting handle it</span>
                     <span className="mt-0.5 block text-xs font-normal text-zinc-500 dark:text-zinc-400">
                       Hides Mode of payment. After Noted By
-                      {skipPaymentApprovedBy ? "" : " and Approved By"} are done, Accounting sets mode of
+                      {skipPaymentApprovedBy ? "" : " and Approved By"} are done, the bookkeeper sets mode of
                       payment on the ticket. Prepared by Bookkeeper and Approved By Accounting are
-                      assigned on the ticket as well.
+                      assigned on the ticket instead of at intake.
                     </span>
                   </span>
                 </label>
@@ -2082,8 +2324,6 @@ function NewTicketPageInner() {
                 onCategoryChange={setAcaCategory}
                 natureOfRequest={acaNatureOfRequest}
                 onNatureOfRequestChange={setAcaNatureOfRequest}
-                departmentStore={acaDepartmentStore}
-                onDepartmentStoreChange={setAcaDepartmentStore}
                 estimatedCost={acaEstimatedCost}
                 onEstimatedCostChange={setAcaEstimatedCost}
                 budgetAmount={acaBudgetAmount}
@@ -2142,12 +2382,37 @@ function NewTicketPageInner() {
                   </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                     Required for Request for Payment, Fund Transfer, and Job Order. Assign
-                    procedural roles before creating this request. RFP Approved By, Fund Transfer
-                    Recommending Approval / Approved By, and Job Order Noted By / Approvers can be
-                    chosen from any company. Item Requisition uses the Assignment Board for
-                    Canvassed By instead.
+                    procedural roles before creating this request. RFP Noted By uses your
+                    requesting department; Approved By uses the next section head up the tree; Prepared by Bookkeeper uses
+                    send request to department and your company, or requesting company when enabled (unless Bookkeeper and Accounting handle it). Fund Transfer Recommending
+                    Approval uses your section; Approved By uses the main section head. Job Order Noted By / Approvers follow section rules;
+                    Approved By seats use the main section head.
                   </p>
                 </div>
+                <IntakeApprovalRecommendationGuide
+                  requestType={activeRequestType!}
+                  requestorSectionId={selectedRequestorOrgChartSectionId}
+                  sendToSectionId={selectedSendToOrgChartSectionId}
+                  requestingCompanyTeamId={
+                    useCustomRequestingCompany ? selectedRequestingCompanyTeamId : ""
+                  }
+                  skipNotedBy={skipPaymentNotedBy}
+                  skipApprovedBy={skipPaymentApprovedBy}
+                  deferBookkeeper={letAccountingHandlePaymentMode}
+                  onApply={(assignees) => {
+                    if (isPaymentRequest) {
+                      setPaymentAssignees((prev) => ({ ...prev, ...assignees }));
+                      return;
+                    }
+                    if (isFundTransferRequest) {
+                      setFundTransferAssignees((prev) => ({ ...prev, ...assignees }));
+                      return;
+                    }
+                    if (isJobOrderRequest) {
+                      setJobOrderAssignees((prev) => ({ ...prev, ...assignees }));
+                    }
+                  }}
+                />
                 {isPaymentRequest ? (
                   <>
                     <div className="flex flex-wrap gap-2">
@@ -2193,7 +2458,10 @@ function NewTicketPageInner() {
                     {(
                       [
                         ["notedByAgentId", "Noted By", "requestor"],
-                        ["approvedByAgentId", "Approved By", "sendTo"],
+                        ["approvedByAgentId", "Approved By", "any"],
+                        ...(letAccountingHandlePaymentMode
+                          ? []
+                          : ([["accountingAgentId", "Prepared by Bookkeeper", "bookkeeper"]] as const)),
                       ] as const
                     )
                       .filter(
@@ -2205,19 +2473,29 @@ function NewTicketPageInner() {
                       const roster =
                         scope === "requestor"
                           ? requestorApprovalAgents
-                          : approvalAgents;
+                          : scope === "bookkeeper"
+                            ? bookkeeperApprovalAgents
+                            : approvalAgents;
                       const taken = new Set(
                         (
                           [
                             paymentAssignees.notedByAgentId,
                             ...(skipPaymentApprovedBy ? [] : [paymentAssignees.approvedByAgentId]),
+                            ...(letAccountingHandlePaymentMode
+                              ? []
+                              : [paymentAssignees.accountingAgentId]),
                           ] as string[]
                         ).filter((id) => id && id !== paymentAssignees[key]),
                       );
                       const scopeReady =
                         scope === "requestor"
-                          ? Boolean(staffDesignatedCompany?.id)
-                          : true;
+                          ? Boolean(selectedRequestorOrgChartSectionId.trim())
+                          : scope === "bookkeeper"
+                            ? Boolean(
+                                selectedSendToOrgChartSectionId.trim() &&
+                                  bookkeeperCompanyTeamId,
+                              )
+                            : true;
                       return (
                         <CompanyUserSearchField
                           key={key}
@@ -2230,8 +2508,12 @@ function NewTicketPageInner() {
                           placeholder={
                             !scopeReady
                               ? scope === "requestor"
-                                ? "Requestor company not assigned"
-                                : "Loading company users…"
+                                ? "Select requesting department first"
+                                : scope === "bookkeeper"
+                                  ? useCustomRequestingCompany
+                                    ? "Select send-to department and requesting company first"
+                                    : "Select send-to department first (uses your assigned company)"
+                                  : "Loading users…"
                               : "Search by name or email…"
                           }
                           onChange={(agentId) =>
@@ -2309,22 +2591,24 @@ function NewTicketPageInner() {
                 {(isJobOrderRequest || isFundTransferRequest) &&
                 approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    No assignees available yet.
+                    {selectedSendToOrgChartSectionId
+                      ? "No assignees available in the selected department yet."
+                      : "Select “Send request to (department)” to load assignees."}
                   </p>
                 ) : null}
                 {!isPaymentRequest &&
                 !isJobOrderRequest &&
                 !isFundTransferRequest &&
-                !selectedCompanyTeamId ? (
+                !selectedSendToOrgChartSectionId ? (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Select “Send request to” first to load company assignees.
+                    Select “Send request to (department)” first to load assignees.
                   </p>
                 ) : !isPaymentRequest &&
                   !isJobOrderRequest &&
                   !isFundTransferRequest &&
                   approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    No company assignees available for this roster yet.
+                    No section assignees available for this roster yet.
                   </p>
                 ) : null}
               </div>

@@ -294,6 +294,17 @@ export function AgentWorkspace({
       return Array.isArray(rows) ? rows : [];
     }
 
+    async function loadSectionAgents(sectionId: string | null | undefined) {
+      const id = (sectionId ?? "").trim();
+      if (!id) return [] as Array<{ id: string; name: string; email: string }>;
+      const res = await fetch(`/api/agents?section=${encodeURIComponent(id)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return [];
+      const rows = (await res.json()) as Array<{ id: string; name: string; email: string }>;
+      return Array.isArray(rows) ? rows : [];
+    }
+
     void (async () => {
       if (
         isPaymentRequest &&
@@ -301,11 +312,28 @@ export function AgentWorkspace({
           canAssignPaymentAccountingFinance ||
           Boolean(sessionAgentId && ticket.assignedAgentId === sessionAgentId))
       ) {
+        const requestorSectionId =
+          "requestorOrgChartSectionId" in ticket &&
+          typeof (ticket as { requestorOrgChartSectionId?: string | null }).requestorOrgChartSectionId ===
+            "string"
+            ? (ticket as { requestorOrgChartSectionId: string }).requestorOrgChartSectionId
+            : null;
+        const sendToSectionId =
+          "orgChartSectionId" in ticket &&
+          typeof (ticket as { orgChartSectionId?: string | null }).orgChartSectionId === "string"
+            ? (ticket as { orgChartSectionId: string }).orgChartSectionId
+            : null;
         const [requestorRows, sendToRows] = await Promise.all([
-          requestorCompanyTeamId
-            ? loadCompanyAgents(requestorCompanyTeamId)
-            : Promise.resolve([]),
-          ticket.teamId ? loadCompanyAgents(ticket.teamId) : Promise.resolve([]),
+          requestorSectionId
+            ? loadSectionAgents(requestorSectionId)
+            : requestorCompanyTeamId
+              ? loadCompanyAgents(requestorCompanyTeamId)
+              : Promise.resolve([]),
+          sendToSectionId
+            ? loadSectionAgents(sendToSectionId)
+            : ticket.teamId
+              ? loadCompanyAgents(ticket.teamId)
+              : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setRequestorApprovalAgents(requestorRows);
@@ -542,15 +570,6 @@ export function AgentWorkspace({
     return ids;
   }, [paymentApprovalMeta]);
 
-  /** Assigned role holders excluded from “Submit for Next Approval” picker. */
-  const paymentPriorApproverIds = useMemo(() => {
-    if (!paymentApprovalMeta || !currentPaymentStep) return new Set<string>();
-    const ids = paymentApprovalParticipantIds(paymentApprovalMeta);
-    const current = assigneeIdForStep(paymentApprovalMeta, currentPaymentStep);
-    if (current) ids.delete(current);
-    return ids;
-  }, [paymentApprovalMeta, currentPaymentStep]);
-
   /** True when the signed-in user already completed another approval role on this RFP. */
   const sessionAlreadyApprovedThisRequest = Boolean(
     sessionAgentId && paymentCompletedApproverIds.has(sessionAgentId),
@@ -651,22 +670,9 @@ export function AgentWorkspace({
     canRequestTransfer && !transferPending && !paymentTransferBlocked && !acaTransferBlocked,
   );
   /**
-   * Assignee must mark Done on the current step before Submit for Next Approval unlocks.
-   * Submit for Next Approval is only for Accounting / Finance — not NOTED BY / APPROVED BY.
+   * Assignee must mark Done on the current step; handoff goes to the next
+   * procedural assignee automatically (no Submit for Next Approval on RFP).
    */
-  const showPaymentSubmitForNextApproval = Boolean(
-    currentPaymentStep === "APPROVED_BY_ACCOUNTING" ||
-      currentPaymentStep === "APPROVED_BY_FINANCE",
-  );
-  const submitNextApprovalLocked =
-    showPaymentSubmitForNextApproval && canCompleteCurrentPaymentStep;
-
-  useEffect(() => {
-    if (!requestApproverId) return;
-    if (paymentPriorApproverIds.has(requestApproverId)) {
-      setRequestApproverId("");
-    }
-  }, [paymentPriorApproverIds, requestApproverId]);
 
   const requisitionProceduralLabel = itemRequisitionApprovalMeta
     ? itemRequisitionProceduralStatusLabel(itemRequisitionApprovalMeta.proceduralStep)
@@ -928,7 +934,7 @@ export function AgentWorkspace({
     } else if (fundTransferDetails) {
       fields.push(
         {
-          label: "Requesting department/business unit",
+          label: "Requesting department",
           value: fundTransferDetails.requestingDepartmentBusinessUnit || "—",
         },
         {
@@ -1319,7 +1325,7 @@ export function AgentWorkspace({
                       </button>
                       <p className="basis-full text-[11px] text-zinc-500 dark:text-zinc-400">
                         {canAssignDeferredAccountingFinance
-                          ? "Save mode of payment, then assign Accounting and Finance below before continuing."
+                          ? "Save mode of payment, then assign Bookkeeper and Accounting below before continuing."
                           : "Save locks this section to read-only. Use Edit to change it again afterward."}
                       </p>
                     </div>
@@ -1596,7 +1602,7 @@ export function AgentWorkspace({
               <dl className="space-y-2 text-sm">
                 <div>
                   <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Requesting department/business unit
+                    Requesting department
                   </dt>
                   <dd className="mt-0.5 break-words font-medium text-zinc-800 dark:text-zinc-200">
                     {fundTransferDetails.requestingDepartmentBusinessUnit || "—"}
@@ -1725,12 +1731,11 @@ export function AgentWorkspace({
                 </div>
               ) : null}
               {jobOrderApprovalMeta?.proceduralStep === "DONE" ? (
-                <JobOrderProjectLinkPanel
-                  ticketId={ticket.id}
-                  canCreateProject={canCreateJobOrderProject}
-                  canRequestProject={canRequestJobOrderProject}
-                  sessionAgentId={sessionAgentId}
-                />
+                <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+                  All approvals are complete. Use{" "}
+                  <span className="font-semibold">Request controls</span> to create or link a Task
+                  Board task for this Job Order.
+                </p>
               ) : null}
             </div>
           ) : showAcaLayout ? (
@@ -1816,7 +1821,9 @@ export function AgentWorkspace({
           {paymentDetails && paymentApprovalMeta ? (
             <div
               className={`mt-4 grid grid-cols-1 items-start gap-x-4 gap-y-3 border-t border-zinc-200 pt-4 sm:grid-cols-2 dark:border-zinc-800/80 ${
-                paymentApprovalMeta.skipApprovedBy ? "lg:grid-cols-3" : "lg:grid-cols-5"
+                paymentApprovalMeta.skipApprovedBy || paymentApprovalMeta.skipNotedBy
+                  ? "lg:grid-cols-3"
+                  : "lg:grid-cols-5"
               }`}
             >
               {paymentApprovalStepsFor(paymentApprovalMeta).map((step) => {
@@ -1849,6 +1856,39 @@ export function AgentWorkspace({
                         Approved and Done
                       </p>
                     ) : null}
+                    {step === currentPaymentStep && canCompleteCurrentPaymentStep ? (
+                      <div className="mt-2 space-y-1.5">
+                        {canMarkCurrentPaymentApproved ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => patch({ action: "approve_payment_step" })}
+                            className="min-h-9 w-full rounded-lg border border-sky-500/50 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-60"
+                          >
+                            Approved
+                          </button>
+                        ) : null}
+                        {currentStepNeedsApprovedAck && !currentStepApprovedAck ? (
+                          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                            Click Approved first. Done hands the request to the next role.
+                          </p>
+                        ) : currentStepNeedsApprovedAck && currentStepApprovedAck ? (
+                          <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                            Approved recorded. Click Done to hand off to the next role.
+                          </p>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={busy || !canMarkCurrentPaymentDone}
+                          onClick={() => patch({ action: "complete_payment_approval_step" })}
+                          className="min-h-9 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                        >
+                          {currentStepNeedsApprovedAck
+                            ? "Done"
+                            : `Complete ${PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]}`}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -1878,6 +1918,21 @@ export function AgentWorkspace({
                     >
                       {name ?? "—"}
                     </p>
+                    {step === currentRequisitionStep && canCompleteCurrentRequisitionStep ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          patch({
+                            action: "complete_item_requisition_approval_step",
+                            items: pricingDraft,
+                          })
+                        }
+                        className="mt-2 min-h-9 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                      >
+                        Complete {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]}
+                      </button>
+                    ) : null}
                   </div>
                 );
               })}
@@ -1908,6 +1963,16 @@ export function AgentWorkspace({
                     >
                       {name ?? "—"}
                     </p>
+                    {step === currentFundTransferStep && canCompleteCurrentFundTransferStep ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => patch({ action: "complete_fund_transfer_approval_step" })}
+                        className="mt-2 min-h-9 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                      >
+                        Complete {FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]}
+                      </button>
+                    ) : null}
                   </div>
                 );
               })}
@@ -1942,6 +2007,16 @@ export function AgentWorkspace({
                     >
                       {name ?? "—"}
                     </p>
+                    {step === currentJobOrderStep && canCompleteCurrentJobOrderStep ? (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => patch({ action: "complete_job_order_approval_step" })}
+                        className="mt-2 min-h-9 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                      >
+                        Done
+                      </button>
+                    ) : null}
                   </div>
                 );
               })}
@@ -1995,6 +2070,16 @@ export function AgentWorkspace({
                                 <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-400">
                                   Current
                                 </p>
+                              ) : null}
+                              {current && canCompleteCurrentAcaStep && !acaRequiresFeedback ? (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => patch({ action: "complete_aca_approval_step" })}
+                                  className="mt-2 min-h-9 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                                >
+                                  Done
+                                </button>
                               ) : null}
                             </div>
                           );
@@ -2125,6 +2210,19 @@ export function AgentWorkspace({
                       placeholder="Enter your feedback / comments for this approval"
                     />
                   </label>
+                  <button
+                    type="button"
+                    disabled={busy || !acaDoneComment.trim()}
+                    onClick={() =>
+                      patch({
+                        action: "complete_aca_approval_step",
+                        comment: acaDoneComment.trim(),
+                      })
+                    }
+                    className="min-h-9 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    Done
+                  </button>
                 </div>
               ) : null}
             </div>
@@ -2370,40 +2468,59 @@ export function AgentWorkspace({
             {isPaymentRequest && canAssignDeferredAccountingFinance ? (
               <div className="space-y-2 rounded-xl border border-orange-400/40 bg-orange-500/5 p-3 dark:border-orange-500/30 dark:bg-orange-500/10">
                 <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  Set Accounting & Finance assignees
+                  {paymentApprovalMeta?.accountingAgentId?.trim()
+                    ? "Set Accounting assignee"
+                    : "Set Bookkeeper and Accounting assignees"}
                 </p>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Prepared by Bookkeeper and Approved By Accounting are set on the ticket after
-                  Noted By
-                  {paymentApprovalMeta?.skipApprovedBy ? "" : " and Approved By"}{" "}
-                  {paymentApprovalMeta?.skipApprovedBy ? "is" : "are"} complete. Assign different
-                  people for each role
-                  {paymentApprovalMeta?.deferPaymentModeToAccounting
-                    ? ", and set mode of payment in the request details above if it is still pending"
-                    : ""}
-                  .
+                  {paymentApprovalMeta?.accountingAgentId?.trim() ? (
+                    <>
+                      Prepared by Bookkeeper was set at intake. Assign Approved By Accounting after
+                      Noted By
+                      {paymentApprovalMeta?.skipApprovedBy ? "" : " and Approved By"}{" "}
+                      {paymentApprovalMeta?.skipApprovedBy ? "is" : "are"} complete
+                      {paymentApprovalMeta?.deferPaymentModeToAccounting
+                        ? ", and set mode of payment in the request details above if it is still pending"
+                        : ""}
+                      .
+                    </>
+                  ) : (
+                    <>
+                      Prepared by Bookkeeper and Approved By Accounting are set on the ticket after
+                      Noted By
+                      {paymentApprovalMeta?.skipApprovedBy ? "" : " and Approved By"}{" "}
+                      {paymentApprovalMeta?.skipApprovedBy ? "is" : "are"} complete. Assign different
+                      people for each role
+                      {paymentApprovalMeta?.deferPaymentModeToAccounting
+                        ? ", and set mode of payment in the request details above if it is still pending"
+                        : ""}
+                      .
+                    </>
+                  )}
                 </p>
-                <CompanyUserSearchField
-                  label="Prepared by Bookkeeper:"
-                  users={deferredAccountingFinanceRoster}
-                  value={approvalDraft.accountingAgentId || ""}
-                  excludedIds={
-                    new Set(
-                      [
-                        ...deferredAccountingFinanceExcludedIds,
-                        approvalDraft.financeAgentId || "",
-                      ].filter((id) => id && id !== approvalDraft.accountingAgentId),
-                    )
-                  }
-                  disabled={busy}
-                  placeholder="Search by name or email…"
-                  onChange={(agentId) =>
-                    setApprovalDraft((prev) => ({
-                      ...prev,
-                      accountingAgentId: agentId || null,
-                    }))
-                  }
-                />
+                {!paymentApprovalMeta?.accountingAgentId?.trim() ? (
+                  <CompanyUserSearchField
+                    label="Prepared by Bookkeeper:"
+                    users={deferredAccountingFinanceRoster}
+                    value={approvalDraft.accountingAgentId || ""}
+                    excludedIds={
+                      new Set(
+                        [
+                          ...deferredAccountingFinanceExcludedIds,
+                          approvalDraft.financeAgentId || "",
+                        ].filter((id) => id && id !== approvalDraft.accountingAgentId),
+                      )
+                    }
+                    disabled={busy}
+                    placeholder="Search by name or email…"
+                    onChange={(agentId) =>
+                      setApprovalDraft((prev) => ({
+                        ...prev,
+                        accountingAgentId: agentId || null,
+                      }))
+                    }
+                  />
+                ) : null}
                 <CompanyUserSearchField
                   label="Approved By Accounting"
                   users={deferredAccountingFinanceRoster}
@@ -2428,18 +2545,26 @@ export function AgentWorkspace({
                 <button
                   type="button"
                   disabled={
-                    busy || !approvalDraft.accountingAgentId || !approvalDraft.financeAgentId
+                    busy ||
+                    !(
+                      approvalDraft.accountingAgentId ||
+                      paymentApprovalMeta?.accountingAgentId
+                    ) ||
+                    !approvalDraft.financeAgentId
                   }
                   onClick={() =>
                     patch({
                       action: "set_payment_approval_assignees",
-                      accountingAgentId: approvalDraft.accountingAgentId,
+                      accountingAgentId:
+                        approvalDraft.accountingAgentId ||
+                        paymentApprovalMeta?.accountingAgentId ||
+                        null,
                       financeAgentId: approvalDraft.financeAgentId,
                     })
                   }
                   className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
                 >
-                  Save Accounting & Finance assignees
+                  Save Bookkeeper and Accounting assignees
                 </button>
               </div>
             ) : null}
@@ -2461,104 +2586,35 @@ export function AgentWorkspace({
                   ) : null}
                   <p className="mt-1 text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
                     Noted By
-                    {paymentApprovalMeta?.skipApprovedBy ? "" : " / Approved By"} are set at create.
-                    Prepared by Bookkeeper and Approved By Accounting are assigned on this ticket
-                    after those steps. Complete the current step to hand off to the next role
-                    {showPaymentSubmitForNextApproval
-                      ? ", or submit for the next approval below"
-                      : ""}
-                    .
+                    {paymentApprovalMeta?.skipApprovedBy ? "" : " / Approved By"}
+                    {paymentApprovalMeta?.accountingAgentId?.trim()
+                      ? " / Prepared by Bookkeeper"
+                      : ""}{" "}
+                    are set at create.
+                    {paymentApprovalMeta?.accountingAgentId?.trim()
+                      ? " Approved By Accounting is assigned on this ticket"
+                      : " Prepared by Bookkeeper and Approved By Accounting are assigned on this ticket"}
+                    after those steps. Complete the current step (Approved / Done under your name)
+                    to hand off to the next role.
                   </p>
                 </div>
                 {currentPaymentStep && canCompleteCurrentPaymentStep ? (
-                  <div className="space-y-2">
-                    {canMarkCurrentPaymentApproved ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => patch({ action: "approve_payment_step" })}
-                        className="min-h-10 w-full rounded-lg border border-sky-500/50 bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-60"
-                      >
-                        Approved
-                      </button>
-                    ) : null}
-                    {currentStepNeedsApprovedAck && !currentStepApprovedAck ? (
-                      <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                        Click Approved first. Done hands the request to the next role.
-                      </p>
-                    ) : currentStepNeedsApprovedAck && currentStepApprovedAck ? (
-                      <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                        Approved recorded. Click Done to hand off to the next role.
-                      </p>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={busy || !canMarkCurrentPaymentDone}
-                      onClick={() => patch({ action: "complete_payment_approval_step" })}
-                      className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                    >
-                      {currentStepNeedsApprovedAck
-                        ? "Done"
-                        : `Complete ${PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]}`}
-                    </button>
-                  </div>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Use the buttons under your name in the approvals above to complete this step.
+                  </p>
                 ) : currentPaymentStep &&
                   sessionAlreadyApprovedThisRequest &&
                   isTicketAssignee &&
                   !currentPaymentStepAllowsRepeatSigner ? (
                   <p className="text-[11px] text-amber-700 dark:text-amber-300">
                     You already approved an earlier step on this request, so Done is hidden.
-                    {showPaymentSubmitForNextApproval
-                      ? " Use Submit for Next Approval to send it to a different person."
-                      : " Wait for the assigned next-role approver to continue."}
+                    Wait for the assigned next-role approver to continue.
                   </p>
                 ) : currentPaymentStep ? (
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                     Only the assigned {PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]} approver can mark Done.
                     Completing Done moves the request onto the next role’s Request Board.
                   </p>
-                ) : null}
-                {canRequestPaymentApproval && showPaymentSubmitForNextApproval ? (
-                  <div className="space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-                    <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                      Submit for Next Approval
-                    </p>
-                    <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                      Each person may only approve once on this request. Prior role holders are hidden.
-                    </p>
-                    {submitNextApprovalLocked ? (
-                      <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                        Mark Done on this step before submitting for the next approval.
-                      </p>
-                    ) : null}
-                    <CompanyUserSearchField
-                      label={`${PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep!]} — company user`}
-                      users={approvalAgents}
-                      value={requestApproverId || currentStepAssigneeId || ""}
-                      onChange={setRequestApproverId}
-                      disabled={busy || submitNextApprovalLocked}
-                      excludedIds={paymentPriorApproverIds}
-                      placeholder="Search company users…"
-                      emptyMessage="No eligible users (or all matches already approved this request)."
-                    />
-                    <button
-                      type="button"
-                      disabled={
-                        busy ||
-                        submitNextApprovalLocked ||
-                        !(requestApproverId || currentStepAssigneeId)
-                      }
-                      onClick={() =>
-                        patch({
-                          action: "request_payment_approval",
-                          approverAgentId: requestApproverId || currentStepAssigneeId,
-                        })
-                      }
-                      className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                    >
-                      Submit for Next Approval
-                    </button>
-                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -2567,11 +2623,9 @@ export function AgentWorkspace({
               <div className="space-y-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
                 <div>
                   <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    {showPaymentSubmitForNextApproval
-                      ? "Submit for Next Approval"
-                      : currentPaymentStep
-                        ? PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]
-                        : "Payment approval"}
+                    {currentPaymentStep
+                      ? PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]
+                      : "Payment approval"}
                   </p>
                   {paymentProceduralLabel ? (
                     <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
@@ -2585,55 +2639,21 @@ export function AgentWorkspace({
                 </div>
                 {currentPaymentStep ? (
                   <>
-                    {showPaymentSubmitForNextApproval ? (
-                      <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                        Each person may only approve once on this request. Prior role holders are hidden.
-                      </p>
-                    ) : (
-                      <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
-                        Mark Done when finished. The request moves to the next procedural assignee
-                        automatically.
-                      </p>
-                    )}
+                    <p className="text-[11px] font-normal text-zinc-500 dark:text-zinc-400">
+                      Mark Done when finished. The request moves to the next procedural assignee
+                      automatically.
+                    </p>
                     {canCompleteCurrentPaymentStep &&
                     paymentStepShowsDoneButton(currentPaymentStep) ? (
-                      <div className="space-y-2">
-                        {canMarkCurrentPaymentApproved ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => patch({ action: "approve_payment_step" })}
-                            className="min-h-10 w-full rounded-lg border border-sky-500/50 bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-60"
-                          >
-                            Approved
-                          </button>
-                        ) : null}
-                        {currentStepNeedsApprovedAck && !currentStepApprovedAck ? (
-                          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                            Click Approved first. Done hands the request to the next role.
-                          </p>
-                        ) : currentStepNeedsApprovedAck && currentStepApprovedAck ? (
-                          <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-                            Approved recorded. Click Done to hand off to the next role.
-                          </p>
-                        ) : null}
-                        <button
-                          type="button"
-                          disabled={busy || !canMarkCurrentPaymentDone}
-                          onClick={() => patch({ action: "complete_payment_approval_step" })}
-                          className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                        >
-                          Done
-                        </button>
-                      </div>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Use the buttons under your name in the approvals above to complete this step.
+                      </p>
                     ) : sessionAlreadyApprovedThisRequest &&
                       isTicketAssignee &&
                       !currentPaymentStepAllowsRepeatSigner ? (
                       <p className="text-[11px] text-amber-700 dark:text-amber-300">
                         You already approved an earlier step on this request, so Done is hidden.
-                        {showPaymentSubmitForNextApproval
-                          ? " Use Submit for Next Approval to send it to a different person."
-                          : " Wait for the assigned next-role approver to continue."}
+                        Wait for the assigned next-role approver to continue.
                       </p>
                     ) : ticket.assignedAgentId ? (
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -2643,64 +2663,12 @@ export function AgentWorkspace({
                       </p>
                     ) : (
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {showPaymentSubmitForNextApproval
-                          ? "Choose a company user and submit for approval, or wait for Admin to assign this request on the Assignment Board."
-                          : "Wait for Admin to assign this request on the Assignment Board."}
+                        Wait for Admin to assign this request on the Assignment Board.
                       </p>
                     )}
-                    {showPaymentSubmitForNextApproval ? (
-                      <>
-                        {submitNextApprovalLocked ? (
-                          <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                            Mark Done on this step before submitting for the next approval.
-                          </p>
-                        ) : null}
-                        <CompanyUserSearchField
-                          label={`${PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep]} — company user`}
-                          users={approvalAgents}
-                          value={requestApproverId || currentStepAssigneeId || ""}
-                          onChange={setRequestApproverId}
-                          disabled={busy || submitNextApprovalLocked}
-                          excludedIds={paymentPriorApproverIds}
-                          placeholder="Search company users…"
-                          emptyMessage="No eligible users (or all matches already approved this request)."
-                        />
-                        <button
-                          type="button"
-                          disabled={
-                            busy ||
-                            submitNextApprovalLocked ||
-                            !(requestApproverId || currentStepAssigneeId)
-                          }
-                          onClick={() =>
-                            patch({
-                              action: "request_payment_approval",
-                              approverAgentId: requestApproverId || currentStepAssigneeId,
-                            })
-                          }
-                          className="min-h-10 w-full rounded-lg border border-orange-500/40 bg-orange-600 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-500 disabled:opacity-60"
-                        >
-                          Submit for Next Approval
-                        </button>
-                      </>
-                    ) : null}
                   </>
                 ) : null}
               </div>
-            ) : null}
-
-            {isPaymentRequest &&
-            canCompleteCurrentPaymentStep &&
-            !canSetApprovalAssignees &&
-            !canRequestPaymentApproval ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => patch({ action: "complete_payment_approval_step" })}
-                className="min-h-10 rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-              >
-                Complete {currentPaymentStep ? PAYMENT_APPROVAL_STEP_LABELS[currentPaymentStep] : "approval"}
-              </button>
             ) : null}
 
             {isPaymentRequest &&
@@ -2709,53 +2677,24 @@ export function AgentWorkspace({
             !canAssignDeferredAccountingFinance &&
             paymentProceduralLabel ? (
               <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] font-medium text-amber-800 dark:text-amber-200">
-                {paymentProceduralLabel} — not green-lit yet. Accounting and Finance must click Approved,
-                then Done to hand off (Finance Done green-lights the request).
+                {paymentProceduralLabel} — not green-lit yet. Bookkeeper and Accounting must click
+                Approved, then Done to hand off (Accounting Done green-lights the request).
+                {paymentApprovalMeta?.skipApprovedBy
+                  ? paymentApprovalMeta?.skipNotedBy
+                    ? " The request starts at Accounting."
+                    : " Noted By uses Approve beside their name."
+                  : paymentApprovalMeta?.skipNotedBy
+                    ? " Approved By uses Approve beside their name."
+                    : " Noted By and Approved By use Approve beside their name."}
               </p>
             ) : null}
 
             {isAcaRequest && canCompleteCurrentAcaStep ? (
-              <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/50">
-                <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  ACA approval · {currentAcaStep?.label}
-                </p>
-                {acaProceduralLabelText ? (
-                  <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
-                    {acaProceduralLabelText}
-                  </p>
-                ) : null}
-                {acaRequiresFeedback ? (
-                  <label className="block text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                    Feedback <span className="font-normal text-rose-600 dark:text-rose-400">(required)</span>
-                    <textarea
-                      value={acaDoneComment}
-                      onChange={(e) => setAcaDoneComment(e.target.value)}
-                      rows={3}
-                      className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-orange-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                      placeholder="Enter your feedback before approving"
-                    />
-                  </label>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={busy || (acaRequiresFeedback && !acaDoneComment.trim())}
-                  onClick={() => {
-                    if (acaRequiresFeedback && !acaDoneComment.trim()) {
-                      setError(
-                        "Feedback is required before approving this ACA seat (AP 4 / 4 ExeComs / All ExeCom).",
-                      );
-                      return;
-                    }
-                    patch({
-                      action: "complete_aca_approval_step",
-                      comment: acaDoneComment.trim() || undefined,
-                    });
-                  }}
-                  className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                >
-                  Done
-                </button>
-              </div>
+              <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-300">
+                {acaRequiresFeedback
+                  ? "This seat needs your feedback before approval — use the feedback box and Done button under your name in the approvals above."
+                  : "Use the Done button under your name in the approvals above to complete this seat."}
+              </p>
             ) : null}
 
             {isAcaRequest && !canCompleteCurrentAcaStep && acaProceduralLabelText ? (
@@ -2842,19 +2781,9 @@ export function AgentWorkspace({
                       : "Assign this request on the Assignment Board so the assignee becomes Canvassed By and can fill pricing."}
                   </p>
                 ) : currentRequisitionStep && canCompleteCurrentRequisitionStep ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      patch({
-                        action: "complete_item_requisition_approval_step",
-                        items: pricingDraft,
-                      })
-                    }
-                    className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                  >
-                    Complete {ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]}
-                  </button>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Use the Complete button under your name in the approvals above to finish this step.
+                  </p>
                 ) : currentRequisitionStep ? (
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                     Only the Assignment Board assignee can complete Approved By. After completion, use
@@ -2943,19 +2872,9 @@ export function AgentWorkspace({
                       Assign Approved By
                     </button>
                     {canCompleteCurrentRequisitionStep ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          patch({
-                            action: "complete_item_requisition_approval_step",
-                            items: pricingDraft,
-                          })
-                        }
-                        className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                      >
-                        Complete {ITEM_REQUISITION_APPROVAL_STEP_LABELS.APPROVED_BY}
-                      </button>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Use the Complete button under your name in the approvals above to finish this step.
+                      </p>
                     ) : ticket.assignedAgentId ? (
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                         Waiting on the assigned personnel to complete Approved By.
@@ -2964,28 +2883,6 @@ export function AgentWorkspace({
                   </>
                 ) : null}
                 </div>
-            ) : null}
-
-            {isRequisitionRequest &&
-            canCompleteCurrentRequisitionStep &&
-            !canSetApprovalAssignees &&
-            !canRequestRequisitionApproval ? (
-                <button
-                  type="button"
-                disabled={busy}
-                onClick={() =>
-                  patch({
-                    action: "complete_item_requisition_approval_step",
-                    items: pricingDraft,
-                  })
-                }
-                className="min-h-10 rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-              >
-                Complete{" "}
-                {currentRequisitionStep
-                  ? ITEM_REQUISITION_APPROVAL_STEP_LABELS[currentRequisitionStep]
-                  : "approval"}
-              </button>
             ) : null}
 
             {isRequisitionRequest &&
@@ -3019,14 +2916,9 @@ export function AgentWorkspace({
                   </p>
                 </div>
                 {currentFundTransferStep && canCompleteCurrentFundTransferStep ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => patch({ action: "complete_fund_transfer_approval_step" })}
-                    className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                  >
-                    Complete {FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]}
-                  </button>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Use the Complete button under your name in the approvals above to finish this step.
+                  </p>
                 ) : currentFundTransferStep ? (
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                     Only the Assignment Board assignee can complete this step. After completion, use
@@ -3112,14 +3004,9 @@ export function AgentWorkspace({
                       Submit for Next Approval
                     </button>
                     {canCompleteCurrentFundTransferStep ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => patch({ action: "complete_fund_transfer_approval_step" })}
-                        className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                      >
-                        Complete {FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]}
-                      </button>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Use the Complete button under your name in the approvals above to finish this step.
+                      </p>
                     ) : ticket.assignedAgentId ? (
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                         Waiting on the assigned personnel to complete{" "}
@@ -3142,17 +3029,9 @@ export function AgentWorkspace({
             canCompleteCurrentFundTransferStep &&
             !canSetApprovalAssignees &&
             !canRequestFundTransferApproval ? (
-            <button
-              type="button"
-                disabled={busy}
-                onClick={() => patch({ action: "complete_fund_transfer_approval_step" })}
-                className="min-h-10 rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-            >
-                Complete{" "}
-                {currentFundTransferStep
-                  ? FUND_TRANSFER_APPROVAL_STEP_LABELS[currentFundTransferStep]
-                  : "approval"}
-            </button>
+              <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-300">
+                Use the Complete button under your name in the approvals above to finish this step.
+              </p>
             ) : null}
 
             {isFundTransferRequest &&
@@ -3242,14 +3121,9 @@ export function AgentWorkspace({
                   </div>
                 ) : null}
                 {currentJobOrderStep && canCompleteCurrentJobOrderStep ? (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => patch({ action: "complete_job_order_approval_step" })}
-                    className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                  >
-                    Done
-                  </button>
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Use the Done button under your name in the approvals above to finish this step.
+                  </p>
                 ) : currentJobOrderStep ? (
                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                     Only the Assignment Board assignee can mark Done for{" "}
@@ -3337,14 +3211,9 @@ export function AgentWorkspace({
                       Submit for Next Approval
                     </button>
                     {canCompleteCurrentJobOrderStep ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => patch({ action: "complete_job_order_approval_step" })}
-                        className="min-h-10 w-full rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-                      >
-                        Done
-                      </button>
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Use the Done button under your name in the approvals above to finish this step.
+                      </p>
                     ) : ticket.assignedAgentId ? (
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                         Waiting on the assigned personnel to mark Done for{" "}
@@ -3365,14 +3234,9 @@ export function AgentWorkspace({
             canCompleteCurrentJobOrderStep &&
             !canSetApprovalAssignees &&
             !canRequestJobOrderApproval ? (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => patch({ action: "complete_job_order_approval_step" })}
-                className="min-h-10 rounded-lg border border-emerald-500/50 bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
-              >
-                Done
-              </button>
+              <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-300">
+                Use the Done button under your name in the approvals above to finish this step.
+              </p>
             ) : null}
 
             {isJobOrderApprovalRequest &&
@@ -3383,6 +3247,17 @@ export function AgentWorkspace({
                 {jobOrderProceduralLabel} — not green-lit yet. Assign on the Assignment Board. After
                 each approval, the assignee can submit for the next role from Ticket Controls.
               </p>
+            ) : null}
+
+            {isJobOrderApprovalRequest &&
+            jobOrderApprovalMeta?.proceduralStep === "DONE" &&
+            (canCreateJobOrderProject || canRequestJobOrderProject) ? (
+              <JobOrderProjectLinkPanel
+                ticketId={ticket.id}
+                canCreateProject={canCreateJobOrderProject}
+                canRequestProject={canRequestJobOrderProject}
+                sessionAgentId={sessionAgentId}
+              />
             ) : null}
 
           </div>

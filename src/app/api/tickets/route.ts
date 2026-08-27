@@ -12,6 +12,11 @@ import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
 import { logActivity } from "@/lib/ticket-actions";
 import { prisma } from "@/lib/prisma";
 import { resolveAgentDesignatedCompanyId, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import {
+  orgChartSectionExists,
+  resolveAgentIdsForOrgChartSection,
+  resolveCompanyTeamIdForOrgChartSection,
+} from "@/lib/org-chart-section-roster";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { addHours, getSlaPolicy } from "@/lib/sla";
@@ -57,7 +62,6 @@ import {
 } from "@/lib/payment-approval-db";
 import {
   applyItemRequisitionApprovalAssignees,
-  currentItemRequisitionStepBoardAssigneeId,
   itemRequisitionProceduralStatusLabel,
   type ItemRequisitionApprovalAssignees,
 } from "@/lib/item-requisition-approval";
@@ -106,6 +110,13 @@ import {
 } from "@/lib/authority-to-conduct-activity";
 import { acaProceduralStatusLabel, defaultAcaApprovalMeta } from "@/lib/aca-approval";
 import { saveAcaApprovalMeta } from "@/lib/aca-approval-db";
+import {
+  resolveAcaAssigneesFromPositions,
+  resolveAgentIdForPositionCode,
+  resolveFtrAssigneesFromPositions,
+  resolveJoAssigneesFromPositions,
+  resolveMergedSourceUserIdForSessionEmail,
+} from "@/lib/approval-position-resolver";
 
 function pickAgentId(v: unknown): string | null {
   if (v === null || v === "") return null;
@@ -161,7 +172,22 @@ export async function GET(req: Request) {
     session.user.role === "Personnel" ? await personnelRequestBoardWhere(operator?.id) : null;
 
   let adminCompanyWhere: Prisma.TicketWhereInput | null = null;
-  if (session.user.role === "Admin") {
+  let sectionBoardWhere: Prisma.TicketWhereInput | null = null;
+  if (
+    session.user.role === "Admin" ||
+    session.user.role === "Personnel"
+  ) {
+    const { roleUsesOrgChartSectionBoardScope, sectionScopedTicketWhere } = await import(
+      "@/lib/org-chart-section-scope"
+    );
+    if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
+      sectionBoardWhere = await sectionScopedTicketWhere({
+        email: session.user.email,
+        agentId: operator?.id,
+      });
+    }
+  }
+  if (session.user.role === "Admin" && !sectionBoardWhere) {
     const scoped = await resolveStaffCompanyTeamId(session.user.email);
     const personalRfpScope = await personnelRequestBoardWhere(operator?.id);
     if (!scoped) {
@@ -179,8 +205,9 @@ export async function GET(req: Request) {
     where: {
       ...(status ? { status: status as never } : {}),
       ...(isElevatedUserRole(session.user.role) && teamIdParam ? { teamId: teamIdParam } : {}),
-      ...(adminCompanyWhere ?? {}),
-      ...(personnelWhere ?? {}),
+      ...(sectionBoardWhere ?? {}),
+      ...(sectionBoardWhere ? {} : adminCompanyWhere ?? {}),
+      ...(sectionBoardWhere ? {} : personnelWhere ?? {}),
       ...(session.user.role === "Customer"
         ? customerTicketWhereBySessionEmail(session.user.email ?? "")
         : {}),
@@ -249,8 +276,11 @@ export async function POST(req: Request) {
     let priority: string | undefined;
     let contactPhone: string | undefined;
     let companyTeamIdRaw: string | undefined;
+    let orgChartSectionIdRaw: string | undefined;
+    let requestorOrgChartSectionIdRaw: string | undefined;
     let customerOrgRoleRaw: string | undefined;
     let branchRaw: string | undefined;
+    let requestingCompanyTeamIdRaw: string | undefined;
     let departmentRaw: string | undefined;
     let assignedCompanyTextRaw: string | undefined;
     let contactNameRaw: string | undefined;
@@ -304,6 +334,10 @@ export async function POST(req: Request) {
       issue = String(fd.get("issue") || "");
       const ct = fd.get("companyTeamId");
       companyTeamIdRaw = ct != null ? String(ct) : undefined;
+      const ocs = fd.get("orgChartSectionId");
+      orgChartSectionIdRaw = ocs != null ? String(ocs) : undefined;
+      const rocs = fd.get("requestorOrgChartSectionId");
+      requestorOrgChartSectionIdRaw = rocs != null ? String(rocs) : undefined;
       const pct = fd.get("portalCompanyTeamId");
       if (!companyTeamIdRaw && pct != null) {
         companyTeamIdRaw = String(pct);
@@ -312,6 +346,8 @@ export async function POST(req: Request) {
       customerOrgRoleRaw = cor != null ? String(cor) : undefined;
       const br = fd.get("branch");
       branchRaw = br != null ? String(br) : undefined;
+      const rc = fd.get("requestingCompanyTeamId");
+      requestingCompanyTeamIdRaw = rc != null ? String(rc) : undefined;
       const dep = fd.get("department");
       departmentRaw = dep != null ? String(dep) : undefined;
       const ac = fd.get("assignedCompanyText");
@@ -443,9 +479,17 @@ export async function POST(req: Request) {
           : typeof body.portalCompanyTeamId === "string"
             ? body.portalCompanyTeamId
             : undefined;
+      orgChartSectionIdRaw =
+        typeof body.orgChartSectionId === "string" ? body.orgChartSectionId : undefined;
+      requestorOrgChartSectionIdRaw =
+        typeof body.requestorOrgChartSectionId === "string"
+          ? body.requestorOrgChartSectionId
+          : undefined;
       customerOrgRoleRaw =
         typeof body.customerOrgRole === "string" ? body.customerOrgRole : undefined;
       branchRaw = typeof body.branch === "string" ? body.branch : undefined;
+      requestingCompanyTeamIdRaw =
+        typeof body.requestingCompanyTeamId === "string" ? body.requestingCompanyTeamId : undefined;
       departmentRaw = typeof body.department === "string" ? body.department : undefined;
       assignedCompanyTextRaw =
         typeof body.assignedCompanyText === "string" ? body.assignedCompanyText : undefined;
@@ -534,7 +578,8 @@ export async function POST(req: Request) {
       acaApprovingAgentIdsRaw = body.acaApprovingAgentIds;
     }
 
-    const intakeApprovalAssignees = parseApprovalAssigneesPayload(approvalAssigneesRaw);
+    const parsedIntakeApprovalAssignees = parseApprovalAssigneesPayload(approvalAssigneesRaw);
+    let intakeApprovalAssignees: Record<string, string> | null = parsedIntakeApprovalAssignees;
     const canSetIntakeApprovalAssignees =
       isElevatedUserRole(session.user.role) ||
       session.user.role === "Admin" ||
@@ -601,10 +646,123 @@ export async function POST(req: Request) {
     if (branch.length > 120) {
       return NextResponse.json({ error: "Branch must be at most 120 characters." }, { status: 400 });
     }
+    const requestingCompanyTeamId = (requestingCompanyTeamIdRaw ?? "").trim();
+    let requestingCompanyName: string | null = null;
+    if (requestingCompanyTeamId) {
+      const requestingCompany = await prisma.team.findUnique({
+        where: { id: requestingCompanyTeamId },
+        select: { id: true, name: true },
+      });
+      if (!requestingCompany) {
+        return NextResponse.json({ error: "Invalid requesting company." }, { status: 400 });
+      }
+      requestingCompanyName = requestingCompany.name;
+    }
     const requestType = parseRequestTypeId(requestTypeRaw);
     const skipPaymentNotedBy = isFormFlag(skipPaymentNotedByRaw);
     const skipApprovedBy =
       isFormFlag(skipApprovedByRaw) || isFormFlag(skipPaymentApprovedByRaw);
+
+    const requestorMergedSourceUserId = await resolveMergedSourceUserIdForSessionEmail(accountEmail);
+    const requestorCompanyTeamId = await resolveStaffCompanyTeamId(session.user.email);
+    const sendToOrgChartSectionId = (orgChartSectionIdRaw ?? "").trim();
+    const requestorOrgChartSectionId = (requestorOrgChartSectionIdRaw ?? "").trim();
+    let intakeCompanyTeamId = (companyTeamIdRaw ?? "").trim() || requestorCompanyTeamId;
+    // Staff intake routes the company queue from the send-to org-chart section when set.
+    if (sendToOrgChartSectionId) {
+      const sectionCompanyId = await resolveCompanyTeamIdForOrgChartSection(sendToOrgChartSectionId);
+      if (sectionCompanyId) intakeCompanyTeamId = sectionCompanyId;
+    }
+
+    if (canSetIntakeApprovalAssignees && requestType === "REQUEST_FOR_PAYMENT") {
+      const assignees = { ...(intakeApprovalAssignees ?? {}) };
+      if (!skipPaymentNotedBy && !pickAgentId(assignees.notedByAgentId)) {
+        const notedByAgentId = await resolveAgentIdForPositionCode({
+          code: "RFP_NOTED_BY",
+          companyTeamId: requestorCompanyTeamId,
+          requestorMergedSourceUserId,
+        });
+        if (notedByAgentId) assignees.notedByAgentId = notedByAgentId;
+      }
+      if (!skipApprovedBy && !pickAgentId(assignees.approvedByAgentId)) {
+        const approvedByAgentId = await resolveAgentIdForPositionCode({
+          code: "RFP_APPROVED_BY",
+          companyTeamId: intakeCompanyTeamId,
+          requestorMergedSourceUserId,
+        });
+        if (approvedByAgentId) assignees.approvedByAgentId = approvedByAgentId;
+      }
+      const deferBookkeeperAtIntake = isFormFlag(deferPaymentModeToAccountingRaw);
+      if (
+        !deferBookkeeperAtIntake &&
+        !pickAgentId(assignees.accountingAgentId)
+      ) {
+        const accountingAgentId = await resolveAgentIdForPositionCode({
+          code: "RFP_BOOKKEEPER",
+          companyTeamId: intakeCompanyTeamId,
+          requestorMergedSourceUserId,
+        });
+        if (accountingAgentId) assignees.accountingAgentId = accountingAgentId;
+      }
+      if (Object.keys(assignees).length > 0) {
+        intakeApprovalAssignees = assignees;
+      }
+    }
+
+    if (canSetIntakeApprovalAssignees && requestType === "ITEM_REQUISITION_SLIP") {
+      // Canvassed By comes from Assignment Board assignee later — do not prefill from positions.
+      // Approved By is resolved from the requestor's company (RS_APPROVED_BY).
+      const assignees = { ...(intakeApprovalAssignees ?? {}) };
+      delete assignees.canvassedByAgentId;
+      if (!pickAgentId(assignees.approvedByAgentId)) {
+        const approvedByAgentId = await resolveAgentIdForPositionCode({
+          code: "RS_APPROVED_BY",
+          companyTeamId: requestorCompanyTeamId,
+          requestorMergedSourceUserId,
+        });
+        if (approvedByAgentId) assignees.approvedByAgentId = approvedByAgentId;
+      }
+      if (Object.keys(assignees).length > 0) {
+        intakeApprovalAssignees = assignees;
+      }
+    }
+
+    if (canSetIntakeApprovalAssignees && requestType === "FUND_TRANSFER_REQUEST") {
+      const assignees = { ...(intakeApprovalAssignees ?? {}) };
+      const resolved = await resolveFtrAssigneesFromPositions({
+        companyTeamId: intakeCompanyTeamId,
+        requestorMergedSourceUserId,
+      });
+      if (!pickAgentId(assignees.recommendingApprovalAgentId) && resolved.RECOMMENDING_APPROVAL) {
+        assignees.recommendingApprovalAgentId = resolved.RECOMMENDING_APPROVAL;
+      }
+      if (!pickAgentId(assignees.approvedByAgentId) && resolved.APPROVED_BY) {
+        assignees.approvedByAgentId = resolved.APPROVED_BY;
+      }
+      if (Object.keys(assignees).length > 0) {
+        intakeApprovalAssignees = assignees;
+      }
+    }
+
+    if (canSetIntakeApprovalAssignees && requestType === "JOB_ORDER") {
+      const assignees = { ...(intakeApprovalAssignees ?? {}) };
+      const resolved = await resolveJoAssigneesFromPositions({
+        companyTeamId: intakeCompanyTeamId,
+        requestorMergedSourceUserId,
+      });
+      if (!pickAgentId(assignees.notedByAgentId) && resolved.NOTED_BY) {
+        assignees.notedByAgentId = resolved.NOTED_BY;
+      }
+      if (!pickAgentId(assignees.approvedByAgentId) && resolved.APPROVED_BY) {
+        assignees.approvedByAgentId = resolved.APPROVED_BY;
+      }
+      if (!pickAgentId(assignees.approvedBy2AgentId) && resolved.APPROVED_BY_2) {
+        assignees.approvedBy2AgentId = resolved.APPROVED_BY_2;
+      }
+      if (Object.keys(assignees).length > 0) {
+        intakeApprovalAssignees = assignees;
+      }
+    }
 
     if (
       canSetIntakeApprovalAssignees &&
@@ -616,6 +774,9 @@ export async function POST(req: Request) {
         REQUEST_FOR_PAYMENT: [
           ...(skipPaymentNotedBy ? [] : [{ key: "notedByAgentId", label: "Noted By" }]),
           ...(skipApprovedBy ? [] : [{ key: "approvedByAgentId", label: "Approved By" }]),
+          ...(isFormFlag(deferPaymentModeToAccountingRaw)
+            ? []
+            : [{ key: "accountingAgentId", label: "Prepared by Bookkeeper" }]),
         ],
         FUND_TRANSFER_REQUEST: [
           { key: "recommendingApprovalAgentId", label: "Recommending Approval" },
@@ -664,7 +825,7 @@ export async function POST(req: Request) {
         : (departmentRaw ?? "").trim();
     const department = departmentFromRequest;
     if (department.length > 200) {
-      return NextResponse.json({ error: "Department must be at most 200 characters." }, { status: 400 });
+      return NextResponse.json({ error: "Requesting department must be at most 200 characters." }, { status: 400 });
     }
     const payee = (payeeRaw ?? "").trim();
     const inPaymentOf = (inPaymentOfRaw ?? "").trim();
@@ -688,7 +849,7 @@ export async function POST(req: Request) {
           return NextResponse.json(
             {
               error:
-                "Mode of payment is required, or enable Let Accounting and Finance Handle it.",
+                "Mode of payment is required, or enable Let Bookkeeper and Accounting handle it.",
             },
             { status: 400 },
           );
@@ -793,9 +954,9 @@ export async function POST(req: Request) {
       const submittedByName =
         (acaSubmittedByNameRaw ?? "").trim() || (session.user.name ?? "").trim() || "Requester";
       const relatedTicketIds = (acaRelatedTicketIdsRaw ?? "").trim();
-      const recommendedByAgentId = (acaRecommendedByAgentIdRaw ?? "").trim();
-      const financeManagerAgentId = (acaFinanceManagerAgentIdRaw ?? "").trim();
-      const approvingAgentIds = Array.isArray(acaApprovingAgentIdsRaw)
+      let recommendedByAgentId = (acaRecommendedByAgentIdRaw ?? "").trim();
+      let financeManagerAgentId = (acaFinanceManagerAgentIdRaw ?? "").trim();
+      let approvingAgentIds = Array.isArray(acaApprovingAgentIdsRaw)
         ? acaApprovingAgentIdsRaw
             .map((v) => (typeof v === "string" ? v.trim() : ""))
             .filter(Boolean)
@@ -813,7 +974,6 @@ export async function POST(req: Request) {
           : [];
 
       if (
-        !departmentStore ||
         !acaCategory ||
         !acaNature ||
         !estimatedCostNormalized ||
@@ -826,7 +986,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             error:
-              "Department/Store, Category, Nature of Request, Estimated Cost, Budget Amount, Description, Objective, Date Submitted, and Implementation Date are required for ACA.",
+              "Category, Nature of Request, Estimated Cost, Budget Amount, Description, Objective, Date Submitted, and Implementation Date are required for ACA.",
           },
           { status: 400 },
         );
@@ -858,6 +1018,41 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
+
+      if (!resolution.recommendingLevel || !resolution.approvingPath) {
+        return NextResponse.json(
+          { error: "Authority Matrix path is incomplete for this request." },
+          { status: 400 },
+        );
+      }
+
+      const acaCompanyTeamId = intakeCompanyTeamId;
+      const positionAssignees = await resolveAcaAssigneesFromPositions({
+        recommendingLevel: resolution.recommendingLevel,
+        approvingPath: resolution.approvingPath,
+        approvingSeatCount: resolution.approvingSeatCount,
+        companyTeamId: acaCompanyTeamId,
+        requestorMergedSourceUserId,
+        useRequestorCompanyLock: acaRecommendedByUsesRequestorCompanyLock(resolution.recommendingLevel),
+      });
+      if (!recommendedByAgentId && positionAssignees.recommendedByAgentId) {
+        recommendedByAgentId = positionAssignees.recommendedByAgentId;
+      }
+      if (!financeManagerAgentId && positionAssignees.financeManagerAgentId) {
+        financeManagerAgentId = positionAssignees.financeManagerAgentId;
+      }
+      if (
+        approvingAgentIds.length === 0 &&
+        positionAssignees.approvingAgentIds.length === resolution.approvingSeatCount
+      ) {
+        approvingAgentIds = positionAssignees.approvingAgentIds;
+      } else if (approvingAgentIds.length < resolution.approvingSeatCount) {
+        for (const agentId of positionAssignees.approvingAgentIds) {
+          if (approvingAgentIds.length >= resolution.approvingSeatCount) break;
+          if (!approvingAgentIds.includes(agentId)) approvingAgentIds.push(agentId);
+        }
+      }
+
       if (!recommendedByAgentId || !financeManagerAgentId) {
         return NextResponse.json(
           { error: "Recommended By and Finance Manager assignees are required." },
@@ -1033,6 +1228,8 @@ export async function POST(req: Request) {
     let customerAssignedCompanyText: string | null = null;
     let customerAssignedOutsideQueue = false;
     let customerRequestOutsideQueue = false;
+    let intakeRequestorSectionId: string | null = null;
+    let intakeSendToSectionId: string | null = null;
 
     if (session.user.role === "Customer") {
       const assignedCompanyText = (assignedCompanyTextRaw ?? "").trim();
@@ -1111,7 +1308,43 @@ export async function POST(req: Request) {
         session.user.role === "Admin" ||
         isElevatedUserRole(session.user.role);
 
-      if (rawCompanyTeamId) {
+      if (isStaffIntake) {
+        if (!sendToOrgChartSectionId || !requestorOrgChartSectionId) {
+          return NextResponse.json(
+            { error: "Requesting department and Send request to (department) are required." },
+            { status: 400 },
+          );
+        }
+        if (
+          !(await orgChartSectionExists(sendToOrgChartSectionId)) ||
+          !(await orgChartSectionExists(requestorOrgChartSectionId))
+        ) {
+          return NextResponse.json({ error: "Invalid section selection." }, { status: 400 });
+        }
+        const sendToSection = await prisma.orgChartSection.findUnique({
+          where: { id: sendToOrgChartSectionId },
+          select: { name: true },
+        });
+        const teamIdFromSection = await resolveCompanyTeamIdForOrgChartSection(sendToOrgChartSectionId);
+        const resolvedTeamId = teamIdFromSection ?? requestorCompanyTeamId;
+        if (!resolvedTeamId) {
+          return NextResponse.json(
+            { error: "Could not resolve a company queue for the selected section." },
+            { status: 400 },
+          );
+        }
+        const selectedTeam = await resolveRosterTeamById(resolvedTeamId);
+        if (!selectedTeam) {
+          return NextResponse.json(
+            { error: "Invalid company queue for the selected section." },
+            { status: 400 },
+          );
+        }
+        team = selectedTeam;
+        customerRequestSbuText = sendToSection?.name ?? selectedTeam.name;
+        intakeRequestorSectionId = requestorOrgChartSectionId;
+        intakeSendToSectionId = sendToOrgChartSectionId;
+      } else if (rawCompanyTeamId) {
         const selectedTeam = await resolveRosterTeamById(rawCompanyTeamId);
         if (!selectedTeam) {
           return NextResponse.json({ error: "Invalid company/SBU selection." }, { status: 400 });
@@ -1151,6 +1384,9 @@ export async function POST(req: Request) {
               ...(skipApprovedBy
                 ? []
                 : [pickAgentId(intakeApprovalAssignees.approvedByAgentId)]),
+              ...(isFormFlag(deferPaymentModeToAccountingRaw)
+                ? []
+                : [pickAgentId(intakeApprovalAssignees.accountingAgentId)]),
             ].filter((v): v is string => Boolean(v))
           : candidateIds;
       const idsToValidate =
@@ -1168,38 +1404,46 @@ export async function POST(req: Request) {
         }
       }
       if (requestType === "REQUEST_FOR_PAYMENT") {
-        const requestorCompanyId = await resolveStaffCompanyTeamId(session.user.email);
-        async function assertCompany(
+        async function assertAgentInSection(
           agentId: string | null,
-          expectedCompanyId: string | null,
+          sectionId: string | null,
           roleLabel: string,
         ): Promise<NextResponse | null> {
           if (!agentId) return null;
-          if (!expectedCompanyId) {
+          if (!sectionId) {
             return NextResponse.json(
-              { error: `${roleLabel} cannot be set because the company scope is missing.` },
+              { error: `${roleLabel} cannot be set because the section scope is missing.` },
               { status: 400 },
             );
           }
-          const agentCompanyId = await resolveAgentDesignatedCompanyId(agentId);
-          if (agentCompanyId !== expectedCompanyId) {
+          const allowed = new Set(await resolveAgentIdsForOrgChartSection(sectionId));
+          if (!allowed.has(agentId)) {
             return NextResponse.json(
-              { error: `${roleLabel} must be someone from the correct company roster.` },
+              { error: `${roleLabel} must be someone from the selected section roster.` },
               { status: 400 },
             );
           }
           return null;
         }
-        // Approved By is cross-company (any roster). Noted By stays on requestor company;
-        // Accounting/Finance stay on Send-to company when set at intake.
+        // Approved By is cross-company (any roster). Noted By uses requestor section;
+        // Bookkeeper uses Send-to section when set at intake.
         for (const check of [
           ...(skipPaymentNotedBy
             ? []
             : [
-                await assertCompany(
+                await assertAgentInSection(
                   pickAgentId(intakeApprovalAssignees.notedByAgentId),
-                  requestorCompanyId,
+                  intakeRequestorSectionId ?? requestorOrgChartSectionId,
                   "Noted By",
+                ),
+              ]),
+          ...(isFormFlag(deferPaymentModeToAccountingRaw)
+            ? []
+            : [
+                await assertAgentInSection(
+                  pickAgentId(intakeApprovalAssignees.accountingAgentId),
+                  intakeSendToSectionId ?? sendToOrgChartSectionId,
+                  "Prepared by Bookkeeper",
                 ),
               ]),
         ]) {
@@ -1215,6 +1459,14 @@ export async function POST(req: Request) {
             ? []
             : ([
                 ["APPROVED_BY", pickAgentId(intakeApprovalAssignees.approvedByAgentId)],
+              ] as Array<[PaymentApprovalStep, string | null]>)),
+          ...(isFormFlag(deferPaymentModeToAccountingRaw)
+            ? []
+            : ([
+                [
+                  "APPROVED_BY_ACCOUNTING",
+                  pickAgentId(intakeApprovalAssignees.accountingAgentId),
+                ],
               ] as Array<[PaymentApprovalStep, string | null]>)),
         ];
         const seen = new Map<string, PaymentApprovalStep>();
@@ -1259,6 +1511,33 @@ export async function POST(req: Request) {
       SET request_type = ${requestType}
       WHERE id = ${ticket.id}
     `;
+    if (intakeRequestorSectionId || intakeSendToSectionId) {
+      await prisma.$executeRaw`
+        UPDATE tickets
+        SET
+          requestor_org_chart_section_id = ${intakeRequestorSectionId},
+          org_chart_section_id = ${intakeSendToSectionId}
+        WHERE id = ${ticket.id}
+      `;
+      if (intakeRequestorSectionId) {
+        const requestorSection = await prisma.orgChartSection.findUnique({
+          where: { id: intakeRequestorSectionId },
+          select: { name: true },
+        });
+        if (requestorSection?.name) {
+          await logActivity(ticket.id, "USER", "Requesting department", requestorSection.name);
+        }
+      }
+      if (intakeSendToSectionId) {
+        const sendToSection = await prisma.orgChartSection.findUnique({
+          where: { id: intakeSendToSectionId },
+          select: { name: true },
+        });
+        if (sendToSection?.name) {
+          await logActivity(ticket.id, "USER", "Send request to department", sendToSection.name);
+        }
+      }
+    }
 
     let uploadedMeta: IntakeScreenshotMetaItem[] | null = null;
     if (screenshotFiles && screenshotFiles.length > 0) {
@@ -1328,8 +1607,9 @@ export async function POST(req: Request) {
           approvedByAgentId: skipApprovedBy
             ? null
             : pickAgentId(intakeApprovalAssignees.approvedByAgentId),
-          // Bookkeeper / Accounting seats are never set at intake — assigned on the ticket later.
-          accountingAgentId: null,
+          accountingAgentId: deferPaymentModeToAccounting
+            ? null
+            : pickAgentId(intakeApprovalAssignees.accountingAgentId),
           financeAgentId: null,
         };
         meta = applyPaymentApprovalAssignees(meta, nextAssignees);
@@ -1372,7 +1652,7 @@ export async function POST(req: Request) {
       let meta = await initItemRequisitionApprovalMetaIfNeeded(ticket.id);
       if (intakeApprovalAssignees) {
         const nextAssignees: Partial<ItemRequisitionApprovalAssignees> = {
-          canvassedByAgentId: pickAgentId(intakeApprovalAssignees.canvassedByAgentId),
+          // Canvassed By is set when the request is assigned on the Assignment Board.
           approvedByAgentId: pickAgentId(intakeApprovalAssignees.approvedByAgentId),
         };
         const agentIds = Object.values(nextAssignees).filter((v): v is string => Boolean(v));
@@ -1390,22 +1670,13 @@ export async function POST(req: Request) {
         }
         meta = applyItemRequisitionApprovalAssignees(meta, nextAssignees);
         await saveItemRequisitionApprovalMeta(ticket.id, meta);
-        const boardAssigneeId = currentItemRequisitionStepBoardAssigneeId(meta);
-        if (boardAssigneeId) {
-          await prisma.ticket.update({
-            where: { id: ticket.id },
-            data: {
-              assignedAgent: { connect: { id: boardAssigneeId } },
-              status: "IN_PROGRESS",
-              resolvedAt: null,
-            },
-          });
-        }
         await logActivity(
           ticket.id,
           "AGENT",
           "Item requisition approval assignees set at intake",
-          "Procedural roles assigned when the request was created.",
+          meta.approvedByAgentId
+            ? "Approved By set from the requestor’s company. Canvassed By will follow Assignment Board assignee."
+            : "Canvassed By will follow Assignment Board assignee. Approved By will resolve from the requestor’s company when available.",
         );
       }
       await logActivity(
@@ -1413,7 +1684,7 @@ export async function POST(req: Request) {
         "SYSTEM",
         "Item requisition approval started",
         itemRequisitionProceduralStatusLabel(meta.proceduralStep) ??
-          "CANVASSED BY IS MISSING",
+          "Assign on the Assignment Board to set Canvassed By",
       );
     }
     if (requestType === "FUND_TRANSFER_REQUEST") {
@@ -1601,13 +1872,14 @@ export async function POST(req: Request) {
     if (branch) {
       await logActivity(ticket.id, "USER", "Branch", branch);
     }
+    if (requestingCompanyName) {
+      await logActivity(ticket.id, "USER", "Requesting company", requestingCompanyName);
+    }
     if (department) {
       await logActivity(
         ticket.id,
         "USER",
-        requestType === "FUND_TRANSFER_REQUEST"
-          ? "Requesting department/business unit"
-          : "Department",
+        "Requesting department",
         department,
       );
     }

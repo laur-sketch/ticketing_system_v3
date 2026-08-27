@@ -56,7 +56,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
           onClick={() => setChoice("verify")}
           className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
             choice === "verify"
-              ? "border-orange-400 bg-orange-500/20 text-orange-100"
+              ? "border-orange-400 bg-orange-500/20 text-orange-900 dark:text-orange-100"
               : "border-zinc-300 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-200"
           }`}
         >
@@ -67,7 +67,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
           onClick={() => setChoice("reject")}
           className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
             choice === "reject"
-              ? "border-rose-400 bg-rose-500/20 text-rose-100"
+              ? "border-rose-400 bg-rose-500/20 text-rose-900 dark:text-rose-100"
               : "border-zinc-300 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-[#181716] dark:text-zinc-200"
           }`}
         >
@@ -76,7 +76,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
       </div>
 
       {choice === "reject" ? (
-        <label className="mt-4 block text-sm text-zinc-300">
+        <label className="mt-4 block text-sm text-zinc-600 dark:text-zinc-300">
           Reason (required)
           <textarea
             value={reason}
@@ -97,7 +97,7 @@ export function TicketVerificationForm({ ticketId }: { ticketId: string }) {
         Submit verification
       </button>
 
-      {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
+      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
     </article>
   );
 }

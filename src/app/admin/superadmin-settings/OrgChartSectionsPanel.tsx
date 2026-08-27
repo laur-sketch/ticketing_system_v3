@@ -1,8 +1,9 @@
 "use client";
 
 import type { OrgChartNode } from "@prisma/client/primary";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import {
+  ArrowUpFromLine,
   ChevronDown,
   ChevronRight,
   Crown,
@@ -11,10 +12,17 @@ import {
   Pencil,
   Plus,
   Trash2,
+  Ungroup,
   Users,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
+import {
+  compareOutlineLabels,
+  orgChartOutlineById,
+  orgChartSectionOutlineById,
+} from "./org-chart-layers";
 
 export type OrgChartSectionRoleRow = {
   id: string;
@@ -52,6 +60,47 @@ type OrgChartNodeRow = OrgChartNode & {
 
 type CompanyOption = { id: string; name: string };
 
+/** Drop target id for promoting a section to top-level. */
+const MAIN_SECTION_DROP = "__main__";
+
+/** Drop target prefix: move a direct child out one level (to the parent's parent). */
+const MOVE_UP_DROP_PREFIX = "__up__:";
+
+/** Drop before a sibling department (reorder). */
+const BEFORE_DROP_PREFIX = "__before__:";
+
+/** Drop at end of a sibling list (reorder). */
+const END_DROP_PREFIX = "__end__:";
+
+function moveUpDropId(parentSectionId: string) {
+  return `${MOVE_UP_DROP_PREFIX}${parentSectionId}`;
+}
+
+function parseMoveUpDropId(column: string): string | null {
+  if (!column.startsWith(MOVE_UP_DROP_PREFIX)) return null;
+  return column.slice(MOVE_UP_DROP_PREFIX.length) || null;
+}
+
+function beforeDropId(sectionId: string) {
+  return `${BEFORE_DROP_PREFIX}${sectionId}`;
+}
+
+function parseBeforeDropId(column: string): string | null {
+  if (!column.startsWith(BEFORE_DROP_PREFIX)) return null;
+  return column.slice(BEFORE_DROP_PREFIX.length) || null;
+}
+
+function endDropId(parentId: string | null) {
+  return `${END_DROP_PREFIX}${parentId ?? "root"}`;
+}
+
+function parseEndDropId(column: string): { parentId: string | null } | null {
+  if (!column.startsWith(END_DROP_PREFIX)) return null;
+  const key = column.slice(END_DROP_PREFIX.length);
+  if (!key) return null;
+  return { parentId: key === "root" ? null : key };
+}
+
 export function OrgChartSectionsPanel({
   sections,
   nodes,
@@ -61,6 +110,8 @@ export function OrgChartSectionsPanel({
   onSectionsChange,
   onNodesChange,
   onSelectMember,
+  onSelectMembers,
+  onRemoveSelected,
   onMessage,
   onError,
   setBusy,
@@ -73,6 +124,10 @@ export function OrgChartSectionsPanel({
   onSectionsChange: (next: OrgChartSectionRow[]) => void;
   onNodesChange: (next: OrgChartNodeRow[]) => void;
   onSelectMember: (node: OrgChartNodeRow) => void;
+  /** Replace chart selection (Shift/Ctrl multi-select in lists). */
+  onSelectMembers?: (ids: string[], focusNode?: OrgChartNodeRow | null) => void;
+  /** Remove selected members from the org chart entirely. */
+  onRemoveSelected?: (ids: string[]) => void;
   onMessage: (msg: string | null) => void;
   onError: (msg: string | null) => void;
   setBusy: (busy: boolean) => void;
@@ -90,18 +145,37 @@ export function OrgChartSectionsPanel({
   const [dragSectionId, setDragSectionId] = useState<string | null>(null);
   const [dropSectionId, setDropSectionId] = useState<string | null>(null);
   const [dropSectionBeforeId, setDropSectionBeforeId] = useState<string | null>(null);
+  /** Anchor for Shift+click range select in Unassigned. */
+  const unassignedSelectAnchorRef = useRef<string | null>(null);
   const [newRoleBySection, setNewRoleBySection] = useState<Record<string, string>>({});
+  const draggingSectionRef = useRef<string | null>(null);
+  const sectionParentIdRef = useRef<Map<string, string | null>>(new Map());
+  const isSectionDescendantOfRef = useRef<(ancestorId: string, candidateId: string) => boolean>(
+    () => false,
+  );
+  const moveSectionRef = useRef<(sectionId: string, newParentId: string | null) => void>(() => {});
+  const reorderSiblingDepartmentsRef = useRef<
+    (parentId: string | null, draggedId: string, beforeId: string | null) => void
+  >(() => {});
+
+  const sectionById = useMemo(() => {
+    const map = new Map(sections.map((s) => [s.id, s]));
+    return map;
+  }, [sections]);
 
   const nodesBySection = useMemo(() => {
     const map = new Map<string | null, OrgChartNodeRow[]>();
     for (const n of nodes) {
-      if (n.sectionMemberships.length === 0) {
+      const memberships = (n.sectionMemberships ?? []).filter((m) =>
+        sectionById.has(m.sectionId),
+      );
+      if (memberships.length === 0) {
         const list = map.get(null) ?? [];
         list.push(n);
         map.set(null, list);
         continue;
       }
-      for (const membership of n.sectionMemberships) {
+      for (const membership of memberships) {
         const list = map.get(membership.sectionId) ?? [];
         list.push(n);
         map.set(membership.sectionId, list);
@@ -111,7 +185,7 @@ export function OrgChartSectionsPanel({
       list.sort((a, b) => a.personName.localeCompare(b.personName));
     }
     return map;
-  }, [nodes]);
+  }, [nodes, sectionById]);
 
   const { roots, childrenByParent } = useMemo(() => {
     const byParent = new Map<string, OrgChartSectionRow[]>();
@@ -134,12 +208,172 @@ export function OrgChartSectionsPanel({
     return { roots: top, childrenByParent: byParent };
   }, [sections]);
 
-  const sectionById = useMemo(() => {
-    const map = new Map(sections.map((s) => [s.id, s]));
-    return map;
-  }, [sections]);
+  sectionParentIdRef.current = new Map(sections.map((s) => [s.id, s.parentId]));
+
+  const basePersonOutlineById = useMemo(
+    () => orgChartOutlineById(nodes, sections),
+    [nodes, sections],
+  );
+  const sectionOutlineById = useMemo(
+    () => orgChartSectionOutlineById(sections, nodes, basePersonOutlineById),
+    [sections, nodes, basePersonOutlineById],
+  );
+
+  const sectionsForReportsToPicker = useMemo(
+    () =>
+      [...sections]
+        .filter((s) => s.id !== editId)
+        .sort((a, b) =>
+          compareOutlineLabels(
+            sectionOutlineById.get(a.id) ?? "",
+            sectionOutlineById.get(b.id) ?? "",
+          ),
+        ),
+    [sections, editId, sectionOutlineById],
+  );
+
+  const peopleForReportsToPicker = useMemo(
+    () =>
+      [...nodes].sort((a, b) =>
+        a.personName.localeCompare(b.personName, undefined, { sensitivity: "base" }),
+      ),
+    [nodes],
+  );
 
   const unassigned = nodesBySection.get(null) ?? [];
+  const unassignedSelectedIds = useMemo(
+    () => chartSelectedIds.filter((id) => unassigned.some((n) => n.id === id)),
+    [chartSelectedIds, unassigned],
+  );
+
+  function selectUnassignedMember(e: MouseEvent, node: OrgChartNodeRow) {
+    if (busy || !onSelectMembers) {
+      onSelectMember(node);
+      return;
+    }
+
+    const orderedIds = unassigned.map((n) => n.id);
+    const multiToggle = e.metaKey || e.ctrlKey;
+    const range = e.shiftKey;
+
+    if (range && unassignedSelectAnchorRef.current) {
+      const anchorIdx = orderedIds.indexOf(unassignedSelectAnchorRef.current);
+      const targetIdx = orderedIds.indexOf(node.id);
+      if (anchorIdx >= 0 && targetIdx >= 0) {
+        const [lo, hi] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+        const rangeIds = orderedIds.slice(lo, hi + 1);
+        onSelectMembers(rangeIds, node);
+        return;
+      }
+    }
+
+    if (multiToggle) {
+      const set = new Set(chartSelectedIds);
+      if (set.has(node.id)) set.delete(node.id);
+      else set.add(node.id);
+      const next = [...set];
+      unassignedSelectAnchorRef.current = node.id;
+      onSelectMembers(next, node);
+      return;
+    }
+
+    // Plain click — single select; Shift without an anchor also starts here.
+    unassignedSelectAnchorRef.current = node.id;
+    onSelectMembers([node.id], node);
+  }
+
+  const isSectionDescendantOf = useCallback(
+    (ancestorId: string, candidateId: string): boolean => {
+      const stack = [...(childrenByParent.get(ancestorId) ?? []).map((c) => c.id)];
+      while (stack.length > 0) {
+        const current = stack.pop()!;
+        if (current === candidateId) return true;
+        for (const child of childrenByParent.get(current) ?? []) {
+          stack.push(child.id);
+        }
+      }
+      return false;
+    },
+    [childrenByParent],
+  );
+  isSectionDescendantOfRef.current = isSectionDescendantOf;
+
+  const sectionDrag = usePointerColumnDrag<string>({
+    disabled: busy,
+    activationDistance: 6,
+    onDrop: (itemId, column) => {
+      if (column === MAIN_SECTION_DROP) {
+        moveSectionRef.current(itemId, null);
+        return;
+      }
+      const moveUpParentId = parseMoveUpDropId(column);
+      if (moveUpParentId) {
+        const grandparentId = sectionParentIdRef.current.get(moveUpParentId) ?? null;
+        moveSectionRef.current(itemId, grandparentId);
+        return;
+      }
+      const beforeId = parseBeforeDropId(column);
+      if (beforeId) {
+        const parentId = sectionParentIdRef.current.get(beforeId) ?? null;
+        reorderSiblingDepartmentsRef.current(parentId, itemId, beforeId);
+        return;
+      }
+      const endTarget = parseEndDropId(column);
+      if (endTarget) {
+        reorderSiblingDepartmentsRef.current(endTarget.parentId, itemId, null);
+        return;
+      }
+      // Same parent → rearrange before that sibling. Different parent → nest under it.
+      const dragParent = sectionParentIdRef.current.get(itemId) ?? null;
+      const targetParent = sectionParentIdRef.current.get(column) ?? null;
+      if (dragParent === targetParent) {
+        reorderSiblingDepartmentsRef.current(dragParent, itemId, column);
+        return;
+      }
+      moveSectionRef.current(itemId, column);
+    },
+    onDragEnd: () => {
+      draggingSectionRef.current = null;
+    },
+    isColumnDropDisabled: (column) => {
+      const dragging = draggingSectionRef.current;
+      if (!dragging) return false;
+      const currentParentId = sectionParentIdRef.current.get(dragging) ?? null;
+      if (column === MAIN_SECTION_DROP) return currentParentId == null;
+      const moveUpParentId = parseMoveUpDropId(column);
+      if (moveUpParentId) {
+        return currentParentId !== moveUpParentId;
+      }
+      const beforeId = parseBeforeDropId(column);
+      if (beforeId) {
+        if (beforeId === dragging) return true;
+        const targetParent = sectionParentIdRef.current.get(beforeId) ?? null;
+        return targetParent !== currentParentId;
+      }
+      const endTarget = parseEndDropId(column);
+      if (endTarget) {
+        return endTarget.parentId !== currentParentId;
+      }
+      if (column === dragging) return true;
+      // Dropping on the current parent is a no-op for nesting — use Move out / Move up instead.
+      if (column === currentParentId) return true;
+      return isSectionDescendantOfRef.current(dragging, column);
+    },
+  });
+
+  function getSectionGripProps(section: OrgChartSectionRow) {
+    const props = sectionDrag.getCardPointerProps(section.id, {
+      getLabel: () => `Move “${section.name}”`,
+    });
+    return {
+      ...props,
+      onPointerDown: (e: PointerEvent) => {
+        if (busy) return;
+        draggingSectionRef.current = section.id;
+        props.onPointerDown(e);
+      },
+    };
+  }
 
   function resetForm() {
     setCreating(false);
@@ -340,6 +574,7 @@ export function OrgChartSectionsPanel({
       await reloadSections();
       const section = sectionById.get(sectionId);
       if (headNodeId) {
+        await reloadNodes();
         const personName =
           body.headName ??
           nodesBySection.get(sectionId)?.find((n) => n.id === headNodeId)?.personName ??
@@ -354,6 +589,66 @@ export function OrgChartSectionsPanel({
       setBusy(false);
     }
   }
+
+  async function moveSection(sectionId: string, newParentId: string | null) {
+    const section = sectionById.get(sectionId);
+    if (!section) return;
+    if (section.parentId === newParentId) return;
+    if (newParentId === sectionId) {
+      onError("A section cannot be nested under itself.");
+      return;
+    }
+    if (newParentId && isSectionDescendantOf(sectionId, newParentId)) {
+      onError("A section cannot be nested under one of its own subsections.");
+      return;
+    }
+
+    setBusy(true);
+    onError(null);
+    onMessage(null);
+    try {
+      const res = await fetch("/api/admin/org-chart-sections", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sectionId, parentId: newParentId }),
+      });
+      const body = (await res.json().catch(() => ({}))) as OrgChartSectionRow & {
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(body.error ?? "Could not move section.");
+      }
+      await reloadSections();
+      if (newParentId) {
+        const parent = sectionById.get(newParentId);
+        onMessage(
+          `Moved “${section.name}” under “${parent?.name ?? body.name ?? "section"}”.`,
+        );
+        setCollapsed((prev) => ({ ...prev, [newParentId]: false }));
+      } else {
+        onMessage(`Made “${section.name}” a main section.`);
+      }
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not move section.");
+    } finally {
+      setBusy(false);
+      draggingSectionRef.current = null;
+    }
+  }
+
+  /** Leave the current parent: nest under grandparent, or become main if parent is a root. */
+  function moveSectionUpOneLevel(sectionId: string) {
+    const section = sectionById.get(sectionId);
+    if (!section?.parentId) return;
+    const grandparentId = sectionById.get(section.parentId)?.parentId ?? null;
+    void moveSection(sectionId, grandparentId);
+  }
+  moveSectionRef.current = (sectionId, newParentId) => {
+    void moveSection(sectionId, newParentId);
+  };
+  reorderSiblingDepartmentsRef.current = (parentId, draggedId, beforeId) => {
+    void reorderSiblingDepartments(parentId, draggedId, beforeId);
+  };
 
   async function createSectionRole(sectionId: string) {
     const label = (newRoleBySection[sectionId] ?? "").trim();
@@ -626,6 +921,7 @@ export function OrgChartSectionsPanel({
                   const next = e.target.value;
                   void setSectionHead(section.id, next || null);
                 }}
+                title="Section head is promoted to portal Admin. Custom section roles below stay as membership labels."
                 className="h-8 min-w-[12rem] flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-orange-500/60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               >
                 <option value="">— No head —</option>
@@ -716,7 +1012,10 @@ export function OrgChartSectionsPanel({
                 <li
                   key={n.id}
                   draggable={!busy}
-                  onClick={() => onSelectMember(n)}
+                  onClick={() => {
+                    if (onSelectMembers) onSelectMembers([n.id], n);
+                    else onSelectMember(n);
+                  }}
                   onDragStart={(e) => {
                     setDragNodeId(n.id);
                     e.dataTransfer.setData("text/org-node-id", n.id);
@@ -824,16 +1123,44 @@ export function OrgChartSectionsPanel({
     return total;
   }
 
+  function renderReorderBeforeDrop(section: OrgChartSectionRow, depth: number) {
+    const dragging = sectionDrag.draggingItemId;
+    if (!dragging || dragging === section.id) return null;
+    const dragParent = sectionParentIdRef.current.get(dragging) ?? null;
+    if (dragParent !== (section.parentId ?? null)) return null;
+    const colId = beforeDropId(section.id);
+    const isActive = sectionDrag.hoverColumn === colId;
+    return (
+      <div
+        key={`before-${section.id}`}
+        ref={sectionDrag.registerColumn(colId)}
+        className={`rounded-lg border border-dashed px-3 py-1.5 text-center text-[11px] font-semibold transition ${
+          isActive
+            ? "border-orange-400 bg-orange-50 text-orange-800 dark:border-orange-600 dark:bg-orange-950/40 dark:text-orange-200"
+            : "border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500"
+        }`}
+        style={depth > 0 ? { marginLeft: `${Math.min(depth, 6) * 16}px` } : undefined}
+      >
+        {isActive ? "Drop to place here" : "·"}
+      </div>
+    );
+  }
+
   function renderSiblingEndDrop(parentId: string | null, depth: number) {
-    if (!dragSectionId) return null;
-    const dragged = sectionById.get(dragSectionId);
-    if (!dragged) return null;
-    if ((dragged.parentId ?? null) !== (parentId ?? null)) return null;
-    const isActive = dropSectionBeforeId === `__end__:${parentId ?? "root"}`;
+    const dragging = sectionDrag.draggingItemId || dragSectionId;
+    if (!dragging) return null;
+    const dragParent = sectionParentIdRef.current.get(dragging) ?? null;
+    if (dragParent !== (parentId ?? null)) return null;
+    const colId = endDropId(parentId);
+    const isActive =
+      sectionDrag.hoverColumn === colId ||
+      dropSectionBeforeId === `__end__:${parentId ?? "root"}`;
     return (
       <div
         key={`end-drop-${parentId ?? "root"}`}
+        ref={sectionDrag.registerColumn(colId)}
         onDragOver={(e) => {
+          if (sectionDrag.draggingItemId) return;
           e.preventDefault();
           e.stopPropagation();
           e.dataTransfer.dropEffect = "move";
@@ -845,6 +1172,7 @@ export function OrgChartSectionsPanel({
           }
         }}
         onDrop={(e) => {
+          if (sectionDrag.draggingItemId) return;
           e.preventDefault();
           e.stopPropagation();
           const sectionDragId =
@@ -872,11 +1200,42 @@ export function OrgChartSectionsPanel({
     const subsections = childrenByParent.get(section.id) ?? [];
     const isCollapsed = collapsed[section.id] === true;
     const isMemberDropTarget = dropSectionId === section.id && !dragSectionId;
-    const isReorderTarget = dropSectionBeforeId === section.id && Boolean(dragSectionId);
+    const isReorderTarget =
+      dropSectionBeforeId === section.id ||
+      (Boolean(sectionDrag.draggingItemId) &&
+        sectionDrag.hoverColumn === section.id &&
+        (sectionParentIdRef.current.get(sectionDrag.draggingItemId!) ?? null) ===
+          (section.parentId ?? null) &&
+        sectionDrag.draggingItemId !== section.id) ||
+      sectionDrag.hoverColumn === beforeDropId(section.id);
+    const isNestDropTarget =
+      sectionDrag.hoverColumn === section.id &&
+      Boolean(sectionDrag.draggingItemId) &&
+      sectionDrag.draggingItemId !== section.id &&
+      (sectionParentIdRef.current.get(sectionDrag.draggingItemId!) ?? null) !==
+        (section.parentId ?? null);
+    const isDraggingThis =
+      sectionDrag.draggingItemId === section.id || dragSectionId === section.id;
     const totalInTree = countMembersInSubtree(section.id);
     const nestedCount = countDescendantSections(section.id);
     const isMain = depth === 0;
     const siblingParentId = section.parentId;
+    const gripProps = getSectionGripProps(section);
+    const draggingParentId = sectionDrag.draggingItemId
+      ? (sectionParentIdRef.current.get(sectionDrag.draggingItemId) ?? null)
+      : null;
+    const showMoveOutDrop = draggingParentId === section.id;
+    const isMoveOutDropTarget =
+      showMoveOutDrop && sectionDrag.hoverColumn === moveUpDropId(section.id);
+    const parentName = section.parentId
+      ? (sectionById.get(section.parentId)?.name ?? "parent")
+      : null;
+    const grandparentId = section.parentId
+      ? (sectionById.get(section.parentId)?.parentId ?? null)
+      : null;
+    const grandparentName = grandparentId
+      ? (sectionById.get(grandparentId)?.name ?? null)
+      : null;
 
     return (
       <div
@@ -884,27 +1243,32 @@ export function OrgChartSectionsPanel({
         className={`overflow-hidden rounded-xl border transition ${
           depth > 0 ? "border-l-2 border-l-orange-300/70 dark:border-l-orange-700/60" : ""
         } ${
-          dragSectionId === section.id
+          isDraggingThis
             ? "opacity-50"
-            : isMemberDropTarget
-              ? "border-orange-400 bg-orange-50/80 dark:border-orange-600 dark:bg-orange-950/30"
-              : "border-zinc-200 dark:border-zinc-800"
+            : isNestDropTarget
+              ? "border-sky-400 bg-sky-50/80 ring-2 ring-sky-300/60 dark:border-sky-500 dark:bg-sky-950/30 dark:ring-sky-700/50"
+              : isReorderTarget
+                ? "border-orange-400 bg-orange-50/50 ring-2 ring-orange-300/50 dark:border-orange-600 dark:bg-orange-950/20 dark:ring-orange-700/40"
+                : isMemberDropTarget
+                  ? "border-orange-400 bg-orange-50/80 dark:border-orange-600 dark:bg-orange-950/30"
+                  : "border-zinc-200 dark:border-zinc-800"
         }`}
         style={depth > 0 ? { marginLeft: `${Math.min(depth, 6) * 16}px` } : undefined}
       >
-        {isReorderTarget ? (
-          <div
-            className="h-1 rounded-t-xl bg-orange-500"
-            aria-hidden
-          />
+        {isReorderTarget && dropSectionBeforeId === section.id ? (
+          <div className="h-1 rounded-t-xl bg-orange-500" aria-hidden />
         ) : null}
         <div
+          ref={sectionDrag.registerColumn(section.id)}
           className={`flex flex-wrap items-center gap-2 px-3 py-2.5 ${
             isMain
               ? "bg-zinc-50/80 dark:bg-zinc-950/50"
               : "bg-white dark:bg-zinc-900/80"
+          } ${
+            isNestDropTarget ? "ring-2 ring-inset ring-sky-400/80 dark:ring-sky-500/60" : ""
           }`}
           onDragOver={(e) => {
+            if (sectionDrag.draggingItemId) return;
             if (dragSectionId) {
               const dragged = sectionById.get(dragSectionId);
               if (!dragged || dragged.id === section.id) return;
@@ -925,6 +1289,7 @@ export function OrgChartSectionsPanel({
             if (dropSectionBeforeId === section.id) setDropSectionBeforeId(null);
           }}
           onDrop={(e) => {
+            if (sectionDrag.draggingItemId) return;
             e.preventDefault();
             e.stopPropagation();
             const sectionDragId =
@@ -950,26 +1315,16 @@ export function OrgChartSectionsPanel({
             if (id) void assignNodes(section.id, [id]);
           }}
         >
-          <button
-            type="button"
-            draggable={!busy}
-            title="Drag to reorder among siblings"
-            aria-label={`Reorder ${section.name}`}
-            onDragStart={(e) => {
-              e.stopPropagation();
-              e.dataTransfer.setData("text/org-section-id", section.id);
-              e.dataTransfer.effectAllowed = "move";
-              setDragSectionId(section.id);
-              setDropSectionId(null);
-            }}
-            onDragEnd={() => {
-              setDragSectionId(null);
-              setDropSectionBeforeId(null);
-            }}
-            className="inline-flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-lg border border-zinc-300 text-zinc-500 hover:bg-zinc-100 active:cursor-grabbing dark:border-zinc-700 dark:hover:bg-zinc-800"
+          <span
+            {...gripProps}
+            title="Drag to reorder among siblings, or drop onto a different department to nest"
+            aria-label={`Drag ${section.name}`}
+            className={`inline-flex h-8 w-8 shrink-0 touch-none select-none items-center justify-center rounded-lg border border-zinc-300/80 text-zinc-500 hover:border-orange-400 hover:bg-orange-50 hover:text-orange-700 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-orange-600 dark:hover:bg-orange-950/40 dark:hover:text-orange-200 ${
+              busy ? "cursor-default opacity-40" : "cursor-grab active:cursor-grabbing"
+            }`}
           >
-            <GripVertical className="h-4 w-4" aria-hidden />
-          </button>
+            <GripVertical className="pointer-events-none h-4 w-4" aria-hidden />
+          </span>
           <button
             type="button"
             onClick={() => toggleCollapsed(section.id)}
@@ -1025,7 +1380,9 @@ export function OrgChartSectionsPanel({
               className="inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-900 dark:bg-sky-950/50 dark:text-sky-200"
               title={section.reportsToName}
             >
-              <span className="truncate">Reports to: {section.reportsToName}</span>
+              <span className="truncate">
+                Reports to: {section.reportsToName}
+              </span>
             </span>
           ) : null}
           {section.description ? (
@@ -1035,6 +1392,36 @@ export function OrgChartSectionsPanel({
           ) : (
             <span className="min-w-0 flex-1" />
           )}
+          {!isMain ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 rounded-lg px-2 text-xs"
+                disabled={busy}
+                title={
+                  grandparentName
+                    ? `Move out of “${parentName}” under “${grandparentName}”`
+                    : `Move out of “${parentName}” to main level`
+                }
+                onClick={() => moveSectionUpOneLevel(section.id)}
+              >
+                <ArrowUpFromLine className="mr-1 h-3.5 w-3.5" />
+                Move up
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 rounded-lg px-2 text-xs"
+                disabled={busy}
+                title="Promote this subsection to a top-level main section"
+                onClick={() => void moveSection(section.id, null)}
+              >
+                <Ungroup className="mr-1 h-3.5 w-3.5" />
+                Make main
+              </Button>
+            </>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -1082,13 +1469,36 @@ export function OrgChartSectionsPanel({
 
         {!isCollapsed ? (
           <div className="space-y-2 border-t border-zinc-100 p-2 dark:border-zinc-800">
+            {showMoveOutDrop ? (
+              <div
+                ref={sectionDrag.registerColumn(moveUpDropId(section.id))}
+                className={`rounded-lg border-2 border-dashed px-3 py-3 text-center text-xs transition ${
+                  isMoveOutDropTarget
+                    ? "border-sky-400 bg-sky-50 text-sky-900 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-100"
+                    : "border-zinc-300 text-zinc-600 dark:border-zinc-600 dark:text-zinc-300"
+                }`}
+              >
+                Drop here to move{" "}
+                <span className="font-semibold">out of “{section.name}”</span>
+                <span className="mt-0.5 block opacity-80">
+                  {section.parentId
+                    ? `→ under “${sectionById.get(section.parentId)?.name ?? "parent"}”`
+                    : "→ becomes a main section"}
+                </span>
+              </div>
+            ) : null}
             {renderMemberList(
               section,
-              "No members yet — assign people here first, then choose a head.",
+              "No members yet — use Add or remove member (with a department), or Add selected from the chart.",
             )}
             {subsections.length > 0 ? (
               <div className="space-y-2 pt-1">
-                {subsections.map((child) => renderSectionBlock(child, depth + 1))}
+                {subsections.map((child) => (
+                  <div key={child.id} className="space-y-2">
+                    {renderReorderBeforeDrop(child, depth + 1)}
+                    {renderSectionBlock(child, depth + 1)}
+                  </div>
+                ))}
                 {renderSiblingEndDrop(section.id, depth + 1)}
               </div>
             ) : null}
@@ -1115,9 +1525,13 @@ export function OrgChartSectionsPanel({
             </span>
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            Departments appear on the org chart. Drag the grip handle to reorder departments or
-            subsections among siblings. Nest under another department or report to a person,
-            assign members, then pick a head and optional custom roles.
+            Drag the <span className="font-medium">grip</span> to rearrange departments at the same
+            level, or drop onto a different department to nest it. Use{" "}
+            <span className="font-medium">Move up</span> /{" "}
+            <span className="font-medium">Make main</span> to change nesting. Add people from{" "}
+            <span className="font-medium">Add or remove member</span> (choose a department), or use{" "}
+            <span className="font-medium">Add selected</span> for chart members. Pick a head and
+            optional custom roles after members are in place.
           </p>
         </div>
         <Button
@@ -1202,19 +1616,16 @@ export function OrgChartSectionsPanel({
               >
                 <option value="">— Top-level (no parent) —</option>
                 <optgroup label="Department">
-                  {sections
-                    .filter((s) => s.id !== editId)
-                    .map((s) => (
-                      <option key={`dept-${s.id}`} value={`dept:${s.id}`}>
-                        {s.name}
-                      </option>
-                    ))}
+                  {sectionsForReportsToPicker.map((s) => (
+                    <option key={`dept-${s.id}`} value={`dept:${s.id}`}>
+                      {s.name}
+                    </option>
+                  ))}
                 </optgroup>
                 <optgroup label="Person on org chart">
-                  {nodes.map((n) => (
+                  {peopleForReportsToPicker.map((n) => (
                     <option key={`person-${n.id}`} value={`person:${n.id}`}>
                       {n.personName}
-                      {n.personRole ? ` · ${n.personRole}` : ""}
                     </option>
                   ))}
                 </optgroup>
@@ -1262,9 +1673,6 @@ export function OrgChartSectionsPanel({
           </p>
         ) : null}
 
-        {roots.map((section) => renderSectionBlock(section, 0))}
-        {roots.length > 0 ? renderSiblingEndDrop(null, 0) : null}
-
         <div
           onDragOver={(e) => {
             if (!dragNodeId) return;
@@ -1279,7 +1687,7 @@ export function OrgChartSectionsPanel({
             const id = e.dataTransfer.getData("text/org-node-id") || dragNodeId;
             if (id) void assignNodes(null, [id]);
           }}
-          className={`overflow-hidden rounded-xl border border-dashed transition ${
+          className={`sticky top-0 z-10 overflow-hidden rounded-xl border border-dashed bg-white/95 shadow-sm backdrop-blur-sm transition dark:bg-zinc-900/95 ${
             dropSectionId === "__unassigned__"
               ? "border-orange-400 bg-orange-50/80 dark:border-orange-600 dark:bg-orange-950/30"
               : "border-zinc-300 dark:border-zinc-700"
@@ -1305,9 +1713,23 @@ export function OrgChartSectionsPanel({
               {unassigned.length}
             </span>
             <span className="min-w-0 flex-1 text-xs text-zinc-500">
-              On the chart but not in a department
+              Shift-click to select a range · Ctrl/⌘-click to toggle · then Remove
             </span>
-            {chartSelectedIds.length > 0 ? (
+            {unassignedSelectedIds.length > 0 && onRemoveSelected ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 rounded-lg border-rose-300 px-2 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                disabled={busy}
+                onClick={() => onRemoveSelected(unassignedSelectedIds)}
+              >
+                <Trash2 className="mr-1 h-3.5 w-3.5" />
+                {unassignedSelectedIds.length > 1
+                  ? `Remove ${unassignedSelectedIds.length}`
+                  : "Remove"}
+              </Button>
+            ) : null}
+            {chartSelectedIds.length > 0 && unassignedSelectedIds.length === 0 ? (
               <Button
                 type="button"
                 variant="outline"
@@ -1319,37 +1741,83 @@ export function OrgChartSectionsPanel({
               </Button>
             ) : null}
           </div>
-          {collapsed.__unassigned__ !== true && unassigned.length > 0 ? (
-            <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">
-              {unassigned.map((n) => (
-                <li
-                  key={n.id}
-                  draggable={!busy}
-                  onDragStart={(e) => {
-                    setDragNodeId(n.id);
-                    e.dataTransfer.setData("text/org-node-id", n.id);
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragEnd={() => {
-                    setDragNodeId(null);
-                    setDropSectionId(null);
-                  }}
-                  className={`flex items-center gap-3 px-4 py-2.5 text-sm ${
-                    dragNodeId === n.id ? "opacity-50" : ""
-                  } ${busy ? "cursor-default" : "cursor-grab active:cursor-grabbing"}`}
-                >
-                  <span className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
-                    {n.personName}
-                  </span>
-                  <span className="shrink-0 truncate text-xs text-zinc-500">
-                    {[n.personRole, n.companyName].filter(Boolean).join(" · ")}
-                  </span>
-                </li>
-              ))}
-            </ul>
+          {collapsed.__unassigned__ !== true ? (
+            unassigned.length > 0 ? (
+              <ul className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-zinc-800 dark:border-zinc-800">
+                {unassigned.map((n) => {
+                  const selected = chartSelectedIds.includes(n.id);
+                  return (
+                    <li
+                      key={n.id}
+                      draggable={!busy}
+                      onClick={(e) => selectUnassignedMember(e, n)}
+                      onDragStart={(e) => {
+                        setDragNodeId(n.id);
+                        e.dataTransfer.setData("text/org-node-id", n.id);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => {
+                        setDragNodeId(null);
+                        setDropSectionId(null);
+                      }}
+                      className={`flex items-center gap-3 px-4 py-2.5 text-sm ${
+                        dragNodeId === n.id ? "opacity-50" : ""
+                      } ${
+                        selected
+                          ? "bg-orange-50 ring-1 ring-inset ring-orange-300/80 dark:bg-orange-950/30 dark:ring-orange-700/50"
+                          : ""
+                      } ${
+                        busy
+                          ? "cursor-default"
+                          : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
+                        {n.personName}
+                      </span>
+                      <span className="shrink-0 truncate text-xs text-zinc-500">
+                        {[n.personRole, n.companyName].filter(Boolean).join(" · ")}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="border-t border-zinc-100 px-4 py-3 text-xs text-zinc-500 dark:border-zinc-800">
+                No unassigned chart members. Add people without a department, or unassign them
+                from a department, and they will show up here.
+              </p>
+            )
           ) : null}
         </div>
+
+        <div
+          ref={sectionDrag.registerColumn(MAIN_SECTION_DROP)}
+          className={
+            sectionDrag.draggingItemId
+              ? `sticky top-0 z-20 rounded-xl border-2 border-dashed px-4 py-4 text-center text-sm shadow-sm backdrop-blur-sm transition ${
+                  sectionDrag.hoverColumn === MAIN_SECTION_DROP
+                    ? "border-sky-400 bg-sky-50 text-sky-900 dark:border-sky-500 dark:bg-sky-950/60 dark:text-sky-100"
+                    : "border-zinc-300 bg-white/95 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/95 dark:text-zinc-300"
+                }`
+              : "pointer-events-none h-0 overflow-hidden opacity-0"
+          }
+        >
+          Drop here to make a <span className="font-semibold">main section</span>
+          <span className="mt-0.5 block text-xs opacity-80">
+            Or drop on another group to nest · drop on a sibling to reorder
+          </span>
+        </div>
+
+        {roots.map((section) => (
+          <div key={section.id} className="space-y-2">
+            {renderReorderBeforeDrop(section, 0)}
+            {renderSectionBlock(section, 0)}
+          </div>
+        ))}
+        {roots.length > 0 ? renderSiblingEndDrop(null, 0) : null}
       </div>
+      <PointerDragGhostLayer ghost={sectionDrag.ghost} />
     </div>
   );
 }

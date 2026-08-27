@@ -34,7 +34,6 @@ const MY_WORK: StaffNavSection = {
   label: "My Work",
   items: [
     { id: "my-assigned", href: "/agent", label: "My Assigned" },
-    { id: "needs-approval", href: "/agent/approvals", label: "Needs My Approval" },
     { id: "my-requests", href: "/my-requests", label: "My Requests" },
   ],
 };
@@ -55,6 +54,34 @@ const BOARDS: StaffNavSection = {
   ],
 };
 
+const MANAGEMENT: StaffNavSection = {
+  id: "management",
+  label: "Management",
+  adminOnly: true,
+  items: [
+    {
+      id: "workforce",
+      href: "/admin/workforce",
+      label: "Workforce",
+      adminOnly: true,
+    },
+  ],
+};
+
+const SUPERADMIN_SETTINGS: StaffNavSection = {
+  id: "superadmin-settings",
+  label: "SuperAdmin Settings",
+  superAdminOnly: true,
+  items: [
+    {
+      id: "superadmin-settings",
+      href: "/admin/superadmin-settings",
+      label: "SuperAdmin Settings",
+      superAdminOnly: true,
+    },
+  ],
+};
+
 const INSIGHTS: StaffNavSection = {
   id: "insights",
   label: "Insights",
@@ -69,18 +96,6 @@ const SYSTEM: StaffNavSection = {
   label: "System",
   adminOnly: true,
   items: [
-    {
-      id: "settings",
-      href: "/admin/superadmin-settings",
-      label: "Settings",
-      superAdminOnly: true,
-    },
-    {
-      id: "workforce",
-      href: "/admin/workforce",
-      label: "User / Position management",
-      adminOnly: true,
-    },
     {
       id: "account",
       href: "/admin/account",
@@ -119,7 +134,7 @@ export function staffNavSectionsForRole(role: string | undefined): StaffNavSecti
     return [GUARD_MAIN];
   }
 
-  const sections = [MAIN, MY_WORK, BOARDS, INSIGHTS, SYSTEM];
+  const sections = [MAIN, MY_WORK, BOARDS, MANAGEMENT, SUPERADMIN_SETTINGS, INSIGHTS, SYSTEM];
   return sections
     .map((section) => ({
       ...section,

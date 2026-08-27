@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -16,6 +16,7 @@ import { parseItemRequisitionDescription } from "@/lib/item-requisition";
 import { extractFundTransferPreview } from "@/lib/fund-transfer-request";
 import { extractJobOrderPreview } from "@/lib/job-order";
 import { requestTypeAcronym, requestTypeLabel } from "@/lib/request-types";
+import { orgChartSectionOptionText } from "@/lib/org-chart-section-display";
 import {
   cleanIssuePreview,
   extractDepartmentFromDescription,
@@ -32,7 +33,13 @@ type TicketCard = {
   updatedAt: string;
   /** Intake request type id — same as ticket board (ISSUE_CONCERN_TICKET, REQUEST_FOR_PAYMENT, …). */
   requestType?: string | null;
+  sendToSectionId?: string | null;
+  sendToSectionName?: string | null;
+  requestorSectionId?: string | null;
+  requestorSectionName?: string | null;
 };
+
+const ASSIGNMENT_UNSECTIONED = "__unsectioned__";
 
 /** Match ticket-board card title (RFP → in payment of + amount; IRS/FTR → purpose; otherwise cleaned description/title). */
 function assignmentCardPreview(ticket: TicketCard): string {
@@ -65,19 +72,20 @@ type PersonnelColumn = {
   role: string;
   teamLabel: string;
   companyId: string | null;
+  sectionId: string | null;
+  sectionName: string | null;
   assigneeColorKey?: string | null;
   cards: TicketCard[];
 };
 
-type RosterCompany = { id: string; name: string };
+type RosterSection = { id: string; name: string; depth: number };
 
-const ASSIGNMENT_COMPANY_ALL = "ALL";
-const ASSIGNMENT_NO_COMPANY = "__NO_COMPANY__";
-const ASSIGNMENT_COMPANY_DROP_PREFIX = "__COMPANY__:";
+const ASSIGNMENT_SECTION_ALL = "ALL";
+const ASSIGNMENT_SECTION_DROP_PREFIX = "__SECTION__:";
 const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
 
-function personnelCompanyKey(col: PersonnelColumn): string {
-  return col.companyId ?? (col.teamLabel ? `name:${col.teamLabel.trim().toLowerCase()}` : ASSIGNMENT_NO_COMPANY);
+function personnelSectionKey(col: PersonnelColumn): string {
+  return col.sectionId?.trim() || ASSIGNMENT_UNSECTIONED;
 }
 
 function personnelRoleLabel(role: string): "Admin" | "Personnel" {
@@ -86,9 +94,8 @@ function personnelRoleLabel(role: string): "Admin" | "Personnel" {
 
 function sortPersonnelByRole(list: PersonnelColumn[]): PersonnelColumn[] {
   return [...list].sort((a, b) => {
-    const roleDiff =
-      (personnelRoleLabel(a.role) === "Admin" ? 0 : 1) - (personnelRoleLabel(b.role) === "Admin" ? 0 : 1);
-    if (roleDiff !== 0) return roleDiff;
+    const roleCmp = personnelRoleLabel(a.role).localeCompare(personnelRoleLabel(b.role));
+    if (roleCmp !== 0) return roleCmp;
     return a.name.localeCompare(b.name);
   });
 }
@@ -96,21 +103,21 @@ function sortPersonnelByRole(list: PersonnelColumn[]): PersonnelColumn[] {
 function matchesAssignmentPersonnelSearch(col: PersonnelColumn, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const name = (col.name ?? "").trim().toLowerCase();
-  const role = (col.role ?? "").trim().toLowerCase();
-  const team = (col.teamLabel ?? "").trim().toLowerCase();
-  return name.includes(q) || role.includes(q) || team.includes(q);
+  return (
+    col.name.toLowerCase().includes(q) ||
+    col.role.toLowerCase().includes(q) ||
+    (col.teamLabel ?? "").toLowerCase().includes(q) ||
+    (col.sectionName ?? "").toLowerCase().includes(q)
+  );
 }
 
-const personnelSearchInputClass = cn(authInputClass, "min-w-[12rem] py-1.5 text-xs sm:min-w-[14rem]");
-
-function assignmentCompanyDropTarget(companyId: string): string {
-  return `${ASSIGNMENT_COMPANY_DROP_PREFIX}${companyId}`;
+function assignmentSectionDropTarget(sectionId: string): string {
+  return `${ASSIGNMENT_SECTION_DROP_PREFIX}${sectionId}`;
 }
 
-function assignmentCompanyIdFromTarget(target: string | null): string | null {
-  if (!target?.startsWith(ASSIGNMENT_COMPANY_DROP_PREFIX)) return null;
-  return target.slice(ASSIGNMENT_COMPANY_DROP_PREFIX.length);
+function assignmentSectionIdFromTarget(target: string | null): string | null {
+  if (!target?.startsWith(ASSIGNMENT_SECTION_DROP_PREFIX)) return null;
+  return target.slice(ASSIGNMENT_SECTION_DROP_PREFIX.length);
 }
 
 function assignmentUserDropTarget(agentId: string): string {
@@ -122,33 +129,30 @@ function assignmentUserIdFromTarget(target: string | null): string | null {
   return target.slice(ASSIGNMENT_USER_DROP_PREFIX.length);
 }
 
+const personnelSearchInputClass = cn(authInputClass, "min-w-[12rem] py-1.5 text-xs sm:min-w-[14rem]");
+
 export function ManualAssignmentBoard({
   unassigned,
   personnel,
-  rosterCompanies = [],
-  companyFilterLabel,
-  showCompanyFilter = false,
+  rosterSections = [],
   notice,
 }: {
   unassigned: TicketCard[];
   personnel: PersonnelColumn[];
-  rosterCompanies?: RosterCompany[];
-  companyFilterLabel?: string | null;
-  /** SuperAdmin/Admin: show the company dropdown to narrow the personnel group. */
-  showCompanyFilter?: boolean;
+  rosterSections?: RosterSection[];
   notice?: string | null;
 }) {
   const [cards, setCards] = useState<TicketCard[]>(unassigned);
   const [columns, setColumns] = useState<PersonnelColumn[]>(personnel);
   const [busyTicketId, setBusyTicketId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openCompanyId, setOpenCompanyId] = useState<string | null>(null);
-  const [dragRevealCompanyId, setDragRevealCompanyId] = useState<string | null>(null);
-  const [companyFilter, setCompanyFilter] = useState<string>(ASSIGNMENT_COMPANY_ALL);
+  const [openSectionId, setOpenSectionId] = useState<string | null>(null);
+  const [dragRevealSectionId, setDragRevealSectionId] = useState<string | null>(null);
+  const [sectionFilter, setSectionFilter] = useState<string>(ASSIGNMENT_SECTION_ALL);
   const [personnelSearchQuery, setPersonnelSearchQuery] = useState("");
   const [assignTicket, setAssignTicket] = useState<TicketCard | null>(null);
   const [sheetSearch, setSheetSearch] = useState("");
-  const [sheetCompany, setSheetCompany] = useState<string>(ASSIGNMENT_COMPANY_ALL);
+  const [sheetSection, setSheetSection] = useState<string>(ASSIGNMENT_SECTION_ALL);
   const [portalReady, setPortalReady] = useState(false);
 
   useEffect(() => {
@@ -171,9 +175,17 @@ export function ManualAssignmentBoard({
     };
   }, [assignTicket]);
 
+  const sectionScopedColumns = useMemo(() => {
+    if (sectionFilter === ASSIGNMENT_SECTION_ALL) return columns;
+    return columns.filter((col) => personnelSectionKey(col) === sectionFilter);
+  }, [columns, sectionFilter]);
+
   const filteredColumns = useMemo(
-    () => columns.filter((col) => matchesAssignmentPersonnelSearch(col, personnelSearchQuery)),
-    [columns, personnelSearchQuery],
+    () =>
+      sectionScopedColumns.filter((col) =>
+        matchesAssignmentPersonnelSearch(col, personnelSearchQuery),
+      ),
+    [sectionScopedColumns, personnelSearchQuery],
   );
   const personnelSearchActive = Boolean(personnelSearchQuery.trim());
 
@@ -204,7 +216,7 @@ export function ManualAssignmentBoard({
       );
       setAssignTicket(null);
       setSheetSearch("");
-      setSheetCompany(ASSIGNMENT_COMPANY_ALL);
+      setSheetSection(ASSIGNMENT_SECTION_ALL);
       return true;
     } finally {
       setBusyTicketId(null);
@@ -213,10 +225,10 @@ export function ManualAssignmentBoard({
 
   const laneDrag = usePointerColumnDrag<string>({
     onDrop: (ticketId, targetId) => {
-      setDragRevealCompanyId(null);
-      const companyId = assignmentCompanyIdFromTarget(targetId);
-      if (companyId) {
-        setOpenCompanyId((current) => (current === companyId ? null : companyId));
+      setDragRevealSectionId(null);
+      const sectionId = assignmentSectionIdFromTarget(targetId);
+      if (sectionId) {
+        setOpenSectionId((current) => (current === sectionId ? null : sectionId));
         return;
       }
       const agentId = assignmentUserIdFromTarget(targetId);
@@ -225,31 +237,31 @@ export function ManualAssignmentBoard({
       if (t) void assign(t, agentId);
     },
     onHover: (targetId) => {
-      const companyId = assignmentCompanyIdFromTarget(targetId);
-      if (companyId) {
-        setDragRevealCompanyId((prev) => (prev === companyId ? prev : companyId));
+      const sectionId = assignmentSectionIdFromTarget(targetId);
+      if (sectionId) {
+        setDragRevealSectionId((prev) => (prev === sectionId ? prev : sectionId));
         return;
       }
       const agentId = assignmentUserIdFromTarget(targetId);
       if (agentId) {
         const col = columns.find((c) => c.agentId === agentId);
         if (col) {
-          const userCompanyId = personnelCompanyKey(col);
-          setDragRevealCompanyId((prev) => (prev === userCompanyId ? prev : userCompanyId));
+          const key = personnelSectionKey(col);
+          setDragRevealSectionId((prev) => (prev === key ? prev : key));
           return;
         }
       }
-      setDragRevealCompanyId(null);
+      setDragRevealSectionId(null);
     },
-    onDragEnd: () => setDragRevealCompanyId(null),
+    onDragEnd: () => setDragRevealSectionId(null),
     disabled: busyTicketId != null,
     activationDistance: 12,
   });
 
-  const columnsByCompany = useMemo(() => {
+  const columnsBySection = useMemo(() => {
     const grouped = new Map<string, PersonnelColumn[]>();
     for (const col of filteredColumns) {
-      const key = personnelCompanyKey(col);
+      const key = personnelSectionKey(col);
       const list = grouped.get(key);
       if (list) list.push(col);
       else grouped.set(key, [col]);
@@ -260,61 +272,94 @@ export function ManualAssignmentBoard({
     return grouped;
   }, [filteredColumns]);
 
-  const companyOptions = useMemo(() => {
-    const nameByCompany = new Map<string, string>();
-    const rosterIds = new Set(rosterCompanies.map((c) => c.id));
-    for (const company of rosterCompanies) {
-      nameByCompany.set(company.id, company.name);
-    }
-    const options: Array<{ id: string; name: string; agentCount: number }> = [];
-    for (const [id, cols] of columnsByCompany) {
-      if (id === ASSIGNMENT_NO_COMPANY) continue;
-      const agentCount = cols.length;
-      if (agentCount === 0) continue;
-      const name = nameByCompany.get(id) ?? cols[0]?.teamLabel ?? "Unknown company";
-      if (rosterIds.size > 0 && !rosterIds.has(id) && !id.startsWith("name:")) continue;
-      options.push({ id, name, agentCount });
+  const sectionOrderIndex = useMemo(
+    () => new Map(rosterSections.map((s, i) => [s.id, i])),
+    [rosterSections],
+  );
+
+  const sectionOptions = useMemo(() => {
+    const nameById = new Map(rosterSections.map((s) => [s.id, s.name]));
+    const depthById = new Map(rosterSections.map((s) => [s.id, s.depth]));
+    const options: Array<{ id: string; name: string; depth: number; agentCount: number }> = [];
+    for (const [id, cols] of columnsBySection) {
+      if (cols.length === 0) continue;
+      if (id === ASSIGNMENT_UNSECTIONED) {
+        options.push({ id, name: "Unsectioned", depth: 0, agentCount: cols.length });
+        continue;
+      }
+      options.push({
+        id,
+        name: nameById.get(id) ?? cols[0]?.sectionName ?? "Unknown section",
+        depth: depthById.get(id) ?? 0,
+        agentCount: cols.length,
+      });
     }
     return options.sort((a, b) => {
-      const rosterA = rosterCompanies.findIndex((c) => c.id === a.id);
-      const rosterB = rosterCompanies.findIndex((c) => c.id === b.id);
-      if (rosterA !== -1 || rosterB !== -1) {
-        const orderA = rosterA === -1 ? Number.MAX_SAFE_INTEGER : rosterA;
-        const orderB = rosterB === -1 ? Number.MAX_SAFE_INTEGER : rosterB;
-        return orderA - orderB;
-      }
+      if (a.id === ASSIGNMENT_UNSECTIONED) return 1;
+      if (b.id === ASSIGNMENT_UNSECTIONED) return -1;
+      const orderA = sectionOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = sectionOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
       return a.name.localeCompare(b.name);
     });
-  }, [columnsByCompany, rosterCompanies]);
+  }, [columnsBySection, rosterSections, sectionOrderIndex]);
 
-  const activeCompanyId =
-    dragRevealCompanyId ?? (!laneDrag.draggingItemId && openCompanyId !== ASSIGNMENT_COMPANY_ALL ? openCompanyId : null);
+  const sectionFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const col of columns) {
+      const key = personnelSectionKey(col);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const nameById = new Map(rosterSections.map((s) => [s.id, s.name]));
+    const depthById = new Map(rosterSections.map((s) => [s.id, s.depth]));
+    const options: Array<{ id: string; name: string; depth: number; agentCount: number }> = [];
+    for (const [id, agentCount] of counts) {
+      if (id === ASSIGNMENT_UNSECTIONED) {
+        options.push({ id, name: "Unsectioned", depth: 0, agentCount });
+        continue;
+      }
+      options.push({
+        id,
+        name: nameById.get(id) ?? "Unknown section",
+        depth: depthById.get(id) ?? 0,
+        agentCount,
+      });
+    }
+    return options.sort((a, b) => {
+      if (a.id === ASSIGNMENT_UNSECTIONED) return 1;
+      if (b.id === ASSIGNMENT_UNSECTIONED) return -1;
+      const orderA = sectionOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const orderB = sectionOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.name.localeCompare(b.name);
+    });
+  }, [columns, rosterSections, sectionOrderIndex]);
 
-  /** Company dropdown (SuperAdmin/Admin) narrows the personnel group to one company/SBU. */
-  const visibleCompanyOptions =
-    companyFilter === ASSIGNMENT_COMPANY_ALL
-      ? companyOptions
-      : companyOptions.filter((c) => c.id === companyFilter);
+  const activeSectionId =
+    dragRevealSectionId ??
+    (!laneDrag.draggingItemId && openSectionId !== null ? openSectionId : null);
 
-  function handleCompanyFilterChange(next: string) {
-    setCompanyFilter(next);
-    setOpenCompanyId(next === ASSIGNMENT_COMPANY_ALL ? null : next);
+  function handleSectionFilterChange(next: string) {
+    setSectionFilter(next);
+    setOpenSectionId(next === ASSIGNMENT_SECTION_ALL ? null : next);
   }
 
   function openAssignSheet(ticket: TicketCard) {
     setAssignTicket(ticket);
     setSheetSearch("");
-    setSheetCompany(companyFilter === ASSIGNMENT_COMPANY_ALL ? ASSIGNMENT_COMPANY_ALL : companyFilter);
+    setSheetSection(
+      sectionFilter === ASSIGNMENT_SECTION_ALL ? ASSIGNMENT_SECTION_ALL : sectionFilter,
+    );
     setError(null);
   }
 
   const sheetPeople = useMemo(() => {
     let list = columns.filter((col) => matchesAssignmentPersonnelSearch(col, sheetSearch));
-    if (sheetCompany !== ASSIGNMENT_COMPANY_ALL) {
-      list = list.filter((col) => personnelCompanyKey(col) === sheetCompany);
+    if (sheetSection !== ASSIGNMENT_SECTION_ALL) {
+      list = list.filter((col) => personnelSectionKey(col) === sheetSection);
     }
     return sortPersonnelByRole(list);
-  }, [columns, sheetSearch, sheetCompany]);
+  }, [columns, sheetSearch, sheetSection]);
 
   function renderTicketCard(t: TicketCard, assigneeColorKey?: string | null, compact?: boolean) {
     const preview = assignmentCardPreview(t);
@@ -343,7 +388,20 @@ export function ManualAssignmentBoard({
         >
           {preview}
         </Link>
-        {extractDepartmentFromDescription(t.description) ? (
+        {(t.requestorSectionName || t.sendToSectionName) ? (
+          <p className="mt-1 space-y-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
+            {t.requestorSectionName ? (
+              <span className="block truncate" title={t.requestorSectionName}>
+                From: {t.requestorSectionName}
+              </span>
+            ) : null}
+            {t.sendToSectionName ? (
+              <span className="block truncate" title={t.sendToSectionName}>
+                To: {t.sendToSectionName}
+              </span>
+            ) : null}
+          </p>
+        ) : extractDepartmentFromDescription(t.description) ? (
           <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-500">
             Request to Company/SBU: {extractDepartmentFromDescription(t.description)}
           </p>
@@ -364,7 +422,14 @@ export function ManualAssignmentBoard({
       );
     }
 
-    return inner;
+    return (
+      <div
+        key={t.id}
+        className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-[#101a2f]"
+      >
+        {inner}
+      </div>
+    );
   }
 
   return (
@@ -405,18 +470,18 @@ export function ManualAssignmentBoard({
                   </div>
 
                   <div className="space-y-2 border-b border-zinc-800 px-4 py-3">
-                    {showCompanyFilter && companyOptions.length > 0 ? (
+                    {sectionFilterOptions.length > 0 ? (
                       <label className="flex flex-col gap-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Company</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Section</span>
                         <select
-                          value={sheetCompany}
-                          onChange={(e) => setSheetCompany(e.target.value)}
+                          value={sheetSection}
+                          onChange={(e) => setSheetSection(e.target.value)}
                           className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100"
                         >
-                          <option value={ASSIGNMENT_COMPANY_ALL}>All companies</option>
-                          {companyOptions.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name} ({c.agentCount})
+                          <option value={ASSIGNMENT_SECTION_ALL}>All sections</option>
+                          {sectionFilterOptions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {orgChartSectionOptionText(s)} ({s.agentCount})
                             </option>
                           ))}
                         </select>
@@ -482,11 +547,6 @@ export function ManualAssignmentBoard({
           <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
             Assignment Board
           </h1>
-          {companyFilterLabel ? (
-            <p className="mt-2 text-xs font-semibold text-orange-700 dark:text-orange-300">
-              Locked to your company/SBU: {companyFilterLabel}
-            </p>
-          ) : null}
           {notice ? (
             <p className="mt-3 rounded-lg border border-amber-400/40 bg-amber-100/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">
               {notice}
@@ -524,7 +584,8 @@ export function ManualAssignmentBoard({
                   <div
                     key={t.id}
                     {...laneDrag.getCardPointerProps(t.id, {
-                      getLabel: () => `${t.ticketNumber} · ${assignmentCardPreview(t).slice(0, 72)}`,
+                      getLabel: () =>
+                        `${t.ticketNumber} · ${assignmentCardPreview(t).slice(0, 72)}`,
                     })}
                     className={cn(
                       "touch-pan-y select-none rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 shadow-sm dark:border-zinc-700 dark:bg-[#101a2f]",
@@ -564,31 +625,31 @@ export function ManualAssignmentBoard({
             <div className="mb-2 flex flex-wrap items-start justify-between gap-2 px-1">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
-                  Personnel group
+                  Personnel by section
                 </h2>
                 <p className="mt-0.5 hidden text-[11px] text-zinc-500 md:block dark:text-zinc-400">
-                  Tap a company to expand, or drag a request over it to reveal admins and personnel.
+                  Tap a section to expand, or drag a request over it to reveal admins and personnel.
                 </p>
                 <p className="mt-0.5 text-[11px] text-zinc-500 md:hidden dark:text-zinc-400">
                   Browse people here, or use Assign on a request card.
                 </p>
               </div>
-              {showCompanyFilter && companyOptions.length > 0 ? (
+              {sectionFilterOptions.length > 0 ? (
                 <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-                  <span className="uppercase tracking-wide">Company</span>
+                  <span className="uppercase tracking-wide">Section</span>
                   <select
-                    value={companyFilter}
-                    onChange={(e) => handleCompanyFilterChange(e.target.value)}
+                    value={sectionFilter}
+                    onChange={(e) => handleSectionFilterChange(e.target.value)}
                     className={cn(
                       "min-w-[200px] max-w-[300px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
                       "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
                     )}
-                    title="Narrow the personnel group to one company/SBU"
+                    title="Narrow personnel to one org-chart section"
                   >
-                    <option value={ASSIGNMENT_COMPANY_ALL}>All companies</option>
-                    {companyOptions.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.agentCount})
+                    <option value={ASSIGNMENT_SECTION_ALL}>All sections</option>
+                    {sectionFilterOptions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {orgChartSectionOptionText(s)} ({s.agentCount})
                       </option>
                     ))}
                   </select>
@@ -611,8 +672,8 @@ export function ManualAssignmentBoard({
               </label>
               <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
                 {personnelSearchActive
-                  ? `Showing ${filteredColumns.length} of ${columns.length} user${columns.length === 1 ? "" : "s"}`
-                  : `${columns.length} user${columns.length === 1 ? "" : "s"}`}
+                  ? `Showing ${filteredColumns.length} of ${sectionScopedColumns.length} user${sectionScopedColumns.length === 1 ? "" : "s"}`
+                  : `${filteredColumns.length} user${filteredColumns.length === 1 ? "" : "s"}`}
               </p>
             </div>
 
@@ -622,48 +683,63 @@ export function ManualAssignmentBoard({
               </div>
             ) : filteredColumns.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
-                No users match “{personnelSearchQuery.trim()}”.
+                No users match the current filters.
               </div>
-            ) : visibleCompanyOptions.length === 0 ? (
+            ) : sectionOptions.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
-                No personnel with a designated company/SBU.
+                No personnel sections to show.
               </div>
             ) : (
               <div className="max-h-[min(72dvh,48rem)] space-y-2 overflow-y-auto pr-1">
-                {visibleCompanyOptions.map((company) => {
-                  const targetId = assignmentCompanyDropTarget(company.id);
-                  const isSelected = openCompanyId === company.id;
+                {sectionOptions.map((section) => {
+                  const targetId = assignmentSectionDropTarget(section.id);
+                  const isSelected = openSectionId === section.id;
                   const isRevealed =
-                    activeCompanyId === company.id ||
+                    activeSectionId === section.id ||
                     (personnelSearchActive && !laneDrag.draggingItemId);
-                  const showRevealRing = activeCompanyId === company.id;
-                  const companyColumns = columnsByCompany.get(company.id) ?? [];
-                  const adminColumns = companyColumns.filter((c) => personnelRoleLabel(c.role) === "Admin");
-                  const personnelColumns = companyColumns.filter((c) => personnelRoleLabel(c.role) === "Personnel");
+                  const showRevealRing = activeSectionId === section.id;
+                  const sectionColumns = columnsBySection.get(section.id) ?? [];
+                  const adminColumns = sectionColumns.filter(
+                    (c) => personnelRoleLabel(c.role) === "Admin",
+                  );
+                  const personnelColumns = sectionColumns.filter(
+                    (c) => personnelRoleLabel(c.role) === "Personnel",
+                  );
 
                   return (
                     <div
-                      key={`company-drop-${company.id}`}
+                      key={`section-drop-${section.id}`}
                       ref={laneDrag.registerColumn(targetId)}
                       className={cn(
                         "touch-pan-y rounded-xl border border-zinc-200 bg-zinc-50/80 p-2 transition dark:border-zinc-700 dark:bg-zinc-900/40",
-                        isSelected && "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
-                        showRevealRing && "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
+                        isSelected &&
+                          "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
+                        showRevealRing &&
+                          "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
                       )}
+                      style={
+                        section.depth > 0
+                          ? { marginLeft: `${Math.min(section.depth, 4) * 12}px` }
+                          : undefined
+                      }
                     >
                       <button
                         type="button"
-                        onClick={() => setOpenCompanyId((current) => (current === company.id ? null : company.id))}
+                        onClick={() =>
+                          setOpenSectionId((current) =>
+                            current === section.id ? null : section.id,
+                          )
+                        }
                         aria-pressed={isSelected}
                         aria-expanded={isRevealed}
                         className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-1 text-left"
                       >
                         <span className="min-w-0 truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                          {company.name}
+                          {section.name}
                         </span>
                         <span className="flex shrink-0 items-center gap-1">
                           <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                            {company.agentCount}
+                            {section.agentCount}
                           </span>
                           <ChevronDown
                             className={cn(
@@ -682,7 +758,7 @@ export function ManualAssignmentBoard({
                             { label: "Personnel", list: personnelColumns },
                           ].map((group) =>
                             group.list.length > 0 ? (
-                              <div key={`${company.id}-${group.label}`} className="space-y-2">
+                              <div key={`${section.id}-${group.label}`} className="space-y-2">
                                 <p className="px-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
                                   {group.label}
                                 </p>
@@ -710,7 +786,10 @@ export function ManualAssignmentBoard({
                                             <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
                                               {col.name}
                                             </p>
-                                            <p className="text-[11px] text-zinc-600 dark:text-zinc-500">{col.role}</p>
+                                            <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                                              {col.role}
+                                              {col.teamLabel ? ` · ${col.teamLabel}` : ""}
+                                            </p>
                                           </div>
                                         </div>
                                         <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
@@ -723,7 +802,9 @@ export function ManualAssignmentBoard({
                                             Drop requests here to assign.
                                           </div>
                                         ) : (
-                                          col.cards.map((t) => renderTicketCard(t, col.assigneeColorKey, true))
+                                          col.cards.map((t) =>
+                                            renderTicketCard(t, col.assigneeColorKey, true),
+                                          )
                                         )}
                                       </div>
                                     </article>

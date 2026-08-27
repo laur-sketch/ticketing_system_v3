@@ -1,7 +1,6 @@
 import { isElevatedUserRole } from "@/lib/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Search } from "lucide-react";
 import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { Prisma } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
@@ -13,7 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { personnelAssigneeHighlightStyleFromKey } from "@/lib/personnel-assignment-colors";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
-import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import {
   getOperatorActionableApprovalLevel,
@@ -22,13 +21,22 @@ import {
 } from "@/lib/travel-order";
 import { listPendingTravelApprovalsForAgent } from "@/lib/travel-order-db";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
-import { AutoSubmitForm } from "@/components/AutoSubmitForm";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRAND_TITLE } from "@/lib/brand";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { REQUEST_TYPES, isRequestTypeId } from "@/lib/request-types";
+import {
+  listOrgChartSectionOptions,
+  orgChartSectionOptionText,
+  resolveAgentIdsForOrgChartSection,
+} from "@/lib/org-chart-section-roster";
+import {
+  roleUsesOrgChartSectionBoardScope,
+  sectionScopedTicketWhere,
+  resolveViewerOrgChartSectionScope,
+} from "@/lib/org-chart-section-scope";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
 import { paymentProceduralStatusLabel, type PaymentApprovalMeta } from "@/lib/request-for-payment-approval";
 import { loadPaymentApprovalMetaMap } from "@/lib/payment-approval-db";
@@ -54,7 +62,7 @@ import { loadJobOrderApprovalMetaMap } from "@/lib/job-order-approval-db";
 import { CompanyKanban } from "./company-kanban";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
-import { TicketBoardCompanySelect } from "./ticket-board-filters";
+import { TicketBoardFilterBar } from "./ticket-board-filter-bar";
 
 export const dynamic = "force-dynamic";
 
@@ -112,6 +120,7 @@ export default async function AgentHome({
     assigned?: string | string[];
     board?: string | string[];
     company?: string | string[];
+    section?: string | string[];
     task?: string | string[];
     requestType?: string | string[];
   }>;
@@ -121,16 +130,17 @@ export default async function AgentHome({
   if (!["SuperAdmin", "HighAdmin", "Personnel", "Admin"].includes(session.user.role)) redirect("/");
 
   const params = await searchParams;
+  if (firstQuery(params.view) === "approvals") {
+    redirect("/agent");
+  }
   const rawBoard = firstQuery(params.board);
   if (rawBoard === "department") {
     redirect("/agent?board=company");
   }
   if (rawBoard === "kpi" || rawBoard === "it-tasks") {
     const qs = new URLSearchParams();
-    const company = firstQuery(params.company);
     const assigned = firstQuery(params.assigned);
     const task = firstQuery(params.task);
-    if (company) qs.set("company", company);
     if (assigned) qs.set("assigned", assigned);
     if (task) qs.set("task", task);
     const s = qs.toString();
@@ -147,6 +157,8 @@ export default async function AgentHome({
   const boardTab = rawBoard === "kpi" ? "kpi" : rawBoard === "company" ? "company" : "ticket";
   const isCompanyBoard = boardTab === "company";
   const selectedCompany = firstQuery(params.company) ?? "ALL";
+  const sectionParam = firstQuery(params.section)?.trim() ?? "ALL";
+  const selectedSection = sectionParam || "ALL";
   const viewMode = session.user.role === "Personnel" ? "board" : requestedViewMode;
   const isBoard = viewMode === "board";
   const selectedAssigned = firstQuery(params.assigned) ?? "ALL";
@@ -173,32 +185,16 @@ export default async function AgentHome({
   let companyAggregates: Awaited<ReturnType<typeof getCompanyBoardAggregates>> | null = null;
   let companyActivityLogs: Awaited<ReturnType<typeof loadTicketActivityLogForSession>> = [];
 
-  const showKpiCompanyFilter =
-    boardTab === "kpi" &&
-    (isElevatedUserRole(session.user.role) ||
-      companyCoordinator);
-  const showTicketCompanyFilter =
-    boardTab === "ticket" &&
-    session.user.role !== "Personnel" &&
-    (isElevatedUserRole(session.user.role) ||
-      session.user.role === "Admin" ||
-      companyCoordinator);
   const showTopTicketFilters = boardTab !== "kpi";
-  const showKpiTaskFilters = showKpiCompanyFilter;
-  const ticketCompanySelected = boardTab === "ticket" && selectedCompany !== "ALL";
-  const kpiCompanySelected = boardTab === "kpi" && selectedCompany !== "ALL";
-  const ticketAssignedFilterActive =
-    boardTab === "ticket" && session.user.role !== "Personnel" && ticketCompanySelected;
-  const kpiAssignedFilterActive = showKpiTaskFilters && kpiCompanySelected;
 
   const adminScopedCompanyId =
-    (isCompanyBoard || boardTab === "kpi") &&
+    isCompanyBoard &&
     !isElevatedUserRole(session.user.role) &&
     (session.user.role === "Admin" || companyCoordinator)
       ? await resolveStaffCompanyTeamId(session.user.email)
       : null;
 
-  /** Admin/coordinator own queue — used to keep Request Board totals aligned with Company Board. */
+  /** Admin/coordinator own queue — used on Company Board only. */
   const adminTicketQueueCompanyId =
     !isElevatedUserRole(session.user.role) &&
     (session.user.role === "Admin" || companyCoordinator)
@@ -214,38 +210,24 @@ export default async function AgentHome({
       ).filter((t) => (adminScopedCompanyId ? t.id === adminScopedCompanyId : true))
     : [];
 
-  const rosterTeamsForKpiFilter = showKpiCompanyFilter
-    ? sortByRosterOrder(
-        await prisma.team.findMany({
-          where: rosterTeamNameFilter(),
-          select: { id: true, name: true },
-        }),
-      ).filter((t) => (adminScopedCompanyId ? t.id === adminScopedCompanyId : true))
-    : [];
-
-  const rosterTeamsForTicketFilter = showTicketCompanyFilter
-    ? sortByRosterOrder(
-        await prisma.team.findMany({
-          where: rosterTeamNameFilter(),
-          select: { id: true, name: true },
-        }),
-      ).filter((t) => (adminScopedCompanyId ? t.id === adminScopedCompanyId : true))
-    : [];
-
-  /** Roster team ids for SuperAdmin Request Board when company = ALL (matches Company Board). */
-  const rosterTeamIdsForTicketScope =
-    boardTab === "ticket" && isElevatedUserRole(session.user.role)
-      ? (
-          rosterTeamsForTicketFilter.length > 0
-            ? rosterTeamsForTicketFilter
-            : sortByRosterOrder(
-                await prisma.team.findMany({
-                  where: rosterTeamNameFilter(),
-                  select: { id: true, name: true },
-                }),
-              )
-        ).map((t) => t.id)
+  const orgChartSectionsForTicketFilter =
+    boardTab === "ticket"
+      ? roleUsesOrgChartSectionBoardScope(session.user.role)
+        ? await (async () => {
+            const scope = await resolveViewerOrgChartSectionScope(session.user.email);
+            if (scope.sectionIds.length === 0) return [];
+            const all = await listOrgChartSectionOptions();
+            return all.filter((s) => scope.sectionIds.includes(s.id));
+          })()
+        : await listOrgChartSectionOptions()
       : [];
+  const selectedSectionValid =
+    selectedSection === "ALL" ||
+    orgChartSectionsForTicketFilter.some((s) => s.id === selectedSection);
+  const effectiveSection = selectedSectionValid ? selectedSection : "ALL";
+  const ticketSectionSelected = boardTab === "ticket" && effectiveSection !== "ALL";
+  const ticketAssignedFilterActive =
+    boardTab === "ticket" && session.user.role !== "Personnel" && ticketSectionSelected;
 
   if (isCompanyBoard) {
     const priorityForCompany = (selectedPriority === "ALL" ? "ALL" : selectedPriority) as TicketPriority | "ALL";
@@ -268,9 +250,8 @@ export default async function AgentHome({
 
   const fetchTicketPipeline = !isCompanyBoard && boardTab !== "kpi";
 
-  async function loadAgentsForCompanyFilter(companyTeamId: string) {
-    // Merged-first company membership so filters match the personnel tab.
-    const agentIds = await loadAgentIdsForCompanyTeam(companyTeamId);
+  async function loadAgentsForSectionFilter(sectionId: string) {
+    const agentIds = await resolveAgentIdsForOrgChartSection(sectionId);
     if (agentIds.length === 0) return [];
     return prisma.agent.findMany({
       where: { id: { in: agentIds } },
@@ -280,13 +261,9 @@ export default async function AgentHome({
   }
 
   const agentsForTicketAssigneeFilter =
-    ticketCompanySelected && fetchTicketPipeline
-      ? await loadAgentsForCompanyFilter(selectedCompany)
+    ticketSectionSelected && fetchTicketPipeline
+      ? await loadAgentsForSectionFilter(effectiveSection)
       : [];
-
-  const agentsForKpiAssigneeFilter = kpiAssignedFilterActive
-    ? await loadAgentsForCompanyFilter(selectedCompany)
-    : [];
 
   const effectiveAssigned =
     ticketAssignedFilterActive &&
@@ -298,33 +275,22 @@ export default async function AgentHome({
         ? selectedAssigned
         : "ALL";
 
-  const effectiveKpiAssigned =
-    kpiAssignedFilterActive &&
-    selectedAssigned !== "ALL" &&
-    !agentsForKpiAssigneeFilter.some((a) => a.id === selectedAssigned)
-      ? "ALL"
-      : kpiAssignedFilterActive
-        ? selectedAssigned
-        : "ALL";
-
   const whereBase: Prisma.TicketWhereInput = {};
-  if (session.user.role === "Personnel") {
+  if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
+    Object.assign(whereBase, await sectionScopedTicketWhere({
+      email: session.user.email,
+      agentId: operator?.id,
+    }));
+  } else if (session.user.role === "Personnel") {
     Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
-  }
-  if (session.user.role !== "Personnel") {
+  } else if (isElevatedUserRole(session.user.role)) {
+    /** SuperAdmin / HighAdmin: all departments (no company roster scope). */
+  } else {
     let companyScope: Prisma.TicketWhereInput | null = null;
-    if (ticketCompanySelected) {
-      companyScope = { teamId: selectedCompany };
-    } else if (adminTicketQueueCompanyId) {
-      /** Admin/coordinator: default to own queue so totals match Company Board. */
+    if (adminTicketQueueCompanyId) {
       companyScope = { teamId: adminTicketQueueCompanyId };
-    } else if (isElevatedUserRole(session.user.role) && rosterTeamIdsForTicketScope.length > 0) {
-      /** SuperAdmin with All: roster companies only (same universe as Company Board). */
-      companyScope = { teamId: { in: rosterTeamIdsForTicketScope } };
     }
 
-    // Company queue = ticket.teamId ("Send request to"). Also surface RFPs where this
-    // staff member is the current procedural assignee (e.g. APPROVED BY from another company).
     const personalRfpScope =
       operator?.id != null ? await personnelRequestBoardWhere(operator.id) : null;
 
@@ -350,6 +316,9 @@ export default async function AgentHome({
   }
   if (!isCompanyBoard && selectedRequestType !== "ALL") {
     whereBase.requestType = selectedRequestType;
+  }
+  if (!isCompanyBoard && effectiveSection !== "ALL") {
+    whereBase.orgChartSectionId = effectiveSection;
   }
   if (query) {
     const searchOr: Prisma.TicketWhereInput[] = [
@@ -557,15 +526,15 @@ export default async function AgentHome({
     if (ticketAssignedFilterActive && effectiveAssigned !== "ALL") {
       qs.set("assigned", effectiveAssigned);
     }
-    if (kpiAssignedFilterActive && effectiveKpiAssigned !== "ALL") {
-      qs.set("assigned", effectiveKpiAssigned);
-    }
     if (!isBoard) {
       if (selectedStatus !== "ALL") qs.set("status", selectedStatus);
     }
     if (boardTab !== "kpi" && selectedPriority !== "ALL") qs.set("priority", selectedPriority);
     if (boardTab !== "kpi" && selectedRequestType !== "ALL") {
       qs.set("requestType", selectedRequestType);
+    }
+    if (boardTab !== "kpi" && effectiveSection !== "ALL") {
+      qs.set("section", effectiveSection);
     }
     if (query) qs.set("q", query);
     if (sort !== "updatedAt") qs.set("sort", sort);
@@ -574,7 +543,7 @@ export default async function AgentHome({
     if (isCompanyBoard && companyLogPage !== 1) qs.set("logsPage", String(companyLogPage));
     if (notificationsOpen) qs.set("notifications", "1");
     if (boardTab !== "ticket") qs.set("board", boardTab);
-    if ((isCompanyBoard || boardTab === "kpi" || showTicketCompanyFilter) && selectedCompany !== "ALL") {
+    if (isCompanyBoard && selectedCompany !== "ALL") {
       qs.set("company", selectedCompany);
     }
 
@@ -787,7 +756,7 @@ export default async function AgentHome({
                           <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                             Pending approval
                             {pending
-                              ? ` · ${travelOrderApprovedByLabel(pending.optional === true)}`
+                              ? ` · ${travelOrderApprovedByLabel(pending.optional === true, pending.level, levels.length)}`
                               : ""}
                           </p>
                           <p className="text-xs text-zinc-700 dark:text-zinc-300">{label}</p>
@@ -936,171 +905,117 @@ export default async function AgentHome({
             }
           >
             {showTopTicketFilters ? (
-              <AutoSubmitForm
+              <div
                 className={`flex flex-col gap-2 sm:gap-3 ${
                   isTicketBoardView
                     ? "sticky top-0 z-20 -mx-2 mb-2 border-b border-zinc-200/80 bg-white/95 px-2 pb-2 backdrop-blur-md sm:static sm:mx-0 sm:mb-4 sm:border-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:backdrop-blur-none dark:border-zinc-800 dark:bg-surface/95"
                     : "mb-3 sm:mb-4"
                 }`}
-                method="get"
               >
-                {viewMode === "table" ? <input type="hidden" name="view" value="table" /> : null}
-                {boardTab !== "ticket" ? <input type="hidden" name="board" value={boardTab} /> : null}
-                <div className="flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between">
-                  <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 lg:flex lg:flex-wrap xl:w-auto">
-                    {isCompanyBoard || showTicketCompanyFilter ? (
-                    <label className="col-span-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
-                      {showTicketCompanyFilter ? (
-                        <TicketBoardCompanySelect
-                          defaultValue={selectedCompany}
-                          options={rosterTeamsForTicketFilter}
-                          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
-                        />
-                      ) : (
-                        <select
-                          name="company"
-                          key={`cc-${selectedCompany}`}
-                          defaultValue={selectedCompany}
-                          className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[260px]"
-                        >
-                          <option value="ALL">All companies</option>
-                          {rosterTeamsForFilter.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </label>
-                    ) : null}
-                    {ticketAssignedFilterActive ? (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
-                      <select
-                        name="assigned"
-                        key={`assigned-${selectedCompany}-${effectiveAssigned}`}
-                        defaultValue={effectiveAssigned}
-                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 lg:max-w-[200px]"
-                      >
-                        <option value="ALL">All</option>
-                        <option value="UNASSIGNED">Unassigned</option>
-                        {agentsForTicketAssigneeFilter.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    ) : null}
-                    {isBoard || isCompanyBoard ? null : (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Status:</span>
-                      <select
-                        name="status"
-                        defaultValue={selectedStatus}
-                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
-                      >
-                        {statusOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    )}
-                    {!(isCompanyBoard && hideCompanyPriorityFilter) ? (
-                    <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Priority:</span>
-                      <select
-                        name="priority"
-                        defaultValue={selectedPriority}
-                        className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
-                      >
-                        {priorityOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    ) : null}
-                    <label className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-800 sm:px-3 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                      <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Type:</span>
-                      <select
-                        name="requestType"
-                        key={`requestType-${selectedRequestType}`}
-                        defaultValue={selectedRequestType}
-                        className="min-w-0 flex-1 bg-transparent py-0.5 pr-7 text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200 sm:min-w-[12rem] lg:max-w-[28rem]"
-                      >
-                        <option value="ALL">All request types</option>
-                        {REQUEST_TYPES.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.acronym} · {t.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                  <div className="min-w-0 flex-1">
+                    <TicketBoardFilterBar
+                  initialQuery={searchFieldQuery}
+                  placeholder={
+                    isTicketBoardView
+                      ? "Search requests…"
+                      : "Search request number, subject, customer…"
+                  }
+                  savedFilterStorageKey={`saved-ticket-filters:${session.user.email}:v1`}
+                  company={{
+                    visible: isCompanyBoard,
+                    value: selectedCompany,
+                    options: [
+                      { value: "ALL", label: "All companies" },
+                      ...rosterTeamsForFilter.map((t) => ({ value: t.id, label: t.name })),
+                    ],
+                  }}
+                  section={{
+                    visible: boardTab === "ticket",
+                    value: effectiveSection,
+                    options: [
+                      { value: "ALL", label: "All departments" },
+                      ...orgChartSectionsForTicketFilter.map((s) => ({
+                        value: s.id,
+                        label: orgChartSectionOptionText(s),
+                      })),
+                    ],
+                  }}
+                  assigned={{
+                    visible: ticketAssignedFilterActive,
+                    value: effectiveAssigned,
+                    options: [
+                      { value: "ALL", label: "All" },
+                      { value: "UNASSIGNED", label: "Unassigned" },
+                      ...agentsForTicketAssigneeFilter.map((a) => ({
+                        value: a.id,
+                        label: a.name,
+                      })),
+                    ],
+                  }}
+                  priority={{
+                    visible: !(isCompanyBoard && hideCompanyPriorityFilter),
+                    value: selectedPriority,
+                    options: priorityOptions,
+                  }}
+                  requestType={{
+                    visible: true,
+                    value: selectedRequestType,
+                    options: [
+                      { value: "ALL", label: "All request types" },
+                      ...REQUEST_TYPES.map((t) => ({
+                        value: t.id,
+                        label: `${t.acronym} · ${t.label}`,
+                      })),
+                    ],
+                  }}
+                  status={{
+                    visible: !isBoard && !isCompanyBoard,
+                    value: selectedStatus,
+                    options: statusOptions,
+                  }}
+                  />
                   </div>
-                  <div className="flex w-full flex-col items-stretch gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 xl:w-auto xl:justify-end">
-                    {/* Already on Board — hide the solitary Board chip on mobile. Table link is in the subtitle. */}
-                    {session.user.role === "Personnel" || isCompanyBoard ? null : (
-                      <Tabs
-                        value={isBoard ? "board" : "table"}
-                        className={isTicketBoardView ? "hidden sm:block sm:w-auto" : "w-full sm:w-auto"}
-                      >
-                        <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
-                          <TabsTrigger
-                            value="board"
-                            asChild
-                            className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
-                          >
-                            <Link href={buildHref({ view: null, page: "1" })}>Board</Link>
-                          </TabsTrigger>
-                          <TabsTrigger
-                            value="table"
-                            asChild
-                            className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
-                          >
-                            <Link href={buildHref({ view: "table", page: "1" })}>Table</Link>
-                          </TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    )}
-                    {isCompanyBoard ? (
-                      <Tabs value="company" className="w-full sm:w-auto">
-                        <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
-                          <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
-                        </TabsList>
-                      </Tabs>
-                    ) : null}
-                    <label
-                      className={`flex min-w-0 flex-1 items-center rounded-md border border-zinc-300 bg-zinc-50 text-sm text-zinc-600 sm:min-w-[280px] xl:max-w-md dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 ${
-                        isTicketBoardView ? "px-2.5 py-1.5" : "px-3 py-2"
-                      }`}
+                  <div className="flex flex-wrap items-center justify-center gap-1.5 sm:justify-end sm:gap-2">
+                  {/* Already on Board — hide the solitary Board chip on mobile. Table link is in the subtitle. */}
+                  {session.user.role === "Personnel" || isCompanyBoard ? null : (
+                    <Tabs
+                      value={isBoard ? "board" : "table"}
+                      className={isTicketBoardView ? "hidden sm:block sm:w-auto" : "w-full sm:w-auto"}
                     >
-                      <Search className="mr-2 size-3.5 shrink-0 opacity-60" aria-hidden />
-                      <input
-                        name="q"
-                        type="search"
-                        defaultValue={searchFieldQuery}
-                        placeholder={
-                          isTicketBoardView
-                            ? "Search requests…"
-                            : "Search request number, subject, customer…"
-                        }
-                        className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
-                        aria-label="Search by request number, subject, or customer"
-                      />
-                    </label>
-                  </div>
+                      <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
+                        <TabsTrigger
+                          value="board"
+                          asChild
+                          className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
+                        >
+                          <Link href={buildHref({ view: null, page: "1" })}>Board</Link>
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="table"
+                          asChild
+                          className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
+                        >
+                          <Link href={buildHref({ view: "table", page: "1" })}>Table</Link>
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  )}
+                  {isCompanyBoard ? (
+                    <Tabs value="company" className="w-full sm:w-auto">
+                      <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
+                      </TabsList>
+                    </Tabs>
+                  ) : null}
+                </div>
                 </div>
                 {isBoard && !isCompanyBoard ? (
                   <p className="hidden text-[11px] text-zinc-600 sm:block dark:text-zinc-500">
                     Board view uses lanes (Open, In progress, Feedback) for active pipeline work. Use Table for resolved
                     items and full filters.
-                    {showTicketCompanyFilter && !ticketCompanySelected
-                      ? " Select a company to filter by assignee."
+                    {session.user.role !== "Personnel" && !ticketSectionSelected
+                      ? " Select a department to filter by assignee."
                       : null}
                   </p>
                 ) : isCompanyBoard ? (
@@ -1109,7 +1024,7 @@ export default async function AgentHome({
                     summary; use the request board for full details.
                   </p>
                 ) : null}
-              </AutoSubmitForm>
+              </div>
             ) : null}
 
             {isCompanyBoard && companyBoardPayload ? (
@@ -1143,7 +1058,7 @@ export default async function AgentHome({
                       {query ||
                       selectedPriority !== "ALL" ||
                       selectedRequestType !== "ALL" ||
-                      ticketCompanySelected ||
+                      ticketSectionSelected ||
                       (ticketAssignedFilterActive && effectiveAssigned !== "ALL")
                         ? "Adjust filters or switch to Table view for resolved requests."
                         : "The queue is clear — new requests will land in Open."}
@@ -1158,79 +1073,8 @@ export default async function AgentHome({
               </>
             ) : isBoard && boardTab === "kpi" ? (
               <>
-                {showKpiTaskFilters || adminScopedCompanyId ? (
-                  <div className="mb-3 flex flex-col gap-2 sm:mb-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                      <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 sm:min-w-[240px]">
-                        <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Company:</span>
-                        {adminScopedCompanyId ? (
-                          <span className="min-w-0 flex-1 text-sm font-semibold text-zinc-900 dark:text-zinc-200">
-                            {rosterTeamsForKpiFilter.find((t) => t.id === adminScopedCompanyId)?.name ?? "Your company"}
-                          </span>
-                        ) : (
-                          <AutoSubmitForm className="contents" method="get">
-                            <input type="hidden" name="board" value="kpi" />
-                            <TicketBoardCompanySelect
-                              defaultValue={selectedCompany}
-                              options={rosterTeamsForKpiFilter}
-                              className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
-                            />
-                          </AutoSubmitForm>
-                        )}
-                      </div>
-                      {adminScopedCompanyId ? null : (
-                        <AutoSubmitForm className="contents" method="get">
-                          <input type="hidden" name="board" value="kpi" />
-                          {kpiAssignedFilterActive ? (
-                            <label className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 sm:min-w-[220px]">
-                              <span className="shrink-0 text-zinc-600 dark:text-zinc-400">Assigned:</span>
-                              <select
-                                name="assigned"
-                                key={`kpi-assigned-${selectedCompany}-${effectiveKpiAssigned}`}
-                                defaultValue={effectiveKpiAssigned}
-                                className="min-w-0 flex-1 bg-transparent text-sm font-medium text-zinc-900 outline-none dark:text-zinc-200"
-                              >
-                                <option value="ALL">All personnel</option>
-                                {agentsForKpiAssigneeFilter.map((a) => (
-                                  <option key={a.id} value={a.id}>
-                                    {a.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          ) : null}
-                        </AutoSubmitForm>
-                      )}
-                    </div>
-                    {!adminScopedCompanyId && showKpiTaskFilters ? (
-                      <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                        {kpiCompanySelected
-                          ? effectiveKpiAssigned !== "ALL"
-                            ? "Showing running tasks assigned to the selected person."
-                            : "Showing running tasks assigned to personnel in this company."
-                          : "Select a company to view running tasks by assignee."}
-                      </p>
-                    ) : null}
-                    {adminScopedCompanyId ? (
-                      <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                        Showing running tasks for your designated company.
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
                 <AgentKpiKanbanFlow
-                  companyFilterTeamId={
-                    adminScopedCompanyId ?? (showKpiCompanyFilter && selectedCompany !== "ALL" ? selectedCompany : null)
-                  }
-                  assignedAgentFilterId={
-                    !adminScopedCompanyId && kpiAssignedFilterActive && effectiveKpiAssigned !== "ALL" ? effectiveKpiAssigned : null
-                  }
-                  companyFilterOptions={
-                    adminScopedCompanyId ? [] : showKpiCompanyFilter ? rosterTeamsForKpiFilter : []
-                  }
-                  currentCompanyFilter={
-                    adminScopedCompanyId ?? (showKpiCompanyFilter ? selectedCompany : "ALL")
-                  }
+                  companyFilterTeamId={null}
                   showAdminTaskManagement={
                     isElevatedUserRole(session.user.role) || session.user.role === "Admin"
                   }

@@ -405,6 +405,59 @@ function weightedRecordedPercent(rows: readonly KpiChecklistProgress[]): number 
   return Math.round((done / total) * 100);
 }
 
+type KpiHistoryRow = Pick<
+  KpiRowForSnapshot,
+  | "id"
+  | "title"
+  | "mainTask"
+  | "frequency"
+  | "recurrenceWeekday"
+  | "recurrenceMonthDay"
+  | "subKpis"
+>;
+
+/**
+ * Per-task monitor series for the ChartView: one efficiency point per recorded
+ * period (snapshot) plus the live in-progress period, dated by the period key.
+ * Zero-task periods are skipped so an idle day doesn't read as 0% efficiency.
+ */
+function buildTaskHistorySeries(
+  kpi: KpiHistoryRow,
+  fromYmd: string,
+  toYmd: string,
+  zone: string,
+  snapshotByKpiPeriod: ReadonlyMap<
+    string,
+    { total: number; done: number; missing: number; percent: number; contributorProgress?: unknown }
+  >,
+  nowPeriodKey: string,
+): TaskChecklistDailyProgress[] {
+  const out: TaskChecklistDailyProgress[] = [];
+  for (const key of enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone)) {
+    const date = key.split(":")[2];
+    if (!date) continue;
+    const snap = snapshotByKpiPeriod.get(`${kpi.id}:${key}`);
+    let progress: KpiChecklistProgress | null = null;
+    if (snap) {
+      progress = snapshotToProgress(snap);
+    } else if (key === nowPeriodKey) {
+      progress = kpiChecklistProgress(kpi.subKpis, kpiMainTaskLabel(kpi));
+    }
+    if (!progress || progress.total <= 0) continue;
+
+    /** Extract contributor names from snapshot contributorProgress. */
+    const contributors: string[] | undefined =
+      snap?.contributorProgress && Array.isArray(snap.contributorProgress)
+        ? (snap.contributorProgress as Array<{ name?: string }>)
+            .map((c) => c.name?.trim())
+            .filter((n): n is string => Boolean(n))
+        : undefined;
+
+    out.push({ date, ...progress, contributors });
+  }
+  return out;
+}
+
 function averageDailyProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress {
   const withData = rows.filter((r) => r.total > 0);
   if (withData.length === 0) return { total: 0, done: 0, missing: 0, percent: 0 };
@@ -471,6 +524,13 @@ export type TaskChecklistIncludedTask = {
   phases?: TaskChecklistIncludedTaskPhase[];
   /** Segmented checklists — SegmentView shows these instead of flat items. */
   segments?: TaskChecklistIncludedTaskSegment[];
+  /** Recorded per-period efficiency (dates on the x-axis) for the ChartView monitor. */
+  history?: TaskChecklistDailyProgress[];
+  /**
+   * Task uses inverted recording (unchecked = safe/uptime; checked = breach/downtime).
+   * Lets the ChartView plot the safe share per task instead of raw checked/total.
+   */
+  invertedRecording?: boolean;
 };
 
 export type TaskChecklistPillarMetric = KpiChecklistProgress & {
@@ -486,10 +546,18 @@ export type TaskChecklistPillarMetric = KpiChecklistProgress & {
   assigneeProgressAccumulated?: TaskAssigneeProgress[];
   /** Main tasks (and their checklist items) that contribute to this donut. */
   includedTasks?: TaskChecklistIncludedTask[];
+  /**
+   * DB-wide recorded snapshot span for this pillar's KPIs (YYYY-MM months,
+   * independent of the requested reporting range). Lets the ChartView hint at
+   * where older recorded data lives when the selected range has none.
+   */
+  recordedRange?: { fromYm: string; toYm: string } | null;
 };
 
 export type TaskChecklistDailyProgress = KpiChecklistProgress & {
   date: string;
+  /** Names of the people who contributed work in this period (bar hover). */
+  contributors?: string[];
 };
 
 export type TaskAssigneeProgress = {
@@ -624,6 +692,7 @@ function buildIncludedTasksFromKpis(
     }
     if (!title) continue;
     const projectMode = opts?.projectMode === true;
+    const taskInverted = taskUsesInvertedRecording({ title: row.title, subKpis: row.subKpis });
     if (projectMode) {
       const agg = itProjectAggregatedProgressFromRaw(row.subKpis);
       const phases = agg.phases
@@ -649,6 +718,7 @@ function buildIncludedTasksFromKpis(
         items: [],
         phases,
         segments: phasesAsIncludedSegments(phases),
+        invertedRecording: taskInverted,
       });
       continue;
     }
@@ -677,6 +747,7 @@ function buildIncludedTasksFromKpis(
         done: isDone(item),
       })),
       segments: buildIncludedTaskSegments(row.subKpis, parentAssignee),
+      invertedRecording: taskInverted,
     });
   }
   return out.sort((a, b) => a.title.localeCompare(b.title));
@@ -1014,6 +1085,7 @@ function buildIncludedTasksForKpis(
         items: [] as TaskChecklistIncludedTaskItem[],
         phases,
         segments: phasesAsIncludedSegments(phases),
+        invertedRecording: invert,
       };
     }
 
@@ -1058,6 +1130,7 @@ function buildIncludedTasksForKpis(
         totalDataRecordedPeriods > 0 ? totalDataRecordedPeriods : progress.total > 0 ? 1 : 0,
       items,
       segments: buildIncludedTaskSegments(kpi.subKpis, parentAssignee),
+      invertedRecording: invert,
     };
   });
 }
@@ -1689,6 +1762,55 @@ export function buildSubtaskCsvPreviewForPillar(args: {
   return { columns: csvColumns, rows };
 }
 
+/** Extract YYYY-MM from a periodKey (e.g. "DAILY:Asia/Taipei:2026-07-15" → "2026-07"). */
+function monthFromPeriodKey(periodKey: string): string | null {
+  const m = periodKey.match(/(\d{4})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+
+/**
+ * Earliest–latest recorded snapshot months per pillar (not scoped to the
+ * requested range), so the chart view can tell users where older data lives.
+ * Future-dated strays (e.g. accidental imports) are ignored.
+ */
+async function loadRecordedRangeByPillar(
+  selectedByPillar: Map<string, readonly { id: string }[]>,
+): Promise<Map<string, { fromYm: string; toYm: string }>> {
+  const pillarByKpiId = new Map<string, string>();
+  for (const [pillar, rows] of selectedByPillar) {
+    for (const row of rows) pillarByKpiId.set(row.id, pillar);
+  }
+  const ids = [...pillarByKpiId.keys()];
+  if (ids.length === 0) return new Map();
+
+  const now = new Date();
+  const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const rows = await prisma.kpiMaintenancePeriodSnapshot.findMany({
+    where: { kpiMaintenanceId: { in: ids } },
+    select: { kpiMaintenanceId: true, periodKey: true },
+  });
+
+  const minByPillar = new Map<string, string>();
+  const maxByPillar = new Map<string, string>();
+  for (const row of rows) {
+    const pillar = pillarByKpiId.get(row.kpiMaintenanceId);
+    if (!pillar) continue;
+    const month = monthFromPeriodKey(row.periodKey);
+    if (!month || month > currentYm) continue;
+    const min = minByPillar.get(pillar);
+    if (!min || month < min) minByPillar.set(pillar, month);
+    const max = maxByPillar.get(pillar);
+    if (!max || month > max) maxByPillar.set(pillar, month);
+  }
+
+  const out = new Map<string, { fromYm: string; toYm: string }>();
+  for (const [pillar, fromYm] of minByPillar) {
+    const toYm = maxByPillar.get(pillar);
+    if (toYm) out.set(pillar, { fromYm, toYm });
+  }
+  return out;
+}
+
 export async function computeTaskChecklistPillarMetrics(args: {
   metricsCadence: TaskMetricsCadence;
   fromYmd: string;
@@ -1777,6 +1899,9 @@ export async function computeTaskChecklistPillarMetrics(args: {
 
   const uniqueSelected = [...new Map(allSelectedKpis.map((k) => [k.id, k])).values()];
 
+  // Full recorded span per pillar (range-independent) for the ChartView hint.
+  const recordedRangeByPillar = await loadRecordedRangeByPillar(selectedByPillar);
+
   const allPeriodKeys = new Set<string>();
   for (const kpi of uniqueSelected) {
     for (const key of enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, zone)) {
@@ -1832,6 +1957,8 @@ export async function computeTaskChecklistPillarMetrics(args: {
       result[pillar] = {
         ...projectMetricsByPillar[pillar]!,
         includedTasks: buildIncludedTasksForKpis(projectKpis),
+        // Project charts have no snapshot-history series, so never hint at a range.
+        recordedRange: null,
       };
       continue;
     }
@@ -1874,6 +2001,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
         assigneeProgress: [],
         assigneeProgressAccumulated: [],
         includedTasks: buildIncludedTasksForKpis(includedKpisForDonut),
+        recordedRange: recordedRangeByPillar.get(pillar) ?? null,
       };
       continue;
     }
@@ -1992,6 +2120,7 @@ export async function computeTaskChecklistPillarMetrics(args: {
         assigneeProgress: [],
         assigneeProgressAccumulated: [],
         includedTasks,
+        recordedRange: recordedRangeByPillar.get(pillar) ?? null,
       };
       continue;
     }
@@ -2063,13 +2192,39 @@ export async function computeTaskChecklistPillarMetrics(args: {
       currentPeriodKeyFor: (kpi) => currentPeriodKeyFor(kpi as (typeof kpis)[number]),
     });
 
+    const historyByTaskId = new Map(
+      rowsForProgress
+        .map((kpi) =>
+          [
+            kpi.id,
+            buildTaskHistorySeries(
+              kpi,
+              fromYmd,
+              toYmd,
+              zone,
+              snapshotByKpiPeriod,
+              currentPeriodKeyFor(kpi),
+            ),
+          ] as const,
+        )
+        .filter(([, history]) => history.length > 0),
+    );
+    const includedTasksWithHistory =
+      historyByTaskId.size === 0
+        ? includedTasks
+        : includedTasks.map((task) => {
+            const history = historyByTaskId.get(task.id);
+            return history ? { ...task, history } : task;
+          });
+
     result[pillar] = {
       ...pillarAgg,
       percent: headlinePercent,
       dailyProgressRows,
       assigneeProgress,
       assigneeProgressAccumulated,
-      includedTasks,
+      includedTasks: includedTasksWithHistory,
+      recordedRange: recordedRangeByPillar.get(pillar) ?? null,
       ...(subtaskCsv
         ? { subtaskCsvColumns: subtaskCsv.columns, subtaskCsvRows: subtaskCsv.rows }
         : {}),

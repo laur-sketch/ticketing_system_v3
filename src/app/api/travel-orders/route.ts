@@ -17,6 +17,8 @@ import {
  */
 export async function GET() {
   const { session, unauthorized } = await requireRole([
+    "SuperAdmin",
+    "HighAdmin",
     "Admin",
     "Personnel",
     "Personnel-Guard",

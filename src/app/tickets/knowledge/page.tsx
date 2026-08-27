@@ -37,7 +37,7 @@ export default async function KnowledgeBasePage() {
           className="mt-4 scroll-mt-20 rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]"
         >
           <h2 className="text-lg font-bold text-zinc-950 dark:text-zinc-100">Portal settings</h2>
-          <p className="mt-2 text-sm text-zinc-300">
+          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
             Notification and profile preferences will appear here in a future release.
           </p>
         </section>

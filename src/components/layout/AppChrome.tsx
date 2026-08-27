@@ -14,7 +14,7 @@ import { SessionLogoutSplash } from "@/components/SessionLogoutSplash";
 import { RedirectLoadingIndicator } from "@/components/ui/redirect-loading-indicator";
 import { isAuthRequiredPath, isSessionExpired } from "@/lib/session-expiry-client";
 
-type Props = { children: React.ReactNode };
+type Props = { children: React.ReactNode; initialRole?: string };
 
 function useIsDesktopLg() {
   const [isLg, setIsLg] = useState(false);
@@ -67,7 +67,13 @@ function StaffMainChrome({ children }: { children: React.ReactNode }) {
   );
 }
 
-function StaffAppShell({ children }: { children: React.ReactNode }) {
+function StaffAppShell({
+  children,
+  initialRole,
+}: {
+  children: React.ReactNode;
+  initialRole?: string;
+}) {
   const isLg = useIsDesktopLg();
   useLockDocumentScroll(isLg);
 
@@ -77,7 +83,7 @@ function StaffAppShell({ children }: { children: React.ReactNode }) {
         <BreadcrumbProvider>
           <div className="flex min-h-dvh flex-1 flex-col bg-zinc-50 text-foreground dark:bg-zinc-950">
             <RealtimeRefreshBeacon />
-            <GlobalSidebar />
+            <GlobalSidebar initialRole={initialRole} />
             <StaffMainChrome>{children}</StaffMainChrome>
           </div>
         </BreadcrumbProvider>
@@ -90,7 +96,7 @@ function StaffAppShell({ children }: { children: React.ReactNode }) {
       <BreadcrumbProvider>
         <div className="fixed inset-0 z-0 flex overflow-hidden bg-zinc-50 text-foreground dark:bg-zinc-950">
           <RealtimeRefreshBeacon />
-          <GlobalSidebar />
+          <GlobalSidebar initialRole={initialRole} />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950">
             <StaffMainChrome>{children}</StaffMainChrome>
           </div>
@@ -100,7 +106,7 @@ function StaffAppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function AppChrome({ children }: Props) {
+export function AppChrome({ children, initialRole }: Props) {
   const pathname = usePathname();
   const { data, status } = useSession();
   const role = data?.user?.role;
@@ -151,5 +157,5 @@ export function AppChrome({ children }: Props) {
     return <CustomerPortalShell>{children}</CustomerPortalShell>;
   }
 
-  return <StaffAppShell>{children}</StaffAppShell>;
+  return <StaffAppShell initialRole={initialRole}>{children}</StaffAppShell>;
 }

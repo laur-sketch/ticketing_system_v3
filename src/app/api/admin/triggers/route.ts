@@ -1,14 +1,26 @@
 import { TicketPriority } from "@prisma/client/primary";
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/access";
+import { requireSession } from "@/lib/access";
 import { prisma } from "@/lib/prisma";
 
 const priorities = new Set(Object.values(TicketPriority));
 const notifyTargets = new Set(["NONE", "ADMIN", "SUPERADMIN", "ADMIN_AND_SUPERADMIN"]);
 
+/** Priority alerts now live in SuperAdmin Settings → SuperAdmin only. */
+async function guardSuperAdmin() {
+  const session = await requireSession();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session.user.role !== "SuperAdmin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return null;
+}
+
 export async function GET() {
-  const { unauthorized } = await requireRole(["Admin"]);
-  if (unauthorized) return unauthorized;
+  const denied = await guardSuperAdmin();
+  if (denied) return denied;
   const triggers = await prisma.escalationTrigger.findMany({
     orderBy: { priority: "asc" },
   });
@@ -16,8 +28,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: Request) {
-  const { unauthorized } = await requireRole(["Admin"]);
-  if (unauthorized) return unauthorized;
+  const denied = await guardSuperAdmin();
+  if (denied) return denied;
 
   const body = await req.json();
   const priority = body.priority as TicketPriority;

@@ -23,12 +23,17 @@ import {
   parseAcaApprovalMeta,
 } from "@/lib/aca-approval";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import {
+  roleUsesOrgChartSectionBoardScope,
+  ticketInViewerSectionScope,
+} from "@/lib/org-chart-section-scope";
 import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
 
 type TicketAccessShape = {
   id?: string;
   teamId: string | null;
   assignedAgentId: string | null;
+  orgChartSectionId?: string | null;
   assignedAgent?: { email?: string | null; teamId?: string | null } | null;
   paymentApprovalMeta?: unknown;
   itemRequisitionApprovalMeta?: unknown;
@@ -38,6 +43,20 @@ type TicketAccessShape = {
   contactEmail?: string | null;
   requestorEmail?: string | null;
 };
+
+async function resolveTicketSendToSectionId(
+  ticket: TicketAccessShape | null | undefined,
+): Promise<string | null> {
+  if (!ticket) return null;
+  const fromShape = (ticket.orgChartSectionId ?? "").trim();
+  if (fromShape) return fromShape;
+  const ticketId = (ticket.id ?? "").trim();
+  if (!ticketId) return null;
+  const rows = await prisma.$queryRaw<Array<{ org_chart_section_id: string | null }>>`
+    SELECT org_chart_section_id FROM tickets WHERE id = ${ticketId} LIMIT 1
+  `;
+  return (rows[0]?.org_chart_section_id ?? "").trim() || null;
+}
 
 /** True when the session identity matches the ticket's board assignee. */
 export function isTicketAssignee(args: {
@@ -159,11 +178,10 @@ export function isAcaBoardVisibleAssignee(
 }
 
 /**
- * Company-scoped Admin (JWT Admin) may only touch tickets routed to their
- * designated company. SuperAdmin is never blocked here.
- * Requestors, board assignees, and current RFP/IRS/FTR step assignees may always
- * access (Noted By is often on the requestor company while the ticket is routed
- * to “Send request to”).
+ * Admin (JWT Admin) may only touch tickets in their designated department
+ * (org-chart send-to section tree). Legacy tickets without a section fall back
+ * to designated-company matching. SuperAdmin is never blocked here.
+ * Requestors, board assignees, and current procedural-step assignees may always access.
  */
 export async function adminOutsideCompanyScope(args: {
   role: string | undefined;
@@ -186,6 +204,20 @@ export async function adminOutsideCompanyScope(args: {
   }
   if (args.ticket && isCurrentProceduralStepAssignee(args.ticket, args.operatorId)) {
     return false;
+  }
+  const sendToSectionId = await resolveTicketSendToSectionId(args.ticket);
+  if (
+    await ticketInViewerSectionScope({
+      email: args.email,
+      orgChartSectionId: sendToSectionId,
+    })
+  ) {
+    return false;
+  }
+  // Legacy / missing section: fall back to designated company.
+  if (sendToSectionId) {
+    // Has a department but viewer is not in that tree → blocked.
+    return true;
   }
   const scoped = await resolveStaffCompanyTeamId(args.email);
   if (!scoped) return true;
@@ -219,9 +251,9 @@ export async function isPendingTransferRecipient(
 
 /**
  * Personnel may read/mutate when they are the requestor, board assignee,
- * current RFP/IRS/FTR/ACA step assignee, listed ACA ExeCom seat, pending transfer
- * recipient, or company coordinator for the ticket's company. Peers on the same
- * team are denied.
+ * current procedural-step assignee, listed ACA ExeCom seat, pending transfer
+ * recipient, ticket send-to department is in their org-chart section tree,
+ * or company coordinator for the ticket's company.
  */
 export async function personnelForbiddenForTicket(args: {
   email?: string | null;
@@ -234,6 +266,17 @@ export async function personnelForbiddenForTicket(args: {
   if (isCurrentProceduralStepAssignee(ticket, operatorId)) return false;
   if (isAcaBoardVisibleAssignee(ticket, operatorId)) return false;
   if (await isPendingTransferRecipient(ticket.id, operatorId)) return false;
+
+  const sendToSectionId = await resolveTicketSendToSectionId(ticket);
+  if (
+    roleUsesOrgChartSectionBoardScope("Personnel") &&
+    (await ticketInViewerSectionScope({
+      email,
+      orgChartSectionId: sendToSectionId,
+    }))
+  ) {
+    return false;
+  }
 
   const companyCoordinator = await portalCompanyAdminPrivilegesForEmail(email);
   if (!companyCoordinator) return true;

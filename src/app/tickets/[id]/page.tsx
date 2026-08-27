@@ -72,11 +72,43 @@ export default async function TicketPage({
     null;
   const branchActivity = ticket.activities.find((a) => a.summary === "Branch");
   const branch = branchActivity?.detail?.trim() ?? null;
+  const requestingCompanyActivity = ticket.activities.find((a) => a.summary === "Requesting company");
+  const requestingCompany = requestingCompanyActivity?.detail?.trim() ?? null;
   const departmentActivity = ticket.activities.find(
     (a) =>
-      a.summary === "Department" || a.summary === "Requesting department/business unit",
+      a.summary === "Department" ||
+      a.summary === "Section" ||
+      a.summary === "Requesting department" ||
+      a.summary === "Requesting department/business unit",
   );
   const department = departmentActivity?.detail?.trim() ?? null;
+  const sendToDepartmentActivity =
+    ticket.activities
+      .find(
+        (a) =>
+          a.summary === "Send request to department" ||
+          a.summary === "Send request to section",
+      )
+      ?.detail?.trim() ?? null;
+  const sendToSectionRows = await prisma.$queryRaw<
+    Array<{ org_chart_section_id: string | null }>
+  >`
+    SELECT org_chart_section_id
+    FROM tickets
+    WHERE id = ${id}
+    LIMIT 1
+  `;
+  const sendToOrgChartSectionId = sendToSectionRows[0]?.org_chart_section_id ?? null;
+  const sendToSectionName = sendToOrgChartSectionId
+    ? (
+        await prisma.orgChartSection.findUnique({
+          where: { id: sendToOrgChartSectionId },
+          select: { name: true },
+        })
+      )?.name?.trim() ?? null
+    : null;
+  const sendRequestToDepartment =
+    sendToSectionName ?? sendToDepartmentActivity ?? null;
   const requestTypeActivity = ticket.activities.find((a) => a.summary === "Request type");
   const requestTypeId =
     "requestType" in ticket && typeof (ticket as { requestType?: string }).requestType === "string"
@@ -264,11 +296,10 @@ export default async function TicketPage({
             contactName={ticket.contactName}
             email={ticket.requestorEmail ?? ticket.contactEmail ?? "—"}
             company={requestorCompanyName ?? "Not assigned"}
+            requestingCompany={requestingCompany}
             branch={branch ?? "—"}
-            sendRequestTo={ticket.team?.name ?? "—"}
-            departmentLabel={
-              isFundTransferRequest ? "Requesting department/business unit" : "Department"
-            }
+            sendRequestTo={sendRequestToDepartment ?? "—"}
+            departmentLabel="Requesting department"
             department={department ?? "—"}
             requestType={requestTypeLabelText}
             proceduralStatus={proceduralStatusLabel}

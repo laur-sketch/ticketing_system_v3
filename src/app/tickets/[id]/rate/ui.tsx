@@ -72,7 +72,7 @@ export function TicketRatingForm({
         ))}
       </div>
 
-      <label className="mt-4 block text-sm text-zinc-300">
+      <label className="mt-4 block text-sm text-zinc-600 dark:text-zinc-300">
         {feedbackRequired ? "Feedback (required for 3 stars or below)" : "Optional comment"}
         <textarea
           value={comment}
@@ -88,7 +88,7 @@ export function TicketRatingForm({
         />
       </label>
       {feedbackRequired ? (
-        <p className="mt-2 text-xs text-amber-300">
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
           Feedback is required when rating 3 stars or below.
         </p>
       ) : null}
@@ -102,7 +102,7 @@ export function TicketRatingForm({
         {done ? "Rating submitted" : "Submit rating"}
       </button>
 
-      {error ? <p className="mt-2 text-sm text-red-400">{error}</p> : null}
+      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
       {done ? <p className="mt-2 text-sm text-orange-300">Thanks. Your ticket has been closed.</p> : null}
     </article>
   );
