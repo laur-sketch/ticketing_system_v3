@@ -18,6 +18,20 @@ const hankenGrotesk = Hanken_Grotesk({
 export const metadata: Metadata = {
   title: BRAND_TITLE,
   description: "End-to-end ticketing with SLA, escalation, and KPIs.",
+  applicationName: BRAND_TITLE,
+  appleWebApp: {
+    capable: true,
+    title: BRAND_TITLE,
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  manifest: "/manifest.webmanifest",
 };
 
 export const viewport: Viewport = {
