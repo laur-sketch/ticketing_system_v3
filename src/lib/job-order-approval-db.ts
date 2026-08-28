@@ -4,6 +4,7 @@ import { ensureAgentRowForPortalStaff } from "@/lib/admin-roster";
 import { findSessionAgentId } from "@/lib/session-agent";
 import {
   defaultJobOrderApprovalMeta,
+  isJobOrderAwaitingExecutionAssignee,
   parseJobOrderApprovalMeta,
   stampJobOrderCreatorAsPreparedBy,
   type JobOrderApprovalMeta,
@@ -101,4 +102,44 @@ export async function loadJobOrderApprovalMetaMap(
     if (parsed) map.set(row.id, parsed);
   }
   return map;
+}
+
+/** Clear stale procedural assignee after approval — ticket awaits execution assignment. */
+export async function reconcileJobOrderAwaitingExecutionAssignee(
+  ticketId: string,
+): Promise<boolean> {
+  const ticket = await prisma.ticket.findUnique({
+    where: { id: ticketId },
+    select: {
+      id: true,
+      assignedAgentId: true,
+      status: true,
+      requestType: true,
+    },
+  });
+  if (!ticket || ticket.requestType !== "JOB_ORDER") return false;
+
+  const meta = await loadJobOrderApprovalMeta(ticketId);
+  if (!isJobOrderAwaitingExecutionAssignee(meta)) return false;
+
+  const needsAssigneeClear = Boolean(ticket.assignedAgentId);
+  const needsStatusFix = ticket.status === "FOR_CONFIRMATION";
+  if (!needsAssigneeClear && !needsStatusFix) return false;
+
+  await prisma.ticket.update({
+    where: { id: ticketId },
+    data: {
+      ...(needsAssigneeClear ? { assignedAgent: { disconnect: true } } : {}),
+      status: "IN_PROGRESS",
+      resolvedAt: null,
+    },
+  });
+  return true;
+}
+
+export async function reconcileJobOrdersAwaitingExecutionAssignee(
+  ticketIds: string[],
+): Promise<void> {
+  const unique = [...new Set(ticketIds.map((id) => id.trim()).filter(Boolean))];
+  await Promise.all(unique.map((id) => reconcileJobOrderAwaitingExecutionAssignee(id)));
 }

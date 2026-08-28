@@ -39,6 +39,7 @@ import {
   jobOrderAssigneeFieldForStep,
   JOB_ORDER_APPROVAL_STEP_LABELS,
   jobOrderProceduralStatusLabel,
+  markJobOrderExecutionAssigned,
 } from "@/lib/job-order-approval";
 import {
   initJobOrderApprovalMetaIfNeeded,
@@ -274,6 +275,23 @@ export async function POST(req: Request) {
               ? `${updated.assignedAgent?.name ?? agent.name} · ${pending}`
               : (updated.assignedAgent?.name ?? agent.name),
           );
+        } else {
+          await saveJobOrderApprovalMeta(
+            ticketId,
+            markJobOrderExecutionAssigned(meta),
+          );
+          await logActivity(
+            ticketId,
+            "SYSTEM",
+            "Job order execution assignee set",
+            `${updated.assignedAgent?.name ?? agent.name} assigned for execution.`,
+          );
+          if (ticket.status === "FOR_CONFIRMATION" || ticket.status === "OPEN" || ticket.status === "PENDING_INFO") {
+            await prisma.ticket.update({
+              where: { id: ticketId },
+              data: { status: "IN_PROGRESS", resolvedAt: null },
+            });
+          }
         }
       }
     } catch (e) {

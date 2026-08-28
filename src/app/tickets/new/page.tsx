@@ -2421,8 +2421,8 @@ function NewTicketPageInner() {
                     requestType="AUTHORITY_TO_CONDUCT_ACTIVITY"
                     requestorSectionId={selectedRequestorOrgChartSectionId}
                     sendToSectionId={selectedSendToOrgChartSectionId}
-                    acaRecommendingLevel={acaResolution?.recommendingLevel}
-                    acaApprovingPath={acaResolution?.approvingPath}
+                    acaRecommendingLevel={acaResolution?.recommendingLevel ?? undefined}
+                    acaApprovingPath={acaResolution?.approvingPath ?? undefined}
                     acaApprovingSeatCount={acaResolution?.approvingSeatCount ?? 0}
                     onApply={(assignees) => {
                       if (assignees.recommendedByAgentId) {

@@ -24,4 +24,10 @@ describe("proceduralBoardAssigneeWrite", () => {
   it("no-ops when already unassigned and the seat is empty", () => {
     expect(proceduralBoardAssigneeWrite(null, null)).toEqual({});
   });
+
+  it("disconnects when approval is complete (no procedural seat left)", () => {
+    expect(proceduralBoardAssigneeWrite(null, "last-approver")).toEqual({
+      assignedAgent: { disconnect: true },
+    });
+  });
 });

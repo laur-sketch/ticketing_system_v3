@@ -16,7 +16,7 @@ import { ACTIVE_REQUEST_STATUSES } from "@/lib/active-request-statuses";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { formatTicketActivityDetail } from "@/lib/ticket-activity-display";
-import { requestTypeLabel } from "@/lib/request-types";
+import { requestTypeLabel, requestTypeSupportsTransfer } from "@/lib/request-types";
 import type { TicketPrintField, TicketPrintModel } from "@/lib/ticket-details-print";
 import { parsePaymentRequestDescription, formatPaymentPeso, formatPaymentRequestTitle, MODE_OF_PAYMENT_CHECK, MODE_OF_PAYMENT_OPTIONS, DELIVERY_OF_CHECK_OPTIONS, paymentModeRequiresBankDetails } from "@/lib/request-for-payment";
 import {
@@ -70,10 +70,12 @@ import {
   JOB_ORDER_APPROVAL_STEP_LABELS,
   jobOrderAssigneeIdForStep,
   jobOrderProceduralStatusLabel,
+  isJobOrderProcedureGreenLit,
   type JobOrderApprovalAssignees,
   type JobOrderApprovalMeta,
   type JobOrderApprovalStep,
 } from "@/lib/job-order-approval";
+import { isJobOrderExecutionMember } from "@/lib/job-order-workers";
 import { parseJobOrderDescription } from "@/lib/job-order";
 import { parseAcaRequestDescription, formatAcaPeso } from "@/lib/authority-to-conduct-activity";
 import {
@@ -91,7 +93,10 @@ import {
   parseIntakeScreenshotMeta,
 } from "@/lib/ticket-intake-screenshots-meta";
 import { parseTransferRequestDetail } from "@/lib/ticket-transfer-request";
+import { JobOrderPostApprovalNav } from "@/components/tickets/JobOrderPostApprovalNav";
 import { JobOrderProjectLinkPanel } from "@/components/tickets/JobOrderProjectLinkPanel";
+import { JobOrderWorkersPanel } from "@/components/tickets/JobOrderWorkersPanel";
+import type { JobOrderScrollSection } from "@/lib/job-order-section-ids";
 
 type TransferRecipient = { id: string; name: string; email: string };
 
@@ -135,6 +140,8 @@ export function AgentWorkspace({
   canAssignPaymentAccountingFinance = false,
   canCreateJobOrderProject = false,
   canRequestJobOrderProject = false,
+  linkedJobOrderProjectAssigneeId = null,
+  linkedJobOrderProjectAssigneeName = null,
   viewerMode = "agent",
   requestorAside = null,
 }: {
@@ -173,6 +180,9 @@ export function AgentWorkspace({
   canCreateJobOrderProject?: boolean;
   /** Assigned Personnel: request a company Admin to create the Task Project. */
   canRequestJobOrderProject?: boolean;
+  /** Linked Task Board project assignee (primary KPI credit after approval). */
+  linkedJobOrderProjectAssigneeId?: string | null;
+  linkedJobOrderProjectAssigneeName?: string | null;
   /**
    * `requestor` = My Requests / customer ticket detail: same request body layout,
    * without agent controls. Pass `requestorAside` for cancel / reply / verify.
@@ -225,6 +235,8 @@ export function AgentWorkspace({
     approvedByAgentId: jobOrderApprovalMeta?.approvedByAgentId ?? null,
     approvedBy2AgentId: jobOrderApprovalMeta?.approvedBy2AgentId ?? null,
   });
+  const [joPostApprovalSection, setJoPostApprovalSection] =
+    useState<JobOrderScrollSection | null>(null);
   const [requestApproverId, setRequestApproverId] = useState("");
   const [pricingDraft, setPricingDraft] = useState<
     Array<{
@@ -548,7 +560,54 @@ export function AgentWorkspace({
     () => parseIntakeScreenshotMeta(ticket.intakeScreenshotMeta),
     [ticket.intakeScreenshotMeta],
   );
-  const canAddAttachments = ACTIVE_REQUEST_STATUSES.includes(ticket.status);
+  const isJobOrderGreenLit = Boolean(
+    isJobOrderApprovalRequest && isJobOrderProcedureGreenLit(jobOrderApprovalMeta),
+  );
+  const jobOrderExecutionAssigneeId = ticket.assignedAgentId?.trim() || null;
+  const jobOrderExecutionAssigneeName = ticket.assignedAgent?.name?.trim() || null;
+  const isJobOrderExecutionTeamMember = Boolean(
+    sessionAgentId &&
+      isJobOrderExecutionMember({
+        agentId: sessionAgentId,
+        meta: jobOrderApprovalMeta,
+        ticketAssignedAgentId: ticket.assignedAgentId,
+        linkedProjectAssigneeId: linkedJobOrderProjectAssigneeId,
+      }),
+  );
+  const canAssignJobOrderExecutionAssignee = Boolean(
+    isJobOrderGreenLit &&
+      (canCreateJobOrderProject || isSuperAdmin || canSetApprovalAssignees),
+  );
+  const canManageJobOrderCoWorkers = Boolean(
+    isJobOrderGreenLit &&
+      jobOrderExecutionAssigneeId &&
+      (canCreateJobOrderProject ||
+        isSuperAdmin ||
+        canSetApprovalAssignees ||
+        Boolean(sessionAgentId && sessionAgentId === jobOrderExecutionAssigneeId)),
+  );
+  const canMarkJobOrderDone = Boolean(
+    isJobOrderGreenLit &&
+      jobOrderExecutionAssigneeId &&
+      jobOrderApprovalMeta?.executionAssignedAt &&
+      !["FOR_CONFIRMATION", "RESOLVED", "CLOSED"].includes(ticket.status) &&
+      (canCreateJobOrderProject ||
+        isSuperAdmin ||
+        canSetApprovalAssignees ||
+        Boolean(sessionAgentId && sessionAgentId === jobOrderExecutionAssigneeId)),
+  );
+  const canAddAttachments = (() => {
+    if (!ACTIVE_REQUEST_STATUSES.includes(ticket.status)) return false;
+    if (!isJobOrderApprovalRequest) return true;
+    if (!isJobOrderGreenLit) return false;
+    if (!jobOrderExecutionAssigneeId) return false;
+    return (
+      canCreateJobOrderProject ||
+      isSuperAdmin ||
+      canSetApprovalAssignees ||
+      isJobOrderExecutionTeamMember
+    );
+  })();
   const attachmentSlotsRemaining = Math.max(0, MAX_SCREENSHOT_COUNT - intakeScreenshots.length);
 
   async function uploadTicketAttachments(fileList: FileList | null) {
@@ -716,16 +775,15 @@ export function AgentWorkspace({
       acaApprovalMeta.proceduralStep !== "DONE",
   );
   const acaRequiresFeedback = acaLevelRequiresFeedback(currentAcaStep?.roleCode);
-  /** Hide transfer while NOTED BY / APPROVED BY own the running procedural step. */
-  const paymentTransferBlocked = Boolean(
-    isPaymentRequest &&
-      (currentPaymentStep === "NOTED_BY" || currentPaymentStep === "APPROVED_BY"),
-  );
+  /** Hide transfer for procedural types (RFP, FTR, JO) and while ACA is not green-lit. */
   const acaTransferBlocked = Boolean(
     isAcaRequest && acaApprovalMeta && acaApprovalMeta.proceduralStep !== "DONE",
   );
   const showRequestTransfer = Boolean(
-    canRequestTransfer && !transferPending && !paymentTransferBlocked && !acaTransferBlocked,
+    canRequestTransfer &&
+      requestTypeSupportsTransfer(ticket.requestType) &&
+      !transferPending &&
+      !acaTransferBlocked,
   );
   /**
    * Assignee must mark Done on the current step; handoff goes to the next
@@ -1788,13 +1846,6 @@ export function AgentWorkspace({
                   </p>
                 </div>
               ) : null}
-              {jobOrderApprovalMeta?.proceduralStep === "DONE" ? (
-                <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
-                  All approvals are complete. Use{" "}
-                  <span className="font-semibold">Request controls</span> to create or link a Task
-                  Board task for this Job Order.
-                </p>
-              ) : null}
             </div>
           ) : showAcaLayout ? (
             <div className="mt-3 grid grid-cols-1 gap-4 border border-zinc-300 bg-white p-3 text-sm dark:border-zinc-700 dark:bg-zinc-950/40 sm:grid-cols-2 sm:gap-6 sm:p-4">
@@ -2299,8 +2350,17 @@ export function AgentWorkspace({
                   ) : null}
                   {canAddAttachments ? (
                     <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                      Add images or documents while this request is open (
-                      {intakeScreenshots.length}/{MAX_SCREENSHOT_COUNT}).
+                      {isJobOrderApprovalRequest && isJobOrderGreenLit
+                        ? `Assignee and co-workers can add images or documents while this request is open (${intakeScreenshots.length}/${MAX_SCREENSHOT_COUNT}).`
+                        : `Add images or documents while this request is open (${intakeScreenshots.length}/${MAX_SCREENSHOT_COUNT}).`}
+                    </p>
+                  ) : isJobOrderApprovalRequest && !isJobOrderGreenLit ? (
+                    <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Attachments can be added after all Job Order approvals are complete.
+                    </p>
+                  ) : isJobOrderApprovalRequest && isJobOrderGreenLit && !jobOrderExecutionAssigneeId ? (
+                    <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Assign an execution assignee before adding attachments.
                     </p>
                   ) : null}
                 </div>
@@ -2468,6 +2528,17 @@ export function AgentWorkspace({
           <>
         <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
           <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">Request controls</h2>
+          {isJobOrderApprovalRequest && isJobOrderGreenLit ? (
+            <div className="mt-2">
+              <JobOrderPostApprovalNav
+                compact
+                showTaskBoard={canCreateJobOrderProject || canRequestJobOrderProject}
+                showExecutionTeam
+                activeSection={joPostApprovalSection}
+                onSelectSection={setJoPostApprovalSection}
+              />
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-col gap-2">
             {ticket.status === "PENDING_INFO" ? (
               <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-950/20">
@@ -3357,12 +3428,29 @@ export function AgentWorkspace({
 
             {isJobOrderApprovalRequest &&
             jobOrderApprovalMeta?.proceduralStep === "DONE" &&
+            joPostApprovalSection === "task-board" &&
             (canCreateJobOrderProject || canRequestJobOrderProject) ? (
               <JobOrderProjectLinkPanel
                 ticketId={ticket.id}
                 canCreateProject={canCreateJobOrderProject}
                 canRequestProject={canRequestJobOrderProject}
                 sessionAgentId={sessionAgentId}
+              />
+            ) : null}
+
+            {isJobOrderApprovalRequest &&
+            isJobOrderGreenLit &&
+            jobOrderApprovalMeta &&
+            joPostApprovalSection === "execution-team" ? (
+              <JobOrderWorkersPanel
+                ticketId={ticket.id}
+                ticketStatus={ticket.status}
+                jobOrderApprovalMeta={jobOrderApprovalMeta}
+                assigneeAgentId={jobOrderExecutionAssigneeId}
+                assigneeName={jobOrderExecutionAssigneeName}
+                canAssignExecutionAssignee={canAssignJobOrderExecutionAssignee}
+                canManageCoWorkers={canManageJobOrderCoWorkers}
+                canMarkJobDone={canMarkJobOrderDone}
               />
             ) : null}
 

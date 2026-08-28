@@ -62,12 +62,13 @@ describe("RFP role KPI attribution inputs", () => {
     });
     assert.ok(meta);
     assert.equal(meta!.proceduralStep, "APPROVED_BY_ACCOUNTING");
+    const accountingCredit =
+      typeof meta!.accountingAgentId === "string" ? meta!.accountingAgentId.trim() : null;
+    const financeCredit =
+      typeof meta!.financeAgentId === "string" ? meta!.financeAgentId.trim() : null;
     assert.equal(meta!.approvedByAgentId, "approver-1");
     assert.equal(meta!.accountingAgentId, null);
     assert.equal(meta!.financeAgentId, null);
-    // Credit helpers must use the role seat only (no board-assignee fallback).
-    const accountingCredit = meta!.accountingAgentId?.trim() || null;
-    const financeCredit = meta!.financeAgentId?.trim() || null;
     assert.equal(accountingCredit, null);
     assert.equal(financeCredit, null);
   });

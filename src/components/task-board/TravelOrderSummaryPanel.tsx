@@ -1976,7 +1976,7 @@ export function TravelOrderSummaryPanel({
                                     isApprovalLevelOptional(
                                       levels.find((l) => l.level === order.rejectedAtLevel),
                                     ),
-                                    order.rejectedAtLevel,
+                                    order.rejectedAtLevel ?? undefined,
                                     totalLevels,
                                   )}
                                 </p>

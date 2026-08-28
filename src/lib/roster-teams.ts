@@ -26,7 +26,7 @@ async function migrateLegacyAciApmcTeam(): Promise<void> {
     });
   } else if (apmc.id !== legacy.id) {
     await reassignTeamReferences(legacy.id, apmc.id);
-    await prisma.team.delete({ where: { id: legacy.id } });
+    await deleteTeamIfExists(legacy.id);
   }
 
   const aci = await prisma.team.findFirst({ where: { name: "ACI" }, select: { id: true } });
@@ -55,6 +55,11 @@ async function reassignTeamReferences(fromTeamId: string, toTeamId: string): Pro
   });
 }
 
+/** Idempotent delete — safe when migrations run concurrently or retry after partial completion. */
+async function deleteTeamIfExists(teamId: string): Promise<void> {
+  await prisma.team.deleteMany({ where: { id: teamId } });
+}
+
 /** One-time: legacy MCONPINCO / M.CONPINCO queue labels → roster MCHISI LPG. */
 async function migrateLegacyMconpincoTeam(): Promise<void> {
   for (const legacyName of LEGACY_MCONPINCO_NAMES) {
@@ -77,7 +82,7 @@ async function migrateLegacyMconpincoTeam(): Promise<void> {
     }
     if (canonical.id !== legacy.id) {
       await reassignTeamReferences(legacy.id, canonical.id);
-      await prisma.team.delete({ where: { id: legacy.id } });
+      await deleteTeamIfExists(legacy.id);
     }
   }
 }
@@ -106,7 +111,7 @@ async function migrateLegacyMchisiSplit(): Promise<void> {
   }
   if (lpg.id !== legacy.id) {
     await reassignTeamReferences(legacy.id, lpg.id);
-    await prisma.team.delete({ where: { id: legacy.id } });
+    await deleteTeamIfExists(legacy.id);
   }
 }
 
@@ -131,7 +136,7 @@ async function migrateLegacyEazygazTeam(): Promise<void> {
   }
   if (canonical.id !== legacy.id) {
     await reassignTeamReferences(legacy.id, canonical.id);
-    await prisma.team.delete({ where: { id: legacy.id } });
+    await deleteTeamIfExists(legacy.id);
   }
 }
 
@@ -163,7 +168,7 @@ async function dedupeRosterTeamsByName(): Promise<void> {
     const [keeper, ...dupes] = [...teams].sort((a, b) => score(b) - score(a));
     for (const d of dupes) {
       await reassignTeamReferences(d.id, keeper.id);
-      await prisma.team.delete({ where: { id: d.id } });
+      await deleteTeamIfExists(d.id);
     }
   }
 }

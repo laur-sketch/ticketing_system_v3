@@ -272,7 +272,7 @@ async function syncMajorDepartmentHeadToTopLevel(sectionId: string) {
     if (walk === head.id) return;
     if (seen.has(walk)) break;
     seen.add(walk);
-    const next = await prismaPrimary.orgChartNode.findUnique({
+    const next: { parentId: string | null } | null = await prismaPrimary.orgChartNode.findUnique({
       where: { id: walk },
       select: { parentId: true },
     });
@@ -801,7 +801,7 @@ export async function PATCH(req: Request) {
     include: sectionIncludeArgs,
   });
 
-  if (data.reportsToNodeId !== undefined || data.headNodeId !== undefined) {
+  if (data.reportsToNodeId !== undefined) {
     await syncMajorDepartmentHeadToTopLevel(id);
     if (data.reportsToNodeId) {
       const children = await prismaPrimary.orgChartSection.findMany({

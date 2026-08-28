@@ -29,6 +29,10 @@ export type JobOrderApprovalMeta = JobOrderApprovalAssignees & {
   proceduralStep: JobOrderProceduralStep;
   /** ISO timestamps when each step was completed. */
   completed: Partial<Record<JobOrderApprovalStep, string>>;
+  /** Post-approval co-workers who share KPI credit with the execution assignee. */
+  workerAgentIds?: string[];
+  /** Set when an admin assigns execution; until then the board icon stays cleared. */
+  executionAssignedAt?: string | null;
 };
 
 export const JOB_ORDER_APPROVAL_STEP_LABELS: Record<JobOrderApprovalStep, string> = {
@@ -64,6 +68,8 @@ export function defaultJobOrderApprovalMeta(): JobOrderApprovalMeta {
     approvedBy2AgentId: null,
     proceduralStep: "NOTED_BY",
     completed: {},
+    workerAgentIds: [],
+    executionAssignedAt: null,
   };
 }
 
@@ -88,6 +94,13 @@ export function parseJobOrderApprovalMeta(raw: unknown): JobOrderApprovalMeta | 
     approvedBy2AgentId: typeof o.approvedBy2AgentId === "string" ? o.approvedBy2AgentId : null,
     proceduralStep: normalizeProceduralStep(o.proceduralStep),
     completed,
+    workerAgentIds: Array.isArray(o.workerAgentIds)
+      ? o.workerAgentIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+      : [],
+    executionAssignedAt:
+      typeof o.executionAssignedAt === "string" && o.executionAssignedAt.trim()
+        ? o.executionAssignedAt.trim()
+        : null,
   };
 }
 
@@ -125,7 +138,7 @@ export function jobOrderAssigneeIdForStep(
   return meta[jobOrderAssigneeFieldForStep(step)];
 }
 
-/** Board assignee who should own the request for the current procedural step. */
+/** Board assignee who should own the request for the current procedural step. Empty when DONE (clears icon). */
 export function currentJobOrderStepBoardAssigneeId(meta: JobOrderApprovalMeta): string | null {
   if (meta.proceduralStep === "DONE") return null;
   return jobOrderAssigneeIdForStep(meta, meta.proceduralStep);
@@ -211,4 +224,97 @@ export function stampJobOrderCreatorAsPreparedBy(
   return applyJobOrderApprovalAssignees(meta, {
     preparedByAgentId: creatorAgentId,
   });
+}
+
+/** Green-lit and still waiting for an explicit execution assignee (board icon should be empty). */
+export function isJobOrderAwaitingExecutionAssignee(
+  meta: JobOrderApprovalMeta | null | undefined,
+): boolean {
+  return isJobOrderProcedureGreenLit(meta) && !meta?.executionAssignedAt;
+}
+
+export function clearJobOrderExecutionAssignment(
+  meta: JobOrderApprovalMeta,
+): JobOrderApprovalMeta {
+  return { ...meta, executionAssignedAt: null };
+}
+
+export function markJobOrderExecutionAssigned(
+  meta: JobOrderApprovalMeta,
+  at: Date = new Date(),
+): JobOrderApprovalMeta {
+  return { ...meta, executionAssignedAt: at.toISOString() };
+}
+
+/** Execution assignee (or Admin) marks work complete → customer confirmation. */
+export function canMarkJobOrderDone(opts: {
+  meta: JobOrderApprovalMeta | null | undefined;
+  ticketStatus: string;
+  ticketAssignedAgentId: string | null;
+  actorAgentId: string | null;
+  isAdmin: boolean;
+}): { ok: true } | { ok: false; error: string } {
+  if (!isJobOrderProcedureGreenLit(opts.meta)) {
+    return {
+      ok: false,
+      error: "Job Order approvals must be complete before marking the job done.",
+    };
+  }
+  if (!opts.meta?.executionAssignedAt) {
+    return {
+      ok: false,
+      error: "Assign an execution assignee before marking the job done.",
+    };
+  }
+  if (!opts.ticketAssignedAgentId?.trim()) {
+    return {
+      ok: false,
+      error: "An execution assignee must be assigned on this ticket.",
+    };
+  }
+  if (
+    opts.ticketStatus === "FOR_CONFIRMATION" ||
+    opts.ticketStatus === "RESOLVED" ||
+    opts.ticketStatus === "CLOSED"
+  ) {
+    return { ok: false, error: "This Job Order is already sent for customer confirmation." };
+  }
+  if (!["IN_PROGRESS", "OPEN", "PENDING_INFO", "ESCALATED"].includes(opts.ticketStatus)) {
+    return { ok: false, error: "This Job Order cannot be marked done in its current status." };
+  }
+  if (opts.isAdmin) return { ok: true };
+  if (!opts.actorAgentId || opts.actorAgentId !== opts.ticketAssignedAgentId) {
+    return {
+      ok: false,
+      error: "Only the execution assignee or Admin can mark this Job Order done.",
+    };
+  }
+  return { ok: true };
+}
+
+export function parseJobOrderWorkerAgentIds(meta: JobOrderApprovalMeta | null | undefined): string[] {
+  if (!meta?.workerAgentIds?.length) return [];
+  return meta.workerAgentIds.filter((id) => typeof id === "string" && Boolean(id.trim()));
+}
+
+/** Co-workers only — excludes the execution assignee when provided. */
+export function applyJobOrderWorkerAgentIds(
+  meta: JobOrderApprovalMeta,
+  workerAgentIds: string[],
+  executionAssigneeId?: string | null,
+): JobOrderApprovalMeta {
+  const assignee = executionAssigneeId?.trim() || null;
+  const normalized = [
+    ...new Set(workerAgentIds.map((id) => id.trim()).filter(Boolean)),
+  ].filter((id) => id !== assignee);
+  return { ...meta, workerAgentIds: normalized };
+}
+
+export function isJobOrderWorkerAgent(
+  agentId: string | null | undefined,
+  meta: JobOrderApprovalMeta | null | undefined,
+): boolean {
+  const id = agentId?.trim();
+  if (!id) return false;
+  return parseJobOrderWorkerAgentIds(meta).includes(id);
 }

@@ -12,7 +12,7 @@ import { AgentWorkspace } from "./workspace";
 import { AgentTicketModalShell } from "@/components/ticket/AgentTicketModalShell";
 import { TicketRequestMetaDetails } from "@/components/ticket/TicketRequestMetaDetails";
 import { TrackRecentSearchVisit } from "@/components/global-search/TrackRecentSearchVisit";
-import { requestTypeLabel, requestTypeAcronym } from "@/lib/request-types";
+import { requestTypeLabel, requestTypeAcronym, requestTypeSupportsTransfer } from "@/lib/request-types";
 import { TicketDetailBreadcrumbs } from "@/components/navigation/TicketDetailBreadcrumbs";
 import { paymentProceduralStatusLabel } from "@/lib/request-for-payment-approval";
 import { initPaymentApprovalMetaIfNeeded, loadPaymentApprovalMeta } from "@/lib/payment-approval-db";
@@ -23,8 +23,12 @@ import {
 } from "@/lib/item-requisition-approval-db";
 import { fundTransferProceduralStatusLabel } from "@/lib/fund-transfer-approval";
 import { stampFundTransferCreatorOnCreate } from "@/lib/fund-transfer-approval-db";
-import { jobOrderProceduralStatusLabel } from "@/lib/job-order-approval";
-import { stampJobOrderCreatorOnCreate } from "@/lib/job-order-approval-db";
+import { jobOrderProceduralStatusLabel, isJobOrderAwaitingExecutionAssignee } from "@/lib/job-order-approval";
+import {
+  reconcileJobOrderAwaitingExecutionAssignee,
+  stampJobOrderCreatorOnCreate,
+} from "@/lib/job-order-approval-db";
+import { getTicketLinkedKpiMaintenanceId } from "@/lib/job-order-project";
 import { acaProceduralStatusLabel } from "@/lib/aca-approval";
 import { loadAcaApprovalMeta } from "@/lib/aca-approval-db";
 
@@ -185,6 +189,22 @@ export default async function AgentTicketPage({
         teamId: ticketForWorkspace.teamId,
       })
     : null;
+  if (isJobOrderRequest && isJobOrderAwaitingExecutionAssignee(jobOrderApprovalMeta)) {
+    if (await reconcileJobOrderAwaitingExecutionAssignee(id)) {
+      const assigneeRefresh = await prisma.ticket.findUnique({
+        where: { id },
+        select: {
+          assignedAgentId: true,
+          assignedAgent: true,
+          status: true,
+          resolvedAt: true,
+        },
+      });
+      if (assigneeRefresh) {
+        Object.assign(ticketForWorkspace, assigneeRefresh);
+      }
+    }
+  }
   const acaApprovalMeta = isAcaRequest
     ? await loadAcaApprovalMeta(ticketForWorkspace.id)
     : null;
@@ -327,7 +347,8 @@ export default async function AgentTicketPage({
       adminCompanyTeamId === ticketForWorkspace.teamId);
   const isAssignedOperator = !!operator && operator.id === ticketForWorkspace.assignedAgentId;
   const canUpdatePriority = isAdmin || companyCoordinator || isAssignedOperator;
-  const canRequestTransfer = isAssignedOperator;
+  const canRequestTransfer =
+    isAssignedOperator && requestTypeSupportsTransfer(requestTypeId);
   const myPortal = normalizedEmail
     ? await prisma.portalAccount.findFirst({
         where: { email: { equals: normalizedEmail, mode: "insensitive" } },
@@ -342,6 +363,23 @@ export default async function AgentTicketPage({
         parsed: parseTransferRequestDetail(lastTransferDetail),
       })
     : false;
+
+  let linkedJobOrderProjectAssigneeId: string | null = null;
+  let linkedJobOrderProjectAssigneeName: string | null = null;
+  if (isJobOrderRequest) {
+    const linkedProjectId = await getTicketLinkedKpiMaintenanceId(ticketForWorkspace.id);
+    if (linkedProjectId) {
+      const linkedProject = await prisma.kpiMaintenance.findUnique({
+        where: { id: linkedProjectId },
+        select: {
+          assignedAgentId: true,
+          assignedAgent: { select: { id: true, name: true } },
+        },
+      });
+      linkedJobOrderProjectAssigneeId = linkedProject?.assignedAgentId ?? null;
+      linkedJobOrderProjectAssigneeName = linkedProject?.assignedAgent?.name ?? null;
+    }
+  }
 
   return (
     <AgentTicketModalShell>
@@ -438,6 +476,8 @@ export default async function AgentTicketPage({
             canAssignPaymentAccountingFinance={canAssignPaymentAccountingFinance}
             canCreateJobOrderProject={isAdmin || companyCoordinator}
             canRequestJobOrderProject={isPersonnel && isAssignedOperator && !isAdmin && !companyCoordinator}
+            linkedJobOrderProjectAssigneeId={linkedJobOrderProjectAssigneeId}
+            linkedJobOrderProjectAssigneeName={linkedJobOrderProjectAssigneeName}
           />
         </div>
       </div>

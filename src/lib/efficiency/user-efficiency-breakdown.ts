@@ -127,7 +127,7 @@ type ChecklistWorkRow = {
   agentId: string;
   ownerName: string;
   taskId: string | null;
-  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK" | "TRAVEL_ORDER";
+  taskSource: "KPI_CHECKLIST" | "IT_PROJECT_SUBTASK" | "TRAVEL_ORDER" | "JOB_ORDER";
   taskTitle: string;
   status: "CURRENT" | "DONE" | "DELAYED";
   dueAt: Date | null;
@@ -594,6 +594,92 @@ async function loadConfirmedTravelWorkInWindow(
   return byAgent;
 }
 
+/**
+ * Green-lit Job Orders in the window — one DONE row per assignee + listed co-worker (execution credit).
+ */
+async function loadJobOrderWorkerWorkInWindow(
+  start: Date,
+  end: Date,
+): Promise<Map<string, ChecklistWorkRow[]>> {
+  const { parseJobOrderApprovalMeta } = await import("@/lib/job-order-approval");
+  const { jobOrderKpiCreditAgentIds } = await import("@/lib/job-order-workers");
+
+  const rows = await prismaPrimary.$queryRaw<
+    Array<{
+      id: string;
+      title: string;
+      ticket_number: string;
+      assigned_agent_id: string | null;
+      job_order_approval_meta: unknown;
+      linked_kpi_maintenance_id: string | null;
+      project_assignee_id: string | null;
+      updated_at: Date;
+    }>
+  >`
+    SELECT
+      t.id,
+      t.title,
+      t.ticket_number,
+      t.assigned_agent_id,
+      t.job_order_approval_meta,
+      t.linked_kpi_maintenance_id,
+      k.assigned_agent_id AS project_assignee_id,
+      t.updated_at
+    FROM tickets t
+    LEFT JOIN kpi_maintenance k ON k.id = t.linked_kpi_maintenance_id
+    WHERE t.request_type = 'JOB_ORDER'
+      AND t.job_order_approval_meta->>'proceduralStep' = 'DONE'
+      AND t.status IN ('FOR_CONFIRMATION', 'RESOLVED', 'CLOSED')
+      AND t.updated_at >= ${start}
+      AND t.updated_at < ${end}
+  `;
+
+  const agentIds = new Set<string>();
+  const parsed = rows.map((row) => {
+    const meta = parseJobOrderApprovalMeta(row.job_order_approval_meta);
+    const creditIds = jobOrderKpiCreditAgentIds({
+      meta,
+      ticketAssignedAgentId: row.assigned_agent_id,
+      linkedProjectAssigneeId: row.project_assignee_id,
+    });
+    for (const id of creditIds) agentIds.add(id);
+    return { ...row, meta, creditIds };
+  });
+
+  const nameById = new Map<string, string>();
+  if (agentIds.size > 0) {
+    const agents = await prismaPrimary.agent.findMany({
+      where: { id: { in: [...agentIds] } },
+      select: { id: true, name: true },
+    });
+    for (const agent of agents) nameById.set(agent.id, agent.name);
+  }
+
+  const byAgent = new Map<string, ChecklistWorkRow[]>();
+  for (const row of parsed) {
+    const title = (row.title?.trim() || row.ticket_number || "Job Order").slice(0, 512);
+    const completedAt =
+      row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at);
+    for (const agentId of row.creditIds) {
+      const work: ChecklistWorkRow = {
+        agentId,
+        ownerName: nameById.get(agentId) ?? "Co-worker",
+        taskId: row.id,
+        taskSource: "JOB_ORDER",
+        taskTitle: title,
+        status: "DONE",
+        dueAt: null,
+        completedAt,
+        delayPenaltyAccrued: 0,
+      };
+      const list = byAgent.get(agentId) ?? [];
+      list.push(work);
+      byAgent.set(agentId, list);
+    }
+  }
+  return byAgent;
+}
+
 function agentIdsForMergedPerson(
   group: PersonGroupRef,
   agents: AgentEnrichment[],
@@ -903,6 +989,12 @@ export async function runComputeUserEfficiencyBreakdowns(
         list.push(...rows);
         projectWork.set(agentId, list);
       }
+      const jobOrderWork = await loadJobOrderWorkerWorkInWindow(period.start, period.end);
+      for (const [agentId, rows] of jobOrderWork) {
+        const list = projectWork.get(agentId) ?? [];
+        list.push(...rows);
+        projectWork.set(agentId, list);
+      }
       // Always load snapshot checklist progress. Applied per person only when that
       // person has no TaskItem and no live project/checklist rows (see below).
       // Do not gate on global `tasks.length` — one board task must not wipe
@@ -1062,7 +1154,9 @@ export async function runComputeUserEfficiencyBreakdowns(
                     ? "IT project subtask"
                     : t.taskSource === "TRAVEL_ORDER"
                       ? "Confirmed Travel Order (traveler)"
-                      : "Non-recurring KPI checklist item",
+                      : t.taskSource === "JOB_ORDER"
+                        ? "Approved Job Order (assignee / co-worker)"
+                        : "Non-recurring KPI checklist item",
             })),
           ];
         }

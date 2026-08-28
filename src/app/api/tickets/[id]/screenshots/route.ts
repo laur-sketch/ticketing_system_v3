@@ -10,6 +10,10 @@ import {
 import { MAX_SCREENSHOT_COUNT } from "@/lib/ticket-intake-screenshots-constants";
 import { parseIntakeScreenshotMeta } from "@/lib/ticket-intake-screenshots-meta";
 import { canAccessTicketScreenshot } from "@/lib/ticket-screenshot-access";
+import { isJobOrderProcedureGreenLit } from "@/lib/job-order-approval";
+import { loadJobOrderApprovalMeta } from "@/lib/job-order-approval-db";
+import { isJobOrderExecutionMember } from "@/lib/job-order-workers";
+import { findSessionAgentWithTeam } from "@/lib/session-agent";
 
 /**
  * POST /api/tickets/:id/screenshots
@@ -43,6 +47,52 @@ export async function POST(
   }
   if (!(await canAccessTicketScreenshot(session, ticket))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const requestTypeRows = await prisma.$queryRaw<Array<{ request_type: string | null }>>`
+    SELECT request_type FROM tickets WHERE id = ${ticket.id} LIMIT 1
+  `;
+  const requestType = (requestTypeRows[0]?.request_type ?? "").trim();
+  if (requestType === "JOB_ORDER") {
+    const joMeta = await loadJobOrderApprovalMeta(ticket.id);
+    if (!isJobOrderProcedureGreenLit(joMeta)) {
+      return NextResponse.json(
+        {
+          error:
+            "Attachments on running Job Orders are available only after all approvals are complete.",
+        },
+        { status: 400 },
+      );
+    }
+    if (!ticket.assignedAgentId?.trim()) {
+      return NextResponse.json(
+        { error: "Assign an execution assignee before adding attachments." },
+        { status: 400 },
+      );
+    }
+    const operator = await findSessionAgentWithTeam({
+      email: session.user.email,
+      name: session.user.name,
+    });
+    const role = session.user.role;
+    const isAdmin = role === "SuperAdmin" || role === "HighAdmin" || role === "Admin";
+    const canUpload =
+      isAdmin ||
+      isJobOrderExecutionMember({
+        agentId: operator?.id ?? null,
+        meta: joMeta,
+        ticketAssignedAgentId: ticket.assignedAgentId,
+        linkedProjectAssigneeId: null,
+      });
+    if (!canUpload) {
+      return NextResponse.json(
+        {
+          error:
+            "Only the Job Order assignee or listed co-workers can add attachments after approval.",
+        },
+        { status: 403 },
+      );
+    }
   }
 
   if (!ACTIVE_REQUEST_STATUSES.includes(ticket.status)) {

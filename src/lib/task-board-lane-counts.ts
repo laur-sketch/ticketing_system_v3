@@ -111,12 +111,15 @@ export async function countTaskBoardLanes(input: {
   if (isPersonnel) {
     if (!operator?.id) return { current: 0, done: 0, delayed: 0 };
     const { kpiIdsWhereAgentIsTravelOrderTraveler } = await import("@/lib/travel-order-db");
+    const { kpiIdsWhereAgentIsJobOrderWorker } = await import("@/lib/job-order-workers-server");
     const travelerKpiIds = await kpiIdsWhereAgentIsTravelOrderTraveler(operator.id);
+    const jobOrderWorkerKpiIds = await kpiIdsWhereAgentIsJobOrderWorker(operator.id);
     rows = rows.filter(
       (row) =>
         row.assignedAgentId === operator.id ||
         hasSubKpiAssignedTo(row.subKpis, operator.id) ||
-        travelerKpiIds.has(row.id),
+        travelerKpiIds.has(row.id) ||
+        jobOrderWorkerKpiIds.has(row.id),
     );
   }
 

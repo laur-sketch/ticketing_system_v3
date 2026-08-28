@@ -204,7 +204,7 @@ export async function PATCH(req: Request) {
       where: { id: portal.id },
       data: {
         role: portalRole,
-        headPrivileges: portalRole === "Admin",
+        headPrivileges: false,
         ...(portalRole === "SuperAdmin"
           ? { staffDesignatedCompany: { disconnect: true } }
           : {}),

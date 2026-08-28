@@ -37,9 +37,9 @@ describe("exempt requester from travelers", () => {
       orderRequest: "Site visit",
       approvedByAgentIds: ["approver-1"],
       confirmationByAgentId: "confirm-1",
-      vehicle: "COMPANY_VAN",
+      vehicle: "COMPANY_VAN" as const,
       exemptRequesterFromTravelers: true,
-      additionalTravelerAgentIds: [],
+      additionalTravelerAgentIds: [] as string[],
       locations: [
         {
           clientKey: "1",

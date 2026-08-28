@@ -10,7 +10,7 @@ import {
 describe("setPillarDone", () => {
   it("clears a previously flagged pillar-only inverted task", () => {
     let raw = applyPillarOnlyTaskCreate(
-      wrapForPersist({ segmented: false, flat: [], segments: [] }),
+      wrapForPersist({ segmented: false, flat: [] }),
       { checkbox: true, numerical: false, screenshots: false, screenshotUpload: false },
     );
     raw = setPillarDone(raw, true);

@@ -78,7 +78,7 @@ describe("subtask kanban board moves (Trello-style segments)", () => {
         {
           id: UNSEGMENTED_SEGMENT_ID,
           label: UNSEGMENTED_SEGMENT_LABEL,
-          items: [{ title: "Waiting", done: false }],
+          items: [{ id: "waiting", title: "Waiting", done: false }],
         },
       ]),
     );
@@ -91,7 +91,7 @@ describe("subtask kanban board moves (Trello-style segments)", () => {
         {
           id: "seg-a",
           label: "Phase A",
-          items: [{ title: "Assigned work", done: false }],
+          items: [{ id: "assigned", title: "Assigned work", done: false }],
         },
       ]),
     );

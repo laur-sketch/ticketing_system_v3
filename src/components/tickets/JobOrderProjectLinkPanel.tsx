@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Link2, PlusSquare } from "lucide-react";
+import { JOB_ORDER_TASK_BOARD_SECTION_ID } from "@/lib/job-order-section-ids";
 
 type ProjectOption = {
   id: string;
@@ -224,7 +225,10 @@ export function JobOrderProjectLinkPanel({
   })();
 
   return (
-    <div className="rounded-xl border border-orange-400/35 bg-orange-500/[0.07] p-3 sm:p-4 dark:border-orange-500/30 dark:bg-orange-500/10">
+    <div
+      id={JOB_ORDER_TASK_BOARD_SECTION_ID}
+      className="scroll-mt-24 rounded-xl border border-orange-400/35 bg-orange-500/[0.07] p-3 sm:p-4 dark:border-orange-500/30 dark:bg-orange-500/10 jo-job-order-section"
+    >
       <div className="space-y-1">
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-orange-900 dark:text-orange-200">
           Link to a Task Board task

@@ -68,6 +68,7 @@ describe("numerical target while task is running", () => {
   it("preserves numericalTarget across cycle reset while clearing actual", () => {
     const afterReset = resetAllSubKpiDone(flatWithTarget);
     const n = normalizeSubKpis(afterReset);
+    if (n.segmented) throw new Error("expected flat sub-kpis");
     const item = n.flat[0]!;
     expect(item.numericalTarget).toBe(100);
     expect(item.numericalValue).toBeUndefined();

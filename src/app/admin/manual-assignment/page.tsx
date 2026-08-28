@@ -27,8 +27,18 @@ export default async function ManualAssignmentPage() {
   const [unassigned, hrisStaff, sectionOptions] = await Promise.all([
     prisma.ticket.findMany({
       where: {
-        status: { in: ACTIVE_STATUSES },
         assignedAgentId: null,
+        OR: [
+          { status: { in: ACTIVE_STATUSES } },
+          {
+            status: "FOR_CONFIRMATION",
+            requestType: "JOB_ORDER",
+            jobOrderApprovalMeta: {
+              path: ["proceduralStep"],
+              equals: "DONE",
+            },
+          },
+        ],
         ...(scopedCompanyFilterTeamId ? { teamId: scopedCompanyFilterTeamId } : {}),
       },
       orderBy: { updatedAt: "desc" },

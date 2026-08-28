@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TaskMetricsCadence } from "@/lib/task-metrics-range";
 import { DateTime } from "luxon";
 import { getDailyPeriodKey } from "@/lib/kpi-recurrence";
 import { wrapForPersist } from "@/lib/kpi-subkpis";
@@ -36,7 +37,7 @@ describe("buildSubtaskCsvPreviewForPillar", () => {
     const preview = buildSubtaskCsvPreviewForPillar({
       pillar: "DATA BACKUP",
       pillarKpis: [kpi],
-      metricsCadence: "DAILY",
+      metricsCadence: "DAILY" as TaskMetricsCadence,
       fromYmd: ymd,
       toYmd: ymd,
       zone,

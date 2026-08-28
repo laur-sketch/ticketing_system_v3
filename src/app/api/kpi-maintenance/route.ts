@@ -172,14 +172,18 @@ function kpiRowVisibleToAgent(
   return row.assignedAgentId === id || hasSubKpiAssignedTo(row.subKpis, id);
 }
 
-/** Assignee / sub-assignee visibility, plus Field Assignments where the agent is a traveler. */
+/** Assignee / sub-assignee visibility, plus Field Assignments where the agent is a traveler or JO co-worker. */
 function filterKpiRowsForViewer<T extends { id: string; assignedAgentId: string | null; subKpis: unknown }>(
   rows: T[],
   agentId: string | null | undefined,
   travelerKpiIds: Set<string>,
+  jobOrderWorkerKpiIds: Set<string>,
 ): T[] {
   return rows.filter(
-    (row) => kpiRowVisibleToAgent(row, agentId) || travelerKpiIds.has(row.id),
+    (row) =>
+      kpiRowVisibleToAgent(row, agentId) ||
+      travelerKpiIds.has(row.id) ||
+      jobOrderWorkerKpiIds.has(row.id),
   );
 }
 
@@ -238,6 +242,7 @@ export async function GET(req: Request) {
     kpiIdsWithTravelOrders,
     travelOrderBoardSummariesByKpiIds,
   } = await import("@/lib/travel-order-db");
+  const { kpiIdsWhereAgentIsJobOrderWorker } = await import("@/lib/job-order-workers-server");
 
   const viewerAgentId = !perms.canAssignWork
     ? (perms.operator?.id ?? null)
@@ -245,11 +250,14 @@ export async function GET(req: Request) {
   const travelerKpiIds = viewerAgentId
     ? await kpiIdsWhereAgentIsTravelOrderTraveler(viewerAgentId)
     : new Set<string>();
+  const jobOrderWorkerKpiIds = viewerAgentId
+    ? await kpiIdsWhereAgentIsJobOrderWorker(viewerAgentId)
+    : new Set<string>();
 
   if (!perms.canAssignWork) {
-    rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds);
+    rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds, jobOrderWorkerKpiIds);
   } else if (filterByAssigned) {
-    rows = filterKpiRowsForViewer(rows, filterByAssigned, travelerKpiIds);
+    rows = filterKpiRowsForViewer(rows, filterByAssigned, travelerKpiIds, jobOrderWorkerKpiIds);
   }
 
   const now = new Date();
@@ -427,9 +435,9 @@ export async function GET(req: Request) {
       );
     }
     if (!perms.canAssignWork) {
-      rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds);
+      rows = filterKpiRowsForViewer(rows, viewerAgentId, travelerKpiIds, jobOrderWorkerKpiIds);
     } else if (filterByAssigned) {
-      rows = filterKpiRowsForViewer(rows, filterByAssigned, travelerKpiIds);
+      rows = filterKpiRowsForViewer(rows, filterByAssigned, travelerKpiIds, jobOrderWorkerKpiIds);
     }
   }
 

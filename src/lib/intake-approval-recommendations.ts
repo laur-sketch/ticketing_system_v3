@@ -380,7 +380,7 @@ async function resolveInSectionForPositionCode(opts: {
 
   const { selected, main, isSubsection } = context;
 
-  if (isSubsection) {
+  if (isSubsection && selected) {
     const subsectionHead = await resolveHeadForSection(selected, opts.maps);
     if (subsectionHead) {
       return {
@@ -594,7 +594,12 @@ async function selectedSectionHeadSeat(
 
   while (currentId && !seen.has(currentId)) {
     seen.add(currentId);
-    const section = await prisma.orgChartSection.findUnique({
+    const section: {
+      id: string;
+      name: string;
+      parentId: string | null;
+      headNodeId: string | null;
+    } | null = await prisma.orgChartSection.findUnique({
       where: { id: currentId },
       select: { id: true, name: true, parentId: true, headNodeId: true },
     });
@@ -674,9 +679,9 @@ async function loadSectionContextNames(sectionId: string | null | undefined): Pr
     return { sectionName: null, mainSectionId: null, mainSectionName: null };
   }
   return {
-    sectionName: context.selected.name,
-    mainSectionId: context.main.id,
-    mainSectionName: context.main.name,
+    sectionName: context.selected?.name ?? null,
+    mainSectionId: context.main?.id ?? null,
+    mainSectionName: context.main?.name ?? null,
   };
 }
 

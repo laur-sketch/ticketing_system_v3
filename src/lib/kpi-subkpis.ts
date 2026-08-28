@@ -880,7 +880,7 @@ export function isPillarOnlyTask(raw: unknown): boolean {
 /** Task completion is a single main-task row (pillar envelope or one legacy sub-task). */
 export function isMainTaskOnlyRecord(
   raw: unknown,
-  opts: Pick<KpiMainTaskRecord, "title" | "mainTask"> = {},
+  opts: Pick<KpiMainTaskRecord, "title" | "mainTask"> = { title: "", mainTask: null },
 ): boolean {
   if (isPillarOnlyTask(raw)) return true;
   const norm = normalizeSubKpis(raw);

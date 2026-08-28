@@ -102,3 +102,14 @@ export function requestTypeAcronym(idOrLabel: string | null | undefined): string
 export function isIssueConcernTicket(id: string | null | undefined): boolean {
   return parseRequestTypeId(id) === "ISSUE_CONCERN_TICKET";
 }
+
+/** Procedural request types that use approval chains instead of personnel transfer. */
+export function requestTypeSupportsTransfer(id: string | null | undefined): boolean {
+  const type = (id ?? "").trim();
+  if (!type) return true;
+  return (
+    type !== "REQUEST_FOR_PAYMENT" &&
+    type !== "FUND_TRANSFER_REQUEST" &&
+    type !== "JOB_ORDER"
+  );
+}

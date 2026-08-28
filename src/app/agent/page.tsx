@@ -57,9 +57,13 @@ import {
 import { loadFundTransferApprovalMetaMap } from "@/lib/fund-transfer-approval-db";
 import {
   jobOrderProceduralStatusLabel,
+  isJobOrderAwaitingExecutionAssignee,
   type JobOrderApprovalMeta,
 } from "@/lib/job-order-approval";
-import { loadJobOrderApprovalMetaMap } from "@/lib/job-order-approval-db";
+import {
+  loadJobOrderApprovalMetaMap,
+  reconcileJobOrdersAwaitingExecutionAssignee,
+} from "@/lib/job-order-approval-db";
 import { CompanyKanban } from "./company-kanban";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
@@ -495,7 +499,7 @@ export default async function AgentHome({
     } as AgentTicketWithTeam;
   };
   const ticketsTableEnriched = ticketsTable.map(withAssigneeColor);
-  const ticketsBoardEnriched = ticketsBoard.map(withAssigneeColor);
+  let ticketsBoardEnriched = ticketsBoard.map(withAssigneeColor);
 
   const boardRequestTypeById = new Map<string, string>();
   let boardPaymentMetaById = new Map<string, PaymentApprovalMeta>();
@@ -516,6 +520,23 @@ export default async function AgentHome({
     boardFundTransferMetaById = await loadFundTransferApprovalMetaMap(ids);
     boardJobOrderMetaById = await loadJobOrderApprovalMetaMap(ids);
     boardAcaMetaById = await loadAcaApprovalMetaMap(ids);
+
+    const joAwaitingExecutionIds = ids.filter((ticketId) => {
+      if (boardRequestTypeById.get(ticketId) !== "JOB_ORDER") return false;
+      return isJobOrderAwaitingExecutionAssignee(boardJobOrderMetaById.get(ticketId));
+    });
+    if (joAwaitingExecutionIds.length > 0) {
+      await reconcileJobOrdersAwaitingExecutionAssignee(joAwaitingExecutionIds);
+      const refreshedBoardTickets = await prisma.ticket.findMany({
+        where: { id: { in: joAwaitingExecutionIds } },
+        include: { team: true, assignedAgent: true, feedback: { select: { csat: true } } },
+      });
+      const refreshedById = new Map(refreshedBoardTickets.map((t) => [t.id, t]));
+      ticketsBoardEnriched = ticketsBoardEnriched.map((t) => {
+        const refreshed = refreshedById.get(t.id);
+        return refreshed ? withAssigneeColor(refreshed) : t;
+      });
+    }
   }
 
   const tickets = isBoard ? ticketsBoardEnriched : ticketsTableEnriched;

@@ -1061,3 +1061,18 @@ html.dark .org-chart-flow {
   border-color: rgb(249 115 22 / 0.95);
   box-shadow: 0 0 0 3px rgb(249 115 22 / 0.55);
 }
+
+.jo-job-order-section.jo-section-highlight {
+  animation: jo-section-pulse 2.2s ease-out;
+  box-shadow: 0 0 0 3px rgb(16 185 129 / 0.45);
+}
+
+@keyframes jo-section-pulse {
+  0%,
+  15% {
+    box-shadow: 0 0 0 4px rgb(16 185 129 / 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+  }
+}

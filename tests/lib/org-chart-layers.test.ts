@@ -4,6 +4,7 @@ import {
   orgChartOptionLabel,
   orgChartOutlineById,
   orgChartPersonOutlineFromLayout,
+  type OrgChartOutlineNode,
 } from "@/app/admin/superadmin-settings/org-chart-layers";
 
 type TestNode = {
@@ -11,9 +12,14 @@ type TestNode = {
   parentId: string | null;
   sortOrder: number;
   personName: string;
+  companyName?: string | null;
   sectionId?: string | null;
   sectionMemberships?: Array<{ sectionId: string }>;
 };
+
+function asOutlineNodes(nodes: TestNode[]): OrgChartOutlineNode[] {
+  return nodes.map((n) => ({ ...n, sectionId: n.sectionId ?? null }));
+}
 
 type TestSection = {
   id: string;
@@ -37,10 +43,10 @@ function layoutOutline(
     ? {
         sectionIdsInScope: layout.sectionIdsInScope,
         scopeRootSectionId: layout.scopeRootSectionId,
-        allNodesForOutline: layout.allNodes ?? nodes,
+        allNodesForOutline: asOutlineNodes(layout.allNodes ?? nodes),
       }
     : undefined;
-  return orgChartOutlineById(nodes, sections, layoutOptions);
+  return orgChartOutlineById(asOutlineNodes(nodes), sections, layoutOptions);
 }
 
 describe("org chart outline consistency", () => {
@@ -59,7 +65,7 @@ describe("org chart outline consistency", () => {
     ];
 
     const fromLayout = layoutOutline(nodes, sections);
-    const fromHelper = orgChartOutlineById(nodes, sections);
+    const fromHelper = orgChartOutlineById(asOutlineNodes(nodes), sections);
 
     for (const n of nodes) {
       expect(fromLayout.get(n.id)).toBe(fromHelper.get(n.id));
@@ -76,7 +82,11 @@ describe("org chart outline consistency", () => {
 
     for (const n of nodes) {
       const cardOutline = outlineById.get(n.id)!;
-      const dropdownLabel = orgChartOptionLabel(n, outlineById.get(n.id) ?? "?", outlineById);
+      const dropdownLabel = orgChartOptionLabel(
+        { ...n, companyName: n.companyName ?? null },
+        outlineById.get(n.id) ?? "?",
+        outlineById,
+      );
       expect(dropdownLabel.startsWith(`${cardOutline} · `)).toBe(true);
     }
   });
@@ -104,7 +114,7 @@ describe("org chart outline consistency", () => {
       },
     ];
     const scope = new Set(["corp", "hr", "it"]);
-    const childrenOf = buildOrgChartChildrenOf(nodes, sections, {
+    const childrenOf = buildOrgChartChildrenOf(asOutlineNodes(nodes), sections, {
       sectionIdsInScope: scope,
       scopeRootSectionId: "corp",
     });
@@ -165,7 +175,7 @@ describe("org chart outline consistency", () => {
       },
     ];
     const scope = new Set(["corp", "hr", "gs", "it", "mkt"]);
-    const childrenOf = buildOrgChartChildrenOf(nodes, sections, {
+    const childrenOf = buildOrgChartChildrenOf(asOutlineNodes(nodes), sections, {
       sectionIdsInScope: scope,
       scopeRootSectionId: "corp",
     });
@@ -260,7 +270,7 @@ describe("org chart outline consistency", () => {
       { id: "fp-head", parentId: "ceo", sortOrder: 0, personName: "FP Head", sectionMemberships: [{ sectionId: "fp" }] },
     ];
     const scope = new Set(["agoc", "corp", "hr", "gs", "fin", "fp"]);
-    const childrenOf = buildOrgChartChildrenOf(nodes, sections, {
+    const childrenOf = buildOrgChartChildrenOf(asOutlineNodes(nodes), sections, {
       sectionIdsInScope: scope,
       scopeRootSectionId: "agoc",
     });
@@ -304,7 +314,7 @@ describe("org chart outline consistency", () => {
       },
     ];
     const outlineById = layoutOutline(nodes, sections);
-    const childrenOf = buildOrgChartChildrenOf(nodes, sections);
+    const childrenOf = buildOrgChartChildrenOf(asOutlineNodes(nodes), sections);
     const roots = (childrenOf.get(null) ?? []).map((n) => n.id);
 
     expect(roots[0]).toBe("manuel");
@@ -372,7 +382,7 @@ describe("org chart outline consistency", () => {
       },
     ];
     const outlineById = layoutOutline(nodes, sections);
-    const peers = (buildOrgChartChildrenOf(nodes, sections).get("manuel") ?? []).map((n) => n.id);
+    const peers = (buildOrgChartChildrenOf(asOutlineNodes(nodes), sections).get("manuel") ?? []).map((n) => n.id);
 
     expect(outlineById.get("manuel")).toBe("1");
     expect(outlineById.get("corp-head")).toBe("1.1");
@@ -536,7 +546,7 @@ describe("org chart outline consistency", () => {
       allNodes,
     };
     const outlineById = layoutOutline(scopedNodes, sections, layout);
-    const peers = (buildOrgChartChildrenOf(scopedNodes, sections, layout).get("satorre") ?? []).map(
+    const peers = (buildOrgChartChildrenOf(asOutlineNodes(scopedNodes), sections, layout).get("satorre") ?? []).map(
       (n) => n.id,
     );
 
@@ -556,7 +566,7 @@ describe("org chart outline consistency", () => {
       { id: "z", parentId: "mgr", sortOrder: 2, personName: "Z" },
     ];
     const outlineById = layoutOutline(nodes, []);
-    const childrenOf = buildOrgChartChildrenOf(nodes, []);
+    const childrenOf = buildOrgChartChildrenOf(asOutlineNodes(nodes), []);
     const siblings = childrenOf.get("mgr") ?? [];
 
     siblings.forEach((child, index) => {
@@ -602,7 +612,7 @@ describe("org chart outline consistency", () => {
       { id: "other-mgr", parentId: null, sortOrder: 1, personName: "Other Mgr" },
     ];
     const outlineById = layoutOutline(nodes, sections);
-    const peers = (buildOrgChartChildrenOf(nodes, sections).get("manuel") ?? []).map(
+    const peers = (buildOrgChartChildrenOf(asOutlineNodes(nodes), sections).get("manuel") ?? []).map(
       (n) => n.id,
     );
 
