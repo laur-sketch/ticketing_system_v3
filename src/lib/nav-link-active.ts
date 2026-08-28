@@ -25,18 +25,22 @@ export function navLinkActive(
   if (path === "/agent/tasks") {
     return pathname === "/agent/tasks" || pathname.startsWith("/agent/tasks/");
   }
-  if (
-    path === "/agent" &&
-    (pathname === "/agent" ||
+  if (path === "/agent") {
+    // Requests board only — do not treat Task Board (/agent/tasks) as active.
+    if (pathname === "/agent/tasks" || pathname.startsWith("/agent/tasks/")) return false;
+    if (
+      pathname === "/agent" ||
       pathname.startsWith("/agent/tickets") ||
       pathname === "/admin/manual-assignment" ||
       pathname === "/my-requests" ||
-      pathname.startsWith("/my-requests/"))
-  ) {
-    if (params?.get("assigned") === "UNASSIGNED") return false;
-    if (params?.get("board") === "company") return false;
-    if (params?.get("view") === "approvals") return false;
-    return true;
+      pathname.startsWith("/my-requests/")
+    ) {
+      if (params?.get("assigned") === "UNASSIGNED") return false;
+      if (params?.get("board") === "company") return false;
+      if (params?.get("view") === "approvals") return false;
+      return true;
+    }
+    return false;
   }
   if (path === "/admin/workforce") {
     return pathname === "/admin/workforce" || pathname.startsWith("/admin/workforce/");

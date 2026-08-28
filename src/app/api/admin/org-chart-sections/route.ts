@@ -3,7 +3,8 @@ import { requireSession } from "@/lib/access";
 import { prismaPrimary } from "@/lib/prisma";
 import {
   ensurePortalAdminForAllOrgChartSectionHeads,
-  ensurePortalAdminForOrgChartHeadNode,
+  reconcilePortalStaffRolesFromOrgChart,
+  resolvePortalTechnicalRolesByMergedSourceUserIds,
 } from "@/lib/org-chart-section-scope";
 
 async function guardSuperAdmin() {
@@ -32,6 +33,7 @@ function serializeSection(s: {
     personName: string;
     personRole: string | null;
     companyName: string | null;
+    mergedSourceUserId?: string;
   } | null;
   reportsToNode?: {
     id: string;
@@ -43,7 +45,11 @@ function serializeSection(s: {
   _count: { memberships: number };
   createdAt: Date;
   updatedAt: Date;
-}) {
+}, portalRoleByMergedId?: Map<string, string>) {
+  const headMergedId = s.headNode?.mergedSourceUserId?.trim() ?? "";
+  const headPortalRole = headMergedId
+    ? portalRoleByMergedId?.get(headMergedId) ?? null
+    : null;
   return {
     id: s.id,
     name: s.name,
@@ -54,7 +60,8 @@ function serializeSection(s: {
     companyName: s.companyTeam?.name ?? null,
     headNodeId: s.headNodeId,
     headName: s.headNode?.personName ?? null,
-    headRole: s.headNode?.personRole ?? null,
+    // Prefer portal Admin/Personnel over HRIS personRole snapshot on the node.
+    headRole: headPortalRole ?? s.headNode?.personRole ?? null,
     headCompanyName: s.headNode?.companyName ?? null,
     reportsToNodeId: s.reportsToNodeId ?? null,
     reportsToName: s.reportsToNode?.personName ?? null,
@@ -71,6 +78,14 @@ function serializeSection(s: {
   };
 }
 
+async function serializeSectionWithHeadPortalRole(s: Parameters<typeof serializeSection>[0]) {
+  const mergedId = s.headNode?.mergedSourceUserId?.trim() ?? "";
+  const map = mergedId
+    ? await resolvePortalTechnicalRolesByMergedSourceUserIds([mergedId])
+    : undefined;
+  return serializeSection(s, map);
+}
+
 const sectionInclude = {
   companyTeam: { select: { id: true, name: true } },
   headNode: {
@@ -79,6 +94,7 @@ const sectionInclude = {
       personName: true,
       personRole: true,
       companyName: true,
+      mergedSourceUserId: true,
     },
   },
   reportsToNode: {
@@ -323,7 +339,7 @@ export async function GET() {
   const denied = await guardSuperAdmin();
   if (denied) return denied;
 
-  // Lazy backfill: existing heads become portal Admin (custom section roles unchanged).
+  // Lazy backfill: align Personnel / Admin with department + sub-department heads.
   await ensurePortalAdminForAllOrgChartSectionHeads();
 
   const sections = await prismaPrimary.orgChartSection.findMany({
@@ -331,7 +347,15 @@ export async function GET() {
     include: sectionIncludeArgs,
   });
 
-  return NextResponse.json(sections.map((s) => serializeSection(s as any)));
+  const headMergedIds = sections
+    .map((s) => (s as { headNode?: { mergedSourceUserId?: string | null } | null }).headNode?.mergedSourceUserId)
+    .filter((id): id is string => Boolean(id?.trim()));
+  const portalRoleByMergedId =
+    await resolvePortalTechnicalRolesByMergedSourceUserIds(headMergedIds);
+
+  return NextResponse.json(
+    sections.map((s) => serializeSection(s as any, portalRoleByMergedId)),
+  );
 }
 
 export async function POST(req: Request) {
@@ -413,7 +437,9 @@ export async function POST(req: Request) {
     include: sectionIncludeArgs,
   });
 
-  return NextResponse.json(serializeSection(created as any), { status: 201 });
+  return NextResponse.json(await serializeSectionWithHeadPortalRole(created as any), {
+    status: 201,
+  });
 }
 
 export async function PATCH(req: Request) {
@@ -480,7 +506,9 @@ export async function PATCH(req: Request) {
       include: sectionIncludeArgs,
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });
-    return NextResponse.json(refreshed.map((s) => serializeSection(s as any)));
+    return NextResponse.json(
+      await Promise.all(refreshed.map((s) => serializeSectionWithHeadPortalRole(s as any))),
+    );
   }
 
   const id = String(body.id ?? "").trim();
@@ -551,6 +579,7 @@ export async function PATCH(req: Request) {
     }
 
     await syncPrimarySections(nodeIds);
+    await reconcilePortalStaffRolesFromOrgChart();
 
     return NextResponse.json({
       sectionId: clearAll ? null : sectionId,
@@ -569,7 +598,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Section not found." }, { status: 404 });
   }
 
-  // Set or clear the section / subsection head.
+  // Set or clear the section / sub-department head.
   if (body.headNodeId !== undefined) {
     const resolved = await resolveHeadNodeId(id, body.headNodeId);
     if ("error" in resolved) {
@@ -580,12 +609,12 @@ export async function PATCH(req: Request) {
       data: { headNodeId: resolved.headNodeId },
       include: sectionIncludeArgs,
     });
-    // Section head → portal Admin; custom section roles stay membership labels.
+    // Align Personnel / Admin with chart heads (promotes new head, demotes former).
+    await reconcilePortalStaffRolesFromOrgChart();
     if (resolved.headNodeId) {
-      await ensurePortalAdminForOrgChartHeadNode(resolved.headNodeId);
       await syncMajorDepartmentHeadToTopLevel(id);
     }
-    return NextResponse.json(serializeSection(updated as any));
+    return NextResponse.json(await serializeSectionWithHeadPortalRole(updated as any));
   }
 
   // Create a custom section role (e.g. Deputy, Coordinator).
@@ -619,7 +648,7 @@ export async function PATCH(req: Request) {
       where: { id },
       include: sectionIncludeArgs,
     });
-    return NextResponse.json(serializeSection(updated as any));
+    return NextResponse.json(await serializeSectionWithHeadPortalRole(updated as any));
   }
 
   // Delete a custom section role.
@@ -640,7 +669,7 @@ export async function PATCH(req: Request) {
       where: { id },
       include: sectionIncludeArgs,
     });
-    return NextResponse.json(serializeSection(updated as any));
+    return NextResponse.json(await serializeSectionWithHeadPortalRole(updated as any));
   }
 
   // Assign / clear a custom role on a section member (not the Head pointer).
@@ -785,7 +814,7 @@ export async function PATCH(req: Request) {
     }
   }
 
-  return NextResponse.json(serializeSection(updated as any));
+  return NextResponse.json(await serializeSectionWithHeadPortalRole(updated as any));
 }
 
 export async function DELETE(req: Request) {

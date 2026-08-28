@@ -599,6 +599,7 @@ export function PersonnelClient({
                 value={createRole}
                 onChange={(e) => setCreateRole(e.target.value as "Admin" | "Personnel")}
                 className={authInputClass}
+                title="New accounts start as Personnel. Admin is granted when the person is set as a department or sub-department head."
               >
                 <option value="Personnel">Personnel</option>
                 <option value="Admin">Admin</option>
@@ -824,7 +825,8 @@ export function PersonnelClient({
         ) : (
           <>
             <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-              HRIS roster from {secondaryDatabaseName} · SuperAdmin can set each employee&apos;s role and company queue
+              HRIS roster from {secondaryDatabaseName} · Admin/Personnel follow org-chart department
+              heads (Workforce → Sectioning). SuperAdmin can set elevated roles and company queue here.
             </p>
 
             <RegistryFiltersBar
@@ -888,10 +890,14 @@ export function PersonnelClient({
                                 void updateMergedUserRole(row.mergedSourceUserId, e.target.value)
                               }
                               className={teamSelectClass}
-                              title="Portal role"
+                              title="Admin/Personnel follow org-chart department heads. Use this for SuperAdmin / HighAdmin / other elevated roles."
                             >
                               {PORTAL_ROLES.map((r) => (
-                                <option key={r} value={r}>
+                                <option
+                                  key={r}
+                                  value={r}
+                                  disabled={r === "Admin" || r === "Personnel"}
+                                >
                                   {r}
                                 </option>
                               ))}

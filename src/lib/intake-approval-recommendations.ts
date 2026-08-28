@@ -12,14 +12,37 @@ import {
   resolveOrgChartSectionContext,
 } from "@/lib/org-chart-section-roster";
 import {
+  ACA_APPROVING_PATH_LABELS,
+  ACA_RECOMMENDING_LABELS,
+  acaRecommendedByUsesRequestorCompanyLock,
+  type AcaApprovingPath,
+  type AcaRecommendingLevel,
+} from "@/lib/aca-authority-matrix";
+import { resolveAcaAssigneesFromPositions } from "@/lib/approval-position-resolver";
+import {
   FTR_STEP_POSITION_CODES,
-  JO_STEP_POSITION_CODES,
   RFP_STEP_POSITION_CODES,
+  RS_STEP_POSITION_CODES,
 } from "@/lib/position-catalog";
 import { prisma } from "@/lib/prisma";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
-import type { JobOrderApprovalStep } from "@/lib/job-order-approval";
 import type { RequestTypeId } from "@/lib/request-types";
+
+const HR_SECTION_NAME_CANDIDATES = [
+  "hr team",
+  "hr",
+  "human resources",
+  "human resource",
+  "human resource management",
+];
+
+function isHrSectionName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  if (!n) return false;
+  return HR_SECTION_NAME_CANDIDATES.some(
+    (candidate) => n === candidate || n.includes(candidate) || candidate.includes(n),
+  );
+}
 
 export type IntakeRecommendationSource =
   | "subsection_head"
@@ -79,7 +102,7 @@ function sourceHint(
 ): string | null {
   switch (source) {
     case "subsection_head":
-      return sectionName ? `Subsection head — ${sectionName}` : "Subsection head";
+      return sectionName ? `Sub-department head — ${sectionName}` : "Sub-department head";
     case "position":
       return mainSectionName
         ? `${positionLabel} in ${mainSectionName}`
@@ -547,6 +570,100 @@ async function sectionSeat(
   };
 }
 
+/**
+ * Head of the selected org-chart section. If a sub-department is selected,
+ * uses that sub-department’s head; walks up parents only when no head is set.
+ */
+async function selectedSectionHeadSeat(
+  key: string,
+  label: string,
+  sectionId: string | null,
+  sectionName: string | null,
+  maps: Awaited<ReturnType<typeof loadStaffMaps>>,
+  emptyHint?: string | null,
+): Promise<IntakeApprovalRecommendationSeat> {
+  if (!sectionId) {
+    return {
+      ...emptySeat(key, label, null, sectionName),
+      hint: emptyHint ?? null,
+    };
+  }
+
+  let currentId: string | null = sectionId;
+  const seen = new Set<string>();
+
+  while (currentId && !seen.has(currentId)) {
+    seen.add(currentId);
+    const section = await prisma.orgChartSection.findUnique({
+      where: { id: currentId },
+      select: { id: true, name: true, parentId: true, headNodeId: true },
+    });
+    if (!section) break;
+
+    const head = await resolveHeadForSection(section, maps);
+    if (head) {
+      const isSubsection = Boolean(section.parentId);
+      return {
+        key,
+        label,
+        agentId: head.agentId,
+        agentName: head.agentName,
+        sectionId: head.sectionId,
+        sectionName: head.sectionName,
+        source: isSubsection ? "subsection_head" : "section_head",
+        hint: sourceHint(
+          isSubsection ? "subsection_head" : "section_head",
+          head.sectionName,
+          label,
+          null,
+        ),
+      };
+    }
+    currentId = section.parentId;
+  }
+
+  return {
+    ...emptySeat(key, label, sectionId, sectionName),
+    hint: sectionName
+      ? `No department head found for ${sectionName}.`
+      : "No department head found.",
+  };
+}
+
+async function hrTeamHeadSeat(
+  key: string,
+  label: string,
+  maps: Awaited<ReturnType<typeof loadStaffMaps>>,
+): Promise<IntakeApprovalRecommendationSeat> {
+  const sections = await prisma.orgChartSection.findMany({
+    select: { id: true, name: true, parentId: true, headNodeId: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  });
+  const hrSections = sections.filter((s) => isHrSectionName(s.name));
+  hrSections.sort((a, b) => a.name.length - b.name.length);
+
+  for (const section of hrSections) {
+    const head = await resolveHeadForSection(section, maps);
+    if (head) {
+      return {
+        key,
+        label,
+        agentId: head.agentId,
+        agentName: head.agentName,
+        sectionId: head.sectionId,
+        sectionName: head.sectionName,
+        source: "section_head",
+        hint: `HR team head — ${head.sectionName}`,
+      };
+    }
+  }
+
+  return {
+    ...emptySeat(key, label, null, null),
+    hint: "No HR team head found on the org chart.",
+  };
+}
+
 async function loadSectionContextNames(sectionId: string | null | undefined): Promise<{
   sectionName: string | null;
   mainSectionId: string | null;
@@ -563,6 +680,30 @@ async function loadSectionContextNames(sectionId: string | null | undefined): Pr
   };
 }
 
+function seatFromResolvedAgent(opts: {
+  key: string;
+  label: string;
+  agentId: string | null;
+  maps: Awaited<ReturnType<typeof loadStaffMaps>>;
+  sectionId?: string | null;
+  sectionName?: string | null;
+  source?: IntakeRecommendationSource;
+  hint?: string | null;
+}): IntakeApprovalRecommendationSeat {
+  const agentId = (opts.agentId ?? "").trim() || null;
+  const agentName = agentId ? opts.maps.nameByAgentId.get(agentId) ?? null : null;
+  return {
+    key: opts.key,
+    label: opts.label,
+    agentId: agentName ? agentId : null,
+    agentName,
+    sectionId: opts.sectionId ?? null,
+    sectionName: opts.sectionName ?? null,
+    source: agentName ? (opts.source ?? "company_position") : null,
+    hint: agentName ? (opts.hint ?? sourceHint("company_position", null, opts.label, null)) : null,
+  };
+}
+
 export async function resolveIntakeApprovalRecommendations(opts: {
   requestType: RequestTypeId;
   requestorSectionId?: string | null;
@@ -573,6 +714,11 @@ export async function resolveIntakeApprovalRecommendations(opts: {
   skipNotedBy?: boolean;
   skipApprovedBy?: boolean;
   deferBookkeeper?: boolean;
+  /** ACA matrix recommending level code (RA_1 … EXECOM). */
+  acaRecommendingLevel?: string | null;
+  /** ACA matrix approving path code (AP_1 … ALL_EXECOM). */
+  acaApprovingPath?: string | null;
+  acaApprovingSeatCount?: number | null;
 }): Promise<IntakeApprovalRecommendationGuide> {
   const requestorSectionId = (opts.requestorSectionId ?? "").trim() || null;
   const sendToSectionId = (opts.sendToSectionId ?? "").trim() || null;
@@ -676,40 +822,99 @@ export async function resolveIntakeApprovalRecommendations(opts: {
   }
 
   if (opts.requestType === "JOB_ORDER") {
-    const steps: JobOrderApprovalStep[] = ["NOTED_BY", "APPROVED_BY", "APPROVED_BY_2"];
-    const keys = ["notedByAgentId", "approvedByAgentId", "approvedBy2AgentId"] as const;
-    const labels = ["Noted By", "Approved By", "Approved By"] as const;
-    for (let i = 0; i < steps.length; i += 1) {
-      const step = steps[i]!;
-      const key = keys[i]!;
-      const label = labels[i]!;
-      if (step === "NOTED_BY") {
-        const code = JO_STEP_POSITION_CODES[step];
-        if (!code) continue;
-        seats.push(
-          await sectionSeat(
-            key,
-            label,
-            code,
-            requestorSectionId,
-            requestorNames.sectionName,
-            requestorNames.mainSectionName,
-            requestorSectionCompanyTeamId,
-            maps,
-          ),
-        );
-        continue;
-      }
+    // Requestor head → send-to (sub) department head → HR team head
+    seats.push(
+      await selectedSectionHeadSeat(
+        "notedByAgentId",
+        "Noted By (Requestor head)",
+        requestorSectionId,
+        requestorNames.sectionName,
+        maps,
+        "Select your department to recommend the requestor’s department head.",
+      ),
+    );
+    seats.push(
+      await selectedSectionHeadSeat(
+        "approvedByAgentId",
+        "Approved By (Send-to head)",
+        sendToSectionId,
+        sendToNames.sectionName,
+        maps,
+        "Select Send request to (department) to recommend that department’s head.",
+      ),
+    );
+    seats.push(await hrTeamHeadSeat("approvedBy2AgentId", "Approved By (HR)", maps));
+  }
+
+  if (opts.requestType === "ITEM_REQUISITION_SLIP") {
+    // Canvassed By is set from Assignment Board later — recommend Approved By only.
+    seats.push(
+      await sectionSeat(
+        "approvedByAgentId",
+        "Approved By",
+        RS_STEP_POSITION_CODES.APPROVED_BY,
+        requestorSectionId,
+        requestorNames.sectionName,
+        requestorNames.mainSectionName,
+        requestorSectionCompanyTeamId ?? requestorCompanyTeamId,
+        maps,
+      ),
+    );
+  }
+
+  if (opts.requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+    const recommendingLevel = (opts.acaRecommendingLevel ?? "").trim() as AcaRecommendingLevel;
+    const approvingPath = (opts.acaApprovingPath ?? "").trim() as AcaApprovingPath;
+    const seatCount = Math.max(0, Math.floor(Number(opts.acaApprovingSeatCount) || 0));
+    const knownRecommending = recommendingLevel in ACA_RECOMMENDING_LABELS;
+    const knownApproving = approvingPath in ACA_APPROVING_PATH_LABELS;
+
+    if (knownRecommending && knownApproving && seatCount > 0) {
+      const useRequestorCompanyLock = acaRecommendedByUsesRequestorCompanyLock(recommendingLevel);
+      const resolved = await resolveAcaAssigneesFromPositions({
+        recommendingLevel,
+        approvingPath,
+        approvingSeatCount: seatCount,
+        companyTeamId: requestorCompanyTeamId,
+        requestorMergedSourceUserId: opts.requestorMergedSourceUserId,
+        useRequestorCompanyLock,
+      });
+
       seats.push(
-        await mainSectionHeadSeat(
-          key,
-          label,
-          requestorSectionId,
-          requestorNames.sectionName,
-          requestorNames.mainSectionName,
+        seatFromResolvedAgent({
+          key: "recommendedByAgentId",
+          label: ACA_RECOMMENDING_LABELS[recommendingLevel] ?? "Recommended By",
+          agentId: resolved.recommendedByAgentId,
           maps,
-        ),
+          hint: useRequestorCompanyLock
+            ? "Position holder in your company (Recommended By)"
+            : "Position holder for Recommended By",
+        }),
       );
+      seats.push(
+        seatFromResolvedAgent({
+          key: "financeManagerAgentId",
+          label: "Finance Manager",
+          agentId: resolved.financeManagerAgentId,
+          maps,
+          hint: "Finance position holder",
+        }),
+      );
+      for (let i = 0; i < seatCount; i += 1) {
+        const agentId = resolved.approvingAgentIds[i] ?? null;
+        seats.push(
+          seatFromResolvedAgent({
+            key: `approvingAgentId${i}`,
+            label:
+              seatCount === 1
+                ? (ACA_APPROVING_PATH_LABELS[approvingPath] ?? "Approving")
+                : `${ACA_APPROVING_PATH_LABELS[approvingPath] ?? "Approving"} (${i + 1})`,
+            agentId,
+            maps,
+            hint: "Approving path position holder",
+          }),
+        );
+      }
     }
   }
 

@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/canonical-user-profile";
 import { mapHrisToPortalRole } from "@/lib/auth/role-mapping";
 import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
+import { isMergedUserOrgChartSectionHead } from "@/lib/org-chart-section-scope";
 import { prismaAuth, prismaPrimary } from "@/lib/prisma";
 import { isStaffPortalRole, normalizePortalRole, type PortalRole } from "@/lib/staff-role";
 
@@ -73,7 +74,23 @@ async function resolvePortalRole(profile: CanonicalUserProfile): Promise<{
           headPrivileges: profile.headPrivileges,
         },
   );
-  return mapped;
+
+  if (
+    mapped.portalRole === "SuperAdmin" ||
+    mapped.portalRole === "HighAdmin" ||
+    mapped.portalRole === "Customer" ||
+    mapped.portalRole === "Personnel-Guard"
+  ) {
+    return mapped;
+  }
+
+  // Org-chart department / sub-department heads own Admin vs Personnel.
+  const mergedId =
+    profile.hrisSourceUserId != null ? String(profile.hrisSourceUserId) : null;
+  if (mergedId && (await isMergedUserOrgChartSectionHead(mergedId))) {
+    return { portalRole: "Admin", headPrivileges: true };
+  }
+  return { portalRole: "Personnel", headPrivileges: false };
 }
 
 async function upsertAuthCompany(profile: CanonicalUserProfile): Promise<string | null> {
@@ -136,8 +153,9 @@ async function resolvePrimaryTeamId(companyName: string | null | undefined): Pro
 /**
  * Conflict policy when syncing HRIS/OAuth → Primary portal_accounts:
  * - Profile fields (name, username, image): always refresh from canonical source.
- * - Role: upgrade Customer → staff; never downgrade SuperAdmin/HighAdmin/Admin/Personnel automatically.
- * - headPrivileges: set when mapping says Admin head; never clear existing true without manual admin action.
+ * - SuperAdmin / HighAdmin: never auto-changed.
+ * - Admin ↔ Personnel: follow org-chart head overlay from resolvePortalRole
+ *   (department / sub-department heads → Admin; others → Personnel).
  */
 function buildPortalRoleUpdate(
   existing: ExistingPortalRow,
@@ -166,7 +184,17 @@ function buildPortalRoleUpdate(
   ) {
     update.role = incoming.portalRole;
     if (incoming.headPrivileges) update.headPrivileges = true;
+  } else if (existingNorm === "Admin" && incoming.portalRole === "Personnel") {
+    update.role = "Personnel";
+    update.headPrivileges = false;
   } else if (incoming.headPrivileges && !existing.headPrivileges) {
+    update.headPrivileges = true;
+  } else if (
+    existingNorm === "Admin" &&
+    incoming.portalRole === "Admin" &&
+    incoming.headPrivileges &&
+    !existing.headPrivileges
+  ) {
     update.headPrivileges = true;
   }
 

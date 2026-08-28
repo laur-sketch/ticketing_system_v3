@@ -4,6 +4,7 @@ import {
   canonicalProfileFromMerged,
   syncPortalProfile,
 } from "@/lib/auth/sync-portal-profile";
+import { reconcilePortalStaffRolesFromOrgChart } from "@/lib/org-chart-section-scope";
 import { prismaAuth, prismaSecondary } from "@/lib/prisma";
 
 type MergedRow = {
@@ -93,6 +94,15 @@ export async function runHrisPortalSync(): Promise<HrisSyncResult> {
       failed++;
       console.error(`[hris-sync-job] failed source_user_id=${row.source_user_id}`, e);
     }
+  }
+
+  try {
+    await reconcilePortalStaffRolesFromOrgChart();
+  } catch (e) {
+    console.warn(
+      "[hris-sync-job] org-chart Personnel/Admin reconcile skipped:",
+      e instanceof Error ? e.message : e,
+    );
   }
 
   return {

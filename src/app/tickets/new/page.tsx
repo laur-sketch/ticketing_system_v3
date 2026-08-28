@@ -9,7 +9,16 @@ import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input, Select, Textarea } from "@/components/ui/field";
+import { ChevronDown } from "lucide-react";
 import { RequestTypeSelection } from "@/components/tickets/RequestTypeSelection";
 import { BRAND_TITLE } from "@/lib/brand";
 import { issueConcernIntakeLockMessage } from "@/lib/issue-concern-intake-lock";
@@ -35,7 +44,7 @@ import {
 } from "@/lib/item-requisition";
 import { validateFundTransferRequestFields } from "@/lib/fund-transfer-request";
 import {
-  JOB_ORDER_NATURE_OPTIONS,
+  JOB_ORDER_NATURE_GROUPS,
   computeJobOrderDurationDays,
   formatJobOrderDurationLabel,
   validateJobOrderFields,
@@ -134,7 +143,14 @@ function NewTicketPageInner() {
     Array<{ id: string; name: string; email: string }>
   >([]);
   const [approvalAgents, setApprovalAgents] = useState<
-    Array<{ id: string; name: string; email: string }>
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      subtitle?: string | null;
+      group?: string | null;
+      optionKey?: string | null;
+    }>
   >([]);
   const [bookkeeperApprovalAgents, setBookkeeperApprovalAgents] = useState<
     Array<{ id: string; name: string; email: string }>
@@ -169,6 +185,9 @@ function NewTicketPageInner() {
     notedByAgentId: "",
     approvedByAgentId: "",
     approvedBy2AgentId: "",
+  });
+  const [itemRequisitionAssignees, setItemRequisitionAssignees] = useState({
+    approvedByAgentId: "",
   });
   const detailsField = useMemo(
     () => ({
@@ -428,7 +447,14 @@ function NewTicketPageInner() {
   const isStaffRequestorIntake = isPersonnelIntake || isAdminStaffIntake;
   const canSetIntakeAssignees =
     isStaffRequestorIntake &&
-    (isPaymentRequest || isFundTransferRequest || isJobOrderRequest);
+    (isPaymentRequest ||
+      isFundTransferRequest ||
+      isJobOrderRequest ||
+      isRequisitionRequest);
+  const canShowAcaRecommendations =
+    isStaffRequestorIntake &&
+    isAcaRequest &&
+    Boolean(acaResolution?.requiresAca && acaResolution.recommendingLevel && acaResolution.approvingPath);
   const isRequestorIntakeLockRole = isTicketRequestorRole(session?.user?.role);
 
   useEffect(() => {
@@ -563,6 +589,37 @@ function NewTicketPageInner() {
       return Array.isArray(rows) ? rows : [];
     }
 
+    async function loadOrgChartHeadAgents() {
+      const res = await fetch("/api/agents?orgChartHeads=1", { cache: "no-store" });
+      if (!res.ok) {
+        return [] as Array<{
+          id: string;
+          name: string;
+          email: string;
+          subtitle?: string | null;
+          group?: string | null;
+          optionKey?: string | null;
+        }>;
+      }
+      const rows = (await res.json()) as Array<{
+        id: string;
+        name: string;
+        email?: string | null;
+        sectionId?: string;
+        subtitle?: string | null;
+        group?: string | null;
+      }>;
+      if (!Array.isArray(rows)) return [];
+      return rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email?.trim() || "",
+        subtitle: row.subtitle ?? null,
+        group: row.group ?? null,
+        optionKey: row.sectionId ? `${row.id}:${row.sectionId}` : row.id,
+      }));
+    }
+
     async function loadSectionAgents(sectionId: string | null | undefined) {
       const id = (sectionId ?? "").trim();
       if (!id) return [] as Array<{ id: string; name: string; email: string }>;
@@ -606,7 +663,16 @@ function NewTicketPageInner() {
         setBookkeeperApprovalAgents(bookkeeperRows);
         return;
       }
-      if (isJobOrderRequest || isFundTransferRequest) {
+      if (isJobOrderRequest) {
+        // Cross-department: only org-chart section heads, labeled by department.
+        const rows = await loadOrgChartHeadAgents();
+        if (cancelled) return;
+        setApprovalAgents(rows);
+        setRequestorApprovalAgents([]);
+        setBookkeeperApprovalAgents([]);
+        return;
+      }
+      if (isFundTransferRequest) {
         const sectionId = selectedSendToOrgChartSectionId.trim();
         const rows = sectionId
           ? await loadSectionAgents(sectionId)
@@ -739,6 +805,8 @@ function NewTicketPageInner() {
       financeAgentId: "",
     });
     setFundTransferAssignees({ recommendingApprovalAgentId: "", approvedByAgentId: "" });
+    setJobOrderAssignees({ notedByAgentId: "", approvedByAgentId: "", approvedBy2AgentId: "" });
+    setItemRequisitionAssignees({ approvedByAgentId: "" });
     router.push(`/tickets/new?type=${encodeURIComponent(id)}`);
   }
 
@@ -1251,7 +1319,9 @@ function NewTicketPageInner() {
           ? paymentAssignees
           : isJobOrderRequest
             ? jobOrderAssignees
-            : fundTransferAssignees;
+            : isRequisitionRequest
+              ? itemRequisitionAssignees
+              : fundTransferAssignees;
         const cleaned = Object.fromEntries(
           Object.entries(assignees).filter(([key, v]) => {
             if (typeof v !== "string" || !v.trim()) return false;
@@ -2219,37 +2289,64 @@ function NewTicketPageInner() {
                   Project / task information
                 </p>
 
-                <fieldset>
-                  <legend className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                <div>
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
                     Nature of Concern
-                  </legend>
+                  </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                     Select all that apply.
                   </p>
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {JOB_ORDER_NATURE_OPTIONS.map((option) => {
-                      const checked = jobOrderNatures.includes(option);
-                      return (
-                        <label
-                          key={option}
-                          className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => {
-                              setJobOrderNatures((prev) =>
-                                checked ? prev.filter((v) => v !== option) : [...prev, option],
-                              );
-                            }}
-                            className="size-4 rounded border-zinc-300 text-orange-600 focus:ring-orange-500/30 dark:border-zinc-600"
-                          />
-                          {option}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </fieldset>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="mt-1.5 flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-left text-sm text-zinc-900 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-orange-500/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                      >
+                        <span className="min-w-0 truncate">
+                          {jobOrderNatures.length === 0
+                            ? "Select nature of concern…"
+                            : jobOrderNatures.join(", ")}
+                        </span>
+                        <ChevronDown
+                          className="size-4 shrink-0 text-zinc-500 dark:text-zinc-400"
+                          aria-hidden
+                        />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="start"
+                      className="w-[var(--radix-dropdown-menu-trigger-width)] max-h-72 overflow-y-auto"
+                    >
+                      {JOB_ORDER_NATURE_GROUPS.map((group, groupIndex) => (
+                        <div key={group.category}>
+                          {groupIndex > 0 ? <DropdownMenuSeparator /> : null}
+                          <DropdownMenuLabel>{group.category}</DropdownMenuLabel>
+                          {group.options.map((option) => {
+                            const checked = jobOrderNatures.includes(option);
+                            return (
+                              <DropdownMenuCheckboxItem
+                                key={option}
+                                checked={checked}
+                                onSelect={(e) => e.preventDefault()}
+                                onCheckedChange={(next) => {
+                                  setJobOrderNatures((prev) =>
+                                    next
+                                      ? prev.includes(option)
+                                        ? prev
+                                        : [...prev, option]
+                                      : prev.filter((v) => v !== option),
+                                  );
+                                }}
+                              >
+                                {option}
+                              </DropdownMenuCheckboxItem>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
 
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
                   Building
@@ -2318,6 +2415,33 @@ function NewTicketPageInner() {
                 </div>
               </div>
             ) : isAcaRequest ? (
+              <div className="space-y-3">
+                {canShowAcaRecommendations ? (
+                  <IntakeApprovalRecommendationGuide
+                    requestType="AUTHORITY_TO_CONDUCT_ACTIVITY"
+                    requestorSectionId={selectedRequestorOrgChartSectionId}
+                    sendToSectionId={selectedSendToOrgChartSectionId}
+                    acaRecommendingLevel={acaResolution?.recommendingLevel}
+                    acaApprovingPath={acaResolution?.approvingPath}
+                    acaApprovingSeatCount={acaResolution?.approvingSeatCount ?? 0}
+                    onApply={(assignees) => {
+                      if (assignees.recommendedByAgentId) {
+                        setAcaRecommendedByAgentId(assignees.recommendedByAgentId);
+                      }
+                      if (assignees.financeManagerAgentId) {
+                        setAcaFinanceManagerAgentId(assignees.financeManagerAgentId);
+                      }
+                      setAcaApprovingAgentIds((prev) => {
+                        const next = [...prev];
+                        for (let i = 0; i < next.length; i += 1) {
+                          const key = `approvingAgentId${i}`;
+                          if (assignees[key]) next[i] = assignees[key]!;
+                        }
+                        return next;
+                      });
+                    }}
+                  />
+                ) : null}
               <AcaIntakeFields
                 companyName={staffDesignatedCompany?.name ?? ""}
                 category={acaCategory}
@@ -2358,6 +2482,7 @@ function NewTicketPageInner() {
                 }
                 renderAttachments={renderOptionalFieldAttachments}
               />
+              </div>
             ) : (
               <div>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
@@ -2381,12 +2506,10 @@ function NewTicketPageInner() {
                     Set approvers
                   </p>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                    Required for Request for Payment, Fund Transfer, and Job Order. Assign
-                    procedural roles before creating this request. RFP Noted By uses your
-                    requesting department; Approved By uses the next section head up the tree; Prepared by Bookkeeper uses
-                    send request to department and your company, or requesting company when enabled (unless Bookkeeper and Accounting handle it). Fund Transfer Recommending
-                    Approval uses your section; Approved By uses the main section head. Job Order Noted By / Approvers follow section rules;
-                    Approved By seats use the main section head.
+                    Assign procedural approvers before creating this request. Recommendations use your
+                    department, send-to department, and org-chart heads (Job Order: requestor head →
+                    send-to head → HR). Item Requisition only needs Approved By here — Canvassed By is
+                    set later on the Assignment Board.
                   </p>
                 </div>
                 <IntakeApprovalRecommendationGuide
@@ -2410,6 +2533,10 @@ function NewTicketPageInner() {
                     }
                     if (isJobOrderRequest) {
                       setJobOrderAssignees((prev) => ({ ...prev, ...assignees }));
+                      return;
+                    }
+                    if (isRequisitionRequest) {
+                      setItemRequisitionAssignees((prev) => ({ ...prev, ...assignees }));
                     }
                   }}
                 />
@@ -2555,12 +2682,13 @@ function NewTicketPageInner() {
                       );
                     })
                   : null}
-                {isJobOrderRequest
-                  ? (
+                {isJobOrderRequest ? (
+                  <div className="flex flex-col gap-3">
+                    {(
                       [
-                        ["notedByAgentId", "Noted By"],
-                        ["approvedByAgentId", "Approved By"],
-                        ["approvedBy2AgentId", "Approved By"],
+                        ["notedByAgentId", "Noted By (Requestor head)"],
+                        ["approvedByAgentId", "Approved By (Send-to head)"],
+                        ["approvedBy2AgentId", "Approved By (HR)"],
                       ] as const
                     ).map(([key, label]) => {
                       const taken = new Set(
@@ -2580,25 +2708,50 @@ function NewTicketPageInner() {
                           users={approvalAgents}
                           value={jobOrderAssignees[key]}
                           excludedIds={taken}
-                          placeholder="Search by name or email…"
+                          placeholder="Search department heads…"
+                          emptyMessage="No matching department heads."
                           onChange={(agentId) =>
                             setJobOrderAssignees((prev) => ({ ...prev, [key]: agentId }))
                           }
                         />
                       );
-                    })
-                  : null}
-                {(isJobOrderRequest || isFundTransferRequest) &&
+                    })}
+                  </div>
+                ) : null}
+                {isRequisitionRequest ? (
+                  <CompanyUserSearchField
+                    label="Approved By"
+                    users={
+                      requestorApprovalAgents.length > 0
+                        ? requestorApprovalAgents
+                        : approvalAgents
+                    }
+                    value={itemRequisitionAssignees.approvedByAgentId}
+                    placeholder={
+                      selectedRequestorOrgChartSectionId
+                        ? "Search by name or email… (optional — auto-filled if empty)"
+                        : "Select requesting department first"
+                    }
+                    disabled={!selectedRequestorOrgChartSectionId}
+                    onChange={(agentId) =>
+                      setItemRequisitionAssignees({ approvedByAgentId: agentId })
+                    }
+                  />
+                ) : null}
+                {(isJobOrderRequest || isFundTransferRequest || isRequisitionRequest) &&
                 approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    {selectedSendToOrgChartSectionId
-                      ? "No assignees available in the selected department yet."
-                      : "Select “Send request to (department)” to load assignees."}
+                    {isJobOrderRequest
+                      ? "No department heads found on the org chart yet."
+                      : selectedSendToOrgChartSectionId || selectedRequestorOrgChartSectionId
+                        ? "No assignees available in the selected department yet."
+                        : "Select your department to load assignees."}
                   </p>
                 ) : null}
                 {!isPaymentRequest &&
                 !isJobOrderRequest &&
                 !isFundTransferRequest &&
+                !isRequisitionRequest &&
                 !selectedSendToOrgChartSectionId ? (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
                     Select “Send request to (department)” first to load assignees.
@@ -2606,6 +2759,7 @@ function NewTicketPageInner() {
                 ) : !isPaymentRequest &&
                   !isJobOrderRequest &&
                   !isFundTransferRequest &&
+                  !isRequisitionRequest &&
                   approvalAgents.length === 0 ? (
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
                     No section assignees available for this roster yet.

@@ -1,7 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Zap } from "lucide-react";
+import {
+  BarChart3,
+  CheckSquare,
+  ClipboardList,
+  FileText,
+  Home,
+  Loader2,
+  MapPin,
+  PlusSquare,
+  Settings,
+  Shield,
+  Ticket,
+  UserCircle,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -27,6 +42,32 @@ const GROUP_ORDER = [
   "Projects",
   "Users",
 ] as const;
+
+function iconForQuickAction(action: QuickAction): LucideIcon {
+  const id = action.id.replace(/^nav-/, "");
+  const href = action.href.toLowerCase();
+  const label = action.label.toLowerCase();
+
+  if (id === "home" || href === "/") return Home;
+  if (id === "create" || id === "create-ticket" || label.includes("issue")) return Ticket;
+  if (id === "create-rfp" || label.includes("payment")) return FileText;
+  if (id === "create-job-order" || label.includes("job order")) return ClipboardList;
+  if (id === "create-travel-order" || label.includes("travel")) return MapPin;
+  if (id === "task-board" || href.includes("/agent/tasks")) return CheckSquare;
+  if (id === "my-assigned" || href === "/agent" || href.startsWith("/agent?")) return Ticket;
+  if (id === "my-requests" || href.includes("my-requests")) return FileText;
+  if (id === "assignment-board") return ClipboardList;
+  if (id === "workforce") return Users;
+  if (id === "kpi" || href.includes("insights")) return BarChart3;
+  if (id === "process") return Settings;
+  if (id.includes("superadmin") || id === "access-controls" || id === "priority-alerts") {
+    return Shield;
+  }
+  if (id === "account" || label.includes("account")) return UserCircle;
+  if (label.includes("create") || label.includes("new")) return PlusSquare;
+  if (action.subtitle?.toLowerCase() === "navigate") return Settings;
+  return Ticket;
+}
 
 export function GlobalCommandPalette({
   open,
@@ -79,9 +120,9 @@ export function GlobalCommandPalette({
         placeholder="Search tickets, requests, users…"
         aria-label="Global search"
       />
-      <CommandList className="max-h-[min(420px,60vh)]">
+      <CommandList className="command-scroll max-h-[min(420px,60vh)]">
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500">
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
             <Loader2 className="size-4 animate-spin" aria-hidden />
             Searching…
           </div>
@@ -102,7 +143,7 @@ export function GlobalCommandPalette({
                 key={`recent-${item.id}-${item.href}`}
                 value={`recent ${item.title} ${item.subtitle ?? ""}`}
                 onSelect={() => onNavigate(item)}
-                className="p-0 aria-selected:bg-transparent"
+                className="p-0 data-[selected=true]:bg-transparent [&[data-selected=true]>div]:bg-orange-50 dark:[&[data-selected=true]>div]:bg-orange-950/40"
               >
                 <SearchResultRow asDiv item={item} query={query} onSelect={onNavigate} />
               </CommandItem>
@@ -114,26 +155,31 @@ export function GlobalCommandPalette({
           <>
             {showRecent ? <CommandSeparator /> : null}
             <CommandGroup heading="Quick Actions">
-              {filteredActions.map((action) => (
-                <CommandItem
-                  key={action.id}
-                  value={`${action.label} ${action.subtitle ?? ""} ${(action.keywords ?? []).join(" ")}`}
-                  onSelect={() => onNavigate(action)}
-                  className="flex items-center gap-2"
-                >
-                  <Zap className="size-3.5 shrink-0 text-orange-600" aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium">
-                      <SearchHighlight text={action.label} query={query} />
+              {filteredActions.map((action) => {
+                const Icon = iconForQuickAction(action);
+                return (
+                  <CommandItem
+                    key={action.id}
+                    value={`${action.label} ${action.subtitle ?? ""} ${(action.keywords ?? []).join(" ")}`}
+                    onSelect={() => onNavigate(action)}
+                    className="flex items-start gap-3 py-2.5"
+                  >
+                    <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white text-orange-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-orange-300">
+                      <Icon className="size-3.5" aria-hidden />
                     </span>
-                    {action.subtitle ? (
-                      <span className="block truncate text-[11px] text-zinc-500">
-                        <SearchHighlight text={action.subtitle} query={query} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                        <SearchHighlight text={action.label} query={query} />
                       </span>
-                    ) : null}
-                  </span>
-                </CommandItem>
-              ))}
+                      {action.subtitle ? (
+                        <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                          <SearchHighlight text={action.subtitle} query={query} />
+                        </span>
+                      ) : null}
+                    </span>
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </>
         ) : null}
@@ -151,7 +197,7 @@ export function GlobalCommandPalette({
                         key={item.id}
                         value={`${item.kind} ${item.title} ${item.subtitle ?? ""} ${item.status ?? ""}`}
                         onSelect={() => onNavigate(item)}
-                        className="p-0 aria-selected:bg-transparent"
+                        className="p-0 data-[selected=true]:bg-transparent [&[data-selected=true]>div]:bg-orange-50 dark:[&[data-selected=true]>div]:bg-orange-950/40"
                       >
                         <SearchResultRow asDiv item={item} query={query} onSelect={onNavigate} />
                       </CommandItem>
@@ -162,9 +208,9 @@ export function GlobalCommandPalette({
             })
           : null}
       </CommandList>
-      <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-zinc-500">
-        <span>Use ↑ ↓ to navigate · Enter to open · Esc to close</span>
-        <CommandShortcut>Ctrl K</CommandShortcut>
+      <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span className="min-w-0 truncate">Use ↑ ↓ to navigate · Enter to open · Esc to close</span>
+        <CommandShortcut className="text-zinc-500 dark:text-zinc-400">Ctrl K</CommandShortcut>
       </div>
     </CommandDialog>
   );

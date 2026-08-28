@@ -62,6 +62,15 @@ export async function PATCH(req: Request) {
         { status: 403 },
       );
     }
+    if (portalRole === "Admin" || portalRole === "Personnel") {
+      return NextResponse.json(
+        {
+          error:
+            "Personnel and Admin are set from org-chart department and sub-department heads (Workforce → Sectioning). Assign elevated roles (SuperAdmin / HighAdmin) here instead.",
+        },
+        { status: 400 },
+      );
+    }
 
     const mergedSourceUserId = BigInt(mergedIdRaw);
     const sourceTags = resolveHrisSourceTags();

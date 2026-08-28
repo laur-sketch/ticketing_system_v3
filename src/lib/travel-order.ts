@@ -509,8 +509,12 @@ export function travelOrderRecommendedOptionalForSeat(
 export type TravelOrderOrgChartPathSeat = {
   /** Approval sequence (1 = first to act). */
   sequenceLevel: number;
-  /** Org-chart layer this seat represents (Layer 2+). */
+  /** Org-chart layer this seat represents (Layer 2+), or a display placeholder. */
   orgChartLayer: number;
+  /** Human label for department-head recommendations (e.g. Immediate head). */
+  label?: string | null;
+  /** Short hint under the recommended name. */
+  hint?: string | null;
   recommendedOptional: boolean;
   agentId: string | null;
   agentName: string | null;

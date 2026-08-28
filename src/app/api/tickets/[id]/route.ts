@@ -131,6 +131,7 @@ import {
   parseRequisitionItemsPayload,
   validateItemRequisitionPricing,
 } from "@/lib/item-requisition";
+import { proceduralBoardAssigneeWrite } from "@/lib/procedural-board-assignee";
 
 async function loadTicketRequestType(ticketId: string): Promise<string> {
   const rows = await prisma.$queryRaw<Array<{ request_type: string | null }>>`
@@ -521,6 +522,13 @@ export async function PATCH(
             if (advanced.proceduralStep !== "DONE") {
               data.status = "IN_PROGRESS";
               data.resolvedAt = null;
+              Object.assign(
+                data,
+                proceduralBoardAssigneeWrite(
+                  currentItemRequisitionStepBoardAssigneeId(advanced),
+                  ticket.assignedAgentId,
+                ),
+              );
               if (paymentProceduralNote) {
                 await logActivity(
                   id,
@@ -565,6 +573,13 @@ export async function PATCH(
             if (advanced.proceduralStep !== "DONE") {
               data.status = "IN_PROGRESS";
               data.resolvedAt = null;
+              Object.assign(
+                data,
+                proceduralBoardAssigneeWrite(
+                  currentFundTransferStepBoardAssigneeId(advanced),
+                  ticket.assignedAgentId,
+                ),
+              );
               if (paymentProceduralNote) {
                 await logActivity(
                   id,
@@ -609,10 +624,13 @@ export async function PATCH(
             if (advanced.proceduralStep !== "DONE") {
               data.status = "IN_PROGRESS";
               data.resolvedAt = null;
-              const nextAssigneeId = currentJobOrderStepBoardAssigneeId(advanced);
-              if (nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId) {
-                data.assignedAgent = { connect: { id: nextAssigneeId } };
-              }
+              Object.assign(
+                data,
+                proceduralBoardAssigneeWrite(
+                  currentJobOrderStepBoardAssigneeId(advanced),
+                  ticket.assignedAgentId,
+                ),
+              );
               if (paymentProceduralNote) {
                 await logActivity(
                   id,
@@ -1414,23 +1432,28 @@ export async function PATCH(
         );
       }
       // Put the request on the current procedural role assignee’s Request Board.
+      // Empty current seat clears the board icon (no stale prior assignee).
       const boardAssigneeId = currentPaymentStepBoardAssigneeId(updatedMeta);
-      if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
+      const assigneeWrite = proceduralBoardAssigneeWrite(boardAssigneeId, ticket.assignedAgentId);
+      if (Object.keys(assigneeWrite).length > 0) {
         await prisma.ticket.update({
           where: { id },
           data: {
-            assignedAgent: { connect: { id: boardAssigneeId } },
-            ...(ticket.status === "OPEN" || ticket.status === "PENDING_INFO"
+            ...assigneeWrite,
+            ...(boardAssigneeId &&
+            (ticket.status === "OPEN" || ticket.status === "PENDING_INFO")
               ? { status: "IN_PROGRESS" as const }
               : {}),
-            resolvedAt: null,
+            ...(boardAssigneeId ? { resolvedAt: null } : {}),
           },
         });
         await logActivity(
           id,
           "SYSTEM",
-          "Assigned to current approval role",
-          "Request placed on the current procedural assignee’s Request Board.",
+          boardAssigneeId ? "Assigned to current approval role" : "Board assignee cleared",
+          boardAssigneeId
+            ? "Request placed on the current procedural assignee’s Request Board."
+            : "Current approval seat has no assignee — cleared the Request Board icon.",
         );
       }
       const nameById = new Map(
@@ -1845,10 +1868,7 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
-              // Always hand the Request Board to the next procedural assignee when known.
-              ...(nextAssigneeId
-                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
-                : {}),
+              ...proceduralBoardAssigneeWrite(nextAssigneeId, ticket.assignedAgentId),
             },
         include: { team: true, assignedAgent: true },
       });
@@ -1958,22 +1978,26 @@ export async function PATCH(
       const updatedMeta = applyItemRequisitionApprovalAssignees(meta, nextAssignees);
       await saveItemRequisitionApprovalMeta(id, updatedMeta);
       const boardAssigneeId = currentItemRequisitionStepBoardAssigneeId(updatedMeta);
-      if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
+      const assigneeWrite = proceduralBoardAssigneeWrite(boardAssigneeId, ticket.assignedAgentId);
+      if (Object.keys(assigneeWrite).length > 0) {
         await prisma.ticket.update({
           where: { id },
           data: {
-            assignedAgent: { connect: { id: boardAssigneeId } },
-            ...(ticket.status === "OPEN" || ticket.status === "PENDING_INFO"
+            ...assigneeWrite,
+            ...(boardAssigneeId &&
+            (ticket.status === "OPEN" || ticket.status === "PENDING_INFO")
               ? { status: "IN_PROGRESS" as const }
               : {}),
-            resolvedAt: null,
+            ...(boardAssigneeId ? { resolvedAt: null } : {}),
           },
         });
         await logActivity(
           id,
           "SYSTEM",
-          "Assigned to current approval role",
-          "Request placed on the current procedural assignee’s Request Board.",
+          boardAssigneeId ? "Assigned to current approval role" : "Board assignee cleared",
+          boardAssigneeId
+            ? "Request placed on the current procedural assignee’s Request Board."
+            : "Current approval seat has no assignee — cleared the Request Board icon.",
         );
       }
       const nameById = new Map(
@@ -2200,9 +2224,7 @@ export async function PATCH(
             description,
             status: "IN_PROGRESS",
             resolvedAt: null,
-            ...(nextBoardAssigneeId && nextBoardAssigneeId !== ticket.assignedAgentId
-              ? { assignedAgent: { connect: { id: nextBoardAssigneeId } } }
-              : {}),
+            ...proceduralBoardAssigneeWrite(nextBoardAssigneeId, ticket.assignedAgentId),
           },
           include: { team: true, assignedAgent: true },
         });
@@ -2398,9 +2420,7 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
-              ...(nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId
-                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
-                : {}),
+              ...proceduralBoardAssigneeWrite(nextAssigneeId, ticket.assignedAgentId),
             },
         include: { team: true, assignedAgent: true },
       });
@@ -2508,22 +2528,26 @@ export async function PATCH(
       const updatedMeta = applyFundTransferApprovalAssignees(meta, nextAssignees);
       await saveFundTransferApprovalMeta(id, updatedMeta);
       const boardAssigneeId = currentFundTransferStepBoardAssigneeId(updatedMeta);
-      if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
+      const assigneeWrite = proceduralBoardAssigneeWrite(boardAssigneeId, ticket.assignedAgentId);
+      if (Object.keys(assigneeWrite).length > 0) {
         await prisma.ticket.update({
           where: { id },
           data: {
-            assignedAgent: { connect: { id: boardAssigneeId } },
-            ...(ticket.status === "OPEN" || ticket.status === "PENDING_INFO"
+            ...assigneeWrite,
+            ...(boardAssigneeId &&
+            (ticket.status === "OPEN" || ticket.status === "PENDING_INFO")
               ? { status: "IN_PROGRESS" as const }
               : {}),
-            resolvedAt: null,
+            ...(boardAssigneeId ? { resolvedAt: null } : {}),
           },
         });
         await logActivity(
           id,
           "SYSTEM",
-          "Assigned to current approval role",
-          "Request placed on the current procedural assignee’s Request Board.",
+          boardAssigneeId ? "Assigned to current approval role" : "Board assignee cleared",
+          boardAssigneeId
+            ? "Request placed on the current procedural assignee’s Request Board."
+            : "Current approval seat has no assignee — cleared the Request Board icon.",
         );
       }
       const nameById = new Map(
@@ -2695,9 +2719,7 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
-              ...(nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId
-                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
-                : {}),
+              ...proceduralBoardAssigneeWrite(nextAssigneeId, ticket.assignedAgentId),
             },
         include: { team: true, assignedAgent: true },
       });
@@ -2800,22 +2822,26 @@ export async function PATCH(
       const updatedMeta = applyJobOrderApprovalAssignees(meta, nextAssignees);
       await saveJobOrderApprovalMeta(id, updatedMeta);
       const boardAssigneeId = currentJobOrderStepBoardAssigneeId(updatedMeta);
-      if (boardAssigneeId && boardAssigneeId !== ticket.assignedAgentId) {
+      const assigneeWrite = proceduralBoardAssigneeWrite(boardAssigneeId, ticket.assignedAgentId);
+      if (Object.keys(assigneeWrite).length > 0) {
         await prisma.ticket.update({
           where: { id },
           data: {
-            assignedAgent: { connect: { id: boardAssigneeId } },
-            ...(ticket.status === "OPEN" || ticket.status === "PENDING_INFO"
+            ...assigneeWrite,
+            ...(boardAssigneeId &&
+            (ticket.status === "OPEN" || ticket.status === "PENDING_INFO")
               ? { status: "IN_PROGRESS" as const }
               : {}),
-            resolvedAt: null,
+            ...(boardAssigneeId ? { resolvedAt: null } : {}),
           },
         });
         await logActivity(
           id,
           "SYSTEM",
-          "Assigned to current approval role",
-          "Request placed on the current procedural assignee’s Request Board.",
+          boardAssigneeId ? "Assigned to current approval role" : "Board assignee cleared",
+          boardAssigneeId
+            ? "Request placed on the current procedural assignee’s Request Board."
+            : "Current approval seat has no assignee — cleared the Request Board icon.",
         );
       }
       const nameById = new Map(
@@ -2979,9 +3005,7 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
-              ...(nextAssigneeId && nextAssigneeId !== ticket.assignedAgentId
-                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
-                : {}),
+              ...proceduralBoardAssigneeWrite(nextAssigneeId, ticket.assignedAgentId),
             },
         include: { team: true, assignedAgent: true },
       });
@@ -3106,9 +3130,7 @@ export async function PATCH(
           : {
               status: "IN_PROGRESS",
               resolvedAt: null,
-              ...(nextAssigneeId
-                ? { assignedAgent: { connect: { id: nextAssigneeId } } }
-                : {}),
+              ...proceduralBoardAssigneeWrite(nextAssigneeId, ticket.assignedAgentId),
             },
         include: { team: true, assignedAgent: true },
       });

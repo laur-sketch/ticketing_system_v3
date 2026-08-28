@@ -19,7 +19,7 @@ export const DEFAULT_HRIS_ROLE_MAPPINGS: ReadonlyArray<{
 }> = [
   { hrisRole: "super_admin", portalRole: "SuperAdmin", headPrivileges: false },
   { hrisRole: "high_admin", portalRole: "HighAdmin", headPrivileges: false },
-  // Staff roles resolve by head title; presets default to Personnel until elevated.
+  // Staff Admin vs Personnel is driven by org-chart department / sub-department heads.
   { hrisRole: "admin", portalRole: "Personnel", headPrivileges: false },
   { hrisRole: "employee", portalRole: "Personnel", headPrivileges: false },
 ];
@@ -30,7 +30,11 @@ function normalizeHrisToken(value: string | null | undefined): string {
 
 const ADMIN_TITLE_PATTERN = /\b(head|leader)\b/;
 
-/** Detect head/leader titles in position or department (e.g. "Team Head", "Unit Team Leader"). */
+/**
+ * Detect head/leader titles in position or department (legacy helper).
+ * Org-chart section heads are the source of truth for portal Admin; title
+ * matching no longer auto-elevates on HRIS sync.
+ */
 export function isHrisHeadTitle(input: Pick<HrisRoleMappingInput, "position" | "department" | "hrisRole">): boolean {
   const tokens = [
     normalizeHrisToken(input.position),
@@ -41,18 +45,11 @@ export function isHrisHeadTitle(input: Pick<HrisRoleMappingInput, "position" | "
   return tokens.some((t) => ADMIN_TITLE_PATTERN.test(t));
 }
 
-function mapHeadOrPersonnel(input: HrisRoleMappingInput): MappedPortalRole {
-  if (isHrisHeadTitle(input)) {
-    return { portalRole: "Admin", headPrivileges: true };
-  }
-  return { portalRole: "Personnel", headPrivileges: false };
-}
-
 /**
  * Map HRIS profile to portal role.
  * - super_admin → SuperAdmin
- * - Head/leader titles (position/department) → Admin
- * - Everyone else → Personnel
+ * - high_admin → HighAdmin
+ * - Everyone else → Personnel (Admin comes from org-chart department / sub-department heads)
  */
 export function mapHrisToPortalRole(
   input: HrisRoleMappingInput,
@@ -68,15 +65,25 @@ export function mapHrisToPortalRole(
   }
 
   if (overrides?.portalRole) {
-    const base: MappedPortalRole = {
-      portalRole: overrides.portalRole,
-      headPrivileges: overrides.headPrivileges ?? overrides.portalRole === "Admin",
-    };
-    if (base.portalRole === "Personnel" && isHrisHeadTitle(input)) {
-      return { portalRole: "Admin", headPrivileges: true };
+    const portalRole = overrides.portalRole;
+    if (portalRole === "SuperAdmin" || portalRole === "HighAdmin") {
+      return { portalRole, headPrivileges: false };
     }
-    return base;
+    if (portalRole === "Customer" || portalRole === "Personnel-Guard") {
+      return {
+        portalRole,
+        headPrivileges: overrides.headPrivileges ?? false,
+      };
+    }
+    // Staff overrides: chart reconcile owns Admin; HRIS stays Personnel by default.
+    if (portalRole === "Admin") {
+      return { portalRole: "Personnel", headPrivileges: false };
+    }
+    return {
+      portalRole: "Personnel",
+      headPrivileges: false,
+    };
   }
 
-  return mapHeadOrPersonnel(input);
+  return { portalRole: "Personnel", headPrivileges: false };
 }

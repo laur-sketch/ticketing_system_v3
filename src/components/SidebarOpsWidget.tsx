@@ -80,7 +80,7 @@ const SHORTCUT_CATALOG: ShortcutDef[] = [
     icon: LifeBuoy,
     superAdminOnly: true,
   },
-  { id: "request-mr", href: "/insights?tab=ticket-metrics", label: "Request M&R", icon: BarChart3 },
+  { id: "request-mr", href: "/insights?tab=ticket-metrics", label: "Req M&R", icon: BarChart3 },
   { id: "task-mr", href: "/insights?tab=task-metrics", label: "Task M&R", icon: ClipboardList },
 ];
 
@@ -461,7 +461,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
                         )}
                         aria-hidden
                       />
-                      <span className="w-full truncate text-[9px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                      <span className="w-full text-center text-[8px] font-bold uppercase leading-tight tracking-wide text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">
                         {item.label}
                       </span>
                     </button>
@@ -481,7 +481,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
                     title={item.label}
                   >
                     <Icon size={14} className="text-orange-600 dark:text-orange-300" aria-hidden />
-                    <span className="w-full truncate text-[9px] font-bold uppercase tracking-wide text-zinc-700 dark:text-zinc-300">
+                    <span className="w-full text-center text-[8px] font-bold uppercase leading-tight tracking-wide text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">
                       {item.label}
                     </span>
                   </Link>

@@ -2,7 +2,8 @@
  * Promote org-chart section heads to portal Admin, and resolve section-scoped
  * visibility for request / task boards. Custom org-chart section roles
  * (Deputy, Coordinator, …) remain membership labels — they do not change
- * portal role; only the singleton section head maps to Admin.
+ * portal role. **Personnel vs Admin** for staff follows the org chart:
+ * department / sub-department heads → Admin; other staff → Personnel.
  */
 import { Prisma } from "@prisma/client/primary";
 import { prisma } from "@/lib/prisma";
@@ -14,23 +15,37 @@ import {
 } from "@/lib/org-chart-section-roster";
 import { isElevatedUserRole } from "@/lib/auth";
 import { hasSubKpiAssignedTo } from "@/lib/kpi-subkpis";
+import { normalizePortalRole } from "@/lib/staff-role";
 
-function collectDescendantIds(
-  rootId: string,
-  childrenByParent: Map<string | null, string[]>,
-): Set<string> {
-  const out = new Set<string>([rootId]);
-  const stack = [...(childrenByParent.get(rootId) ?? [])];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    if (out.has(id)) continue;
-    out.add(id);
-    stack.push(...(childrenByParent.get(id) ?? []));
+/** Pure helper: membership / filter roots → self + nested sub-departments. */
+export function collectOrgChartDescendantIds(
+  rootIds: string[],
+  sections: Array<{ id: string; parentId: string | null }>,
+): string[] {
+  const roots = [...new Set(rootIds.map((id) => id.trim()).filter(Boolean))];
+  if (roots.length === 0) return [];
+
+  const childrenByParent = new Map<string | null, string[]>();
+  for (const s of sections) {
+    const list = childrenByParent.get(s.parentId) ?? [];
+    list.push(s.id);
+    childrenByParent.set(s.parentId, list);
   }
-  return out;
+
+  const out = new Set<string>();
+  for (const root of roots) {
+    const stack = [root];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (out.has(id)) continue;
+      out.add(id);
+      stack.push(...(childrenByParent.get(id) ?? []));
+    }
+  }
+  return [...out];
 }
 
-/** Membership sections plus all nested subsections. */
+/** Membership sections plus all nested sub-departments. */
 export async function expandOrgChartSectionIdsWithDescendants(
   sectionIds: string[],
 ): Promise<string[]> {
@@ -39,29 +54,140 @@ export async function expandOrgChartSectionIdsWithDescendants(
   const sections = await prisma.orgChartSection.findMany({
     select: { id: true, parentId: true },
   });
-  const childrenByParent = new Map<string | null, string[]>();
-  for (const s of sections) {
-    const list = childrenByParent.get(s.parentId) ?? [];
-    list.push(s.id);
-    childrenByParent.set(s.parentId, list);
-  }
-  const out = new Set<string>();
-  for (const root of roots) {
-    for (const id of collectDescendantIds(root, childrenByParent)) out.add(id);
-  }
-  return [...out];
+  return collectOrgChartDescendantIds(roots, sections);
 }
 
 /**
- * When a node is set as section head, upgrade their portal account to Admin
- * (with headPrivileges). Never demotes SuperAdmin/HighAdmin; skips Customer /
- * Personnel-Guard. Does not clear custom section roles on the membership.
+ * Request-board Departments filter: selected department + nested sub-departments.
+ * Intersects with `allowedSectionIds` when the viewer is section-scoped.
+ */
+export async function ticketWhereForOrgChartSectionFilter(opts: {
+  sectionId: string;
+  /** When set, only keep ids the viewer is allowed to see. */
+  allowedSectionIds?: readonly string[] | null;
+}): Promise<Prisma.TicketWhereInput> {
+  const sectionId = opts.sectionId.trim();
+  if (!sectionId || sectionId === "ALL") return {};
+
+  let ids = await expandOrgChartSectionIdsWithDescendants([sectionId]);
+  if (opts.allowedSectionIds) {
+    const allowed = new Set(opts.allowedSectionIds);
+    ids = ids.filter((id) => allowed.has(id));
+  }
+  if (ids.length === 0) {
+    return { id: "__none__" };
+  }
+  return { orgChartSectionId: { in: ids } };
+}
+
+/** Merged HRIS ids currently set as a department or sub-department head. */
+export async function resolveOrgChartHeadMergedSourceUserIds(): Promise<Set<string>> {
+  const headSections = await prisma.orgChartSection.findMany({
+    where: { headNodeId: { not: null } },
+    select: { headNodeId: true },
+  });
+  const headNodeIds = [
+    ...new Set(
+      headSections
+        .map((h) => h.headNodeId)
+        .filter((id): id is string => Boolean(id?.trim())),
+    ),
+  ];
+  if (headNodeIds.length === 0) return new Set();
+
+  const nodes = await prisma.orgChartNode.findMany({
+    where: { id: { in: headNodeIds } },
+    select: { mergedSourceUserId: true },
+  });
+  return new Set(
+    nodes
+      .map((n) => n.mergedSourceUserId?.trim())
+      .filter((id): id is string => Boolean(id)),
+  );
+}
+
+/** Org-chart stores merged ids as strings; portal_accounts uses BigInt. */
+function mergedSourceUserIdAsBigInt(raw: string | null | undefined): bigint | null {
+  const s = String(raw ?? "").trim();
+  if (!/^\d+$/.test(s)) return null;
+  try {
+    return BigInt(s);
+  } catch {
+    return null;
+  }
+}
+
+async function findStaffPortalByMergedSourceUserId(mergedId: string): Promise<{
+  id: string;
+  role: string;
+  headPrivileges: boolean;
+} | null> {
+  const asBigInt = mergedSourceUserIdAsBigInt(mergedId);
+  if (asBigInt == null) return null;
+  return prisma.portalAccount.findFirst({
+    where: { mergedSourceUserId: asBigInt },
+    select: { id: true, role: true, headPrivileges: true },
+  });
+}
+
+export async function isMergedUserOrgChartSectionHead(
+  mergedSourceUserId: string | null | undefined,
+): Promise<boolean> {
+  const mergedId = String(mergedSourceUserId ?? "").trim();
+  if (!mergedId) return false;
+  const heads = await resolveOrgChartHeadMergedSourceUserIds();
+  return heads.has(mergedId);
+}
+
+/**
+ * Portal technical role (Admin / Personnel / …) keyed by org-chart mergedSourceUserId string.
+ * Used on department cards so heads show Admin/Personnel, not the HRIS personRole snapshot.
+ */
+export async function resolvePortalTechnicalRolesByMergedSourceUserIds(
+  mergedSourceUserIds: Iterable<string>,
+): Promise<Map<string, string>> {
+  const ids = [
+    ...new Set(
+      [...mergedSourceUserIds].map((id) => String(id ?? "").trim()).filter(Boolean),
+    ),
+  ];
+  const bigints = ids
+    .map((id) => mergedSourceUserIdAsBigInt(id))
+    .filter((id): id is bigint => id != null);
+  if (bigints.length === 0) return new Map();
+
+  const portals = await prisma.portalAccount.findMany({
+    where: { mergedSourceUserId: { in: bigints } },
+    select: { mergedSourceUserId: true, role: true },
+  });
+
+  const out = new Map<string, string>();
+  for (const portal of portals) {
+    if (portal.mergedSourceUserId == null) continue;
+    const key = String(portal.mergedSourceUserId);
+    const role = normalizePortalRole(portal.role) ?? portal.role;
+    out.set(key, role);
+  }
+  return out;
+}
+
+/**
+ * Promote a single section-head node to Admin. Prefer
+ * `reconcilePortalStaffRolesFromOrgChart` after head changes so former heads
+ * are demoted. Never touches SuperAdmin / HighAdmin / Customer / Personnel-Guard.
  */
 export async function ensurePortalAdminForOrgChartHeadNode(
   headNodeId: string | null | undefined,
 ): Promise<void> {
   const id = (headNodeId ?? "").trim();
   if (!id) return;
+
+  const isSectionHead = await prisma.orgChartSection.findFirst({
+    where: { headNodeId: id },
+    select: { id: true },
+  });
+  if (!isSectionHead) return;
+
   const node = await prisma.orgChartNode.findUnique({
     where: { id },
     select: { mergedSourceUserId: true },
@@ -69,14 +195,12 @@ export async function ensurePortalAdminForOrgChartHeadNode(
   const mergedId = (node?.mergedSourceUserId ?? "").trim();
   if (!mergedId) return;
 
-  const portal = await prisma.portalAccount.findFirst({
-    where: { mergedSourceUserId: mergedId },
-    select: { id: true, role: true, headPrivileges: true, authUserId: true },
-  });
+  const portal = await findStaffPortalByMergedSourceUserId(mergedId);
   if (!portal) return;
-  if (portal.role === "SuperAdmin" || portal.role === "HighAdmin") return;
-  if (portal.role === "Customer" || portal.role === "Personnel-Guard") return;
-  if (portal.role === "Admin" && portal.headPrivileges === true) return;
+  const role = normalizePortalRole(portal.role) ?? portal.role;
+  if (role === "SuperAdmin" || role === "HighAdmin") return;
+  if (role === "Customer" || role === "Personnel-Guard") return;
+  if (role === "Admin" && portal.headPrivileges === true) return;
 
   await prisma.portalAccount.update({
     where: { id: portal.id },
@@ -84,17 +208,71 @@ export async function ensurePortalAdminForOrgChartHeadNode(
   });
 }
 
-/** Backfill: ensure every current section head is portal Admin. */
-export async function ensurePortalAdminForAllOrgChartSectionHeads(): Promise<number> {
-  const heads = await prisma.orgChartSection.findMany({
-    where: { headNodeId: { not: null } },
-    select: { headNodeId: true },
-  });
-  const unique = [...new Set(heads.map((h) => h.headNodeId).filter(Boolean))] as string[];
-  for (const headNodeId of unique) {
-    await ensurePortalAdminForOrgChartHeadNode(headNodeId);
+export type OrgChartStaffRoleReconcileResult = {
+  /** Department + sub-department head count (unique people). */
+  headCount: number;
+  promoted: number;
+  demoted: number;
+};
+
+/**
+ * Align Personnel / Admin technical roles with the org chart:
+ * - Heads of departments and sub-departments → Admin (+ headPrivileges)
+ * - Other linked Admin accounts → Personnel
+ * - SuperAdmin / HighAdmin / Customer / Personnel-Guard unchanged
+ * - Admin accounts with no merged HRIS id are left alone
+ */
+export async function reconcilePortalStaffRolesFromOrgChart(): Promise<OrgChartStaffRoleReconcileResult> {
+  const headMergedIds = await resolveOrgChartHeadMergedSourceUserIds();
+
+  let promoted = 0;
+  for (const mergedId of headMergedIds) {
+    const portal = await findStaffPortalByMergedSourceUserId(mergedId);
+    if (!portal) continue;
+    const role = normalizePortalRole(portal.role) ?? portal.role;
+    if (role === "SuperAdmin" || role === "HighAdmin") continue;
+    if (role === "Customer" || role === "Personnel-Guard") continue;
+    if (role === "Admin" && portal.headPrivileges === true) continue;
+
+    await prisma.portalAccount.update({
+      where: { id: portal.id },
+      data: { role: "Admin", headPrivileges: true },
+    });
+    promoted += 1;
   }
-  return unique.length;
+
+  const admins = await prisma.portalAccount.findMany({
+    where: {
+      role: "Admin",
+      mergedSourceUserId: { not: null },
+    },
+    select: { id: true, mergedSourceUserId: true },
+  });
+
+  let demoted = 0;
+  for (const portal of admins) {
+    const mergedId =
+      portal.mergedSourceUserId != null ? String(portal.mergedSourceUserId) : "";
+    if (!mergedId || headMergedIds.has(mergedId)) continue;
+
+    await prisma.portalAccount.update({
+      where: { id: portal.id },
+      data: { role: "Personnel", headPrivileges: false },
+    });
+    demoted += 1;
+  }
+
+  return {
+    headCount: headMergedIds.size,
+    promoted,
+    demoted,
+  };
+}
+
+/** Backfill / alias: full chart-based Personnel ↔ Admin reconcile. */
+export async function ensurePortalAdminForAllOrgChartSectionHeads(): Promise<number> {
+  const result = await reconcilePortalStaffRolesFromOrgChart();
+  return result.headCount;
 }
 
 export type ViewerSectionScope = {
@@ -175,7 +353,7 @@ export async function resolveViewerDepartmentScopeLabel(
     .slice(0, 3);
   if (names.length === 0) return null;
   if (roots.length > 3 || sections.length > roots.length) {
-    return `${names.join(", ")} (+subs)`;
+    return `${names.join(", ")} (+sub-departments)`;
   }
   return names.join(", ");
 }

@@ -181,6 +181,43 @@ html.dark .picker-scroll::-webkit-scrollbar-thumb {
 html.dark .picker-scroll::-webkit-scrollbar-thumb:hover {
   background: #71717a;
 }
+html.dark .picker-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Slimmer scrollbar for command palette / dense overlays. */
+.command-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #71717a transparent;
+}
+html.dark .command-scroll {
+  color-scheme: dark;
+  scrollbar-color: #52525b transparent;
+}
+.command-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.command-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.command-scroll::-webkit-scrollbar-thumb {
+  background: #52525b;
+  border-radius: 999px;
+}
+html.dark .command-scroll::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+}
+.command-scroll::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+.command-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
 
 /* Native date input + popup: contrast on light and dark surfaces. */
 input[type="date"].date-input {

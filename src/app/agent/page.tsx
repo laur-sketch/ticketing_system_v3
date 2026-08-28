@@ -36,6 +36,7 @@ import {
   roleUsesOrgChartSectionBoardScope,
   sectionScopedTicketWhere,
   resolveViewerOrgChartSectionScope,
+  ticketWhereForOrgChartSectionFilter,
 } from "@/lib/org-chart-section-scope";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
 import { paymentProceduralStatusLabel, type PaymentApprovalMeta } from "@/lib/request-for-payment-approval";
@@ -210,14 +211,16 @@ export default async function AgentHome({
       ).filter((t) => (adminScopedCompanyId ? t.id === adminScopedCompanyId : true))
     : [];
 
+  const viewerSectionScopeForFilter = roleUsesOrgChartSectionBoardScope(session.user.role)
+    ? await resolveViewerOrgChartSectionScope(session.user.email)
+    : null;
   const orgChartSectionsForTicketFilter =
     boardTab === "ticket"
-      ? roleUsesOrgChartSectionBoardScope(session.user.role)
+      ? viewerSectionScopeForFilter
         ? await (async () => {
-            const scope = await resolveViewerOrgChartSectionScope(session.user.email);
-            if (scope.sectionIds.length === 0) return [];
+            if (viewerSectionScopeForFilter.sectionIds.length === 0) return [];
             const all = await listOrgChartSectionOptions();
-            return all.filter((s) => scope.sectionIds.includes(s.id));
+            return all.filter((s) => viewerSectionScopeForFilter.sectionIds.includes(s.id));
           })()
         : await listOrgChartSectionOptions()
       : [];
@@ -318,7 +321,13 @@ export default async function AgentHome({
     whereBase.requestType = selectedRequestType;
   }
   if (!isCompanyBoard && effectiveSection !== "ALL") {
-    whereBase.orgChartSectionId = effectiveSection;
+    Object.assign(
+      whereBase,
+      await ticketWhereForOrgChartSectionFilter({
+        sectionId: effectiveSection,
+        allowedSectionIds: viewerSectionScopeForFilter?.sectionIds ?? null,
+      }),
+    );
   }
   if (query) {
     const searchOr: Prisma.TicketWhereInput[] = [

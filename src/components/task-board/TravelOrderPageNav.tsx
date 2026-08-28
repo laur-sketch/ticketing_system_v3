@@ -124,12 +124,12 @@ export function TravelOrderPageNav({
   );
 }
 
-/** Tailwind grid columns for horizontal approval stamp rows. */
+/** Tailwind grid columns for horizontal approval stamp rows (left → right). */
 export function travelOrderApprovalGridClass(count: number): string {
   const n = Math.min(Math.max(count, 1), 5);
-  if (n <= 1) return "grid grid-cols-1 items-start gap-x-4 gap-y-3";
-  if (n === 2) return "grid grid-cols-1 items-start gap-x-4 gap-y-3 sm:grid-cols-2";
-  if (n === 3) return "grid grid-cols-1 items-start gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3";
-  if (n === 4) return "grid grid-cols-1 items-start gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-4";
-  return "grid grid-cols-1 items-start gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-5";
+  if (n <= 1) return "grid grid-cols-1 items-stretch gap-x-3 gap-y-3";
+  if (n === 2) return "grid grid-cols-1 items-stretch gap-x-3 gap-y-3 sm:grid-cols-2";
+  if (n === 3) return "grid grid-cols-1 items-stretch gap-x-3 gap-y-3 md:grid-cols-3";
+  if (n === 4) return "grid grid-cols-1 items-stretch gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-4";
+  return "grid grid-cols-1 items-stretch gap-x-3 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5";
 }

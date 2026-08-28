@@ -115,7 +115,7 @@ export function GlobalSearchBar({ className }: { className?: string }) {
         <div
           id={listboxId}
           role="listbox"
-          className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-50 max-h-[min(360px,50vh)] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl dark:border-zinc-700 dark:bg-zinc-950"
+          className="command-scroll absolute left-0 right-0 top-[calc(100%+0.35rem)] z-50 max-h-[min(360px,50vh)] overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1.5 shadow-xl dark:border-zinc-700 dark:bg-zinc-950"
         >
           {!hasQuery ? (
             <p className="px-2 py-3 text-xs text-zinc-500">Type at least 2 characters…</p>

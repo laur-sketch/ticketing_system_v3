@@ -4,8 +4,15 @@ import { CompanyUserSearchField } from "@/components/tickets/CompanyUserSearchFi
 import { TicketDetailsPrintButton } from "@/components/tickets/TicketDetailsPrintButton";
 import type { Agent, Team, Ticket, TicketActivity, TicketMessage } from "@prisma/client/primary";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { FileText } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FileText, Paperclip, Loader2 } from "lucide-react";
+import {
+  INTAKE_ATTACHMENT_ACCEPT,
+  MAX_SCREENSHOT_BYTES,
+  MAX_SCREENSHOT_COUNT,
+  isAllowedIntakeAttachment,
+} from "@/lib/ticket-intake-screenshots-constants";
+import { ACTIVE_REQUEST_STATUSES } from "@/lib/active-request-statuses";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { formatTicketActivityDetail } from "@/lib/ticket-activity-display";
@@ -177,6 +184,10 @@ export function AgentWorkspace({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [priority, setPriority] = useState(ticket.priority);
   const [transferReason, setTransferReason] = useState("");
   const [logModalOpen, setLogModalOpen] = useState(false);
@@ -537,6 +548,53 @@ export function AgentWorkspace({
     () => parseIntakeScreenshotMeta(ticket.intakeScreenshotMeta),
     [ticket.intakeScreenshotMeta],
   );
+  const canAddAttachments = ACTIVE_REQUEST_STATUSES.includes(ticket.status);
+  const attachmentSlotsRemaining = Math.max(0, MAX_SCREENSHOT_COUNT - intakeScreenshots.length);
+
+  async function uploadTicketAttachments(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0 || !canAddAttachments) return;
+    const files = Array.from(fileList);
+    if (attachmentSlotsRemaining <= 0) {
+      setAttachmentError(`You can attach at most ${MAX_SCREENSHOT_COUNT} files.`);
+      return;
+    }
+    for (const file of files) {
+      if (file.size > MAX_SCREENSHOT_BYTES) {
+        setAttachmentError("Each attachment must be at most 5MB.");
+        return;
+      }
+      if (!isAllowedIntakeAttachment(file.type || "", file.name)) {
+        setAttachmentError(
+          "Attachments must be images or documents (PDF, Word, Excel, CSV, TXT).",
+        );
+        return;
+      }
+    }
+
+    setAttachmentBusy(true);
+    setAttachmentError(null);
+    try {
+      const form = new FormData();
+      for (const file of files.slice(0, attachmentSlotsRemaining)) {
+        form.append("screenshots", file);
+      }
+      const res = await fetch(`/api/tickets/${ticket.id}/screenshots`, {
+        method: "POST",
+        body: form,
+      });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(payload.error ?? "Could not upload attachments.");
+      }
+      setAttachmentInputKey((k) => k + 1);
+      router.refresh();
+    } catch (err) {
+      setAttachmentError(err instanceof Error ? err.message : "Could not upload attachments.");
+    } finally {
+      setAttachmentBusy(false);
+      if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+    }
+  }
 
   const pendingTransfer = useMemo(() => {
     let detail: string | null = null;
@@ -2227,51 +2285,99 @@ export function AgentWorkspace({
               ) : null}
             </div>
           ) : null}
-          {intakeScreenshots.length > 0 ? (
+          {intakeScreenshots.length > 0 || canAddAttachments ? (
             <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-                {isAcaRequest ? "Related documents" : "Attachments"}
-              </p>
-              {(acaApprovalMeta?.relatedTicketIds?.length ?? 0) > 0 && isAcaRequest ? (
-                <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
-                  Ticket refs: {acaApprovalMeta!.relatedTicketIds!.join(", ")}
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                    {isAcaRequest ? "Related documents" : "Attachments"}
+                  </p>
+                  {(acaApprovalMeta?.relatedTicketIds?.length ?? 0) > 0 && isAcaRequest ? (
+                    <p className="mt-1 text-[11px] text-zinc-600 dark:text-zinc-400">
+                      Ticket refs: {acaApprovalMeta!.relatedTicketIds!.join(", ")}
+                    </p>
+                  ) : null}
+                  {canAddAttachments ? (
+                    <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Add images or documents while this request is open (
+                      {intakeScreenshots.length}/{MAX_SCREENSHOT_COUNT}).
+                    </p>
+                  ) : null}
+                </div>
+                {canAddAttachments && attachmentSlotsRemaining > 0 ? (
+                  <div className="shrink-0">
+                    <input
+                      key={attachmentInputKey}
+                      ref={attachmentInputRef}
+                      type="file"
+                      accept={INTAKE_ATTACHMENT_ACCEPT}
+                      multiple
+                      className="sr-only"
+                      disabled={attachmentBusy}
+                      onChange={(e) => {
+                        void uploadTicketAttachments(e.target.files);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={attachmentBusy}
+                      onClick={() => attachmentInputRef.current?.click()}
+                      className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-orange-300/70 bg-orange-50 px-2.5 py-1.5 text-xs font-semibold text-orange-900 transition hover:bg-orange-100 disabled:opacity-60 dark:border-orange-500/40 dark:bg-orange-950/30 dark:text-orange-100 dark:hover:bg-orange-950/50"
+                    >
+                      {attachmentBusy ? (
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <Paperclip className="size-3.5" aria-hidden />
+                      )}
+                      {attachmentBusy ? "Uploading…" : "Add files"}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              {attachmentError ? (
+                <p className="mt-2 text-xs text-rose-600 dark:text-rose-300">{attachmentError}</p>
+              ) : null}
+              {intakeScreenshots.length > 0 ? (
+                <ul className="mt-2 flex flex-wrap gap-3">
+                  {intakeScreenshots.map((m) => {
+                    const href = `/api/tickets/${ticket.id}/screenshots/${encodeURIComponent(m.storedFileName)}`;
+                    const isImage = isIntakeAttachmentImage(m);
+                    return (
+                      <li key={m.storedFileName} className="w-[5.5rem]">
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group flex flex-col items-center gap-1.5 rounded-lg p-1 outline-none transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-orange-500/40 dark:hover:bg-zinc-800/60"
+                          title={m.originalName}
+                        >
+                          {isImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={href}
+                              alt={m.originalName}
+                              className="size-12 rounded-md border border-zinc-200 object-cover object-top dark:border-zinc-700"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span className="flex size-12 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-orange-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-orange-400">
+                              <FileText className="size-7" strokeWidth={1.5} aria-hidden />
+                              <span className="sr-only">Document</span>
+                            </span>
+                          )}
+                          <span className="w-full truncate text-center text-[10px] text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-500 dark:group-hover:text-zinc-200">
+                            {m.originalName}
+                          </span>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : canAddAttachments ? (
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  No files yet. Use Add files to attach supporting documents.
                 </p>
               ) : null}
-              <ul className="mt-2 flex flex-wrap gap-3">
-                {intakeScreenshots.map((m) => {
-                  const href = `/api/tickets/${ticket.id}/screenshots/${encodeURIComponent(m.storedFileName)}`;
-                  const isImage = isIntakeAttachmentImage(m);
-                  return (
-                    <li key={m.storedFileName} className="w-[5.5rem]">
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group flex flex-col items-center gap-1.5 rounded-lg p-1 outline-none transition hover:bg-zinc-100 focus-visible:ring-2 focus-visible:ring-orange-500/40 dark:hover:bg-zinc-800/60"
-                        title={m.originalName}
-                      >
-                        {isImage ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={href}
-                            alt={m.originalName}
-                            className="size-12 rounded-md border border-zinc-200 object-cover object-top dark:border-zinc-700"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <span className="flex size-12 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-orange-600 dark:border-zinc-700 dark:bg-zinc-950 dark:text-orange-400">
-                            <FileText className="size-7" strokeWidth={1.5} aria-hidden />
-                            <span className="sr-only">Document</span>
-                          </span>
-                        )}
-                        <span className="w-full truncate text-center text-[10px] text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-500 dark:group-hover:text-zinc-200">
-                          {m.originalName}
-                        </span>
-                      </a>
-                    </li>
-                  );
-                })}
-              </ul>
             </div>
           ) : isAcaRequest && (acaApprovalMeta?.relatedTicketIds?.length ?? 0) > 0 ? (
             <div className="mt-4 border-t border-zinc-200 pt-4 dark:border-zinc-800/80">

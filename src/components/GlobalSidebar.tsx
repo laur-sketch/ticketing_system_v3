@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { navLinkActive } from "@/lib/nav-link-active";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BrandLogo } from "@/components/BrandLogo";
 import { SidebarOpsWidget } from "@/components/SidebarOpsWidget";
 import { closeStaffMobileNav, subscribeStaffMobileNav } from "@/lib/staff-mobile-nav";
 import { SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
@@ -297,11 +298,6 @@ function SidebarProfileFooter({
             {roleLabel}
           </p>
         </div>
-        <UserCircle
-          size={15}
-          className={cn("shrink-0", mobile ? "text-zinc-500" : "text-zinc-400")}
-          aria-hidden
-        />
       </Link>
       <button
         type="button"
@@ -417,7 +413,17 @@ function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
             aria-label="Main navigation"
           >
             <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3.5 pt-[max(0.85rem,env(safe-area-inset-top,0px))]">
-              <p className="text-sm font-bold tracking-wide text-zinc-100">Menu</p>
+              <Link
+                href="/"
+                onClick={closeMobile}
+                className="flex min-w-0 items-center gap-2.5"
+                title="Workforce Productivity Dashboard"
+              >
+                <BrandLogo width={36} className="h-auto max-h-8 w-9 shrink-0" />
+                <span className="truncate text-sm font-bold tracking-wide text-zinc-100">
+                  Menu
+                </span>
+              </Link>
               <button
                 type="button"
                 onClick={closeMobile}
@@ -493,18 +499,25 @@ function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
           )}
         >
           {!collapsed ? (
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-              Navigate
-            </p>
+            <Link
+              href="/"
+              className="flex min-w-0 items-center gap-2"
+              title="Workforce Productivity Dashboard"
+            >
+              <BrandLogo width={28} className="h-auto max-h-7 w-7 shrink-0" />
+              <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                Navigate
+              </p>
+            </Link>
           ) : null}
           <button
             type="button"
             onClick={toggleCollapsed}
-            className="inline-flex size-8 items-center justify-center rounded-lg border border-zinc-300 text-zinc-600 transition hover:bg-white dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-600 transition hover:bg-white dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            <Menu size={16} />
+            {collapsed ? <BrandLogo width={22} className="h-auto max-h-5 w-5" /> : <Menu size={16} />}
           </button>
         </div>
 

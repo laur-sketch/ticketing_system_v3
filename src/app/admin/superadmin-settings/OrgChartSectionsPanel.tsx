@@ -579,9 +579,14 @@ export function OrgChartSectionsPanel({
           body.headName ??
           nodesBySection.get(sectionId)?.find((n) => n.id === headNodeId)?.personName ??
           "Member";
-        onMessage(`Set ${personName} as head of “${section?.name ?? body.name}”.`);
+        const roleNote = section?.parentId
+          ? "Portal role set to Admin (sub-department head)."
+          : "Portal role set to Admin (department head).";
+        onMessage(`Set ${personName} as head of “${section?.name ?? body.name}”. ${roleNote}`);
       } else {
-        onMessage(`Cleared head for “${section?.name ?? body.name}”.`);
+        onMessage(
+          `Cleared head for “${section?.name ?? body.name}”. Portal Admin/Personnel roles were re-synced from the org chart.`,
+        );
       }
     } catch (e) {
       onError(e instanceof Error ? e.message : "Could not update section head.");
@@ -912,7 +917,7 @@ export function OrgChartSectionsPanel({
             <label className="flex flex-wrap items-center gap-2 text-xs">
               <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                 <Crown className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                Department head
+                {section.parentId ? "Sub-department head" : "Department head"}
               </span>
               <select
                 disabled={busy}
@@ -921,7 +926,11 @@ export function OrgChartSectionsPanel({
                   const next = e.target.value;
                   void setSectionHead(section.id, next || null);
                 }}
-                title="Section head is promoted to portal Admin. Custom section roles below stay as membership labels."
+                title={
+                  section.parentId
+                    ? "Sub-department head → portal Admin. Non-heads stay Personnel. Custom section roles stay as membership labels."
+                    : "Department head → portal Admin. Non-heads stay Personnel. Custom section roles stay as membership labels."
+                }
                 className="h-8 min-w-[12rem] flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-xs outline-none focus:border-orange-500/60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
               >
                 <option value="">— No head —</option>

@@ -20,11 +20,16 @@ export function isAllowedIntakeAttachmentFile(file: File): boolean {
 
 export function validateScreenshotFiles(
   files: File[],
+  opts?: { maxCount?: number },
 ): { ok: true } | { ok: false; error: string } {
-  if (files.length > MAX_SCREENSHOT_COUNT) {
+  const maxCount = opts?.maxCount ?? MAX_SCREENSHOT_COUNT;
+  if (files.length > maxCount) {
     return {
       ok: false,
-      error: `You can attach at most ${MAX_SCREENSHOT_COUNT} files.`,
+      error:
+        maxCount <= 0
+          ? `You can attach at most ${MAX_SCREENSHOT_COUNT} files.`
+          : `You can attach at most ${maxCount} more file${maxCount === 1 ? "" : "s"} (${MAX_SCREENSHOT_COUNT} total).`,
     };
   }
   for (const f of files) {

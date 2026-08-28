@@ -232,3 +232,116 @@ export async function resolveOrgChartSectionContext(sectionId: string | null | u
     isSubsection: chain.length > 1,
   };
 }
+
+export type OrgChartSectionHeadOption = {
+  id: string;
+  name: string;
+  email: string;
+  sectionId: string;
+  sectionName: string;
+  isSubsection: boolean;
+  /** Major (root) department name — used for picker grouping. */
+  group: string;
+  /** e.g. "Sub-department head — IT TEAM" */
+  subtitle: string;
+};
+
+/**
+ * Cross-department org-chart section heads for intake / travel-style approver pickers.
+ * One row per section that has a resolvable head (same person may appear under multiple sections).
+ */
+export async function listOrgChartSectionHeads(): Promise<OrgChartSectionHeadOption[]> {
+  const [sections, staff] = await Promise.all([
+    prisma.orgChartSection.findMany({
+      select: { id: true, name: true, parentId: true, headNodeId: true, sortOrder: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    }),
+    loadHrisAssignableStaff({}),
+  ]);
+
+  const agentByMerged = new Map<string, { agentId: string; name: string }>();
+  for (const row of staff) {
+    if (!row.mergedSourceUserId || !row.agentId) continue;
+    agentByMerged.set(row.mergedSourceUserId, { agentId: row.agentId, name: row.name });
+  }
+
+  const headNodeIds = [
+    ...new Set(
+      sections
+        .map((s) => s.headNodeId)
+        .filter((id): id is string => Boolean(id?.trim())),
+    ),
+  ];
+  if (headNodeIds.length === 0) return [];
+
+  const nodes = await prisma.orgChartNode.findMany({
+    where: { id: { in: headNodeIds } },
+    select: { id: true, mergedSourceUserId: true, personName: true },
+  });
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  const agentIds = new Set<string>();
+  for (const section of sections) {
+    if (!section.headNodeId) continue;
+    const node = nodeById.get(section.headNodeId);
+    if (!node?.mergedSourceUserId) continue;
+    const staffRow = agentByMerged.get(node.mergedSourceUserId);
+    if (staffRow?.agentId) agentIds.add(staffRow.agentId);
+  }
+
+  const agents =
+    agentIds.size > 0
+      ? await prisma.agent.findMany({
+          where: { id: { in: [...agentIds] } },
+          select: { id: true, name: true, email: true },
+        })
+      : [];
+  const agentById = new Map(agents.map((a) => [a.id, a]));
+
+  const sectionById = new Map(sections.map((s) => [s.id, s]));
+  function majorSectionName(sectionId: string): string {
+    let current = sectionById.get(sectionId);
+    const seen = new Set<string>();
+    while (current?.parentId && !seen.has(current.id)) {
+      seen.add(current.id);
+      current = sectionById.get(current.parentId);
+    }
+    return (current?.name ?? sectionById.get(sectionId)?.name ?? "Other").trim() || "Other";
+  }
+
+  const out: OrgChartSectionHeadOption[] = [];
+  for (const section of sections) {
+    if (!section.headNodeId) continue;
+    const node = nodeById.get(section.headNodeId);
+    if (!node?.mergedSourceUserId) continue;
+    const staffRow = agentByMerged.get(node.mergedSourceUserId);
+    if (!staffRow) continue;
+    const agent = agentById.get(staffRow.agentId);
+    if (!agent) continue;
+
+    const isSubsection = Boolean(section.parentId);
+    const group = majorSectionName(section.id);
+    out.push({
+      id: agent.id,
+      name: agent.name || staffRow.name || node.personName || "Unknown",
+      email: agent.email?.trim() || "",
+      sectionId: section.id,
+      sectionName: section.name,
+      isSubsection,
+      group,
+      subtitle: isSubsection
+        ? `Sub-department head — ${section.name}`
+        : `Department head — ${section.name}`,
+    });
+  }
+
+  out.sort((a, b) => {
+    const g = a.group.localeCompare(b.group, undefined, { sensitivity: "base" });
+    if (g !== 0) return g;
+    const s = a.sectionName.localeCompare(b.sectionName, undefined, { sensitivity: "base" });
+    if (s !== 0) return s;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+
+  return out;
+}

@@ -105,12 +105,14 @@ export function readRecentSearchItems(): GlobalSearchResult[] {
 
 export function rememberSearchItem(item: Omit<GlobalSearchResult, "kind"> & { kind?: GlobalSearchResultKind }) {
   if (typeof window === "undefined") return;
+  const preservedKind =
+    item.kind && item.kind !== "recent" && item.kind !== "action" ? item.kind : "ticket";
   const next: GlobalSearchResult = {
     ...item,
-    kind: item.kind ?? "recent",
+    kind: preservedKind,
   };
   const prev = readRecentSearchItems().filter((row) => row.id !== next.id || row.href !== next.href);
-  const merged = [{ ...next, kind: "recent" }, ...prev].slice(0, RECENT_LIMIT);
+  const merged = [next, ...prev].slice(0, RECENT_LIMIT);
   window.localStorage.setItem(RECENT_KEY, JSON.stringify(merged));
 }
 

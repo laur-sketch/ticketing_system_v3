@@ -1,19 +1,41 @@
 /** Shared helpers for Job Order (J.O.) intake. */
 
-export const JOB_ORDER_NATURE_OPTIONS = [
-  "Electrical",
-  "Plumbing",
-  "HVAC / Air Conditioning",
-  "Carpentry / Civil Works",
-  "Painting",
-  "IT / Network",
-  "Cleaning / Janitorial",
-  "Security / Access",
-  "Equipment Repair",
-  "Other",
+export const JOB_ORDER_NATURE_GROUPS = [
+  {
+    category: "Building systems",
+    options: [
+      "Electrical",
+      "Plumbing",
+      "HVAC / Air Conditioning",
+    ],
+  },
+  {
+    category: "Structural & finishes",
+    options: ["Carpentry / Civil Works", "Painting"],
+  },
+  {
+    category: "Facilities & services",
+    options: [
+      "Cleaning / Janitorial",
+      "Security / Access",
+      "Equipment Repair",
+    ],
+  },
+  {
+    category: "Technology",
+    options: ["IT / Network"],
+  },
+  {
+    category: "Other",
+    options: ["Other"],
+  },
 ] as const;
 
-export type JobOrderNatureOption = (typeof JOB_ORDER_NATURE_OPTIONS)[number];
+export type JobOrderNatureOption =
+  (typeof JOB_ORDER_NATURE_GROUPS)[number]["options"][number];
+
+export const JOB_ORDER_NATURE_OPTIONS: readonly JobOrderNatureOption[] =
+  JOB_ORDER_NATURE_GROUPS.flatMap((group) => [...group.options]);
 
 export type JobOrderFields = {
   natureOfConcern: string[];

@@ -12,7 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
 import { resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
-import { resolveAgentIdsForOrgChartSection } from "@/lib/org-chart-section-roster";
+import { resolveAgentIdsForOrgChartSection, listOrgChartSectionHeads } from "@/lib/org-chart-section-roster";
 
 export async function GET(req: Request) {
   const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
@@ -30,6 +30,15 @@ export async function GET(req: Request) {
   const positionLevel = positionLevelRaw && /^\d+$/.test(positionLevelRaw) ? Number(positionLevelRaw) : null;
   const assignToManager =
     searchParams.get("assignToManager") === "1" || searchParams.get("assignToManager") === "true";
+  const orgChartHeads =
+    searchParams.get("orgChartHeads") === "1" || searchParams.get("orgChartHeads") === "true";
+
+  if (orgChartHeads) {
+    const heads = await listOrgChartSectionHeads();
+    return NextResponse.json(heads, {
+      headers: { "cache-control": "private, max-age=5, stale-while-revalidate=10" },
+    });
+  }
 
   let companyIdFilter: string | null = null;
   const anyCompany =

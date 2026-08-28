@@ -20,6 +20,13 @@ export async function GET(req: Request) {
       requestorAgentId: "",
       requestorOrgLayer: null,
       seats: [],
+      recommendedConfirmation: {
+        agentId: null,
+        agentName: null,
+        sectionId: null,
+        sectionName: null,
+        hint: null,
+      },
     });
   }
 

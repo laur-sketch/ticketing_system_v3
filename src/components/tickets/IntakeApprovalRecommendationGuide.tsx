@@ -15,6 +15,10 @@ type Props = {
   skipNotedBy?: boolean;
   skipApprovedBy?: boolean;
   deferBookkeeper?: boolean;
+  /** ACA matrix inputs — required for AUTHORITY_TO_CONDUCT_ACTIVITY recommendations. */
+  acaRecommendingLevel?: string;
+  acaApprovingPath?: string;
+  acaApprovingSeatCount?: number;
   onApply: (assignees: Record<string, string>) => void;
 };
 
@@ -26,6 +30,9 @@ export function IntakeApprovalRecommendationGuide({
   skipNotedBy = false,
   skipApprovedBy = false,
   deferBookkeeper = false,
+  acaRecommendingLevel = "",
+  acaApprovingPath = "",
+  acaApprovingSeatCount = 0,
   onApply,
 }: Props) {
   const [guide, setGuide] = useState<IntakeApprovalRecommendationGuide | null>(null);
@@ -42,8 +49,22 @@ export function IntakeApprovalRecommendationGuide({
         skipNotedBy ? "1" : "0",
         skipApprovedBy ? "1" : "0",
         deferBookkeeper ? "1" : "0",
+        acaRecommendingLevel.trim(),
+        acaApprovingPath.trim(),
+        String(acaApprovingSeatCount || 0),
       ].join("|"),
-    [requestType, requestorSectionId, sendToSectionId, requestingCompanyTeamId, skipNotedBy, skipApprovedBy, deferBookkeeper],
+    [
+      requestType,
+      requestorSectionId,
+      sendToSectionId,
+      requestingCompanyTeamId,
+      skipNotedBy,
+      skipApprovedBy,
+      deferBookkeeper,
+      acaRecommendingLevel,
+      acaApprovingPath,
+      acaApprovingSeatCount,
+    ],
   );
 
   useEffect(() => {
@@ -52,6 +73,17 @@ export function IntakeApprovalRecommendationGuide({
     setError(null);
     void (async () => {
       try {
+        if (
+          requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY" &&
+          (!acaRecommendingLevel.trim() || !acaApprovingPath.trim() || acaApprovingSeatCount < 1)
+        ) {
+          if (!cancelled) {
+            setGuide(null);
+            setLoading(false);
+          }
+          return;
+        }
+
         const params = new URLSearchParams({ requestType });
         const requestorId = requestorSectionId.trim();
         const sendToId = sendToSectionId.trim();
@@ -62,6 +94,15 @@ export function IntakeApprovalRecommendationGuide({
         if (skipNotedBy) params.set("skipNotedBy", "1");
         if (skipApprovedBy) params.set("skipApprovedBy", "1");
         if (deferBookkeeper) params.set("deferBookkeeper", "1");
+        if (acaRecommendingLevel.trim()) {
+          params.set("acaRecommendingLevel", acaRecommendingLevel.trim());
+        }
+        if (acaApprovingPath.trim()) {
+          params.set("acaApprovingPath", acaApprovingPath.trim());
+        }
+        if (acaApprovingSeatCount > 0) {
+          params.set("acaApprovingSeatCount", String(acaApprovingSeatCount));
+        }
 
         const res = await fetch(`/api/intake/approval-recommendations?${params.toString()}`, {
           cache: "no-store",
@@ -85,7 +126,19 @@ export function IntakeApprovalRecommendationGuide({
     return () => {
       cancelled = true;
     };
-  }, [queryKey, deferBookkeeper, requestType, requestorSectionId, requestingCompanyTeamId, sendToSectionId, skipApprovedBy, skipNotedBy]);
+  }, [
+    queryKey,
+    deferBookkeeper,
+    requestType,
+    requestorSectionId,
+    requestingCompanyTeamId,
+    sendToSectionId,
+    skipApprovedBy,
+    skipNotedBy,
+    acaRecommendingLevel,
+    acaApprovingPath,
+    acaApprovingSeatCount,
+  ]);
 
   const filledSeats = guide?.seats.filter((seat) => seat.agentId) ?? [];
   const canApply = filledSeats.length > 0;
@@ -105,7 +158,7 @@ export function IntakeApprovalRecommendationGuide({
       if (guide.requestorMainSectionName) {
         parts.push(
           requestorIsSubsection
-            ? `main section ${guide.requestorMainSectionName} (subsection head first)`
+            ? `main section ${guide.requestorMainSectionName} (sub-department head first)`
             : `main section ${guide.requestorMainSectionName}`,
         );
       }
@@ -119,13 +172,50 @@ export function IntakeApprovalRecommendationGuide({
       }
       return parts.length > 0 ? parts.join(" · ") : null;
     }
+    if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+      return guide.requestorCompanyName
+        ? `company ${guide.requestorCompanyName} · authority matrix positions`
+        : "authority matrix positions";
+    }
+    if (requestType === "ITEM_REQUISITION_SLIP") {
+      return guide.requestorMainSectionName
+        ? `Approved By from ${guide.requestorMainSectionName} (Canvassed By is set on the Assignment Board)`
+        : "Approved By from your department (Canvassed By is set on the Assignment Board)";
+    }
+    if (requestType === "JOB_ORDER") {
+      const parts: string[] = [];
+      if (guide.requestorSectionName) {
+        parts.push(`requestor head from ${guide.requestorSectionName}`);
+      }
+      if (guide.sendToSectionName) {
+        parts.push(`send-to head from ${guide.sendToSectionName}`);
+      }
+      parts.push("HR team head");
+      return parts.join(" · ");
+    }
     if (guide.requestorMainSectionName) {
       return requestorIsSubsection
-        ? `main section ${guide.requestorMainSectionName} (subsection head first for ${guide.requestorSectionName})`
+        ? `main section ${guide.requestorMainSectionName} (sub-department head first for ${guide.requestorSectionName})`
         : `main section ${guide.requestorMainSectionName}`;
     }
     return null;
   }, [guide, requestType]);
+
+  const helpText = useMemo(() => {
+    if (requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY") {
+      return "Suggested assignees from the authority matrix positions for your company and selected nature/cost. You can still choose someone else below.";
+    }
+    if (requestType === "ITEM_REQUISITION_SLIP") {
+      return "Suggested Approved By from your department. Canvassed By is assigned later on the Assignment Board. You can still choose someone else below.";
+    }
+    if (requestType === "REQUEST_FOR_PAYMENT") {
+      return "Suggested assignees from org-chart sections. Sub-department heads are listed first for Noted By when you belong to a sub-department. Approved By uses the next section head up from your department. Bookkeeper uses send-to section and your company. You can still choose someone else below.";
+    }
+    if (requestType === "JOB_ORDER") {
+      return "Suggested chain: head of your department → head of the send-to department (or sub-department if selected) → head of the HR team. You can still choose someone else below.";
+    }
+    return "Suggested assignees from org-chart sections and position holders. You can still choose someone else below.";
+  }, [requestType]);
 
   function handleApply() {
     if (!guide) return;
@@ -137,6 +227,13 @@ export function IntakeApprovalRecommendationGuide({
     onApply(next);
   }
 
+  const emptyHint =
+    requestType === "AUTHORITY_TO_CONDUCT_ACTIVITY"
+      ? "Select Nature of Request and Estimated Cost to see recommended approvers."
+      : requestType === "JOB_ORDER"
+        ? "Select your department and Send request to (department) to see recommended approvers."
+        : "Select your department to see recommended approvers.";
+
   return (
     <div className="rounded-xl border border-orange-200/80 bg-orange-50/40 p-3 dark:border-orange-500/25 dark:bg-orange-950/15 sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -146,11 +243,8 @@ export function IntakeApprovalRecommendationGuide({
             Approval recommendations
           </p>
           <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-            Suggested assignees from org-chart sections
-            {sectionSummary ? ` — ${sectionSummary}` : ""}. Subsection heads are listed first for Noted By when you belong to a subsection.
-            Approved By uses the next section head up from your department. Bookkeeper uses send-to
-            section and your company by default, or requesting company when that option is enabled.
-            You can still choose someone else below.
+            {helpText}
+            {sectionSummary ? ` — ${sectionSummary}.` : ""}
           </p>
         </div>
         <Button
@@ -173,12 +267,17 @@ export function IntakeApprovalRecommendationGuide({
       {loading ? (
         <p className="mt-3 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          Loading section-based recommendations…
+          Loading recommendations…
         </p>
       ) : error ? (
         <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{error}</p>
       ) : guide && guide.seats.length > 0 ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div
+          className={cn(
+            "mt-3 grid gap-2",
+            guide.seats.length >= 3 ? "sm:grid-cols-3" : "sm:grid-cols-2",
+          )}
+        >
           {guide.seats.map((seat) => (
             <div
               key={seat.key}
@@ -206,16 +305,14 @@ export function IntakeApprovalRecommendationGuide({
                 <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{seat.hint}</p>
               ) : !seat.agentName ? (
                 <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  No matching user in the send-to section for your company.
+                  No matching user found for this seat.
                 </p>
               ) : null}
             </div>
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-          Select your section to see recommended approvers.
-        </p>
+        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">{emptyHint}</p>
       )}
     </div>
   );

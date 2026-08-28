@@ -5,6 +5,10 @@ import { loadPersonnelAccountsPayload } from "@/lib/personnel-accounts-data";
 import { loadOnDutySnapshot } from "@/lib/load-on-duty-snapshot";
 import { prisma } from "@/lib/prisma";
 import { resolveAdminOnDutyCompanyFilter } from "@/lib/staff-company-scope";
+import {
+  reconcilePortalStaffRolesFromOrgChart,
+  resolvePortalTechnicalRolesByMergedSourceUserIds,
+} from "@/lib/org-chart-section-scope";
 import { WorkforceClient } from "./ui";
 import type { OrgChartSectionRow } from "../superadmin-settings/OrgChartSectionsPanel";
 
@@ -90,6 +94,7 @@ export default async function WorkforcePage({
                   personName: true,
                   personRole: true,
                   companyName: true,
+                  mergedSourceUserId: true,
                 },
               },
               reportsToNode: {
@@ -115,26 +120,44 @@ export default async function WorkforcePage({
   ]);
 
   const orderedCompanies = sortByRosterOrder(assignableTeams);
+
+  if (isSuperAdmin && orgPayload) {
+    await reconcilePortalStaffRolesFromOrgChart();
+  }
+
+  const headMergedIds =
+    orgPayload?.[1]
+      .map((s) => s.headNode?.mergedSourceUserId)
+      .filter((id): id is string => Boolean(id?.trim())) ?? [];
+  const portalRoleByMergedId =
+    headMergedIds.length > 0
+      ? await resolvePortalTechnicalRolesByMergedSourceUserIds(headMergedIds)
+      : new Map<string, string>();
+
   const initialOrgSections: OrgChartSectionRow[] | undefined = orgPayload
-    ? orgPayload[1].map((s) => ({
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        sortOrder: s.sortOrder,
-        parentId: s.parentId,
-        companyTeamId: s.companyTeamId,
-        companyName: s.companyTeam?.name ?? null,
-        headNodeId: s.headNodeId,
-        headName: s.headNode?.personName ?? null,
-        headRole: s.headNode?.personRole ?? null,
-        headCompanyName: s.headNode?.companyName ?? null,
-        reportsToNodeId: s.reportsToNodeId,
-        reportsToName: s.reportsToNode?.personName ?? null,
-        reportsToRole: s.reportsToNode?.personRole ?? null,
-        reportsToCompanyName: s.reportsToNode?.companyName ?? null,
-        roles: s.roles,
-        memberCount: s._count.memberships,
-      }))
+    ? orgPayload[1].map((s) => {
+        const mergedId = s.headNode?.mergedSourceUserId?.trim() ?? "";
+        const portalRole = mergedId ? portalRoleByMergedId.get(mergedId) ?? null : null;
+        return {
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          sortOrder: s.sortOrder,
+          parentId: s.parentId,
+          companyTeamId: s.companyTeamId,
+          companyName: s.companyTeam?.name ?? null,
+          headNodeId: s.headNodeId,
+          headName: s.headNode?.personName ?? null,
+          headRole: portalRole ?? s.headNode?.personRole ?? null,
+          headCompanyName: s.headNode?.companyName ?? null,
+          reportsToNodeId: s.reportsToNodeId,
+          reportsToName: s.reportsToNode?.personName ?? null,
+          reportsToRole: s.reportsToNode?.personRole ?? null,
+          reportsToCompanyName: s.reportsToNode?.companyName ?? null,
+          roles: s.roles,
+          memberCount: s._count.memberships,
+        };
+      })
     : undefined;
   const initialOrgEitherOrLinks = orgPayload?.[2].map((l) => ({
     id: l.id,
