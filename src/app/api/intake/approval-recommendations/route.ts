@@ -4,7 +4,7 @@ import {
   resolveMergedSourceUserIdForSessionEmail,
 } from "@/lib/approval-position-resolver";
 import { resolveIntakeApprovalRecommendations } from "@/lib/intake-approval-recommendations";
-import { resolveOrgChartSectionIdsForMergedUser } from "@/lib/org-chart-section-roster";
+import { resolveDeepestOrgChartSectionIdForMergedUser } from "@/lib/org-chart-section-roster";
 import { parseRequestTypeId, type RequestTypeId } from "@/lib/request-types";
 
 const SUPPORTED: RequestTypeId[] = [
@@ -48,8 +48,8 @@ export async function GET(req: Request) {
 
   const mergedSourceUserId = await resolveMergedSourceUserIdForSessionEmail(session.user.email);
   if (!requestorSectionId) {
-    const memberSectionIds = await resolveOrgChartSectionIdsForMergedUser(mergedSourceUserId);
-    requestorSectionId = memberSectionIds[0] ?? "";
+    requestorSectionId =
+      (await resolveDeepestOrgChartSectionIdForMergedUser(mergedSourceUserId)) ?? "";
   }
 
   const guide = await resolveIntakeApprovalRecommendations({

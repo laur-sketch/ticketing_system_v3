@@ -32,6 +32,7 @@ import {
   type KpiChecklistProgress,
   type SubKpiItem,
 } from "@/lib/kpi-subkpis";
+import { subKpiRequirementsMet } from "@/lib/sub-kpi-completion-mode";
 import {
   countItProjectSubKpiStatus,
   itProjectAggregatedProgressFromRaw,
@@ -624,7 +625,7 @@ function mapIncludedTaskSegmentItems(
       return {
         id: item.id,
         title: item.title.trim(),
-        done: Boolean(item.done),
+        done: subKpiRequirementsMet(item),
         assigneeName: owner.role === "Unassigned" ? null : owner.name,
         recordedPercent: numericalRecordProgressPercent(item.numericalValue, item.numericalTarget),
       };
@@ -736,7 +737,7 @@ function buildIncludedTasksFromKpis(
     const items = (opts?.itemsForRow?.(row) ?? collectChecklistProgressItems(row.subKpis, title)).filter(
       (item) => item.title.trim().length > 0,
     );
-    const isDone = opts?.isDone ?? ((item: SubKpiItem) => Boolean(item.done));
+    const isDone = opts?.isDone ?? subKpiRequirementsMet;
     const total = items.length;
     const done = items.reduce((sum, item) => sum + (isDone(item) ? 1 : 0), 0);
     const missing = Math.max(0, total - done);
@@ -1035,8 +1036,9 @@ function storedToAssigneeProgress(rows: StoredContributorProgress[]): TaskAssign
   });
 }
 
+/** Single completion predicate for metrics / snapshots (matches Task Board). */
 function rawCheckboxIsDone(item: SubKpiItem): boolean {
-  return Boolean(item.done);
+  return subKpiRequirementsMet(item);
 }
 
 /** Live Task Board rows that currently roll into a Task Metrics donut (Admin extended view). */
@@ -1508,13 +1510,13 @@ function subtaskChecksFromSubKpis(
     const virtual = pillarVirtualSubKpiItem(subKpis, taskTitle);
     const title = (taskTitle ?? virtual?.title ?? "").trim();
     if (virtual && title) {
-      byTitle.set(title.toLowerCase(), Boolean(virtual.done));
+      byTitle.set(title.toLowerCase(), subKpiRequirementsMet(virtual));
     }
   } else {
     for (const item of collectAllSubKpiItems(normalizeSubKpis(subKpis))) {
       const title = item.title.trim();
       if (!title) continue;
-      byTitle.set(title.toLowerCase(), Boolean(item.done));
+      byTitle.set(title.toLowerCase(), subKpiRequirementsMet(item));
     }
   }
   return Object.fromEntries(columns.map((title) => [title, byTitle.get(title.toLowerCase()) === true]));

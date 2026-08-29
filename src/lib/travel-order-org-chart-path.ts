@@ -3,7 +3,9 @@ import {
   resolveMergedSourceUserIdForAgent,
 } from "@/lib/approval-position-resolver";
 import { loadHrisAssignableStaff } from "@/lib/hris-staff-roster";
+import { isHrSectionName } from "@/lib/hr-section-name";
 import {
+  pickDeepestOrgChartSectionId,
   resolveOrgChartSectionContext,
   resolveOrgChartSectionIdsForMergedUser,
 } from "@/lib/org-chart-section-roster";
@@ -45,14 +47,6 @@ type SectionRow = {
   parentId: string | null;
   headNodeId: string | null;
 };
-
-const HR_SECTION_NAME_CANDIDATES = [
-  "hr team",
-  "hr",
-  "human resources",
-  "human resource",
-  "human resource management",
-];
 
 function emptyConfirmer(): TravelOrderRecommendedConfirmer {
   return {
@@ -108,14 +102,6 @@ function seatFromHead(
   };
 }
 
-function isHrSectionName(name: string): boolean {
-  const n = name.trim().toLowerCase();
-  if (!n) return false;
-  return HR_SECTION_NAME_CANDIDATES.some(
-    (candidate) => n === candidate || n.includes(candidate) || candidate.includes(n),
-  );
-}
-
 async function resolveHeadPersonForSection(
   section: Pick<SectionRow, "id" | "name" | "headNodeId">,
   opts: {
@@ -154,30 +140,16 @@ async function resolveRequestorDepartmentContext(mergedSourceUserId: string): Pr
   const sectionIds = await resolveOrgChartSectionIdsForMergedUser(mergedSourceUserId);
   if (sectionIds.length === 0) return null;
 
+  const deepestId = await pickDeepestOrgChartSectionId(sectionIds);
+  if (!deepestId) return null;
+
   const sections = await prisma.orgChartSection.findMany({
     where: { id: { in: sectionIds } },
     select: { id: true, name: true, parentId: true, headNodeId: true },
   });
   if (sections.length === 0) return null;
 
-  const byId = new Map(sections.map((s) => [s.id, s]));
-
-  function depthOf(sectionId: string): number {
-    let depth = 0;
-    let current: string | null = sectionId;
-    const seen = new Set<string>();
-    while (current && !seen.has(current)) {
-      seen.add(current);
-      const row = byId.get(current);
-      if (!row?.parentId) break;
-      depth += 1;
-      current = byId.has(row.parentId) ? row.parentId : null;
-    }
-    return depth;
-  }
-
-  const ranked = [...sections].sort((a, b) => depthOf(b.id) - depthOf(a.id));
-  const immediate = ranked[0] ?? null;
+  const immediate = sections.find((s) => s.id === deepestId) ?? sections[0] ?? null;
   if (!immediate) return null;
 
   const context = await resolveOrgChartSectionContext(immediate.id);

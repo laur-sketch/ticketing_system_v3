@@ -724,6 +724,7 @@ export function DepartmentTaskMetricsGrid({
         created?: Array<{ mainTask: string }>;
         skipped?: Array<{ mainTask: string; reason: string }>;
         errors?: string[];
+        warnings?: string[];
         membershipsAdded?: number;
       } | null;
       if (!res.ok) {
@@ -737,13 +738,19 @@ export function DepartmentTaskMetricsGrid({
       const created = json?.created?.length ?? 0;
       const skipped = json?.skipped?.length ?? 0;
       const errCount = json?.errors?.length ?? 0;
+      const warnCount = json?.warnings?.length ?? 0;
+      const memberships = json?.membershipsAdded ?? 0;
       const parts = [
         `Created ${created} task${created === 1 ? "" : "s"}`,
         skipped > 0 ? `skipped ${skipped}` : null,
+        memberships > 0 ? `${memberships} department link${memberships === 1 ? "" : "s"}` : null,
+        warnCount > 0 ? `${warnCount} warning${warnCount === 1 ? "" : "s"}` : null,
         errCount > 0 ? `${errCount} row error${errCount === 1 ? "" : "s"}` : null,
       ].filter(Boolean);
       setImportMessage(parts.join(" · "));
-      if (Array.isArray(json?.errors) && json.errors.length > 0 && created === 0) {
+      if (Array.isArray(json?.warnings) && json.warnings.length > 0) {
+        setImportError(json.warnings.slice(0, 3).join(" "));
+      } else if (Array.isArray(json?.errors) && json.errors.length > 0 && created === 0) {
         setImportError(json.errors.slice(0, 3).join(" "));
       }
       if (created > 0) onImportComplete?.();

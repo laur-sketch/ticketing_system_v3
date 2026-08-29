@@ -19,13 +19,20 @@ import {
   type KpiFrequencyCode,
 } from "@/lib/kpi-recurrence";
 import { getPeriodStartInclusive } from "@/lib/kpi-period-window";
+import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 
 export type DepartmentTaskImportResult = {
   created: Array<{ id: string; mainTask: string; assigneeEmail: string }>;
   skipped: Array<{ mainTask: string; reason: string }>;
+  /** Soft warnings (task created, but department link / company resolve failed). */
+  warnings: string[];
   membershipsAdded: number;
   errors: string[];
 };
+
+type MembershipResult =
+  | { ok: true }
+  | { ok: false; reason: string };
 
 function buildSubKpisJson(task: DepartmentTaskCsvTask): Prisma.InputJsonValue {
   // Pillar-only: blank subtask_title — completion requirements live on the main task.
@@ -73,44 +80,72 @@ async function resolveAgentIdByEmail(email: string): Promise<string | null> {
   return agent?.id ?? null;
 }
 
-async function resolveCompanyTeamId(company: string | null): Promise<string | null> {
-  if (!company?.trim()) return null;
+async function resolveCompanyTeamId(company: string | null): Promise<{
+  teamId: string | null;
+  warning: string | null;
+}> {
+  if (!company?.trim()) return { teamId: null, warning: null };
+  const raw = company.trim();
+  const canonical = resolveRosterCompanyName(raw) ?? raw;
   const team = await prisma.team.findFirst({
-    where: { name: { equals: company.trim(), mode: "insensitive" } },
+    where: { name: { equals: canonical, mode: "insensitive" } },
     select: { id: true },
   });
-  return team?.id ?? null;
+  if (!team) {
+    return {
+      teamId: null,
+      warning: `Company "${raw}" not found on roster (tried "${canonical}")`,
+    };
+  }
+  return { teamId: team.id, warning: null };
 }
 
 async function ensureDepartmentMembership(args: {
   departmentName: string | null;
   agentId: string;
-}): Promise<boolean> {
-  if (!args.departmentName?.trim()) return false;
+}): Promise<MembershipResult> {
+  if (!args.departmentName?.trim()) {
+    return { ok: false, reason: "No department_name on row" };
+  }
+  const dept = args.departmentName.trim();
   const section = await prisma.orgChartSection.findFirst({
-    where: { name: { equals: args.departmentName.trim(), mode: "insensitive" } },
+    where: { name: { equals: dept, mode: "insensitive" } },
     select: { id: true },
   });
-  if (!section) return false;
+  if (!section) {
+    return { ok: false, reason: `Department "${dept}" not found on org chart` };
+  }
 
   const agent = await prisma.agent.findUnique({
     where: { id: args.agentId },
     select: { email: true, name: true },
   });
-  if (!agent?.email) return false;
+  if (!agent?.email) {
+    return { ok: false, reason: `Agent has no email for department link` };
+  }
 
   // Prefer org-chart node linked via merged portal email.
   const portal = await prisma.portalAccount.findFirst({
     where: { email: { equals: agent.email, mode: "insensitive" } },
     select: { mergedSourceUserId: true },
   });
-  if (portal?.mergedSourceUserId == null) return false;
+  if (portal?.mergedSourceUserId == null) {
+    return {
+      ok: false,
+      reason: `No portal/HRIS link for ${agent.email} — cannot attach to "${dept}"`,
+    };
+  }
 
   const node = await prisma.orgChartNode.findFirst({
     where: { mergedSourceUserId: portal.mergedSourceUserId.toString() },
     select: { id: true },
   });
-  if (!node) return false;
+  if (!node) {
+    return {
+      ok: false,
+      reason: `${agent.email} is not on the org chart — cannot attach to "${dept}"`,
+    };
+  }
 
   await prisma.orgChartNodeSectionMembership.createMany({
     data: [{ nodeId: node.id, sectionId: section.id }],
@@ -121,7 +156,7 @@ async function ensureDepartmentMembership(args: {
     where: { id: node.id, sectionId: null },
     data: { sectionId: section.id },
   });
-  return true;
+  return { ok: true };
 }
 
 export async function importDepartmentTasksFromCsv(
@@ -136,6 +171,7 @@ export async function importDepartmentTasksFromCsv(
   const result: DepartmentTaskImportResult = {
     created: [],
     skipped: [],
+    warnings: [],
     membershipsAdded: 0,
     errors: [...parsed.errors],
   };
@@ -159,17 +195,19 @@ export async function importDepartmentTasksFromCsv(
     const mainTask = task.mainTask.trim();
     const title = mainTask.replace(/\s+/g, " ").toUpperCase();
 
+    // Duplicate is per assignee — same main task name may exist for another person.
     const duplicate = await prisma.kpiMaintenance.findFirst({
       where: {
         title,
         mainTask: { equals: mainTask, mode: "insensitive" },
+        assignedAgentId: agentId,
       },
       select: { id: true },
     });
     if (duplicate) {
       result.skipped.push({
         mainTask,
-        reason: `Task "${mainTask}" already exists`,
+        reason: `Task "${mainTask}" already exists for ${task.assigneeEmail}`,
       });
       continue;
     }
@@ -183,7 +221,10 @@ export async function importDepartmentTasksFromCsv(
     }
     if (
       isRecurring &&
-      (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL" || frequency === "YEARLY")
+      (frequency === "MONTHLY" ||
+        frequency === "QUARTERLY" ||
+        frequency === "SEMI_ANNUAL" ||
+        frequency === "YEARLY")
     ) {
       recurrenceMonthDay = 1;
     }
@@ -207,7 +248,10 @@ export async function importDepartmentTasksFromCsv(
         )
       : null;
 
-    const scopedCompanyTeamId = await resolveCompanyTeamId(task.company);
+    const companyResolved = await resolveCompanyTeamId(task.company);
+    if (companyResolved.warning) {
+      result.warnings.push(`"${mainTask}": ${companyResolved.warning}`);
+    }
     const subKpis = buildSubKpisJson(task);
 
     try {
@@ -219,7 +263,7 @@ export async function importDepartmentTasksFromCsv(
           frequency,
           subKpis,
           assignedAgentId: agentId,
-          scopedCompanyTeamId,
+          scopedCompanyTeamId: companyResolved.teamId,
           recurrenceWeekday,
           recurrenceMonthDay,
           periodCycleStartAt,
@@ -236,11 +280,19 @@ export async function importDepartmentTasksFromCsv(
         assigneeEmail: task.assigneeEmail,
       });
 
-      const added = await ensureDepartmentMembership({
-        departmentName: task.departmentName,
-        agentId,
-      });
-      if (added) result.membershipsAdded += 1;
+      if (task.departmentName?.trim()) {
+        const membership = await ensureDepartmentMembership({
+          departmentName: task.departmentName,
+          agentId,
+        });
+        if (membership.ok) {
+          result.membershipsAdded += 1;
+        } else {
+          result.warnings.push(
+            `"${mainTask}" (${task.assigneeEmail}): ${membership.reason}`,
+          );
+        }
+      }
     } catch (e) {
       result.errors.push(
         `Failed to create "${mainTask}": ${e instanceof Error ? e.message : "unknown error"}`,

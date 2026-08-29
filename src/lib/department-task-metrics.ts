@@ -199,7 +199,13 @@ export async function computeDepartmentTaskMetrics(args: {
       metricsCadence: args.metricsCadence,
       timeZone,
     });
-    const childIds = childrenByParent.get(section.id) ?? [];
+    const childIds = (childrenByParent.get(section.id) ?? []).filter((childId) => {
+      if (!args.companyTeamId) return true;
+      const child = sections.find((s) => s.id === childId);
+      if (!child) return false;
+      // Same company, or inherit parent company when child has no company set.
+      return !child.companyTeamId || child.companyTeamId === args.companyTeamId;
+    });
     const subsections = (
       await Promise.all(childIds.map((childId) => buildNode(childId)))
     ).filter((s): s is DepartmentMetricRow => s != null);
@@ -217,10 +223,8 @@ export async function computeDepartmentTaskMetrics(args: {
 
   let mainSections = sections.filter((s) => !s.parentId);
   if (args.companyTeamId) {
-    mainSections = mainSections.filter((s) => {
-      if (s.companyTeamId && s.companyTeamId !== args.companyTeamId) return false;
-      return true;
-    });
+    // Require an explicit company match — do not keep unscoped (null) sections.
+    mainSections = mainSections.filter((s) => s.companyTeamId === args.companyTeamId);
   }
   if (args.onlyMergedSourceUserId) {
     const uid = args.onlyMergedSourceUserId;

@@ -28,21 +28,7 @@ import { prisma } from "@/lib/prisma";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import type { RequestTypeId } from "@/lib/request-types";
 
-const HR_SECTION_NAME_CANDIDATES = [
-  "hr team",
-  "hr",
-  "human resources",
-  "human resource",
-  "human resource management",
-];
-
-function isHrSectionName(name: string): boolean {
-  const n = name.trim().toLowerCase();
-  if (!n) return false;
-  return HR_SECTION_NAME_CANDIDATES.some(
-    (candidate) => n === candidate || n.includes(candidate) || candidate.includes(n),
-  );
-}
+import { isHrSectionName } from "@/lib/hr-section-name";
 
 export type IntakeRecommendationSource =
   | "subsection_head"

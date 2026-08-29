@@ -117,17 +117,28 @@ function mergedSourceUserIdAsBigInt(raw: string | null | undefined): bigint | nu
   }
 }
 
+function warnOrgChartPortalLookup(mergedId: string, reason: string): void {
+  console.warn(`[org-chart] portal lookup skipped for mergedSourceUserId=${mergedId}: ${reason}`);
+}
+
 async function findStaffPortalByMergedSourceUserId(mergedId: string): Promise<{
   id: string;
   role: string;
   headPrivileges: boolean;
 } | null> {
   const asBigInt = mergedSourceUserIdAsBigInt(mergedId);
-  if (asBigInt == null) return null;
-  return prisma.portalAccount.findFirst({
+  if (asBigInt == null) {
+    warnOrgChartPortalLookup(mergedId, "non-numeric or empty id");
+    return null;
+  }
+  const portal = await prisma.portalAccount.findFirst({
     where: { mergedSourceUserId: asBigInt },
     select: { id: true, role: true, headPrivileges: true },
   });
+  if (!portal) {
+    warnOrgChartPortalLookup(mergedId, "no matching portal_accounts row");
+  }
+  return portal;
 }
 
 export async function isMergedUserOrgChartSectionHead(
@@ -213,12 +224,15 @@ export type OrgChartStaffRoleReconcileResult = {
   headCount: number;
   promoted: number;
   demoted: number;
+  /** Heads skipped because merged id was non-numeric or portal row missing. */
+  skippedHeads: number;
 };
 
 /**
  * Align Personnel / Admin technical roles with the org chart:
  * - Heads of departments and sub-departments → Admin (+ headPrivileges)
- * - Other linked Admin accounts → Personnel
+ * - Former chart heads (Admin + headPrivileges, no longer a head) → Personnel
+ * - Company Admins without headPrivileges are left alone
  * - SuperAdmin / HighAdmin / Customer / Personnel-Guard unchanged
  * - Admin accounts with no merged HRIS id are left alone
  */
@@ -226,9 +240,13 @@ export async function reconcilePortalStaffRolesFromOrgChart(): Promise<OrgChartS
   const headMergedIds = await resolveOrgChartHeadMergedSourceUserIds();
 
   let promoted = 0;
+  let skippedHeads = 0;
   for (const mergedId of headMergedIds) {
     const portal = await findStaffPortalByMergedSourceUserId(mergedId);
-    if (!portal) continue;
+    if (!portal) {
+      skippedHeads += 1;
+      continue;
+    }
     const role = normalizePortalRole(portal.role) ?? portal.role;
     if (role === "SuperAdmin" || role === "HighAdmin") continue;
     if (role === "Customer" || role === "Personnel-Guard") continue;
@@ -241,9 +259,11 @@ export async function reconcilePortalStaffRolesFromOrgChart(): Promise<OrgChartS
     promoted += 1;
   }
 
+  // Only demote Admins that were promoted via org-chart headship (headPrivileges).
   const admins = await prisma.portalAccount.findMany({
     where: {
       role: "Admin",
+      headPrivileges: true,
       mergedSourceUserId: { not: null },
     },
     select: { id: true, mergedSourceUserId: true },
@@ -262,10 +282,17 @@ export async function reconcilePortalStaffRolesFromOrgChart(): Promise<OrgChartS
     demoted += 1;
   }
 
+  if (skippedHeads > 0) {
+    console.warn(
+      `[org-chart] reconcile skipped ${skippedHeads} head(s) with missing/invalid portal link`,
+    );
+  }
+
   return {
     headCount: headMergedIds.size,
     promoted,
     demoted,
+    skippedHeads,
   };
 }
 

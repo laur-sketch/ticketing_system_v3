@@ -455,8 +455,11 @@ export function OrgChartSectionsPanel({
         payload.id = editId;
       }
       if (reportsToTarget.startsWith("person:")) {
+        // People-chart edge only — keep department nesting (parentId) intact.
         payload.reportsToNodeId = reportsToTarget.slice("person:".length);
-        payload.parentId = null;
+        if (!editId && parentIdForCreate) {
+          payload.parentId = parentIdForCreate;
+        }
       } else if (reportsToTarget.startsWith("dept:")) {
         payload.parentId = reportsToTarget.slice("dept:".length);
         payload.reportsToNodeId = null;

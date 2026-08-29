@@ -269,10 +269,15 @@ export function parseDepartmentTaskCsv(content: string): DepartmentTaskCsvParseR
     let isRecurring = parseBool(get(idx.isRecurring), true);
     if (parsedFreq.isRecurringHint === false) isRecurring = false;
 
-    const requireCheckbox = parseBool(get(idx.requireCheckbox), true);
     const requireScreenshots = parseBool(get(idx.requireScreenshots), false);
     const requireUpload = parseBool(get(idx.requireUpload), false);
     const requireNumerical = parseBool(get(idx.requireNumerical), false);
+    const checkboxRaw = get(idx.requireCheckbox);
+    // Omitted checkbox column: default TRUE for checklist rows, FALSE when numerical-only
+    // so pillar/numerical imports are not stuck behind an invisible checkbox gate.
+    const requireCheckbox = checkboxRaw
+      ? parseBool(checkboxRaw, true)
+      : !requireNumerical;
 
     const label = subtaskTitle || mainTask;
     if (!requireCheckbox && !requireScreenshots && !requireUpload && !requireNumerical) {

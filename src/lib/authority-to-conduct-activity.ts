@@ -5,6 +5,7 @@ import {
   type AcaApprovingPath,
   type AcaRecommendingLevel,
 } from "@/lib/aca-authority-matrix";
+import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 
 export type AcaRequestFields = {
   departmentStore: string;
@@ -43,6 +44,7 @@ export const ACA_COMPANY_FORM_PREFIXES: Record<string, string> = {
   "M.CONPINCO": "MCHSI",
   "M.CONPINCO HOME IMPROVEMENT SUPERCENTER, INC.": "MCHSI",
   EAZYGAZ: "EAZYGAZ",
+  EAZZYGAS: "EAZZY",
   EAZZY: "EAZZY",
   "EAZZY GAS": "EAZZY",
   "EAZZY GAS OPC": "EAZZY",
@@ -72,11 +74,13 @@ function sanitizeAcaFormPrefix(raw: string): string {
 export function resolveAcaFormCompanyPrefix(companyName: string | null | undefined): string {
   const raw = (companyName ?? "").trim();
   if (!raw) return "ACA";
-  const upper = raw.toUpperCase();
+  // Normalize HRIS / CSV aliases onto Company Board roster names first.
+  const canonical = resolveRosterCompanyName(raw) ?? raw;
+  const upper = canonical.toUpperCase();
   for (const [key, prefix] of Object.entries(ACA_COMPANY_FORM_PREFIXES)) {
     if (upper === key.toUpperCase() || upper.includes(key.toUpperCase())) return prefix;
   }
-  return sanitizeAcaFormPrefix(raw);
+  return sanitizeAcaFormPrefix(canonical);
 }
 
 export function resolveAcaFormCode(companyName: string | null | undefined): string {

@@ -144,6 +144,55 @@ export async function resolveOrgChartSectionIdsForMergedUser(
   return [...ids];
 }
 
+/**
+ * Prefer the deepest nested membership (most specific department), then stable id order.
+ * Used when intake / travel omit an explicit requestor section.
+ */
+export async function pickDeepestOrgChartSectionId(
+  sectionIds: readonly string[],
+): Promise<string | null> {
+  const ids = [...new Set(sectionIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0) return null;
+  if (ids.length === 1) return ids[0] ?? null;
+
+  // Full tree so depth counts ancestors outside the membership set.
+  const allSections = await prisma.orgChartSection.findMany({
+    select: { id: true, parentId: true },
+  });
+  const byId = new Map(allSections.map((s) => [s.id, s]));
+  const present = ids.filter((id) => byId.has(id));
+  if (present.length === 0) return ids[0] ?? null;
+
+  function depthOf(sectionId: string): number {
+    let depth = 0;
+    let current: string | null = sectionId;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const row = byId.get(current);
+      if (!row?.parentId) break;
+      depth += 1;
+      current = row.parentId;
+    }
+    return depth;
+  }
+
+  const ranked = [...present].sort((a, b) => {
+    const depthDiff = depthOf(b) - depthOf(a);
+    if (depthDiff !== 0) return depthDiff;
+    return a.localeCompare(b);
+  });
+  return ranked[0] ?? ids[0] ?? null;
+}
+
+/** Deepest org-chart section for a merged HRIS user, or null if none. */
+export async function resolveDeepestOrgChartSectionIdForMergedUser(
+  mergedSourceUserId: string | null | undefined,
+): Promise<string | null> {
+  const sectionIds = await resolveOrgChartSectionIdsForMergedUser(mergedSourceUserId);
+  return pickDeepestOrgChartSectionId(sectionIds);
+}
+
 /** Walk section tree upward to find a company team for board routing. */
 export async function resolveCompanyTeamIdForOrgChartSection(
   sectionId: string | null | undefined,

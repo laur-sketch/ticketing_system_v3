@@ -387,12 +387,8 @@ export async function POST(req: Request) {
       { status: reportsResolved.status },
     );
   }
-  let reportsToNodeId = reportsResolved?.reportsToNodeId ?? null;
-  // Prefer one reports-to target: person takes precedence over parent department.
-  const effectiveParentId = reportsToNodeId ? null : parentId;
-  if (reportsToNodeId && parentId) {
-    reportsToNodeId = reportsResolved!.reportsToNodeId;
-  }
+  const reportsToNodeId = reportsResolved?.reportsToNodeId ?? null;
+  // Nesting (parentId) and people-chart reports-to are independent — metrics use parentId.
 
   let companyTeamId: string | null = body.companyTeamId
     ? String(body.companyTeamId).trim()
@@ -415,7 +411,7 @@ export async function POST(req: Request) {
   }
 
   const [max] = await prismaPrimary.orgChartSection.findMany({
-    where: { parentId: effectiveParentId },
+    where: { parentId },
     orderBy: { sortOrder: "desc" },
     take: 1,
     select: { sortOrder: true },
@@ -430,7 +426,7 @@ export async function POST(req: Request) {
       name: name.slice(0, 120),
       description,
       companyTeamId,
-      parentId: effectiveParentId,
+      parentId,
       reportsToNodeId,
       sortOrder,
     },
@@ -752,9 +748,10 @@ export async function PATCH(req: Request) {
       );
     }
     data.parentId = parentResolved?.parentId ?? null;
-    if (data.parentId) {
-      data.reportsToNodeId = null;
-    }
+    // Nesting under a department owns the tree edge for the people chart — clear person
+    // reports-to so the move is visible. Setting reportsToNodeId must NOT clear parentId
+    // (department metrics nest via parentId).
+    data.reportsToNodeId = null;
   }
 
   if (body.reportsToNodeId !== undefined) {
@@ -766,9 +763,6 @@ export async function PATCH(req: Request) {
       );
     }
     data.reportsToNodeId = reportsResolved?.reportsToNodeId ?? null;
-    if (data.reportsToNodeId) {
-      data.parentId = null;
-    }
   }
 
   if (body.companyTeamId !== undefined) {
