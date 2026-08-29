@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/access";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { computeKpis, parseHelpdeskCadence, parseKpiRangeFromQuery } from "@/lib/kpis";
+import { resolveAgentIdsForOrgChartSection } from "@/lib/org-chart-section-roster";
 import { prisma } from "@/lib/prisma";
 import { resolveStaffCompanyTeamId, resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import { findSessionAgentId } from "@/lib/session-agent";
@@ -20,9 +21,14 @@ export async function GET(req: Request) {
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
   const requestedAgentId = searchParams.get("agentId")?.trim() || null;
+  const departmentSectionId =
+    searchParams.get("department")?.trim() || searchParams.get("section")?.trim() || null;
+  const departmentId =
+    departmentSectionId && departmentSectionId !== "ALL" ? departmentSectionId : null;
 
   let assignedAgentId: string | undefined =
     session?.user?.role === "Personnel" ? operator?.id ?? "__none__" : undefined;
+  let assignedAgentIds: string[] | undefined;
 
   /**
    * Company scope uses routed-to team (`ticket.teamId`) — same as Request / Company boards —
@@ -74,8 +80,18 @@ export async function GET(req: Request) {
     }
   }
 
+  // Org-chart department: tickets whose assignee is in the section (incl. subsections).
+  // Skipped when a single agent is already selected (search wins).
+  if (!assignedAgentId && departmentId && session?.user?.role !== "Personnel") {
+    assignedAgentIds = await resolveAgentIdsForOrgChartSection(departmentId);
+  }
+
   const helpdeskCadence = parseHelpdeskCadence(searchParams.get("helpdeskCadence"));
-  const kpis = await computeKpis({ from, to }, { assignedAgentId, teamId, teamIds }, { helpdeskCadence });
+  const kpis = await computeKpis(
+    { from, to },
+    { assignedAgentId, assignedAgentIds, teamId, teamIds },
+    { helpdeskCadence },
+  );
   if (process.env.NODE_ENV === "development") {
     console.info(
       `[perf] GET /api/kpis ${Date.now() - startedAt}ms from=${from.toISOString()} to=${to.toISOString()}`,

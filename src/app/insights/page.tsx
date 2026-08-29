@@ -214,6 +214,7 @@ function InsightsPageInner() {
     [],
   );
   const [requestMetricAgentsLoading, setRequestMetricAgentsLoading] = useState(false);
+  const [requestOrgChartSections, setRequestOrgChartSections] = useState<OrgChartSectionOption[]>([]);
 
   const metricsSearchQ = searchParams.get("q") ?? "";
   const selectedRequestMetricAgentId = searchParams.get("agentId") ?? "";
@@ -222,6 +223,10 @@ function InsightsPageInner() {
       ? searchParams.get("department")!
       : "";
 
+  const requestDepartmentOptions = useMemo(
+    () => buildOrgChartDepartmentFilterOptions(requestOrgChartSections),
+    [requestOrgChartSections],
+  );
   const resolvedRequestMetricAgentId = useMemo(() => {
     if (selectedRequestMetricAgentId) return selectedRequestMetricAgentId;
     const q = metricsSearchQ.trim().toLowerCase();
@@ -256,6 +261,9 @@ function InsightsPageInner() {
     if (isAdminRole) {
       qs.set("companyId", selectedTicketMetricCompany || "ALL");
     }
+    if (isAdminRole && selectedPersonnelDepartment) {
+      qs.set("department", selectedPersonnelDepartment);
+    }
     if (resolvedRequestMetricAgentId) {
       qs.set("agentId", resolvedRequestMetricAgentId);
     }
@@ -273,6 +281,7 @@ function InsightsPageInner() {
     isAdminRole,
     isCompanyScopedAdmin,
     selectedTicketMetricCompany,
+    selectedPersonnelDepartment,
     resolvedRequestMetricAgentId,
   ]);
 
@@ -409,9 +418,12 @@ function InsightsPageInner() {
           : selectedTicketMetricCompany && selectedTicketMetricCompany !== "ALL"
             ? selectedTicketMetricCompany
             : null;
-      const qs = companyParam ? `?company=${encodeURIComponent(companyParam)}` : "?anyCompany=1";
+      const qs = new URLSearchParams();
+      if (companyParam) qs.set("company", companyParam);
+      else qs.set("anyCompany", "1");
+      if (selectedPersonnelDepartment) qs.set("section", selectedPersonnelDepartment);
       try {
-        const res = await fetch(`/api/agents${qs}`, { cache: "no-store" });
+        const res = await fetch(`/api/agents?${qs.toString()}`, { cache: "no-store" });
         const rows = (await res.json().catch(() => [])) as Array<{ id: string; name: string }>;
         if (cancelled) return;
         if (!res.ok || !Array.isArray(rows)) {
@@ -439,7 +451,30 @@ function InsightsPageInner() {
     isAdminRole,
     isCompanyScopedAdmin,
     selectedTicketMetricCompany,
+    selectedPersonnelDepartment,
   ]);
+
+  useEffect(() => {
+    if (activeTab !== "ticket-metrics" || !isAdminRole) return;
+    let cancelled = false;
+    async function loadRequestDepartments() {
+      try {
+        const res = await fetch("/api/org-chart-sections", { cache: "no-store" });
+        if (!res.ok) {
+          if (!cancelled) setRequestOrgChartSections([]);
+          return;
+        }
+        const json = (await res.json()) as { sections?: OrgChartSectionOption[] };
+        if (!cancelled) setRequestOrgChartSections(json.sections ?? []);
+      } catch {
+        if (!cancelled) setRequestOrgChartSections([]);
+      }
+    }
+    void loadRequestDepartments();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, isAdminRole]);
 
   useEffect(() => {
     queueMicrotask(() => void loadKpis());
@@ -643,22 +678,36 @@ function InsightsPageInner() {
   const userEmail = session?.user?.email ?? "";
 
   const requestMetricsFilterFields = useMemo((): MetricsFilterFieldDef[] => {
-    if (!isAdminRole || isCompanyScopedAdmin) return [];
-    return [
-      {
+    if (!isAdminRole) return [];
+    const fields: MetricsFilterFieldDef[] = [];
+    if (!isCompanyScopedAdmin) {
+      fields.push({
         id: "company",
         type: "Company",
         param: "companyId",
         visible: true,
         value: selectedTicketMetricCompany || "ALL",
-        options: buildCompanyFieldOptions(taskMetricCompanies),
-      },
-    ];
+        emptyValue: "ALL",
+        options: buildCompanyFieldOptions(taskMetricCompanies, { includeAll: false }),
+      });
+    }
+    fields.push({
+      id: "department",
+      type: "Department",
+      param: "department",
+      visible: true,
+      value: selectedPersonnelDepartment || "ALL",
+      emptyValue: "ALL",
+      options: requestDepartmentOptions,
+    });
+    return fields;
   }, [
     isAdminRole,
     isCompanyScopedAdmin,
     selectedTicketMetricCompany,
+    selectedPersonnelDepartment,
     taskMetricCompanies,
+    requestDepartmentOptions,
   ]);
 
   const viewingPersonalRequestMetrics = Boolean(resolvedRequestMetricAgentId);
@@ -726,8 +775,8 @@ function InsightsPageInner() {
             savedFilterStorageKey={
               userEmail ? `saved-request-metrics-filters:${userEmail}:v1` : undefined
             }
-            preserveParams={["tab", "from", "to", "agentId"]}
-            extraCaptureParams={["from", "to", "agentId"]}
+            preserveParams={["tab", "from", "to", "agentId", "department"]}
+            extraCaptureParams={["from", "to", "agentId", "department"]}
             searchSuggestions={requestMetricAgents.map((agent) => ({
               id: agent.id,
               label: agent.name,
