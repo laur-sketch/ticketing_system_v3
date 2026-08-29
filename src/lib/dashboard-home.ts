@@ -20,6 +20,21 @@ import {
 import { requestTypeAcronym } from "@/lib/request-types";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
+import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
+import { taskKanbanDerivedStatus } from "@/lib/kpi-cycle-state";
+import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
+import {
+  hasSubKpiAssignedTo,
+  isFieldAssignmentTask,
+  isProjectTask,
+  kpiChecklistProgress,
+  taskUsesInvertedRecording,
+} from "@/lib/kpi-subkpis";
+import {
+  itProjectChecklistProgressFromRaw,
+  usesProjectTimelineTracker,
+} from "@/lib/it-project-subkpis";
+import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 
 export type DashboardActionItem = {
   id: string;
@@ -163,6 +178,111 @@ function ticketToActionItem(row: {
   };
 }
 
+function isTimelineBoardRecord(record: { title?: string | null; subKpis?: unknown }): boolean {
+  return (
+    isItProjectImplementationPillar(String(record.title ?? "")) ||
+    usesProjectTimelineTracker(record.subKpis)
+  );
+}
+
+function taskProgressForDashboard(row: {
+  title: string;
+  mainTask: string | null;
+  subKpis: unknown;
+}): { total: number; done: number } {
+  if (isTimelineBoardRecord(row)) {
+    return itProjectChecklistProgressFromRaw(row.subKpis);
+  }
+  return kpiChecklistProgress(row.subKpis, kpiMainTaskLabel(row));
+}
+
+/** Task Board cards assigned to (or visible as work for) this agent — Pending and Done. */
+async function listTasksAssignedToAgent(
+  agentId: string,
+  take = 8,
+): Promise<DashboardActionItem[]> {
+  const { kpiIdsWhereAgentIsTravelOrderTraveler } = await import("@/lib/travel-order-db");
+  const { kpiIdsWhereAgentIsJobOrderWorker } = await import("@/lib/job-order-workers-server");
+  const [travelerKpiIds, jobOrderWorkerKpiIds, rows] = await Promise.all([
+    kpiIdsWhereAgentIsTravelOrderTraveler(agentId),
+    kpiIdsWhereAgentIsJobOrderWorker(agentId),
+    prisma.kpiMaintenance.findMany({
+      select: {
+        id: true,
+        title: true,
+        mainTask: true,
+        frequency: true,
+        subKpis: true,
+        isRecurring: true,
+        recurrenceWeekday: true,
+        recurrenceMonthDay: true,
+        periodCycleStartAt: true,
+        nonRecurringEndAt: true,
+        assignedAgentId: true,
+        updatedAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 120,
+    }),
+  ]);
+
+  const nowMs = Date.now();
+  const timeZone = DEFAULT_TIME_ZONE;
+  const pending: DashboardActionItem[] = [];
+  const done: DashboardActionItem[] = [];
+
+  for (const row of rows) {
+    const assigned =
+      row.assignedAgentId === agentId ||
+      hasSubKpiAssignedTo(row.subKpis, agentId) ||
+      travelerKpiIds.has(row.id) ||
+      jobOrderWorkerKpiIds.has(row.id);
+    if (!assigned) continue;
+
+    const p = taskProgressForDashboard(row);
+    const inverted = taskUsesInvertedRecording({ title: row.title, subKpis: row.subKpis });
+    const lane =
+      inverted && !isTimelineBoardRecord(row)
+        ? taskKanbanDerivedStatus(row, {
+            total: p.total,
+            done: 0,
+            nowMs,
+            timeZone,
+          }) === "DELAYED"
+          ? "DELAYED"
+          : "CURRENT"
+        : taskKanbanDerivedStatus(row, {
+            total: p.total,
+            done: p.done,
+            nowMs,
+            timeZone,
+          });
+
+    const badge = isFieldAssignmentTask(row.subKpis)
+      ? "Field"
+      : isProjectTask(row.subKpis)
+        ? "Project"
+        : "Task";
+    const label = kpiMainTaskLabel(row);
+    const pillar = row.title.trim();
+    const isDone = lane === "DONE";
+    const item: DashboardActionItem = {
+      id: row.id,
+      kind: "task",
+      title: label || pillar || "Task",
+      subtitle: pillar && pillar.toLowerCase() !== label.toLowerCase() ? pillar : undefined,
+      href: `/agent/tasks?task=${encodeURIComponent(row.id)}`,
+      status: isDone ? "Done" : "Pending",
+      badge,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+    if (isDone) done.push(item);
+    else pending.push(item);
+  }
+
+  return [...pending, ...done].slice(0, take);
+}
+
 export async function loadStaffDashboardHome(session: Session): Promise<StaffDashboardHome> {
   const user = session.user;
   const now = new Date();
@@ -223,6 +343,7 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
     pendingTravelApprovals,
     pendingTravelConfirmations,
     accountRequestsPending,
+    tasksAssignedToMe,
   ] = await Promise.all([
     countStatus("OPEN"),
     countStatus(["IN_PROGRESS", "PENDING_INFO", "ESCALATED"]),
@@ -315,6 +436,9 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
     isAdminView
       ? prisma.accountActionRequest.count({ where: { status: "PENDING" } })
       : Promise.resolve(0),
+    isPersonnel && personnelAgentId
+      ? listTasksAssignedToAgent(personnelAgentId, 8)
+      : Promise.resolve([] as DashboardActionItem[]),
   ]);
 
   const avgResponseMinutes =
@@ -398,7 +522,7 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
     },
     needsAction,
     assignedPreview: assignedPreview.slice(0, 6),
-    overdueItems: overdueTickets.map(ticketToActionItem),
+    overdueItems: isPersonnel ? tasksAssignedToMe : overdueTickets.map(ticketToActionItem),
     recentActivity: recentActivities.map((row) => ({
       id: row.id,
       ticketNumber: row.ticket.ticketNumber,

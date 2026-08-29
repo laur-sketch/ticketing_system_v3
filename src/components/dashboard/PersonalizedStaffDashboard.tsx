@@ -156,36 +156,49 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
           ) : null}
         </div>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          <DashboardActionList
-            title="Needs your action"
-            emptyMessage={
-              data.isPersonnelView
-                ? "You're caught up — nothing is waiting on you right now."
-                : "No urgent items in your scope right now."
-            }
-            items={data.needsAction}
-            viewAllHref="/agent"
-          />
-
-          <div className="space-y-5">
-            {data.isPersonnelView ? (
+        <section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          {data.isPersonnelView ? (
+            <div className="min-w-0 space-y-5 self-start">
               <DashboardActionList
                 title="Assigned to me"
                 emptyMessage="No active assignments."
                 items={data.assignedPreview}
                 viewAllHref="/agent"
               />
+              <DashboardRecentActivity items={data.recentActivity} />
+            </div>
+          ) : (
+            <div className="min-w-0 space-y-5 self-start">
+              <DashboardActionList
+                title="Needs your action"
+                emptyMessage="No urgent items in your scope right now."
+                items={data.needsAction}
+                viewAllHref="/agent"
+              />
+              <DashboardRecentActivity items={data.recentActivity} />
+            </div>
+          )}
+
+          <div className="space-y-5">
+            {data.isPersonnelView ? (
+              <DashboardActionList
+                title="Needs your action"
+                emptyMessage="You're caught up — nothing is waiting on you right now."
+                items={data.needsAction}
+                viewAllHref="/agent"
+              />
             ) : null}
 
             <DashboardActionList
-              title={data.isPersonnelView ? "Overdue / SLA risk" : "Overdue & high priority"}
-              emptyMessage="No overdue or at-risk items."
+              title={data.isPersonnelView ? "Tasks assigned to me" : "Overdue & high priority"}
+              emptyMessage={
+                data.isPersonnelView
+                  ? "No tasks assigned to you yet."
+                  : "No overdue or at-risk items."
+              }
               items={data.overdueItems}
-              viewAllHref="/agent?priority=HIGH"
+              viewAllHref={data.isPersonnelView ? "/agent/tasks" : "/agent?priority=HIGH"}
             />
-
-            <DashboardRecentActivity items={data.recentActivity} />
           </div>
         </section>
       </div>

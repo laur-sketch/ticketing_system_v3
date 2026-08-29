@@ -103,6 +103,11 @@ export function DashboardActionList({
                       {item.badge}
                     </span>
                   ) : null}
+                  {item.status ? (
+                    <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide", statusTagClass(item.status))}>
+                      {item.status}
+                    </span>
+                  ) : null}
                   {item.slaState === "BREACHED" ? (
                     <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-rose-800 dark:bg-rose-950/50 dark:text-rose-200">
                       Overdue
@@ -118,10 +123,11 @@ export function DashboardActionList({
                     {item.subtitle}
                   </span>
                 ) : null}
-                <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-zinc-500">
-                  {item.status ? <span>{item.status}</span> : null}
-                  {item.priority ? <span>· {item.priority}</span> : null}
-                </span>
+                {item.priority ? (
+                  <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                    <span>{item.priority}</span>
+                  </span>
+                ) : null}
               </span>
               <ArrowRight className="mt-1 size-4 shrink-0 text-zinc-400" aria-hidden />
             </Link>
@@ -130,6 +136,23 @@ export function DashboardActionList({
       </div>
     </article>
   );
+}
+
+function statusTagClass(status: string) {
+  const key = status.trim().toLowerCase();
+  if (key === "done" || key === "closed" || key === "resolved") {
+    return "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200";
+  }
+  if (key === "pending" || key === "open" || key === "awaiting approval" || key === "awaiting confirmation") {
+    return "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200";
+  }
+  if (key.includes("progress") || key === "current") {
+    return "bg-sky-100 text-sky-900 dark:bg-sky-950/40 dark:text-sky-200";
+  }
+  if (key === "delayed" || key === "escalated") {
+    return "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-200";
+  }
+  return "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
 }
 
 export function DashboardQuickCreate({
