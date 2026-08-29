@@ -17,7 +17,6 @@ import {
 } from "@/lib/kpi-subkpis";
 import type { SubKpiCompletionRequirements } from "@/lib/sub-kpi-completion-mode";
 import { DraftSubTasksPopup } from "@/components/task-board/DraftSubTasksPopup";
-import { TravelOrderRequestModal } from "@/components/task-board/TravelOrderRequestModal";
 import { ListChecks } from "lucide-react";
 
 const INSIGHTS_VIEW_ONLY = false;
@@ -87,9 +86,6 @@ export function KpiDefinitionConsole({
   const [mainTaskTargetDateDraft, setMainTaskTargetDateDraft] = useState("");
   /** Project = one-off work item (no forced IT PROJECT IMPLEMENTATION pillar). */
   const [isProjectMode, setIsProjectMode] = useState(() => Boolean(fromJobOrderTicketId?.trim()));
-  /** Field Assignment = one-off travel-order workflow (opens Request for Travel Order). */
-  const [isFieldAssignmentMode, setIsFieldAssignmentMode] = useState(false);
-  const [travelOrderModalOpen, setTravelOrderModalOpen] = useState(false);
   const [maintenanceIsRecurring, setMaintenanceIsRecurring] = useState(
     () => !Boolean(fromJobOrderTicketId?.trim()),
   );
@@ -131,9 +127,8 @@ export function KpiDefinitionConsole({
   const [linkedJobOrderTicketId, setLinkedJobOrderTicketId] = useState<string | null>(null);
   const [jobOrderPrefillBanner, setJobOrderPrefillBanner] = useState<string | null>(null);
 
-  /** Effective recurring flag: Projects and Field Assignments are always one-off. */
-  const effectiveIsRecurring =
-    isProjectMode || isFieldAssignmentMode ? false : maintenanceIsRecurring;
+  /** Effective recurring flag: Projects are always one-off. */
+  const effectiveIsRecurring = isProjectMode ? false : maintenanceIsRecurring;
 
   useEffect(() => {
     const joId = fromJobOrderTicketId?.trim() || null;
@@ -169,7 +164,6 @@ export function KpiDefinitionConsole({
           return;
         }
         setIsProjectMode(true);
-        setIsFieldAssignmentMode(false);
         setMaintenanceIsRecurring(false);
         setMaintenanceTitle(JOB_ORDER_REQUEST_PILLAR_TITLE);
         setMainTaskDraft(p.suggestedProjectName?.trim() || `Job Order ${p.ticketNumber ?? ""}`);
@@ -352,24 +346,19 @@ export function KpiDefinitionConsole({
     setDailyPenaltyDraft("");
     setEnableSubtaskAssignees(true);
     setIsProjectMode(false);
-    setIsFieldAssignmentMode(false);
-    setTravelOrderModalOpen(false);
     setLocalError(null);
   }
 
-  function handleTaskTypeChange(next: "task" | "project" | "field") {
+  function handleTaskTypeChange(next: "task" | "project") {
     if ((linkedJobOrderTicketId || fromJobOrderTicketId?.trim()) && next !== "project") {
-      setError("Job Order creates stay in Project mode. Unlink the Job Order flow to create a Task or Field Assignment.");
+      setError("Job Order creates stay in Project mode. Unlink the Job Order flow to create a Task.");
       return;
     }
     setIsProjectMode(next === "project");
-    setIsFieldAssignmentMode(next === "field");
     setLocalError(null);
-    setTravelOrderModalOpen(false);
-    if (next === "project" || next === "field") {
-      setInvertedRecording(false);
-    }
     if (next === "project") {
+      setInvertedRecording(false);
+      setMaintenanceIsRecurring(false);
       if (fromJobOrderTicketId?.trim()) {
         setLinkedJobOrderTicketId(fromJobOrderTicketId.trim());
         setMaintenanceTitle((prev) => prev.trim() || JOB_ORDER_REQUEST_PILLAR_TITLE);
@@ -385,22 +374,10 @@ export function KpiDefinitionConsole({
         );
       }
     }
-    if (next === "project" || next === "field") {
-      setMaintenanceIsRecurring(false);
-      if (next === "field") setMainTaskTargetDateDraft("");
-    }
   }
 
   async function createMaintenanceRecord() {
     if (INSIGHTS_VIEW_ONLY) return;
-    if (isFieldAssignmentMode) {
-      if (!mainTaskDraft.trim()) {
-        setError("Enter a Field Assignment label.");
-        return;
-      }
-      setTravelOrderModalOpen(true);
-      return;
-    }
     const isJoProjectCreate = Boolean(linkedJobOrderTicketId) && isProjectMode;
     if (!mainTaskDraft.trim()) {
       setError(isProjectMode ? "Enter a project name." : "Enter a main task name.");
@@ -588,8 +565,6 @@ export function KpiDefinitionConsole({
         setOk(isProjectMode ? "Project created." : "Task created.");
       }
       setIsProjectMode(false);
-      setIsFieldAssignmentMode(false);
-      setTravelOrderModalOpen(false);
       setMaintenanceTitle("");
       setMainTaskDraft("");
       setMainTaskTargetDateDraft("");
@@ -679,12 +654,12 @@ export function KpiDefinitionConsole({
         {kpiMaintenanceAssignWork ? (
           <fieldset className="flex flex-col gap-2 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500 md:col-span-2">
             <legend className="mb-1 px-0">Task type</legend>
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-2">
               <label
                 className={cn(
                   "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:text-zinc-100",
                   isJoCreateFlow ? "cursor-not-allowed opacity-50" : "cursor-pointer",
-                  !isProjectMode && !isFieldAssignmentMode
+                  !isProjectMode
                     ? "border-orange-500 bg-orange-50/80 ring-1 ring-orange-500/30 dark:border-orange-500/60 dark:bg-orange-950/20"
                     : "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950",
                 )}
@@ -692,7 +667,7 @@ export function KpiDefinitionConsole({
                 <input
                   type="radio"
                   name="maintenance-task-type"
-                  checked={!isProjectMode && !isFieldAssignmentMode}
+                  checked={!isProjectMode}
                   disabled={isJoCreateFlow}
                   onChange={() => handleTaskTypeChange("task")}
                 />
@@ -714,35 +689,15 @@ export function KpiDefinitionConsole({
                 />
                 Project
               </label>
-              <label
-                className={cn(
-                  "flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:text-zinc-100",
-                  isJoCreateFlow ? "cursor-not-allowed opacity-50" : "cursor-pointer",
-                  isFieldAssignmentMode
-                    ? "border-orange-500 bg-orange-50/80 ring-1 ring-orange-500/30 dark:border-orange-500/60 dark:bg-orange-950/20"
-                    : "border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-950",
-                )}
-              >
-                <input
-                  type="radio"
-                  name="maintenance-task-type"
-                  checked={isFieldAssignmentMode}
-                  disabled={isJoCreateFlow}
-                  onChange={() => handleTaskTypeChange("field")}
-                />
-                Field Assignment
-              </label>
             </div>
             <p className="text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400">
-              {isFieldAssignmentMode
-                ? "Field Assignment opens a Request for Travel Order with locations, GPS pins, approver, and remarks."
-                : isProjectMode
-                  ? "Projects are one-off (non-recurring) and use the same sub-task manager, assignees, and completion conditions as tasks."
-                  : "Tasks can be recurring or one-off."}
+              {isProjectMode
+                ? "Projects are one-off (non-recurring) and use the same sub-task manager, assignees, and completion conditions as tasks."
+                : "Tasks can be recurring or one-off. Use Travel Order for field travel work."}
             </p>
           </fieldset>
         ) : null}
-        {kpiMaintenanceAssignWork && formUnlocked && !isFieldAssignmentMode ? (
+        {kpiMaintenanceAssignWork && formUnlocked ? (
           <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 md:col-span-2">
             <input
               type="checkbox"
@@ -763,11 +718,7 @@ export function KpiDefinitionConsole({
         {formUnlocked ? (
           <div className="grid gap-3 md:col-span-2 md:grid-cols-[minmax(220px,1fr)_180px]">
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-              {isFieldAssignmentMode
-                ? "Field Assignment label"
-                : isProjectMode
-                  ? "Project name"
-                  : "Main Task"}
+              {isProjectMode ? "Project name" : "Main Task"}
               <input
                 type="text"
                 value={mainTaskDraft}
@@ -775,18 +726,12 @@ export function KpiDefinitionConsole({
                   setMainTaskDraft(e.target.value);
                   setLocalError(null);
                 }}
-                placeholder={
-                  isFieldAssignmentMode
-                    ? "e.g. Site survey — Client HQ"
-                    : isProjectMode
-                      ? "Name of the project"
-                      : "e.g. Reroute Connections"
-                }
+                placeholder={isProjectMode ? "Name of the project" : "e.g. Reroute Connections"}
                 required
                 className={TASK_TITLE_INPUT_CLASS}
               />
             </label>
-            {!effectiveIsRecurring && !isFieldAssignmentMode ? (
+            {!effectiveIsRecurring ? (
               <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
                 Target date
                 <DatePickerField
@@ -798,18 +743,16 @@ export function KpiDefinitionConsole({
               </label>
             ) : null}
             <p className="text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 md:col-span-2">
-              {isFieldAssignmentMode
-                ? "Shown as a label on the Field Assignment card. Work is tracked on the Travel Order (not as a main-task checklist)."
-                : isProjectMode
-                  ? "With no sub-tasks, completion conditions apply on this project on the Task Board."
-                  : "Works for recurring and one-off schedules — with no sub-tasks, completion conditions apply on this main task on the Task Board."}
-              {!effectiveIsRecurring && !isFieldAssignmentMode
+              {isProjectMode
+                ? "With no sub-tasks, completion conditions apply on this project on the Task Board."
+                : "Works for recurring and one-off schedules — with no sub-tasks, completion conditions apply on this main task on the Task Board."}
+              {!effectiveIsRecurring
                 ? " Target date applies when there are no sub-tasks (delayed the day after if incomplete)."
                 : null}
             </p>
           </div>
         ) : null}
-        {formUnlocked && !isProjectMode && !isFieldAssignmentMode ? (
+        {formUnlocked && !isProjectMode ? (
           <div className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Task schedule type
             <label className="flex items-center gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100">
@@ -854,18 +797,12 @@ export function KpiDefinitionConsole({
             </label>
           </div>
         ) : null}
-        {formUnlocked && isFieldAssignmentMode ? (
-          <div className="rounded-xl border border-dashed border-orange-400/50 bg-orange-500/[0.04] px-3 py-3 text-xs text-zinc-700 dark:border-orange-500/35 dark:bg-orange-500/[0.07] dark:text-zinc-300 md:col-span-2">
-            Field Assignment creates a one-off task card with a <strong>Request for Travel Order</strong>. Use that
-            button to add locations, approver, and approval confirmation.
-          </div>
-        ) : null}
         {formUnlocked && isProjectMode ? (
           <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">
             Projects are always one-off (non-recurring).
           </div>
         ) : null}
-        {formUnlocked && !isProjectMode && !isFieldAssignmentMode && maintenanceIsRecurring ? (
+        {formUnlocked && !isProjectMode && maintenanceIsRecurring ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Frequency
             <select
@@ -910,7 +847,6 @@ export function KpiDefinitionConsole({
         ) : null}
         {formUnlocked &&
         !isProjectMode &&
-        !isFieldAssignmentMode &&
         maintenanceIsRecurring &&
         maintenanceFrequency === "Weekly" ? (
           <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
@@ -932,7 +868,6 @@ export function KpiDefinitionConsole({
         ) : null}
         {formUnlocked &&
         !isProjectMode &&
-        !isFieldAssignmentMode &&
         maintenanceIsRecurring &&
         (maintenanceFrequency === "Monthly" ||
           maintenanceFrequency === "Quarterly" ||
@@ -960,7 +895,6 @@ export function KpiDefinitionConsole({
             </select>
           </label>
         ) : null}
-        {!isFieldAssignmentMode ? (
         <div className="rounded-xl border border-dashed border-zinc-300 px-3 py-3 text-xs text-zinc-600 dark:border-zinc-700 dark:text-zinc-400 md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p>
@@ -985,10 +919,9 @@ export function KpiDefinitionConsole({
               ) : null}
           </div>
         </div>
-        ) : null}
       </div>
 
-      {formUnlocked && !isFieldAssignmentMode ? (
+      {formUnlocked ? (
         <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950/30 dark:text-zinc-300">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
             Completion conditions
@@ -1108,27 +1041,11 @@ export function KpiDefinitionConsole({
       {formUnlocked ? (
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            {isFieldAssignmentMode ? (
-              <Button
-                type="button"
-                className="rounded-xl px-4"
-                onClick={() => void createMaintenanceRecord()}
-                disabled={!mainTaskDraft.trim()}
-              >
-                Request for Travel Order
-              </Button>
-            ) : (
-              <Button type="button" onClick={() => void createMaintenanceRecord()} className="rounded-xl px-4">
-                Apply
-              </Button>
-            )}
+            <Button type="button" onClick={() => void createMaintenanceRecord()} className="rounded-xl px-4">
+              Apply
+            </Button>
           </div>
-          {isFieldAssignmentMode ? (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Opens the Request for Travel Order form. Saving there creates the Field Assignment task and travel
-              order together.
-            </p>
-          ) : draftSubKpiTotal > 0 ? (
+          {draftSubKpiTotal > 0 ? (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               {draftSubKpiTotal} sub-task{draftSubKpiTotal === 1 ? "" : "s"} ready
               {draftUseSegments ? ` in ${draftSegments.length} segment${draftSegments.length === 1 ? "" : "s"}` : ""} — open{" "}
@@ -1191,32 +1108,6 @@ export function KpiDefinitionConsole({
         onSegmentedChange={setDraftSegmentedMode}
         onSegmentsChange={setDraftSegments}
         onClose={() => setDraftSubTasksOpen(false)}
-      />
-
-      <TravelOrderRequestModal
-        open={travelOrderModalOpen}
-        taskGroupTitle={normalizeTaskTitle(mainTaskDraft)}
-        mainTaskName={mainTaskDraft.trim()}
-        scopedCompanyTeamId={scopedCompanyTeamId || adminDesignatedCompanyId}
-        companyScopeAgentId={null}
-        onClose={() => setTravelOrderModalOpen(false)}
-        onCreated={async ({ offlineQueued }) => {
-          setOk(
-            offlineQueued
-              ? "Travel order saved offline and will sync when you reconnect."
-              : "Field Assignment and travel order created.",
-          );
-          setTravelOrderModalOpen(false);
-          if (offlineQueued) return;
-          resetTaskDraftAfterCreate();
-          setMaintenanceTitle("");
-          setScopedCompanyTeamId("");
-          const reload = await fetch(`/api/kpi-maintenance${kpiMaintenanceSearch}`, { cache: "no-store" });
-          if (reload.ok) {
-            const payload = (await reload.json()) as { rows: KpiDefinitionMaintenanceRecord[] };
-            onMaintenanceRecordsUpdated?.(payload.rows);
-          }
-        }}
       />
     </section>
   );

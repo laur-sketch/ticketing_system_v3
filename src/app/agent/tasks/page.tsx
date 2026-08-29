@@ -128,7 +128,7 @@ export default async function AgentTasksPage({
               Task Board
             </h1>
             <p className="mt-1 hidden text-sm text-zinc-600 dark:text-zinc-400 sm:block">
-              Field assignments, projects, and running tasks.
+              Projects, running tasks, and travel-linked field work.
             </p>
           </div>
 
