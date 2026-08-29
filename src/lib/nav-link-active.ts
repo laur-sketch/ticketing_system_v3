@@ -11,6 +11,9 @@ export function navLinkActive(
   if (hrefParams) {
     const onPath = pathname === path || pathname.startsWith(`${path}/`);
     if (!onPath) return false;
+    if (path === "/agent" && !hrefParams.has("pane") && params?.get("pane") === "mine") {
+      return false;
+    }
     for (const [key, value] of hrefParams.entries()) {
       const current = params?.get(key);
       if (key === "board" && path === "/agent" && value === "ticket" && !current) {
@@ -31,13 +34,12 @@ export function navLinkActive(
     if (
       pathname === "/agent" ||
       pathname.startsWith("/agent/tickets") ||
-      pathname === "/admin/manual-assignment" ||
-      pathname === "/my-requests" ||
-      pathname.startsWith("/my-requests/")
+      pathname === "/admin/manual-assignment"
     ) {
       if (params?.get("assigned") === "UNASSIGNED") return false;
       if (params?.get("board") === "company") return false;
       if (params?.get("view") === "approvals") return false;
+      if (params?.get("pane") === "mine") return false;
       return true;
     }
     return false;

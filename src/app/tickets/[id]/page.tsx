@@ -54,7 +54,7 @@ export default async function TicketPage({
     redirect("/");
   }
 
-  const backHref = session.user.role === "Customer" ? "/my-tickets" : "/my-requests";
+  const backHref = session.user.role === "Customer" ? "/my-tickets" : "/agent?pane=mine";
 
   const requestorEmail = (ticket.requestorEmail ?? ticket.contactEmail ?? "").trim();
   const requestorAccount = requestorEmail

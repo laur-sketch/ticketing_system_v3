@@ -789,7 +789,7 @@ function NewTicketPageInner() {
     isIssueConcernTicket(activeRequestType) &&
     isRequestorIntakeLockRole &&
     (!intakeGateReady || !intake.canCreateIssueConcern);
-  const myTicketsHref = isCustomer ? "/my-tickets" : "/my-requests";
+  const myTicketsHref = isCustomer ? "/my-tickets" : "/agent?pane=mine";
 
   useEffect(() => {
     if (!issueConcernLocked) return;
@@ -865,7 +865,7 @@ function NewTicketPageInner() {
     if (role === "Customer") {
       router.push("/my-tickets?submitted=1");
     } else if (isTicketRequestorRole(role)) {
-      router.push("/my-requests?submitted=1");
+      router.push("/agent?pane=mine&submitted=1");
     } else {
       router.push("/");
     }

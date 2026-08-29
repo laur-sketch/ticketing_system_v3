@@ -38,6 +38,7 @@ import {
   resolveViewerOrgChartSectionScope,
   ticketWhereForOrgChartSectionFilter,
 } from "@/lib/org-chart-section-scope";
+import { MyRequestsBoard } from "@/components/my-requests/MyRequestsBoard";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
 import { paymentProceduralStatusLabel, type PaymentApprovalMeta } from "@/lib/request-for-payment-approval";
 import { loadPaymentApprovalMetaMap } from "@/lib/payment-approval-db";
@@ -66,6 +67,7 @@ import {
 } from "@/lib/job-order-approval-db";
 import { CompanyKanban } from "./company-kanban";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
+import { RequestBoardPanes } from "./request-board-panes";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
 import { TicketBoardFilterBar } from "./ticket-board-filter-bar";
 
@@ -128,6 +130,8 @@ export default async function AgentHome({
     section?: string | string[];
     task?: string | string[];
     requestType?: string | string[];
+    pane?: string | string[];
+    submitted?: string | string[];
   }>;
 }) {
   const session = await requireSession();
@@ -138,6 +142,8 @@ export default async function AgentHome({
   if (firstQuery(params.view) === "approvals") {
     redirect("/agent");
   }
+  const paneMine = firstQuery(params.pane) === "mine";
+  const submittedBanner = firstQuery(params.submitted) === "1";
   const rawBoard = firstQuery(params.board);
   if (rawBoard === "department") {
     redirect("/agent?board=company");
@@ -166,6 +172,14 @@ export default async function AgentHome({
   const selectedSection = sectionParam || "ALL";
   const viewMode = session.user.role === "Personnel" ? "board" : requestedViewMode;
   const isBoard = viewMode === "board";
+  if (paneMine && (boardTab !== "ticket" || !isBoard)) {
+    const qs = new URLSearchParams();
+    qs.set("pane", "mine");
+    const qKeep = firstQuery(params.q)?.trim();
+    if (qKeep) qs.set("q", qKeep);
+    if (submittedBanner) qs.set("submitted", "1");
+    redirect(`/agent?${qs.toString()}`);
+  }
   const selectedAssigned = firstQuery(params.assigned) ?? "ALL";
   const selectedStatus = firstQuery(params.status) ?? "ALL";
   const selectedPriority = firstQuery(params.priority) ?? "ALL";
@@ -839,77 +853,36 @@ export default async function AgentHome({
           <div className={`flex flex-col ${isTicketBoardView ? "gap-2 sm:gap-3" : "gap-3"}`}>
             <OrchestrationQueueNav />
 
+            {!isTicketBoardView ? (
             <div
-              className={`flex flex-col lg:flex-row lg:items-start lg:justify-between ${
-                isTicketBoardView ? "gap-2 sm:gap-4" : "gap-4"
-              }`}
+              className={`flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4`}
             >
               <div className="min-w-0 flex-1">
-                <p
-                  className={`font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95 ${
-                    isTicketBoardView
-                      ? "hidden text-[10px] sm:block sm:text-[11px]"
-                      : "text-[11px]"
-                  }`}
-                >
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
                   {BRAND_TITLE} ·{" "}
                   {isCompanyBoard ? "Company" : boardTab === "kpi" ? "Tasks" : "Requests"}
                 </p>
                 <div className="flex items-end justify-between gap-3">
                   <div className="min-w-0">
-                    <h1
-                      className={`font-bold tracking-tight text-zinc-900 dark:text-zinc-100 ${
-                        isTicketBoardView
-                          ? "text-xl sm:mt-1.5 sm:text-2xl"
-                          : "mt-1.5 text-2xl"
-                      }`}
-                    >
+                    <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                       {isCompanyBoard
                         ? "Company overview"
                         : boardTab === "kpi"
                           ? "Task Board"
-                          : "Request Board"}
+                          : "Requests"}
                     </h1>
-                    <p
-                      className={`text-zinc-600 dark:text-zinc-400 ${
-                        isTicketBoardView ? "mt-0.5 text-xs sm:mt-1 sm:text-sm" : "mt-1 text-sm"
-                      }`}
-                    >
+                    <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                       <span className="font-semibold text-orange-700 dark:text-orange-400">
                         {activeEvents.toLocaleString()}
                       </span>{" "}
                       {!isCompanyBoard
                         ? `active ${boardTab === "kpi" ? "task" : isBoard ? "pipeline" : ""} event${activeEvents !== 1 ? "s" : ""}`
                         : `request${activeEvents !== 1 ? "s" : ""}`}
-                      {isTicketBoardView && session.user.role !== "Personnel" ? (
-                        <>
-                          <span className="mx-1.5 text-zinc-400 sm:hidden" aria-hidden>
-                            ·
-                          </span>
-                          <Link
-                            href={buildHref({ view: "table", page: "1" })}
-                            className="font-semibold text-zinc-500 underline-offset-2 hover:text-orange-700 hover:underline sm:hidden dark:text-zinc-400 dark:hover:text-orange-400"
-                          >
-                            Table
-                          </Link>
-                        </>
-                      ) : null}
                     </p>
                   </div>
-                  {boardTab !== "kpi" && isTicketBoardView ? (
-                    <div className="flex max-w-[55%] shrink-0 gap-1.5 sm:hidden">
-                      <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" compact />
-                      <StatCard label="Open" value={statOpen} valueClass="text-orange-400" compact />
-                      <StatCard label="SLA" value={statSla} valueClass="text-amber-400" compact />
-                    </div>
-                  ) : null}
                 </div>
               </div>
-              <div
-                className={`shrink-0 flex-col items-stretch gap-3 lg:items-end ${
-                  isTicketBoardView ? "hidden sm:flex" : "flex"
-                }`}
-              >
+              <div className="flex shrink-0 flex-col items-stretch gap-3 lg:items-end">
                 {boardTab !== "kpi" ? (
                   <div className="flex flex-wrap gap-3">
                     <StatCard label="Critical" value={statCritical} valueClass="text-rose-400" />
@@ -923,6 +896,7 @@ export default async function AgentHome({
                 ) : null}
               </div>
             </div>
+            ) : null}
           </div>
 
           <section
@@ -930,11 +904,11 @@ export default async function AgentHome({
               boardTab === "kpi"
                 ? "min-w-0"
                 : isTicketBoardView
-                  ? "min-w-0 rounded-xl border border-zinc-200/80 bg-white/90 p-2 shadow-none sm:border-zinc-200 sm:bg-white sm:p-5 sm:shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-surface dark:sm:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+                  ? "min-w-0"
                   : "rounded-xl border border-zinc-200 bg-white p-2.5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-5 dark:border-zinc-800 dark:bg-surface dark:shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
             }
           >
-            {showTopTicketFilters ? (
+            {showTopTicketFilters && !isTicketBoardView ? (
               <div
                 className={`flex flex-col gap-2 sm:gap-3 ${
                   isTicketBoardView
@@ -1080,27 +1054,158 @@ export default async function AgentHome({
                 />
               </>
             ) : isBoard && boardTab === "ticket" ? (
-              <>
-                {ticketsEmpty ? (
-                  <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 py-20 text-center dark:border-zinc-800">
-                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">No requests in the pipeline</p>
-                    <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-600">
-                      {query ||
-                      selectedPriority !== "ALL" ||
-                      selectedRequestType !== "ALL" ||
-                      ticketSectionSelected ||
-                      (ticketAssignedFilterActive && effectiveAssigned !== "ALL")
-                        ? "Adjust filters or switch to Table view for resolved requests."
-                        : "The queue is clear — new requests will land in Open."}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <AgentKanban tickets={boardCards} columnTotals={boardColumnTotals} />
-                    {ticketPagination}
-                  </>
-                )}
-              </>
+              <RequestBoardPanes
+                initialPane={paneMine ? "mine" : "board"}
+                myRequests={
+                  <MyRequestsBoard
+                    email={session.user.email ?? ""}
+                    authProvider={session.user.authProvider}
+                    query={paneMine ? query : ""}
+                    selectedPriority={paneMine ? selectedPriority : "ALL"}
+                    selectedStatus={paneMine ? selectedStatus : "ALL"}
+                    selectedRequestType={paneMine ? selectedRequestType : "ALL"}
+                    submitted={Boolean(paneMine && submittedBanner)}
+                    savedFilterStorageKey={`saved-my-request-filters:${session.user.email}:v1`}
+                  />
+                }
+              >
+                <div className="flex flex-col gap-4 sm:gap-5">
+                  <header className="rounded-2xl border border-zinc-200 bg-gradient-to-br from-white via-white to-orange-50/40 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.05)] dark:border-zinc-800/90 dark:from-[#171614] dark:via-[#131313] dark:to-[#10100f] dark:shadow-[0_18px_48px_rgba(0,0,0,0.35)] sm:p-5 md:p-7">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-orange-700 dark:text-orange-400/95">
+                          {BRAND_TITLE} · Requests
+                        </p>
+                        <h2 className="mt-1.5 text-[1.5rem] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-[1.85rem]">
+                          Requests
+                        </h2>
+                        <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
+                          Assigned pipeline work in Open, In progress, and Feedback lanes.
+                          {session.user.role !== "Personnel" ? (
+                            <>
+                              {" "}
+                              <Link
+                                href={buildHref({ view: "table", page: "1" })}
+                                className="font-semibold text-orange-700 hover:underline dark:text-orange-400"
+                              >
+                                Open table view
+                              </Link>
+                              {" "}
+                              for resolved items and full filters.
+                            </>
+                          ) : null}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        {session.user.role === "Personnel" ? null : (
+                          <Tabs value="board" className="hidden sm:block sm:w-auto">
+                            <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
+                              <TabsTrigger
+                                value="board"
+                                asChild
+                                className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
+                              >
+                                <Link href={buildHref({ view: null, page: "1" })}>Board</Link>
+                              </TabsTrigger>
+                              <TabsTrigger
+                                value="table"
+                                asChild
+                                className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
+                              >
+                                <Link href={buildHref({ view: "table", page: "1" })}>Table</Link>
+                              </TabsTrigger>
+                            </TabsList>
+                          </Tabs>
+                        )}
+                        <Link
+                          href="/tickets/new"
+                          className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#f97316] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(249,115,22,0.32)] transition hover:bg-[#fb923c] active:translate-y-px"
+                        >
+                          Create Request
+                        </Link>
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <TicketBoardFilterBar
+                        initialQuery={searchFieldQuery}
+                        placeholder="Search requests…"
+                        savedFilterStorageKey={`saved-ticket-filters:${session.user.email}:v1`}
+                        company={{
+                          visible: false,
+                          value: selectedCompany,
+                          options: [
+                            { value: "ALL", label: "All companies" },
+                            ...rosterTeamsForFilter.map((t) => ({ value: t.id, label: t.name })),
+                          ],
+                        }}
+                        section={{
+                          visible: true,
+                          value: effectiveSection,
+                          options: [
+                            { value: "ALL", label: "All departments" },
+                            ...orgChartSectionsForTicketFilter.map((s) => ({
+                              value: s.id,
+                              label: orgChartSectionOptionText(s),
+                            })),
+                          ],
+                        }}
+                        assigned={{
+                          visible: ticketAssignedFilterActive,
+                          value: effectiveAssigned,
+                          options: [
+                            { value: "ALL", label: "All" },
+                            { value: "UNASSIGNED", label: "Unassigned" },
+                            ...agentsForTicketAssigneeFilter.map((a) => ({
+                              value: a.id,
+                              label: a.name,
+                            })),
+                          ],
+                        }}
+                        priority={{
+                          visible: true,
+                          value: selectedPriority,
+                          options: priorityOptions,
+                        }}
+                        requestType={{
+                          visible: true,
+                          value: selectedRequestType,
+                          options: [
+                            { value: "ALL", label: "All request types" },
+                            ...REQUEST_TYPES.map((t) => ({
+                              value: t.id,
+                              label: `${t.acronym} · ${t.label}`,
+                            })),
+                          ],
+                        }}
+                        status={{
+                          visible: false,
+                          value: selectedStatus,
+                          options: statusOptions,
+                        }}
+                      />
+                    </div>
+                  </header>
+                  {ticketsEmpty ? (
+                    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 py-20 text-center dark:border-zinc-800">
+                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-400">No requests in the pipeline</p>
+                      <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-600">
+                        {query ||
+                        selectedPriority !== "ALL" ||
+                        selectedRequestType !== "ALL" ||
+                        ticketSectionSelected ||
+                        (ticketAssignedFilterActive && effectiveAssigned !== "ALL")
+                          ? "Adjust filters or switch to Table view for resolved requests."
+                          : "The queue is clear — new requests will land in Open."}
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <AgentKanban tickets={boardCards} columnTotals={boardColumnTotals} />
+                      {ticketPagination}
+                    </>
+                  )}
+                </div>
+              </RequestBoardPanes>
             ) : isBoard && boardTab === "kpi" ? (
               <>
                 <AgentKpiKanbanFlow

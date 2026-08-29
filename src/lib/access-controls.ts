@@ -16,9 +16,9 @@ export const ACCESS_CAPABILITIES = [
   { id: "nav.superadminSettings", label: "SuperAdmin Settings", group: "Navigation" },
   { id: "nav.travelOrders", label: "Travel Orders (kiosk)", group: "Navigation" },
 
-  { id: "board.assignment", label: "Assignment Board", group: "Request boards" },
+  { id: "board.assignment", label: "Assign Requests", group: "Request boards" },
   { id: "board.company", label: "Company Board", group: "Request boards" },
-  { id: "board.request", label: "Request Board", group: "Request boards" },
+  { id: "board.request", label: "Requests", group: "Request boards" },
 
   { id: "ticket.create", label: "Create requests", group: "Requests" },
   { id: "ticket.assign", label: "Assign / reassign", group: "Requests" },

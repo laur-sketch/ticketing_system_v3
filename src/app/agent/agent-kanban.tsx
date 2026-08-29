@@ -291,6 +291,7 @@ export function AgentKanban({
 
       <div
         ref={scrollerRef}
+        data-kanban-scroller
         className="-mx-2 flex snap-x snap-proximity gap-2.5 overflow-x-auto overscroll-x-contain px-2 pb-1 scroll-smooth [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:grid md:snap-none md:gap-4 md:overflow-visible md:px-0 md:pb-0 md:scroll-auto md:grid-cols-3"
         style={{ WebkitOverflowScrolling: "touch" }}
       >
@@ -341,6 +342,7 @@ export function AgentKanban({
                         {...getCardPointerProps(t.id, {
                           getLabel: () => `#${t.ticketNumber} · ${kanbanCardPreview(t).slice(0, 80)}`,
                         })}
+                        data-drag-handle
                         className={cn(
                           "mt-0.5 flex min-h-10 w-7 shrink-0 touch-none select-none flex-col items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-500 active:bg-orange-50 active:text-orange-600 md:min-h-0 md:w-auto md:border-0 md:bg-transparent md:cursor-grab md:active:cursor-grabbing dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-400 dark:active:bg-orange-950/30",
                           busyId === t.id && "pointer-events-none",

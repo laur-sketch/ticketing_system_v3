@@ -545,7 +545,7 @@ export function ManualAssignmentBoard({
             {BRAND_TITLE} · Manual assignment
           </p>
           <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl md:text-4xl dark:text-white">
-            Assignment Board
+            Assign Requests
           </h1>
           {notice ? (
             <p className="mt-3 rounded-lg border border-amber-400/40 bg-amber-100/70 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">

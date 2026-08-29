@@ -34,7 +34,7 @@ const MY_WORK: StaffNavSection = {
   label: "My Work",
   items: [
     { id: "my-assigned", href: "/agent", label: "My Assigned" },
-    { id: "my-requests", href: "/my-requests", label: "My Requests" },
+    { id: "my-requests", href: "/agent?pane=mine", label: "My Requests" },
   ],
 };
 
@@ -45,7 +45,7 @@ const BOARDS: StaffNavSection = {
     {
       id: "assignment-board",
       href: "/admin/manual-assignment",
-      label: "Assignment Board",
+      label: "Assign Requests",
       adminOnly: true,
     },
     { id: "task-board", href: "/agent/tasks", label: "Kanban / Task Board" },

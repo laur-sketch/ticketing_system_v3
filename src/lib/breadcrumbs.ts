@@ -4,14 +4,14 @@ export type BreadcrumbSegment = {
 };
 
 const ROUTE_LABELS: Record<string, string> = {
-  agent: "Assignment Board",
+  agent: "Assign Requests",
   tasks: "Kanban / Task Board",
   tickets: "Requests",
   insights: "KPI / Insights",
   process: "Process Controls",
   admin: "Administration",
   workforce: "User / Position management",
-  "manual-assignment": "Assignment Board",
+  "manual-assignment": "Assign Requests",
   "superadmin-settings": "SuperAdmin Settings",
   account: "My account",
   "my-requests": "My Requests",
@@ -70,7 +70,7 @@ export function buildStaffBreadcrumbs(
     return [
       home,
       { label: "My Work", href: "/agent" },
-      { label: "Assignment Board", href: "/agent" },
+      { label: "Assign Requests", href: "/agent" },
       { label: parts[2] },
     ];
   }
@@ -96,11 +96,14 @@ export function buildStaffBreadcrumbs(
     if (params.get("assigned") === "UNASSIGNED") {
       return [home, { label: "Boards", href: "/agent" }, { label: "Unassigned" }];
     }
+    if (params.get("pane") === "mine") {
+      return [home, { label: "My Work", href: "/agent?pane=mine" }, { label: "My Requests" }];
+    }
     return [home, { label: "My Work", href: "/agent" }, { label: "My Assigned", href: "/agent" }];
   }
 
   if (parts[0] === "my-requests") {
-    return [home, { label: "My Work", href: "/my-requests" }, { label: "My Requests" }];
+    return [home, { label: "My Work", href: "/agent?pane=mine" }, { label: "My Requests" }];
   }
 
   if (parts[0] === "travel-orders") {
@@ -120,11 +123,11 @@ export function buildStaffBreadcrumbs(
   }
 
   if (parts[0] === "tickets" && parts[1]) {
-    return [home, { label: "Requests", href: "/my-requests" }, { label: parts[1] }];
+    return [home, { label: "Requests", href: "/agent?pane=mine" }, { label: parts[1] }];
   }
 
   if (parts[0] === "admin" && parts[1] === "manual-assignment") {
-    return [home, { label: "Boards", href: "/admin/manual-assignment" }, { label: "Assignment Board" }];
+    return [home, { label: "Boards", href: "/admin/manual-assignment" }, { label: "Assign Requests" }];
   }
 
   const crumbs: BreadcrumbSegment[] = [home];

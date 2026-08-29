@@ -70,7 +70,7 @@ const SHORTCUT_CATALOG: ShortcutDef[] = [
   { id: "a-board", href: "/admin/manual-assignment", label: "a.board", icon: Kanban, adminOnly: true },
   { id: "c-board", href: "/agent?board=company", label: "c.board", icon: Building2, adminOnly: true },
   { id: "r-board", href: "/agent?board=ticket", label: "r.board", icon: Ticket },
-  { id: "m-requests", href: "/my-requests", label: "m.requests", icon: UserRound },
+  { id: "m-requests", href: "/agent?pane=mine", label: "m.requests", icon: UserRound },
   { id: "tasks", href: "/agent/tasks", label: "Tasks", icon: CheckSquare },
   { id: "workforce", href: "/admin/workforce", label: "Workforce", icon: Users, adminOnly: true },
   {

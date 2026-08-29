@@ -8,16 +8,12 @@ import { useEffect, useState } from "react";
 import { Tabs } from "@/components/ui/vercel-tabs";
 
 const adminTabs = [
-  { id: "assignment", label: "Assignment Board" },
+  { id: "assignment", label: "Assign Requests" },
   { id: "company", label: "Company Board" },
-  { id: "ticket", label: "Request Board" },
-  { id: "my-requests", label: "My requests" },
+  { id: "ticket", label: "Requests" },
 ];
 
-const personnelTabs = [
-  { id: "ticket", label: "Request Board" },
-  { id: "my-requests", label: "My requests" },
-];
+const personnelTabs = [{ id: "ticket", label: "Requests" }];
 
 export function OrchestrationQueueNav() {
   const router = useRouter();
@@ -27,7 +23,6 @@ export function OrchestrationQueueNav() {
   const role = data?.user?.role;
   const onOrchestration = pathname === "/agent";
   const onAssignment = pathname === "/admin/manual-assignment";
-  const onMyRequests = pathname === "/my-requests" || pathname.startsWith("/my-requests/");
 
   const isAdmin = isElevatedPlatformRole(role) || role === "Admin";
   const [fetchedAllow, setFetchedAllow] = useState<boolean | null>(null);
@@ -56,15 +51,9 @@ export function OrchestrationQueueNav() {
   const board = searchParams.get("board") ?? "ticket";
   const onCompanyBoard = onOrchestration && board === "company";
 
-  if (!onOrchestration && !onAssignment && !onMyRequests) return null;
+  if (!onOrchestration && !onAssignment) return null;
 
-  const activeTab = onMyRequests
-    ? "my-requests"
-    : onAssignment
-      ? "assignment"
-      : onCompanyBoard
-        ? "company"
-        : "ticket";
+  const activeTab = onAssignment ? "assignment" : onCompanyBoard ? "company" : "ticket";
 
   const goToTab = (tabId: string) => {
     if (tabId === "assignment") {
@@ -73,10 +62,6 @@ export function OrchestrationQueueNav() {
     }
     if (tabId === "company") {
       router.push("/agent?board=company");
-      return;
-    }
-    if (tabId === "my-requests") {
-      router.push("/my-requests");
       return;
     }
     router.push("/agent?board=ticket");
