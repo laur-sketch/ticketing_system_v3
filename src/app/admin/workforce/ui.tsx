@@ -26,8 +26,9 @@ import Filters, {
   loadSavedFilters,
   persistSavedFilters,
 } from "@/components/ui/filters";
+import type { WorkforceViewId } from "@/lib/workforce-view-visibility";
 
-type WorkforceView = "list" | "activity" | "sections";
+type WorkforceView = WorkforceViewId;
 
 type WorkforceUrlState = {
   view: WorkforceView;
@@ -37,16 +38,26 @@ type WorkforceUrlState = {
   onDutyCompany: string;
 };
 
-function parseWorkforceView(raw: string | null, allowSections: boolean): WorkforceView {
-  if (raw === "activity") return "activity";
-  if (raw === "sections" && allowSections) return "sections";
+export type WorkforceVisibleViews = Record<WorkforceView, boolean>;
+
+function firstAllowedView(allowed: WorkforceVisibleViews, preferred?: string | null): WorkforceView {
+  if (preferred === "activity" && allowed.activity) return "activity";
+  if (preferred === "sections" && allowed.sections) return "sections";
+  if (preferred === "list" && allowed.list) return "list";
+  if (allowed.list) return "list";
+  if (allowed.activity) return "activity";
+  if (allowed.sections) return "sections";
   return "list";
 }
 
-function readWorkforceUrlState(allowSections: boolean): WorkforceUrlState {
+function parseWorkforceView(raw: string | null, allowed: WorkforceVisibleViews): WorkforceView {
+  return firstAllowedView(allowed, raw);
+}
+
+function readWorkforceUrlState(allowed: WorkforceVisibleViews): WorkforceUrlState {
   const params = new URLSearchParams(window.location.search);
   return {
-    view: parseWorkforceView(params.get("view"), allowSections),
+    view: parseWorkforceView(params.get("view"), allowed),
     search: params.get("q") ?? "",
     role: params.get("role") ?? "",
     company: params.get("company") ?? "",
@@ -79,7 +90,9 @@ type Props = {
   lockedCompanyFilter?: string | null;
   /** Session user email — scopes the saved-filters localStorage key per user. */
   userEmail?: string | null;
-  /** SuperAdmin: show the Org. Chart toggle and manage org-chart departments. */
+  /** Which Workforce toggles are enabled (SuperAdmin Settings → Workforce). */
+  visibleViews: WorkforceVisibleViews;
+  /** SuperAdmin: manage org-chart departments when Org. Chart is shown. */
   canManageSections?: boolean;
   initialOrgSections?: OrgChartSectionRow[];
   initialOrgNodes?: OrgChartNodeRow[];
@@ -88,18 +101,24 @@ type Props = {
 };
 
 /**
- * Workforce = Personnel registry (ListView), live On Duty activity, and
- * (SuperAdmin) the Org. Chart (department sectioning + chart). List/Activity
- * stay mounted so filter state survives toggling; Org. Chart mounts lazily.
+ * Workforce = Personnel registry (ListView), live On Duty activity, and Org. Chart.
+ * Toggle visibility comes from SuperAdmin Settings → Workforce.
+ * List stays mounted so filter state survives toggling; Activity / Org. Chart mount lazily.
  */
 export function WorkforceClient(props: Props) {
-  const canManageSections = Boolean(props.canManageSections);
+  const allowed = props.visibleViews;
+  const showList = allowed.list;
+  const showActivity = allowed.activity;
+  const showSections = allowed.sections;
+  const canManageSections = Boolean(props.canManageSections) && showSections;
   /** Search + filter chips persist in the URL (?q=, ?role=, ?company=,
    *  ?onDutyCompany=, ?view=) so refresh and back/forward restore them.
    *  The server passes the URL-derived values for a hydration-safe first
    *  paint; the URL is the source of truth after mount (replaceState sync +
    *  popstate restore below). */
-  const [view, setView] = useState<WorkforceView>(props.initialView);
+  const [view, setView] = useState<WorkforceView>(() =>
+    firstAllowedView(allowed, props.initialView),
+  );
   /** Single shared search bar: filters the personnel registry (ListView) and
    *  the on-duty cards (Activity) with one query. Initial values come from the
    *  server-rendered URL (?q=, ?role=, ?company=, ?onDutyCompany=) so refresh
@@ -114,8 +133,12 @@ export function WorkforceClient(props: Props) {
   );
   /** Mount the Activity cards lazily on first open so the on-duty poller
    *  only runs once the user actually visits that view. Stays mounted after. */
-  const [activityOpened, setActivityOpened] = useState(props.initialView === "activity");
-  const [sectionsOpened, setSectionsOpened] = useState(props.initialView === "sections");
+  const [activityOpened, setActivityOpened] = useState(
+    showActivity && firstAllowedView(allowed, props.initialView) === "activity",
+  );
+  const [sectionsOpened, setSectionsOpened] = useState(
+    showSections && firstAllowedView(allowed, props.initialView) === "sections",
+  );
 
   const savedFilterStorageKey = `workforce-filters:${props.userEmail ?? "anon"}:v1`;
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() =>
@@ -295,8 +318,7 @@ export function WorkforceClient(props: Props) {
     setRoleFilter(filter.params.role ?? "");
     setCompanyFilter(filter.params.company ?? "");
     setOnDutyCompanyFilter(filter.params.onDutyCompany ?? "");
-    const nextView: WorkforceView =
-      view === "activity" ? "activity" : view === "sections" ? "sections" : "list";
+    const nextView = firstAllowedView(allowed, view);
     pushPendingRef.current = true;
     window.history.pushState(
       {},
@@ -331,7 +353,7 @@ export function WorkforceClient(props: Props) {
    *  If the restored view is Activity, mount the cards so they render. */
   useEffect(() => {
     function syncFromUrl() {
-      const next = readWorkforceUrlState(canManageSections);
+      const next = readWorkforceUrlState(allowed);
       if (next.view === "activity") setActivityOpened(true);
       if (next.view === "sections") setSectionsOpened(true);
       setView(next.view);
@@ -342,13 +364,16 @@ export function WorkforceClient(props: Props) {
     }
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
-  }, [canManageSections]);
+  }, [allowed]);
 
   /** The ListView/Activity/Org. Chart toggle is a deliberate action: push a
    *  history entry (with the current filters preserved) so Back/Forward can
    *  navigate it. Re-clicking the active toggle is a no-op. */
   function selectView(next: WorkforceView) {
     if (next === view) return;
+    if (next === "list" && !showList) return;
+    if (next === "activity" && !showActivity) return;
+    if (next === "sections" && !showSections) return;
     if (next === "activity") setActivityOpened(true);
     if (next === "sections") setSectionsOpened(true);
     setView(next);
@@ -379,41 +404,50 @@ export function WorkforceClient(props: Props) {
                 Workforce
               </h1>
               <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-                Personnel registry, live On Duty / Offline activity
-                {canManageSections ? ", and the org. chart" : ""} from today&apos;s HRIS
-                clock-ins.
+                {[
+                  showList ? "Personnel registry" : null,
+                  showActivity ? "live On Duty / Offline activity" : null,
+                  showSections ? "org. chart" : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ") || "Workforce"}{" "}
+                from today&apos;s HRIS clock-ins. Toggle visibility is set in SuperAdmin Settings.
               </p>
             </div>
             <div className="inline-flex shrink-0 self-start rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:self-auto dark:border-zinc-700 dark:bg-zinc-900">
-              <button
-                type="button"
-                onClick={() => selectView("list")}
-                aria-pressed={view === "list"}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-center transition",
-                  view === "list"
-                    ? "bg-orange-600 text-white shadow-sm"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                )}
-              >
-                <List className="size-3.5" aria-hidden />
-                ListView
-              </button>
-              <button
-                type="button"
-                onClick={() => selectView("activity")}
-                aria-pressed={view === "activity"}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-center transition",
-                  view === "activity"
-                    ? "bg-orange-600 text-white shadow-sm"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                )}
-              >
-                <Activity className="size-3.5" aria-hidden />
-                Activity
-              </button>
-              {canManageSections ? (
+              {showList ? (
+                <button
+                  type="button"
+                  onClick={() => selectView("list")}
+                  aria-pressed={view === "list"}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-center transition",
+                    view === "list"
+                      ? "bg-orange-600 text-white shadow-sm"
+                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                  )}
+                >
+                  <List className="size-3.5" aria-hidden />
+                  ListView
+                </button>
+              ) : null}
+              {showActivity ? (
+                <button
+                  type="button"
+                  onClick={() => selectView("activity")}
+                  aria-pressed={view === "activity"}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-center transition",
+                    view === "activity"
+                      ? "bg-orange-600 text-white shadow-sm"
+                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                  )}
+                >
+                  <Activity className="size-3.5" aria-hidden />
+                  Activity
+                </button>
+              ) : null}
+              {showSections ? (
                 <button
                   type="button"
                   onClick={() => selectView("sections")}
@@ -455,11 +489,18 @@ export function WorkforceClient(props: Props) {
               showOperators={false}
             />
             <FiltersTrigger
-              viewOptions={[[
-                { name: "Role", icon: undefined },
-                { name: "Company", icon: undefined },
-                { name: "On-duty company", icon: undefined },
-              ]]}
+              viewOptions={[
+                showActivity
+                  ? [
+                      { name: "Role", icon: undefined },
+                      { name: "Company", icon: undefined },
+                      { name: "On-duty company", icon: undefined },
+                    ]
+                  : [
+                      { name: "Role", icon: undefined },
+                      { name: "Company", icon: undefined },
+                    ],
+              ]}
               filterOptions={filterOptions}
               onSelect={addFilter}
               savedFilters={savedFilters}
@@ -515,7 +556,7 @@ export function WorkforceClient(props: Props) {
             />
           ) : null}
         </div>
-        {canManageSections ? (
+        {showSections ? (
           <div className={cn(view === "sections" && sectionsOpened ? "block" : "hidden")}>
             {sectionsOpened && props.initialOrgSections && props.initialOrgNodes ? (
               <WorkforceSectioningClient

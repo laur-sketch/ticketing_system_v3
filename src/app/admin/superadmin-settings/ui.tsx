@@ -9,6 +9,7 @@ import { EscalationTriggersClient } from "../escalation-triggers/ui";
 import { AccessControlsPanel } from "./AccessControlsPanel";
 import { FaqPanel } from "./FaqPanel";
 import { IntakeRequestTypesPanel } from "./IntakeRequestTypesPanel";
+import { WorkforceViewsPanel } from "./WorkforceViewsPanel";
 
 type Trigger = Pick<
   EscalationTrigger,
@@ -41,7 +42,9 @@ export function SuperAdminSettingsClient({
           ? "?tab=faq"
           : next === "intake"
             ? "?tab=intake"
-            : "?tab=alerts";
+            : next === "workforce"
+              ? "?tab=workforce"
+              : "?tab=alerts";
     router.replace(`/admin/superadmin-settings${qs}`, { scroll: false });
   }
 
@@ -56,8 +59,8 @@ export function SuperAdminSettingsClient({
             SuperAdmin Settings
           </h1>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Manage escalation alerts, access controls, and the public sign-in FAQ. The
-            organizational chart lives under Workforce → Org. Chart.
+            Manage escalation alerts, access controls, Workforce toggles, and the public sign-in FAQ.
+            The organizational chart lives under Workforce → Org. Chart when that toggle is shown.
           </p>
         </div>
         <SuperAdminSettingsNav activeTab={tab} onTabChange={setTab} />
@@ -67,6 +70,8 @@ export function SuperAdminSettingsClient({
         <AccessControlsPanel maxOrgLayer={maxOrgLayer} />
       ) : tab === "intake" ? (
         <IntakeRequestTypesPanel />
+      ) : tab === "workforce" ? (
+        <WorkforceViewsPanel />
       ) : tab === "faq" ? (
         <FaqPanel />
       ) : (

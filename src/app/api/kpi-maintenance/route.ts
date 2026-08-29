@@ -100,6 +100,7 @@ import { triggerEfficiencyRecomputeBackground } from "@/lib/efficiency/trigger-e
 import { inferKpiPatchAudit, logKpiActivity } from "@/lib/kpi-activity";
 import { kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { isAgentOnDutyFromMergedDb } from "@/lib/load-on-duty-snapshot";
+import { isTaskAssignmentOnDutyRequired } from "@/lib/workforce-view-visibility-db";
 import { prisma } from "@/lib/prisma";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
@@ -525,7 +526,8 @@ export async function GET(req: Request) {
     canAssignWork: perms.canAssignWork,
     canUnassignWork: isElevatedUserRole(session.user.role),
     canCompleteUnassignedWork: isElevatedUserRole(session.user.role),
-    canAssignOffline: isElevatedUserRole(session.user.role),
+    canAssignOffline:
+      isElevatedUserRole(session.user.role) || !(await isTaskAssignmentOnDutyRequired()),
     canDeleteTask: session.user.role === "SuperAdmin",
     /** SuperAdmin may edit the checklist of any running task, not just their own. */
     canEditRunningTasks: session.user.role === "SuperAdmin",
@@ -668,7 +670,12 @@ export async function POST(req: Request) {
   if (assigneeId && !assignee) {
     return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
   }
-  if (assigneeId && !isElevatedUserRole(session.user.role) && !(await isAgentOnDutyFromMergedDb(assigneeId))) {
+  if (
+    assigneeId &&
+    !isElevatedUserRole(session.user.role) &&
+    (await isTaskAssignmentOnDutyRequired()) &&
+    !(await isAgentOnDutyFromMergedDb(assigneeId))
+  ) {
     return NextResponse.json(
       { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
       { status: 400 },
@@ -1864,6 +1871,7 @@ export async function PATCH(req: Request) {
     if (
       assignedAgentId &&
       !isElevatedUserRole(session.user.role) &&
+      (await isTaskAssignmentOnDutyRequired()) &&
       !(await isAgentOnDutyFromMergedDb(assignedAgentId))
     ) {
       return NextResponse.json(
@@ -2239,7 +2247,11 @@ export async function PATCH(req: Request) {
     if (!assignee) {
       return NextResponse.json({ error: "Assignee not found." }, { status: 404 });
     }
-    if (!isElevatedUserRole(session.user.role) && !(await isAgentOnDutyFromMergedDb(assignee.id))) {
+    if (
+      !isElevatedUserRole(session.user.role) &&
+      (await isTaskAssignmentOnDutyRequired()) &&
+      !(await isAgentOnDutyFromMergedDb(assignee.id))
+    ) {
       return NextResponse.json(
         { error: "Assignee is Offline (no merged DB clock-in today). Only On Duty personnel can be assigned." },
         { status: 400 },

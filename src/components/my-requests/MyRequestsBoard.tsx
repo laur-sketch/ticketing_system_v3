@@ -14,7 +14,9 @@ import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-co
 import { BRAND_TITLE } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { prisma } from "@/lib/prisma";
-import { REQUEST_TYPES, isRequestTypeId } from "@/lib/request-types";
+import { isRequestTypeId } from "@/lib/request-types";
+import { visibleIntakeRequestTypes } from "@/lib/intake-request-type-visibility";
+import { getIntakeRequestTypeVisibility } from "@/lib/intake-request-type-visibility-db";
 
 /** Canonical deep link for the My Requests swipe pane on Request Board. */
 export const MY_REQUESTS_HREF = "/agent?pane=mine";
@@ -172,9 +174,14 @@ export async function MyRequestsBoard({
   savedFilterStorageKey?: string;
 }) {
   const me = email.trim().toLowerCase();
+  const requestTypeVisibility = await getIntakeRequestTypeVisibility();
+  const visibleRequestTypes = visibleIntakeRequestTypes(requestTypeVisibility.hiddenTypeIds);
   const requestTypeFilter =
     selectedRequestType === "ALL" || isRequestTypeId(selectedRequestType)
-      ? selectedRequestType
+      ? selectedRequestType === "ALL" ||
+        visibleRequestTypes.some((t) => t.id === selectedRequestType)
+        ? selectedRequestType
+        : "ALL"
       : "ALL";
 
   const clauses: Array<Record<string, unknown>> = [
@@ -296,7 +303,7 @@ export async function MyRequestsBoard({
               value: requestTypeFilter,
               options: [
                 { value: "ALL", label: "All request types" },
-                ...REQUEST_TYPES.map((t) => ({
+                ...visibleRequestTypes.map((t) => ({
                   value: t.id,
                   label: `${t.acronym} · ${t.label}`,
                 })),

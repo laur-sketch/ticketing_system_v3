@@ -11,6 +11,11 @@ import {
 } from "@/lib/org-chart-section-scope";
 import { WorkforceClient } from "./ui";
 import type { OrgChartSectionRow } from "../superadmin-settings/OrgChartSectionsPanel";
+import {
+  firstVisibleWorkforceView,
+  isWorkforceViewVisible,
+} from "@/lib/workforce-view-visibility";
+import { getWorkforceViewVisibility } from "@/lib/workforce-view-visibility-db";
 
 export const dynamic = "force-dynamic";
 
@@ -38,13 +43,14 @@ export default async function WorkforcePage({
 
   const params = await searchParams;
   const isSuperAdmin = session.user.role === "SuperAdmin";
+  const viewVisibility = await getWorkforceViewVisibility();
+  const visibleViews = {
+    list: isWorkforceViewVisible(viewVisibility, "list"),
+    activity: isWorkforceViewVisible(viewVisibility, "activity"),
+    sections: isWorkforceViewVisible(viewVisibility, "sections"),
+  };
   const viewParam = firstQuery(params.view);
-  const initialView =
-    viewParam === "activity"
-      ? "activity"
-      : viewParam === "sections" && isSuperAdmin
-        ? "sections"
-        : "list";
+  const initialView = firstVisibleWorkforceView(viewVisibility, viewParam);
   const initialSearchQuery = firstQuery(params.q)?.trim() ?? "";
   const initialRoleFilter = firstQuery(params.role)?.trim() ?? "";
   const initialCompanyFilter = firstQuery(params.company)?.trim() ?? "";
@@ -69,7 +75,7 @@ export default async function WorkforcePage({
       pageSize: ON_DUTY_PAGE_SIZE,
       ...(lockedCompanyFilter ? { companyFilter: lockedCompanyFilter } : {}),
     }),
-    isSuperAdmin
+    visibleViews.sections
       ? Promise.all([
           prisma.orgChartNode.findMany({
             include: {
@@ -121,7 +127,7 @@ export default async function WorkforcePage({
 
   const orderedCompanies = sortByRosterOrder(assignableTeams);
 
-  if (isSuperAdmin && orgPayload) {
+  if (isSuperAdmin && visibleViews.sections && orgPayload) {
     await reconcilePortalStaffRolesFromOrgChart();
   }
 
@@ -192,6 +198,7 @@ export default async function WorkforcePage({
       onDutyPageSize={ON_DUTY_PAGE_SIZE}
       lockedCompanyFilter={lockedCompanyFilter}
       userEmail={session.user.email}
+      visibleViews={visibleViews}
       canManageSections={isSuperAdmin}
       initialOrgSections={initialOrgSections}
       initialOrgNodes={orgPayload?.[0]}

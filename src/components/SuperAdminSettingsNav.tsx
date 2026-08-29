@@ -3,12 +3,13 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Tabs } from "@/components/ui/vercel-tabs";
 
-export type SuperAdminSettingsTab = "alerts" | "access" | "faq" | "intake";
+export type SuperAdminSettingsTab = "alerts" | "access" | "faq" | "intake" | "workforce";
 
 const settingsTabs = [
   { id: "alerts", label: "Priority Alerts" },
   { id: "access", label: "Access Controls" },
   { id: "intake", label: "Create Request" },
+  { id: "workforce", label: "Workforce" },
   { id: "faq", label: "FAQ" },
 ];
 
@@ -18,6 +19,7 @@ export function parseSuperAdminSettingsTab(
   if (value === "access") return "access";
   if (value === "faq") return "faq";
   if (value === "intake") return "intake";
+  if (value === "workforce") return "workforce";
   return "alerts";
 }
 
@@ -53,7 +55,9 @@ export function SuperAdminSettingsNavFromUrl() {
           ? "?tab=faq"
           : tab === "intake"
             ? "?tab=intake"
-            : "?tab=alerts";
+            : tab === "workforce"
+              ? "?tab=workforce"
+              : "?tab=alerts";
     router.replace(`/admin/superadmin-settings${qs}`, { scroll: false });
   }
 

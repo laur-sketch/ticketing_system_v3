@@ -26,7 +26,9 @@ import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRAND_TITLE } from "@/lib/brand";
 import { formatTicketPriorityLabel } from "@/lib/ticket-priority-label";
-import { REQUEST_TYPES, isRequestTypeId } from "@/lib/request-types";
+import { isRequestTypeId } from "@/lib/request-types";
+import { visibleIntakeRequestTypes } from "@/lib/intake-request-type-visibility";
+import { getIntakeRequestTypeVisibility } from "@/lib/intake-request-type-visibility-db";
 import {
   listOrgChartSectionOptions,
   orgChartSectionOptionText,
@@ -184,8 +186,23 @@ export default async function AgentHome({
   const selectedStatus = firstQuery(params.status) ?? "ALL";
   const selectedPriority = firstQuery(params.priority) ?? "ALL";
   const requestTypeParam = firstQuery(params.requestType) ?? "ALL";
-  const selectedRequestType =
+  const requestTypeVisibility = await getIntakeRequestTypeVisibility();
+  const visibleRequestTypes = visibleIntakeRequestTypes(requestTypeVisibility.hiddenTypeIds);
+  const requestTypeFilterOptions = [
+    { value: "ALL", label: "All request types" },
+    ...visibleRequestTypes.map((t) => ({
+      value: t.id,
+      label: `${t.acronym} · ${t.label}`,
+    })),
+  ];
+  const selectedRequestTypeRaw =
     requestTypeParam === "ALL" || isRequestTypeId(requestTypeParam) ? requestTypeParam : "ALL";
+  /** Hidden intake types must not remain selected in board filters. */
+  const selectedRequestType =
+    selectedRequestTypeRaw === "ALL" ||
+    visibleRequestTypes.some((t) => t.id === selectedRequestTypeRaw)
+      ? selectedRequestTypeRaw
+      : "ALL";
   const queryRaw = firstQuery(params.q)?.trim() ?? "";
   const query = queryRaw.replace(/^#/, "").trim();
   const sort = firstQuery(params.sort) ?? "updatedAt";
@@ -965,13 +982,7 @@ export default async function AgentHome({
                   requestType={{
                     visible: true,
                     value: selectedRequestType,
-                    options: [
-                      { value: "ALL", label: "All request types" },
-                      ...REQUEST_TYPES.map((t) => ({
-                        value: t.id,
-                        label: `${t.acronym} · ${t.label}`,
-                      })),
-                    ],
+                    options: requestTypeFilterOptions,
                   }}
                   status={{
                     visible: !isBoard && !isCompanyBoard,
@@ -1169,13 +1180,7 @@ export default async function AgentHome({
                         requestType={{
                           visible: true,
                           value: selectedRequestType,
-                          options: [
-                            { value: "ALL", label: "All request types" },
-                            ...REQUEST_TYPES.map((t) => ({
-                              value: t.id,
-                              label: `${t.acronym} · ${t.label}`,
-                            })),
-                          ],
+                          options: requestTypeFilterOptions,
                         }}
                         status={{
                           visible: false,
