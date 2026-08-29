@@ -8,6 +8,7 @@ export const DEPARTMENT_TASK_CSV_FREQUENCIES = [
   "MONTHLY",
   "QUARTERLY",
   "SEMI_ANNUAL",
+  "YEARLY",
 ] as const;
 
 export type DepartmentTaskCsvFrequency = (typeof DEPARTMENT_TASK_CSV_FREQUENCIES)[number];
@@ -260,7 +261,7 @@ export function parseDepartmentTaskCsv(content: string): DepartmentTaskCsvParseR
     const parsedFreq = parseFrequency(freqRaw);
     if (!parsedFreq) {
       errors.push(
-        `Row ${rowNum}: invalid frequency "${freqRaw}" (use DAILY, WEEKLY, MONTHLY, QUARTERLY, SEMI_ANNUAL, or ONE_OFF).`,
+        `Row ${rowNum}: invalid frequency "${freqRaw}" (use DAILY, WEEKLY, MONTHLY, QUARTERLY, SEMI_ANNUAL, YEARLY, or ONE_OFF).`,
       );
       continue;
     }

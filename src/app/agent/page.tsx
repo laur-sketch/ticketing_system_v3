@@ -1050,8 +1050,8 @@ export default async function AgentHome({
                   </p>
                 ) : isCompanyBoard ? (
                   <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                    One column per company with a flat request list (number and status). Open a request for a read-only
-                    summary; use the request board for full details.
+                    One card per company with priority breakdowns. Use Edit order to rearrange cards, then Save order to
+                    lock. Reset restores the last saved layout. Click a priority row to open the request list.
                   </p>
                 ) : null}
               </div>

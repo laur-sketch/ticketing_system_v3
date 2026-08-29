@@ -6,7 +6,6 @@ export const COMPANY_ROSTER = [
   "APMC",
   "AGOC",
   "AWIC",
-  "MCHISI",
   "MCHISI LPG",
   "MCHISI FAMES",
   "EAZZYGAS",

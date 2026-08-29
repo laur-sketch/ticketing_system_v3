@@ -1,12 +1,10 @@
 import Link from "next/link";
 import { BarChart3, SlidersHorizontal } from "lucide-react";
 import type { StaffDashboardHome } from "@/lib/dashboard-home";
-import { buildQuickActions } from "@/lib/global-search";
 import { BRAND_TITLE } from "@/lib/brand";
 import {
   DashboardActionList,
   DashboardFilterPills,
-  DashboardQuickCreate,
   DashboardRecentActivity,
   DashboardSummaryCards,
   formatDashboardResponseDuration,
@@ -19,11 +17,8 @@ type Props = {
   nowLabel: string;
 };
 
-export function PersonalizedStaffDashboard({ data, role, nowLabel }: Props) {
+export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
   const { summary } = data;
-  const createActions = buildQuickActions(role)
-    .filter((action) => action.id.startsWith("create-"))
-    .slice(0, 4);
 
   const summaryCards: SummaryCard[] = data.isPersonnelView
     ? [
@@ -48,21 +43,16 @@ export function PersonalizedStaffDashboard({ data, role, nowLabel }: Props) {
           tone: summary.tasksDelayed > 0 ? "warning" : "default",
         },
       ]
-    : [
-        { id: "open", label: "Open requests", value: summary.open, href: "/agent?status=OPEN" },
+    : [];
+
+  const adminTopRowCards: SummaryCard[] = data.isAdminView
+    ? [
         {
-          id: "unassigned",
-          label: "Unassigned",
-          value: summary.unassigned,
-          href: "/agent?assigned=UNASSIGNED",
+          id: "open-unassigned",
+          label: "Open / Unassigned",
+          value: `${summary.open} / ${summary.unassigned}`,
+          href: "/agent?status=OPEN",
           tone: summary.unassigned > 0 ? "warning" : "default",
-        },
-        {
-          id: "sla-breached",
-          label: "SLA breached",
-          value: summary.slaBreached,
-          href: "/agent?priority=HIGH",
-          tone: summary.slaBreached > 0 ? "danger" : "default",
         },
         {
           id: "pending-approvals",
@@ -71,19 +61,27 @@ export function PersonalizedStaffDashboard({ data, role, nowLabel }: Props) {
           href: "/agent",
           tone: summary.pendingApprovals > 0 ? "warning" : "default",
         },
-      ];
-
-  const adminKpiCards: SummaryCard[] = data.isAdminView
-    ? [
         {
           id: "avg-response",
-          label: data.isPersonnelView ? "My avg. response" : "Avg. response",
+          label: "Avg. response",
           value: formatDashboardResponseDuration(summary.avgResponseMinutes),
         },
         {
           id: "resolution-rate",
-          label: data.isPersonnelView ? "My resolution rate" : "Resolution rate",
+          label: "Resolution rate",
           value: `${summary.resolutionRate.toFixed(1)}%`,
+        },
+      ]
+    : [];
+
+  const adminBottomRowCards: SummaryCard[] = data.isAdminView
+    ? [
+        {
+          id: "sla-breached",
+          label: "SLA breached",
+          value: summary.slaBreached,
+          href: "/agent?priority=HIGH",
+          tone: summary.slaBreached > 0 ? "danger" : "default",
         },
         {
           id: "sla-risk",
@@ -117,7 +115,7 @@ export function PersonalizedStaffDashboard({ data, role, nowLabel }: Props) {
       <div className="mx-auto w-full max-w-7xl space-y-5">
         <header className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-700 sm:text-[11px] dark:text-orange-400/95">
-            {BRAND_TITLE} · Dashboard
+            {BRAND_TITLE}
           </p>
           <h1 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
             {dashboardTitle}
@@ -127,10 +125,14 @@ export function PersonalizedStaffDashboard({ data, role, nowLabel }: Props) {
           </p>
         </header>
 
-        <DashboardSummaryCards cards={summaryCards} />
-        {adminKpiCards.length > 0 ? <DashboardSummaryCards cards={adminKpiCards} /> : null}
-
-        <DashboardQuickCreate actions={createActions} />
+        {data.isPersonnelView ? <DashboardSummaryCards cards={summaryCards} /> : null}
+        {adminTopRowCards.length > 0 ? <DashboardSummaryCards cards={adminTopRowCards} /> : null}
+        {adminBottomRowCards.length > 0 ? (
+          <DashboardSummaryCards
+            cards={adminBottomRowCards}
+            className="grid-cols-1 sm:grid-cols-3"
+          />
+        ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <DashboardFilterPills pills={filterPills} />

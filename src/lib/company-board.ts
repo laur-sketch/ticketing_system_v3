@@ -2,6 +2,7 @@ import { isElevatedUserRole } from "@/lib/auth";
 import type { Prisma, TicketPriority, TicketStatus } from "@prisma/client/primary";
 import type { Session } from "next-auth";
 import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
+import { companyHasLocalLogo } from "@/lib/company-logo";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
 import { ensureOutsideCompanyTeam } from "@/lib/outside-company-team";
 import { ensureRosterTeamsInDb } from "@/lib/roster-teams";
@@ -39,6 +40,8 @@ export type CompanyBoardColumn = {
   teamId: string;
   companyName: string;
   cardMode: CompanyBoardCardMode;
+  /** True when a logo path or inlined image is stored for this company. */
+  hasLogo: boolean;
   buckets: Record<CompanyBucketId, CompanyTicketCard[]>;
 };
 
@@ -75,7 +78,7 @@ type CompanyBoardScope =
       cardMode: CompanyBoardCardMode;
       ticketWhereBase: Prisma.TicketWhereInput;
       displayTeamIds: string[];
-      teams: { id: string; name: string }[];
+      teams: { id: string; name: string; hasLogo: boolean }[];
       groupByRequestor: boolean;
       excludedTeamIds: string[];
       outsideId: string;
@@ -139,12 +142,30 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
   const selectedNonAll = selectedIds.filter((s) => s !== "ALL");
   const filterBySpecificCompany = selectedNonAll.length > 0;
 
-  const teams = sortByRosterOrder(
+  const teamsRaw = sortByRosterOrder(
     await prisma.team.findMany({
       where: mergedTeamWhere,
       select: { id: true, name: true },
     }),
   );
+
+  // Logo columns may exist before Prisma client is regenerated — use raw SQL.
+  const logoRows =
+    teamsRaw.length > 0
+      ? await prisma.$queryRawUnsafe<{ id: string; has_logo: boolean }[]>(
+          `SELECT id,
+                  (COALESCE(NULLIF(TRIM(logo_path), ''), NULL) IS NOT NULL
+                   OR COALESCE(NULLIF(TRIM(logo_image), ''), NULL) IS NOT NULL) AS has_logo
+           FROM teams
+           WHERE id = ANY($1::text[])`,
+          teamsRaw.map((t) => t.id),
+        )
+      : [];
+  const hasLogoById = new Map(logoRows.map((r) => [r.id, Boolean(r.has_logo)]));
+  const teams = teamsRaw.map((t) => ({
+    ...t,
+    hasLogo: companyHasLocalLogo(t.name) || (hasLogoById.get(t.id) ?? false),
+  }));
 
   const ticketWhereBase: Prisma.TicketWhereInput = {};
   if (priorityFilter && priorityFilter !== "ALL" && cardMode === "staff") {
@@ -319,6 +340,7 @@ export async function loadCompanyBoard(opts: CompanyBoardScopeOpts): Promise<{
       teamId: t.id,
       companyName: t.name,
       cardMode,
+      hasLogo: t.hasLogo,
       buckets: emptyBuckets(),
     });
   }

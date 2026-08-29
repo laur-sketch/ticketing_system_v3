@@ -9,7 +9,7 @@ import {
 import { normalizeTimeZone } from "@/lib/kpi-recurrence";
 import { findSessionAgentId } from "@/lib/session-agent";
 import { loadAgentIdsForCompanyTeam, resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
-import { parseTaskMetricsTaskType } from "@/lib/task-metrics-task-type";
+import { parseTaskMetricsTaskTypeFilter } from "@/lib/task-metrics-task-type";
 
 export async function GET(req: Request) {
   const startedAt = Date.now();
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const { from, to } = parseKpiRangeFromQuery(searchParams.get("from"), searchParams.get("to"));
   const helpdeskCadence = parseHelpdeskCadence(searchParams.get("helpdeskCadence"));
-  const taskType = parseTaskMetricsTaskType(searchParams.get("taskType"));
+  const taskType = parseTaskMetricsTaskTypeFilter(searchParams.get("taskType"));
 
   const operator =
     session?.user?.role === "Personnel"

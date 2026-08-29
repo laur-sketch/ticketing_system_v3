@@ -4,12 +4,13 @@ import { COMPANY_ROSTER, type CompanyRosterName } from "@/lib/company-roster";
  * Map HRIS / CSV / legacy labels onto canonical Company Board roster names.
  */
 const HRIS_COMPANY_ALIASES: Record<string, CompanyRosterName> = {
-  mconpinco: "MCHISI",
-  "m.conpinco": "MCHISI",
-  "m conpinco": "MCHISI",
-  /** HRIS still labels the main SBU as MCHISI. */
-  mchisi: "MCHISI",
-  "mchisi lpg": "MCHISI",
+  mconpinco: "MCHISI LPG",
+  "m.conpinco": "MCHISI LPG",
+  "m conpinco": "MCHISI LPG",
+  /** Plain MCHISI is no longer on the roster — map to LPG. */
+  mchisi: "MCHISI LPG",
+  "mchisi lpg": "MCHISI LPG",
+  "mchisi fames": "MCHISI FAMES",
   eazygaz: "EAZZYGAS",
   easygas: "EAZZYGAS",
   eazygas: "EAZZYGAS",
@@ -17,6 +18,9 @@ const HRIS_COMPANY_ALIASES: Record<string, CompanyRosterName> = {
   "eazy gaz": "EAZZYGAS",
   "eazzy gas": "EAZZYGAS",
   "aci/apmc": "ACI",
+  "amalgated industries": "INDUSTRIES",
+  "amalgamated industries": "INDUSTRIES",
+  industries: "INDUSTRIES",
 };
 
 export function resolveRosterCompanyName(

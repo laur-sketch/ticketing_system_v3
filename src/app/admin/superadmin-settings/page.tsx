@@ -23,7 +23,13 @@ export default async function SuperAdminSettingsPage({
     redirect("/admin/workforce?view=sections");
   }
   const initialTab =
-    tabParam === "access" ? "access" : tabParam === "faq" ? "faq" : "alerts";
+    tabParam === "access"
+      ? "access"
+      : tabParam === "faq"
+        ? "faq"
+        : tabParam === "intake"
+          ? "intake"
+          : "alerts";
 
   const [triggers, orgLayerNodes] = await Promise.all([
     prisma.escalationTrigger.findMany({ orderBy: { priority: "asc" } }),

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { KINETIC_PALETTE, ticketStatusChartColor, TICKET_STATUS_CHART_COLORS } from "@/lib/kinetic-palette";
 import { formatTicketStatusLabel } from "@/lib/ticket-status-label";
@@ -46,16 +47,12 @@ export function queueSegmentsForCharts(raw: { status: string; count: number }[])
 }
 
 /**
- * Daily x-axis tick density — every day for short windows, then every 2/3/7
- * days as the range grows so labels never overlap regardless of width.
+ * Daily x-axis tick density — cap label count so mobile never overcrowds.
  */
-function pickDailyTickIndices(n: number): number[] {
+function pickDailyTickIndices(n: number, maxTicks = 12): number[] {
   if (n <= 1) return [0];
-  let step: number;
-  if (n <= 10) step = 1;
-  else if (n <= 21) step = 2;
-  else if (n <= 45) step = 3;
-  else step = 7;
+  if (n <= maxTicks) return Array.from({ length: n }, (_, i) => i);
+  const step = Math.max(1, Math.ceil((n - 1) / (maxTicks - 1)));
   const idx = new Set<number>();
   for (let i = 0; i < n; i += step) idx.add(i);
   idx.add(n - 1);
@@ -79,6 +76,16 @@ export function MetricsTrendChart({
   closed: number[];
   variant?: "density" | "line";
 }) {
+  const [maxTicks, setMaxTicks] = useState(12);
+  useEffect(() => {
+    function update() {
+      setMaxTicks(window.innerWidth < 640 ? 5 : window.innerWidth < 1024 ? 8 : 12);
+    }
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
   const n = Math.min(labels.length, created.length, closed.length);
   if (n === 0) {
     return (
@@ -138,7 +145,7 @@ export function MetricsTrendChart({
   const createdAreaPath = smoothAreaPath(safeCreated);
   const closedAreaPath = smoothAreaPath(safeClosed);
 
-  const tickIdx = pickDailyTickIndices(n);
+  const tickIdx = pickDailyTickIndices(n, maxTicks);
   /** Y-axis reference ticks — divide vertical space into 4 bands with rounded values. */
   const yTickValues = (() => {
     const out: number[] = [];
@@ -153,7 +160,7 @@ export function MetricsTrendChart({
       <div className="relative">
         <svg
           viewBox={`0 0 ${w} ${h}`}
-          className="h-52 w-full overflow-visible sm:h-60"
+          className="h-44 w-full overflow-visible sm:h-52 md:h-60"
           preserveAspectRatio="none"
           role="img"
           aria-label="Daily volume trend"
@@ -262,12 +269,12 @@ export function MetricsTrendChart({
         </div>
       </div>
 
-      <div className="mt-3 grid w-full grid-flow-col auto-cols-fr text-[10px] font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-500">
+      <div className="mt-2 grid w-full grid-cols-[repeat(auto-fit,minmax(2.75rem,1fr))] gap-1 text-[9px] font-medium uppercase tracking-wide text-zinc-600 sm:mt-3 sm:gap-0 sm:text-[10px] sm:tracking-wider dark:text-zinc-500">
         {tickIdx.map((i) => (
           <span
             key={`xlabel-${safeLabels[i] ?? i}`}
             className={cn(
-              "text-center first:text-left last:text-right",
+              "truncate text-center sm:whitespace-normal",
               tickIdx.length === 1 ? "text-center" : null,
             )}
             title={safeLabels[i] ?? ""}
@@ -277,7 +284,7 @@ export function MetricsTrendChart({
         ))}
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-4 text-xs text-zinc-600 dark:text-zinc-400">
+      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-zinc-600 sm:mt-3 sm:gap-4 sm:text-xs dark:text-zinc-400">
         <span className="inline-flex items-center gap-2">
           <span className="size-2 rounded-sm bg-orange-500" /> Created
         </span>

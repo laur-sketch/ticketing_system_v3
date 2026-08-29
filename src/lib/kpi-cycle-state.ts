@@ -248,13 +248,16 @@ export function nextRolloverEligibleAtUtc(
 export const RECURRING_INCOMPLETE_ROLLOVER_HOLD_DAYS = 10;
 
 /**
- * The incomplete-cycle rollover hold applies only to MONTHLY / QUARTERLY / SEMI_ANNUAL
+ * The incomplete-cycle rollover hold applies only to MONTHLY / QUARTERLY / SEMI_ANNUAL / YEARLY
  * cadences. DAILY and WEEKLY cycles roll into the next period immediately once stale.
  */
 export function recurringIncompleteRolloverHoldDays(
   frequency: KpiFrequencyCode | null | undefined,
 ): number {
-  return frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL"
+  return frequency === "MONTHLY" ||
+    frequency === "QUARTERLY" ||
+    frequency === "SEMI_ANNUAL" ||
+    frequency === "YEARLY"
     ? RECURRING_INCOMPLETE_ROLLOVER_HOLD_DAYS
     : 0;
 }

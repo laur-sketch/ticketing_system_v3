@@ -18,17 +18,24 @@ type PersonnelTaskMetricsGridProps = {
   rows: PersonnelCombinedMetricCard[];
   reportingPeriodLabel?: string;
   companyLabel?: string | null;
+  departmentLabel?: string | null;
   loading?: boolean;
+  /** When set, search is controlled by the parent metrics filter bar. */
+  searchQuery?: string;
 };
 
 export function PersonnelTaskMetricsGrid({
   rows,
   reportingPeriodLabel,
   companyLabel,
+  departmentLabel,
   loading = false,
+  searchQuery: controlledSearchQuery,
 }: PersonnelTaskMetricsGridProps) {
   const [searchDraft, setSearchDraft] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [internalSearchQuery, setInternalSearchQuery] = useState("");
+  const searchControlled = controlledSearchQuery !== undefined;
+  const searchQuery = searchControlled ? controlledSearchQuery : internalSearchQuery;
 
   const filteredRows = useMemo(
     () => filterPersonnelSearchQuery(rows, searchQuery),
@@ -66,7 +73,8 @@ export function PersonnelTaskMetricsGrid({
             Personnel accumulated tasks
           </p>
           <h4 className="mt-1 text-lg font-bold text-zinc-950 dark:text-zinc-50">
-            {companyLabel ? `${companyLabel} personnel` : "All personnel"}
+            {[companyLabel, departmentLabel].filter(Boolean).join(" · ") || "All personnel"}
+            {companyLabel || departmentLabel ? " personnel" : ""}
           </h4>
           {reportingPeriodLabel ? (
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{reportingPeriodLabel}</p>
@@ -109,11 +117,11 @@ export function PersonnelTaskMetricsGrid({
         ) : null}
       </div>
 
-      {rows.length > 0 ? (
+      {rows.length > 0 && !searchControlled ? (
         <BoardSearchBar
           query={searchDraft}
           onQueryChange={setSearchDraft}
-          onSearchSubmit={() => setSearchQuery(searchDraft.trim())}
+          onSearchSubmit={() => setInternalSearchQuery(searchDraft.trim())}
           placeholder="Search personnel by name"
           ariaLabel="Search personnel by name"
         />

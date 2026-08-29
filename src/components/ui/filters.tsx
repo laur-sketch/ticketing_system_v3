@@ -29,6 +29,8 @@ import {
   CalendarPlus,
   CalendarSync,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   CircleAlert,
   CircleCheck,
@@ -160,6 +162,8 @@ export type FilterOption = {
   name: string;
   icon: React.ReactNode | undefined;
   label?: string;
+  /** Stable unique id when `name` can repeat (e.g. duplicate people). */
+  id?: string;
 };
 
 export type Filter = {
@@ -235,6 +239,7 @@ export const FilterIcon = ({
       return <CalendarSync className="size-3.5" />;
     case "Company":
       return <Building2 className="size-3.5" />;
+    case "Department":
     case "Departments":
     case "Section":
       return <Network className="size-3.5" />;
@@ -250,6 +255,11 @@ export const FilterIcon = ({
       return <Tag className="size-3.5" />;
     case "Frequency":
       return <Repeat className="size-3.5" />;
+    case "Task":
+    case "Task type":
+      return <Tag className="size-3.5" />;
+    case "Cadence":
+      return <Calendar className="size-3.5" />;
     case Status.BACKLOG:
       return <CircleDashed className="size-3.5 text-muted-subtle" />;
     case Status.TODO:
@@ -533,10 +543,10 @@ const FilterValueCombobox = ({
                     {nonSelectedFilterValues.map((filter: FilterOption) => (
                       <CommandItem
                         className="group flex gap-2 items-center"
-                        key={filter.name}
+                        key={filter.id ?? filter.name}
                         value={filter.name}
-                        onSelect={(currentValue: string) => {
-                          setFilterValues([...filterValues, currentValue]);
+                        onSelect={() => {
+                          setFilterValues([...filterValues, filter.name]);
                           setTimeout(() => {
                             setCommandInput("");
                           }, 200);
@@ -620,10 +630,10 @@ const FilterValueDateCombobox = ({
                   (filter: FilterOption) => (
                     <CommandItem
                       className="group flex gap-2 items-center"
-                      key={filter.name}
+                      key={filter.id ?? filter.name}
                       value={filter.name}
-                      onSelect={(currentValue: string) => {
-                        setFilterValues([currentValue]);
+                      onSelect={() => {
+                        setFilterValues([filter.name]);
                         setTimeout(() => {
                           setCommandInput("");
                         }, 200);
@@ -798,26 +808,32 @@ export function FiltersTrigger({
           aria-expanded={open}
           size="sm"
           className={cn(
-            "transition group h-6 text-xs items-center rounded-sm flex gap-1.5 items-center",
+            "group flex h-6 items-center gap-1.5 rounded-sm text-xs transition",
             className
           )}
         >
-          <ListFilter className="size-3 shrink-0 transition-all text-muted-subtle group-hover:text-brand" />
+          <ListFilter className="size-3 shrink-0 text-muted-subtle transition-all group-hover:text-brand" />
           Filter
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[200px] p-0">
+      <PopoverContent align="end" className="w-72 p-0 shadow-lg">
         <AnimateChangeInHeight>
           {saving ? (
             <Command>
               <CommandInput
-                placeholder="Filter name…"
+                placeholder="Name this filter set…"
                 className="h-9"
                 value={saveName}
                 onInputCapture={(e) => {
                   setSaveName(e.currentTarget.value);
                 }}
                 onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setSaving(false);
+                    setSaveName("");
+                    return;
+                  }
                   if (e.key === "Enter") {
                     e.preventDefault();
                     commitSave();
@@ -826,15 +842,25 @@ export function FiltersTrigger({
                 ref={saveNameRef}
               />
               <CommandList>
-                <CommandEmpty>No results found.</CommandEmpty>
+                <CommandEmpty>Enter a name to save.</CommandEmpty>
                 <CommandGroup>
                   <CommandItem
-                    className="group flex gap-2 items-center"
+                    className="flex items-center gap-2"
                     disabled={!saveName.trim()}
                     onSelect={commitSave}
                   >
                     <BookmarkPlus className="size-3.5 shrink-0 text-muted-subtle" />
                     <span className="text-foreground">Save filter</span>
+                  </CommandItem>
+                  <CommandItem
+                    className="flex items-center gap-2"
+                    onSelect={() => {
+                      setSaving(false);
+                      setSaveName("");
+                    }}
+                  >
+                    <ChevronLeft className="size-3.5 shrink-0 text-muted-subtle" />
+                    <span className="text-foreground">Cancel</span>
                   </CommandItem>
                 </CommandGroup>
               </CommandList>
@@ -842,11 +868,17 @@ export function FiltersTrigger({
           ) : (
             <Command>
               <CommandInput
-                placeholder={selectedView ? selectedView : "Filter..."}
+                placeholder={selectedView ? `Search ${selectedView.toLowerCase()}…` : "Search filters…"}
                 className="h-9"
                 value={commandInput}
                 onInputCapture={(e) => {
                   setCommandInput(e.currentTarget.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Backspace" && !commandInput && selectedView) {
+                    e.preventDefault();
+                    setSelectedView(null);
+                  }
                 }}
                 ref={commandInputRef}
               />
@@ -854,13 +886,26 @@ export function FiltersTrigger({
                 <CommandEmpty>No results found.</CommandEmpty>
                 {selectedView ? (
                   <CommandGroup>
+                    <CommandItem
+                      className="flex items-center gap-2 text-muted-subtle"
+                      value="__back__"
+                      onSelect={() => {
+                        setSelectedView(null);
+                        setCommandInput("");
+                        commandInputRef.current?.focus();
+                      }}
+                    >
+                      <ChevronLeft className="size-3.5 shrink-0" />
+                      <span>Back to filters</span>
+                    </CommandItem>
                     {filterOptions[selectedView]?.map((filter: FilterOption) => (
                       <CommandItem
-                        className="group flex gap-2 items-center"
-                        key={filter.name}
-                        value={filter.name}
-                        onSelect={(currentValue) => {
-                          onSelect(selectedView, currentValue);
+                        className="group flex items-center gap-2"
+                        key={filter.id ?? filter.name}
+                        value={`${filter.name} ${filter.id ?? ""}`}
+                        onSelect={() => {
+                          // Prefer option name (original casing). cmdk lowercases `currentValue`.
+                          onSelect(selectedView, filter.name);
                           setTimeout(() => {
                             setSelectedView(null);
                             setCommandInput("");
@@ -869,14 +914,14 @@ export function FiltersTrigger({
                         }}
                       >
                         {filter.icon}
-                        <span className="text-foreground">
+                        <span className="min-w-0 flex-1 truncate text-foreground">
                           {filter.name}
                         </span>
-                        {filter.label && (
-                          <span className="text-muted-subtle text-xs ml-auto">
+                        {filter.label ? (
+                          <span className="ml-auto shrink-0 text-xs text-muted-subtle">
                             {filter.label}
                           </span>
-                        )}
+                        ) : null}
                       </CommandItem>
                     ))}
                   </CommandGroup>
@@ -884,11 +929,11 @@ export function FiltersTrigger({
                   <>
                     {viewOptions.map((group: FilterOption[], index: number) => (
                       <Fragment key={index}>
-                        <CommandGroup>
+                        <CommandGroup heading={index === 0 ? "Add filter" : undefined}>
                           {group.map((filter: FilterOption) => (
                             <CommandItem
-                              className="group flex gap-2 items-center"
-                              key={filter.name}
+                              className="group flex items-center gap-2"
+                              key={filter.id ?? filter.name}
                               value={filter.name}
                               onSelect={(currentValue) => {
                                 setSelectedView(currentValue);
@@ -896,10 +941,13 @@ export function FiltersTrigger({
                                 commandInputRef.current?.focus();
                               }}
                             >
-                              {filter.icon}
-                              <span className="text-foreground">
+                              <span className="flex size-5 shrink-0 items-center justify-center text-muted-subtle">
+                                {filter.icon}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-foreground">
                                 {filter.name}
                               </span>
+                              <ChevronRight className="size-3.5 shrink-0 text-muted-subtle opacity-60 group-data-[selected=true]:opacity-100" />
                             </CommandItem>
                           ))}
                         </CommandGroup>
@@ -911,42 +959,54 @@ export function FiltersTrigger({
                     {savedFilters !== undefined ? (
                       <>
                         <CommandSeparator />
-                        <CommandItem
-                          className="group flex gap-2 items-center"
-                          disabled={!canSaveCurrent}
-                          onSelect={() => {
-                            setSaving(true);
-                            setCommandInput("");
-                          }}
-                        >
-                          <BookmarkPlus className="size-3.5 shrink-0 text-muted-subtle" />
-                          <span className="text-foreground">Save current filters</span>
-                          {!canSaveCurrent ? (
-                            <span className="ml-auto text-muted-subtle text-xs">
-                              Add a filter first
+                        <CommandGroup>
+                          <CommandItem
+                            className={cn(
+                              "flex items-start gap-2 py-2",
+                              !canSaveCurrent && "opacity-70",
+                            )}
+                            disabled={!canSaveCurrent}
+                            onSelect={() => {
+                              if (!canSaveCurrent) return;
+                              setSaving(true);
+                              setCommandInput("");
+                            }}
+                          >
+                            <BookmarkPlus className="mt-0.5 size-3.5 shrink-0 text-muted-subtle" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm text-foreground">
+                                Save current filters
+                              </span>
+                              <span className="mt-0.5 block text-xs text-muted-subtle">
+                                {canSaveCurrent
+                                  ? "Keep this combination for later"
+                                  : "Add a filter or search first"}
+                              </span>
                             </span>
-                          ) : null}
-                        </CommandItem>
+                          </CommandItem>
+                        </CommandGroup>
                         <CommandSeparator />
                         <CommandGroup heading="Favorites">
                           {savedFilters.length === 0 ? (
-                            <p className="px-2 py-1.5 text-xs text-muted-subtle">
-                              No saved filters yet.
+                            <p className="px-2 py-2 text-xs leading-relaxed text-muted-subtle">
+                              No saved filters yet. Save a combination to reuse it here.
                             </p>
                           ) : (
                             savedFilters.map((filter) => (
                               <CommandItem
                                 key={filter.id}
-                                className="group flex gap-2 items-center"
+                                className="group flex items-center gap-2"
                                 value={`Saved: ${filter.name}`}
                                 onSelect={() => {
                                   onApplySavedFilter?.(filter);
                                   setOpen(false);
                                 }}
                               >
-                                <Star className="size-3.5 shrink-0 text-amber-500" />
-                                <span className="text-foreground">{filter.name}</span>
-                                <span className="ml-auto text-xs text-muted-subtle">
+                                <Star className="size-3.5 shrink-0 fill-amber-500/20 text-amber-500" />
+                                <span className="min-w-0 flex-1 truncate text-foreground">
+                                  {filter.name}
+                                </span>
+                                <span className="shrink-0 rounded bg-surface-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-subtle">
                                   {Object.keys(filter.params).length}
                                 </span>
                                 <button
@@ -956,7 +1016,7 @@ export function FiltersTrigger({
                                     event.stopPropagation();
                                     onDeleteSavedFilter?.(filter.id);
                                   }}
-                                  className="rounded-sm p-0.5 text-muted-subtle transition hover:bg-surface-muted hover:text-red-500"
+                                  className="rounded-sm p-0.5 text-muted-subtle opacity-70 transition hover:bg-surface-muted hover:text-red-500 hover:opacity-100"
                                 >
                                   <Trash2 className="size-3.5" />
                                 </button>

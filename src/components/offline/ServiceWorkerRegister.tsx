@@ -27,6 +27,19 @@ function warmTravelOrderShell(registration?: ServiceWorkerRegistration | null) {
 export function ServiceWorkerRegister() {
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    // Dev compiles often exceed NetworkFirst timeouts; a cached shell + new chunks
+    // produces ChunkLoadError / half-mounted React trees. Keep SW for production only.
+    if (process.env.NODE_ENV !== "production") {
+      void navigator.serviceWorker.getRegistrations().then((regs) => {
+        for (const reg of regs) void reg.unregister();
+      });
+      if ("caches" in window) {
+        void caches.keys().then((keys) => {
+          for (const key of keys) void caches.delete(key);
+        });
+      }
+      return;
+    }
 
     const wb = new Workbox("/sw.js", { scope: "/" });
 

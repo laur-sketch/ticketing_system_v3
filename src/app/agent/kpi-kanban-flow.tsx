@@ -37,7 +37,7 @@ import {
   type ItProjectPhase,
 } from "@/lib/it-project-subkpis";
 import { ProjectTimelineKanban } from "@/components/task-board/ProjectTimelineKanban";
-import { kpiHasDistinctMainTask, kpiMainTaskLabel, kpiPillarLabel } from "@/lib/kpi-main-task";
+import { kpiHasDistinctMainTask, kpiMainTaskLabel } from "@/lib/kpi-main-task";
 import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import {
   kpiChecklistMetricView,
@@ -54,6 +54,7 @@ import {
   mainTaskCheckboxItem,
   isFieldAssignmentTask,
   isProjectTask,
+  hasSubKpiAssignedTo,
   normalizeSubKpis,
   pillarScreenshotUploadEnabled,
   pillarScreenshotsEnabled,
@@ -124,7 +125,7 @@ import {
   listOfflineDrafts,
   offlineDraftAsListItem,
 } from "@/lib/offline/travel-order-offline-db";
-import { isPlatformSuperAdminPortalRole } from "@/lib/staff-role";
+import { isElevatedPlatformRole, isPlatformSuperAdminPortalRole } from "@/lib/staff-role";
 import { isBrowserOnline, fetchTravelOrderWithTimeout, isTravelOrderNetworkFailure, flushTravelOrderPendingQueue, subscribeTravelOrderConnectivity } from "@/lib/offline/travel-order-sync";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 
@@ -284,6 +285,8 @@ function boardLayoutSectionLabel(key: string): string {
       return "Quarterly";
     case "SEMI_ANNUAL":
       return "Semi Annual";
+    case "YEARLY":
+      return "Annualy";
     case PROJECTS_DONUT_KEY:
       return "Projects";
     case FIELD_ASSIGNMENT_DONUT_KEY:
@@ -340,6 +343,17 @@ function nonRecurringCycleHint(r: KpiRecord): string {
   return `${nonRecurringTaskKindLabel(r)} — based on main task target and actual dates`;
 }
 
+type AssignRosterScopePayload = {
+  elevated: boolean;
+  companies: { id: string; name: string }[];
+  departments: { value: string; label: string }[];
+  lockedCompanyId: string | null;
+  lockedCompanyName: string | null;
+  lockedAgentIds: string[];
+};
+
+type AssignPickerMode = "company" | "department";
+
 type AssignableAgent = {
   id: string;
   name: string;
@@ -395,12 +409,38 @@ function taskToScheduleDraft(r: KpiRecord): TaskScheduleDraft {
 function assignmentCompanyKey(agent: AssignableAgent): string {
   return (
     agent.assignmentCompany?.id ??
-    (agent.assignmentCompany?.name ? `name:${agent.assignmentCompany.name.trim().toLowerCase()}` : ASSIGNMENT_NO_COMPANY)
+    agent.team?.id ??
+    (agent.assignmentCompany?.name
+      ? `name:${agent.assignmentCompany.name.trim().toLowerCase()}`
+      : agent.team?.name
+        ? `name:${agent.team.name.trim().toLowerCase()}`
+        : ASSIGNMENT_NO_COMPANY)
   );
 }
 
 function assignmentCompanyName(agent: AssignableAgent): string {
-  return agent.assignmentCompany?.name?.trim() || "No assigned company";
+  return (
+    agent.assignmentCompany?.name?.trim() ||
+    agent.team?.name?.trim() ||
+    "No assigned company"
+  );
+}
+
+/** True when the agent belongs to the selected roster company (id or name). */
+function agentMatchesCompanyScope(
+  agent: AssignableAgent,
+  companyId: string,
+  companyName?: string | null,
+): boolean {
+  if (!companyId) return false;
+  if (agent.assignmentCompany?.id === companyId) return true;
+  if (agent.team?.id === companyId) return true;
+  const want = (companyName ?? "").trim().toLowerCase();
+  if (!want) return false;
+  const names = [agent.assignmentCompany?.name, agent.team?.name]
+    .map((n) => (n ?? "").trim().toLowerCase())
+    .filter(Boolean);
+  return names.includes(want);
 }
 
 function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
@@ -418,6 +458,7 @@ function dedupeAssignableAgents(list: AssignableAgent[]): AssignableAgent[] {
 
 export function AgentKpiKanbanFlow({
   companyFilterTeamId = null,
+  orgChartSectionFilterId = null,
   assignedAgentFilterId = null,
   showAdminTaskManagement = false,
   focusTaskId = null,
@@ -429,6 +470,8 @@ export function AgentKpiKanbanFlow({
 }: {
   /** When set, loads KPI rows and assignment lanes for this SBU only (personnel designated company). */
   companyFilterTeamId?: string | null;
+  /** When set, keeps tasks whose main assignee is in this org-chart section (incl. subsections). */
+  orgChartSectionFilterId?: string | null;
   /** When set, narrows the task board to this main assignee. */
   assignedAgentFilterId?: string | null;
   /** SuperAdmin / Admin: KPI definition form (moved from Request Metrics and Reports). */
@@ -447,9 +490,16 @@ export function AgentKpiKanbanFlow({
   frequencyFilter?: string;
 } = {}) {
   const isSuperAdmin = isPlatformSuperAdminPortalRole(sessionRole);
+  const isElevatedAssign = isElevatedPlatformRole(sessionRole);
   const [rows, setRows] = useState<KpiRecord[]>([]);
   const [agents, setAgents] = useState<AssignableAgent[]>([]);
   const [allAssignableAgents, setAllAssignableAgents] = useState<AssignableAgent[]>([]);
+  const [orgSectionAgentIds, setOrgSectionAgentIds] = useState<Set<string> | null>(null);
+  const [assignRosterScope, setAssignRosterScope] = useState<AssignRosterScopePayload | null>(null);
+  const [assignPickerMode, setAssignPickerMode] = useState<AssignPickerMode>("company");
+  const [assignPickerCompanyId, setAssignPickerCompanyId] = useState("");
+  const [assignPickerDepartmentId, setAssignPickerDepartmentId] = useState("");
+  const [assignScopeAgents, setAssignScopeAgents] = useState<AssignableAgent[] | null>(null);
   const [canAssignWork, setCanAssignWork] = useState(false);
   const [canUnassignWork, setCanUnassignWork] = useState(false);
   const [canCompleteUnassignedWork, setCanCompleteUnassignedWork] = useState(false);
@@ -619,11 +669,14 @@ export function AgentKpiKanbanFlow({
     const agentsUrl =
       companyFilterTeamId && companyFilterTeamId !== "ALL"
         ? `/api/agents?company=${encodeURIComponent(companyFilterTeamId)}`
-        : "/api/agents";
-    const [permRes, agentsRes, allAgentsRes] = await Promise.all([
+        : isElevatedAssign
+          ? "/api/agents?anyCompany=1"
+          : "/api/agents";
+    const [permRes, agentsRes, allAgentsRes, scopeRes] = await Promise.all([
       fetch("/api/me/permissions", { cache: "no-store" }),
       fetch(agentsUrl, { cache: "no-store" }),
-      fetch("/api/agents", { cache: "no-store" }),
+      fetch(isElevatedAssign ? "/api/agents?anyCompany=1" : "/api/agents", { cache: "no-store" }),
+      fetch("/api/me/assign-roster-scope", { cache: "no-store" }),
     ]);
     if (permRes.ok) {
       const p = (await permRes.json()) as {
@@ -645,6 +698,17 @@ export function AgentKpiKanbanFlow({
       const a = (await allAgentsRes.json()) as AssignableAgent[];
       if (Array.isArray(a)) setAllAssignableAgents(dedupeAssignableAgents(a));
     }
+    if (scopeRes.ok) {
+      const scope = (await scopeRes.json()) as AssignRosterScopePayload;
+      setAssignRosterScope({
+        elevated: Boolean(scope.elevated),
+        companies: Array.isArray(scope.companies) ? scope.companies : [],
+        departments: Array.isArray(scope.departments) ? scope.departments : [],
+        lockedCompanyId: scope.lockedCompanyId ?? null,
+        lockedCompanyName: scope.lockedCompanyName ?? null,
+        lockedAgentIds: Array.isArray(scope.lockedAgentIds) ? scope.lockedAgentIds : [],
+      });
+    }
   }
 
   useEffect(() => {
@@ -654,6 +718,103 @@ export function AgentKpiKanbanFlow({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tz, companyFilterTeamId, assignedAgentFilterId]);
+
+  useEffect(() => {
+    const elevated = Boolean(assignRosterScope?.elevated || isElevatedAssign);
+    if (!elevated) {
+      setAssignScopeAgents(null);
+      return;
+    }
+    let cancelled = false;
+    async function loadAssignScopeAgents() {
+      if (assignPickerMode === "company") {
+        if (!assignPickerCompanyId) {
+          setAssignScopeAgents([]);
+          return;
+        }
+        setAssignScopeAgents(null);
+        const res = await fetch(
+          `/api/agents?company=${encodeURIComponent(assignPickerCompanyId)}`,
+          { cache: "no-store" },
+        );
+        if (cancelled) return;
+        if (!res.ok) {
+          setAssignScopeAgents([]);
+          return;
+        }
+        const list = (await res.json()) as AssignableAgent[];
+        if (!cancelled) setAssignScopeAgents(Array.isArray(list) ? dedupeAssignableAgents(list) : []);
+        return;
+      }
+      if (!assignPickerDepartmentId) {
+        setAssignScopeAgents([]);
+        return;
+      }
+      setAssignScopeAgents(null);
+      const qs = new URLSearchParams();
+      qs.set("section", assignPickerDepartmentId);
+      qs.set("anyCompany", "1");
+      const res = await fetch(`/api/agents?${qs.toString()}`, { cache: "no-store" });
+      if (cancelled) return;
+      if (!res.ok) {
+        setAssignScopeAgents([]);
+        return;
+      }
+      const list = (await res.json()) as AssignableAgent[];
+      if (!cancelled) setAssignScopeAgents(Array.isArray(list) ? dedupeAssignableAgents(list) : []);
+    }
+    void loadAssignScopeAgents();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assignRosterScope?.elevated,
+    isElevatedAssign,
+    assignPickerMode,
+    assignPickerCompanyId,
+    assignPickerDepartmentId,
+  ]);
+
+  useEffect(() => {
+    const sectionId = (orgChartSectionFilterId ?? "").trim();
+    if (!sectionId || sectionId === "ALL") {
+      setOrgSectionAgentIds(null);
+      return;
+    }
+    let cancelled = false;
+    const qs = new URLSearchParams();
+    qs.set("section", sectionId);
+    if (companyFilterTeamId && companyFilterTeamId !== "ALL") {
+      qs.set("company", companyFilterTeamId);
+    } else {
+      qs.set("anyCompany", "1");
+    }
+    void fetch(`/api/agents?${qs.toString()}`, {
+      cache: "no-store",
+    })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list: unknown) => {
+        if (cancelled) return;
+        const ids = new Set(
+          Array.isArray(list)
+            ? list
+                .map((row) =>
+                  row && typeof row === "object" && "id" in row
+                    ? String((row as { id: string }).id)
+                    : "",
+                )
+                .filter(Boolean)
+            : [],
+        );
+        setOrgSectionAgentIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgSectionAgentIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orgChartSectionFilterId, companyFilterTeamId]);
 
   /** Refresh On Duty flags from merged clock-ins while the assignment board is open. */
   useEffect(() => {
@@ -1718,7 +1879,7 @@ export function AgentKpiKanbanFlow({
     if (draft.isRecurring && draft.frequency === "WEEKLY") {
       taskSchedule.recurrenceWeekday = draft.recurrenceWeekday;
     }
-    if (draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY" || draft.frequency === "SEMI_ANNUAL")) {
+    if (draft.isRecurring && (draft.frequency === "MONTHLY" || draft.frequency === "QUARTERLY" || draft.frequency === "SEMI_ANNUAL" || draft.frequency === "YEARLY")) {
       taskSchedule.recurrenceMonthDay = draft.recurrenceMonthDay;
     }
 
@@ -1746,21 +1907,58 @@ export function AgentKpiKanbanFlow({
 
   const boardRows = useMemo(() => {
     let list = rows;
-    if (companyFilterTeamId && companyFilterTeamId !== "ALL") {
-      list = list.filter((row) => Boolean(row.assignedAgent?.id));
+    // Company scope is applied by /api/kpi-maintenance?company= — do not re-filter here.
+    if (orgSectionAgentIds) {
+      list = list.filter((row) => {
+        const mainId = row.assignedAgent?.id ?? null;
+        if (mainId && orgSectionAgentIds.has(mainId)) return true;
+        for (const agentId of orgSectionAgentIds) {
+          if (hasSubKpiAssignedTo(row.subKpis, agentId)) return true;
+        }
+        return false;
+      });
     }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
-      list = list.filter((row) => (row.title ?? "").toLowerCase().includes(q));
+      list = list.filter((row) => {
+        const haystack = [
+          row.title,
+          row.mainTask,
+          row.itProjectName,
+          taskLabel(row),
+          row.assignedAgent?.name,
+        ]
+          .filter((part): part is string => Boolean(part && String(part).trim()))
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(q);
+      });
     }
     if (categoryFilter !== "all") {
       list = list.filter((row) => taskBoardCategoryOf(row) === categoryFilter);
     }
     if (frequencyFilter !== "all") {
-      list = list.filter((row) => boardLayoutSectionKey(row) === frequencyFilter);
+      // Align with card badge ("DAILY TASK") / one-off — not project/field section keys.
+      list = list.filter((row) => {
+        const cat = taskBoardCategoryOf(row);
+        if (cat !== "task") return false;
+        if (frequencyFilter === "ONE-OFF") return row.isRecurring === false;
+        return (
+          row.isRecurring !== false &&
+          String(row.frequency ?? "").trim().toUpperCase() === frequencyFilter
+        );
+      });
     }
     return list;
-  }, [rows, companyFilterTeamId, searchQuery, categoryFilter, frequencyFilter, nowMs, tz]);
+  }, [
+    rows,
+    orgSectionAgentIds,
+    searchQuery,
+    categoryFilter,
+    frequencyFilter,
+    nowMs,
+    tz,
+  ]);
   const hasBoardRows = boardRows.length > 0;
   const laneCounts = useMemo(() => {
     const counts: Record<KpiBoardStatus, number> = { CURRENT: 0, DONE: 0, DELAYED: 0 };
@@ -1912,31 +2110,206 @@ export function AgentKpiKanbanFlow({
   }, [agents, allAssignableAgents, subAssigneePeersByMainId, companyFilterTeamId]);
 
   /**
-   * Company lock: once a task is assigned to a user with an assigned company,
-   * only personnel from that same company may be assigned (main task or sub-tasks).
-   * The current assignee stays visible even when offline or outside the roster.
+   * Assignee roster for reassignment:
+   * - Elevated: company or department (org chart) scope — may cross company/department.
+   * - Admin/Personnel: locked to designated company ∩ org-chart department.
+   * - Fallback: lock to the current main assignee's company when present.
    */
-  function companyLockedCandidatesFor(r: KpiRecord): { candidates: AssigneeSearchAgent[]; lockNote: string | null } {
+  function companyLockedCandidatesFor(r: KpiRecord): {
+    candidates: AssigneeSearchAgent[];
+    lockNote: string | null;
+    emptyHint: string | null;
+    scopeReady: boolean;
+  } {
     const mainId = r.assignedAgent?.id ?? null;
-    const main = mainId ? (assigneeCandidates.find((a) => a.id === mainId) ?? null) : null;
-    const mainCompany = main ? assignmentCompanyKey(main) : null;
-    const locked = Boolean(main && mainCompany && mainCompany !== ASSIGNMENT_NO_COMPANY);
-    let list = locked
-      ? assigneeCandidates.filter((a) => assignmentCompanyKey(a) === mainCompany)
-      : assigneeCandidates;
-    if (mainId && !list.some((a) => a.id === mainId) && main) {
+    const main =
+      mainId != null
+        ? (assigneeCandidates.find((a) => a.id === mainId) ??
+          allAssignableAgents.find((a) => a.id === mainId) ??
+          (r.assignedAgent
+            ? ({
+                id: r.assignedAgent.id,
+                name: r.assignedAgent.name,
+                assignmentCompany: r.assignedAgent.team
+                  ? { id: r.assignedAgent.team.id ?? null, name: r.assignedAgent.team.name ?? null }
+                  : null,
+                team: r.assignedAgent.team ?? null,
+                isOnDuty: true,
+              } satisfies AssignableAgent)
+            : null))
+        : null;
+    const elevated = Boolean(assignRosterScope?.elevated || isElevatedAssign);
+    const lockedIds = assignRosterScope?.lockedAgentIds ?? [];
+
+    let list: AssignableAgent[];
+    let lockNote: string | null = null;
+    let emptyHint: string | null = null;
+    let scopeReady = true;
+
+    if (elevated) {
+      if (assignPickerMode === "company") {
+        scopeReady = Boolean(assignPickerCompanyId);
+        const companyName =
+          assignRosterScope?.companies.find((c) => c.id === assignPickerCompanyId)?.name ?? null;
+        // Trust the company-scoped /api/agents fetch when present; otherwise fall back to
+        // the full roster matched by assignment company id, team id, or company name.
+        if (!scopeReady) {
+          list = [];
+        } else if (assignScopeAgents != null) {
+          list = [...assignScopeAgents];
+        } else {
+          list = allAssignableAgents.filter((a) =>
+            agentMatchesCompanyScope(a, assignPickerCompanyId, companyName),
+          );
+        }
+        if (scopeReady) {
+          lockNote = `Company: ${companyName ?? "selected"} · ${list.length} personnel · cross-company assign allowed`;
+        } else {
+          lockNote = "Select a company to list assignees";
+          emptyHint = "Select a company first.";
+        }
+      } else {
+        scopeReady = Boolean(assignPickerDepartmentId);
+        list = scopeReady && assignScopeAgents != null ? [...assignScopeAgents] : [];
+        const deptLabel = assignRosterScope?.departments.find((d) => d.value === assignPickerDepartmentId)?.label;
+        if (scopeReady) {
+          lockNote = `Department: ${deptLabel ?? "selected"} · ${list.length} personnel · cross-company`;
+          if (list.length === 0) {
+            emptyHint = "No personnel in this org-chart department.";
+          }
+        } else {
+          lockNote = "Select an org-chart department to list assignees";
+          emptyHint = "Select a department first.";
+        }
+      }
+    } else if (assignRosterScope && lockedIds.length > 0) {
+      const allowed = new Set(lockedIds);
+      list = assigneeCandidates.filter((a) => allowed.has(a.id));
+      lockNote = assignRosterScope.lockedCompanyName
+        ? `Locked to ${assignRosterScope.lockedCompanyName} · your org-chart department`
+        : "Locked to your company and org-chart department";
+    } else if (assignRosterScope && !assignRosterScope.elevated) {
+      list = [];
+      lockNote = assignRosterScope.lockedCompanyName
+        ? `No assignable personnel in ${assignRosterScope.lockedCompanyName} · your org-chart department`
+        : "No assignable personnel in your company / department scope";
+      emptyHint = lockNote;
+    } else {
+      const mainCompany = main ? assignmentCompanyKey(main) : null;
+      const locked = Boolean(main && mainCompany && mainCompany !== ASSIGNMENT_NO_COMPANY);
+      list = locked
+        ? assigneeCandidates.filter((a) => assignmentCompanyKey(a) === mainCompany)
+        : [...assigneeCandidates];
+      lockNote = locked && mainCompany ? `Locked to ${assignmentCompanyName(main!)} personnel` : null;
+    }
+
+    // Keep current assignee visible only after a scope is ready (avoid a one-person fake roster).
+    if (scopeReady && mainId && !list.some((a) => a.id === mainId) && main) {
       list = [...list, main];
     }
-    if (!canAssignOffline && mainId) {
-      const withCurrent = list.filter((a) => agentIsOnDuty(a) || a.id === mainId);
-      if (withCurrent.length > 0) list = withCurrent;
-    } else if (!canAssignOffline) {
-      list = list.filter((a) => agentIsOnDuty(a));
+    // Elevated SuperAdmin/HighAdmin may assign Offline personnel; never strip them here.
+    if (!elevated && !canAssignOffline) {
+      if (mainId) {
+        const withCurrent = list.filter((a) => agentIsOnDuty(a) || a.id === mainId);
+        if (withCurrent.length > 0) list = withCurrent;
+      } else {
+        list = list.filter((a) => agentIsOnDuty(a));
+      }
     }
     return {
       candidates: list,
-      lockNote: locked && mainCompany ? `Locked to ${assignmentCompanyName(main!)} personnel` : null,
+      lockNote,
+      emptyHint,
+      scopeReady,
     };
+  }
+
+  /** Prefill elevated company scope from the task's current assignee when opening the editor. */
+  function seedAssignScopeFromRecord(r: KpiRecord) {
+    if (!(assignRosterScope?.elevated || isElevatedAssign)) return;
+    const mainId = r.assignedAgent?.id;
+    if (!mainId) return;
+    const main =
+      assigneeCandidates.find((a) => a.id === mainId) ??
+      allAssignableAgents.find((a) => a.id === mainId) ??
+      null;
+    const companyId =
+      main?.assignmentCompany?.id?.trim() ||
+      main?.team?.id?.trim() ||
+      r.assignedAgent?.team?.id?.trim() ||
+      "";
+    if (
+      companyId &&
+      assignRosterScope?.companies.some((c) => c.id === companyId) &&
+      !assignPickerCompanyId
+    ) {
+      setAssignPickerMode("company");
+      setAssignPickerCompanyId(companyId);
+    }
+  }
+
+  function renderAssignScopePicker() {
+    const elevated = Boolean(assignRosterScope?.elevated || isElevatedAssign);
+    if (!elevated || !assignRosterScope) return null;
+    return (
+      <div className="flex w-56 max-w-full min-w-0 flex-col gap-1">
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={() => setAssignPickerMode("company")}
+            className={cn(
+              "flex-1 rounded-md px-1.5 py-1 text-[10px] font-bold uppercase tracking-wide transition",
+              assignPickerMode === "company"
+                ? "bg-orange-500 text-white"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+            )}
+          >
+            Company
+          </button>
+          <button
+            type="button"
+            onClick={() => setAssignPickerMode("department")}
+            className={cn(
+              "flex-1 rounded-md px-1.5 py-1 text-[10px] font-bold uppercase tracking-wide transition",
+              assignPickerMode === "department"
+                ? "bg-orange-500 text-white"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
+            )}
+          >
+            Department
+          </button>
+        </div>
+        {assignPickerMode === "company" ? (
+          <select
+            value={assignPickerCompanyId}
+            onChange={(e) => setAssignPickerCompanyId(e.target.value)}
+            className="h-7 w-full rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] text-zinc-800 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            aria-label="Assign by company"
+          >
+            <option value="">Select company…</option>
+            {assignRosterScope.companies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <select
+            value={assignPickerDepartmentId}
+            onChange={(e) => setAssignPickerDepartmentId(e.target.value)}
+            className="h-7 w-full rounded-md border border-zinc-300 bg-white px-1.5 text-[11px] text-zinc-800 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            aria-label="Assign by department"
+          >
+            <option value="">Select department…</option>
+            {assignRosterScope.departments.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    );
   }
 
   function subKpiAssigneeLabel(s: SubKpiItem) {
@@ -2079,11 +2452,14 @@ export function AgentKpiKanbanFlow({
     }
 
     const mainAssigneeId = r.assignedAgent?.id;
-    const { candidates: companyScopedAgents, lockNote } = companyLockedCandidatesFor(r);
+    const { candidates: companyScopedAgents, lockNote, emptyHint } = companyLockedCandidatesFor(r);
+    const elevated = Boolean(assignRosterScope?.elevated || isElevatedAssign);
     const subTaskCandidates = companyScopedAgents.filter((a) => a.id !== mainAssigneeId);
     const assignedStillVisible = assignedId && !subTaskCandidates.some((a) => a.id === assignedId);
     const assignedAgentObj = assignedId
-      ? assigneeCandidates.find((a) => a.id === assignedId) ?? null
+      ? assigneeCandidates.find((a) => a.id === assignedId) ??
+        allAssignableAgents.find((a) => a.id === assignedId) ??
+        null
       : null;
     const candidateList =
       assignedStillVisible && assignedAgentObj ? [...subTaskCandidates, assignedAgentObj] : subTaskCandidates;
@@ -2098,11 +2474,14 @@ export function AgentKpiKanbanFlow({
           </p>
           {editing ? (
             <div className="flex w-56 max-w-full min-w-0 flex-col gap-1" data-assignee-editor>
+              {renderAssignScopePicker()}
               <AgentAssigneeSearch
-                key={`sub-assignee-${r.id}-${s.id}-${assignedId}`}
+                key={`sub-assignee-${r.id}-${s.id}-${assignPickerMode}-${assignPickerCompanyId}-${assignPickerDepartmentId}`}
                 value={assignedId}
                 agents={candidateList}
-                placeholder={s.assignedAgentName?.trim() || "Search sub-task assignee…"}
+                placeholder="Search sub-task assignee…"
+                selectedLabel={s.assignedAgentName?.trim() || null}
+                emptyHint={emptyHint}
                 allowClear
                 disabled={busyId === r.id}
                 autoFocus
@@ -2113,7 +2492,16 @@ export function AgentKpiKanbanFlow({
                 }}
               />
               {lockNote ? (
-                <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-500">{lockNote}</p>
+                <p
+                  className={cn(
+                    "text-[10px] font-medium",
+                    elevated
+                      ? "text-zinc-500 dark:text-zinc-400"
+                      : "text-amber-800 dark:text-amber-200/90",
+                  )}
+                >
+                  {lockNote}
+                </p>
               ) : null}
             </div>
           ) : (
@@ -2122,6 +2510,7 @@ export function AgentKpiKanbanFlow({
               data-assignee-editor
               onClick={(e) => {
                 e.stopPropagation();
+                seedAssignScopeFromRecord(r);
                 setEditingAssigneeId(null);
                 setEditingSubAssigneeKey(`${r.id}:${s.id}`);
               }}
@@ -3674,14 +4063,18 @@ export function AgentKpiKanbanFlow({
    */
   function assigneeSearchFor(r: KpiRecord) {
     const currentId = r.assignedAgent?.id ?? "";
-    const { candidates, lockNote } = companyLockedCandidatesFor(r);
+    const { candidates, lockNote, emptyHint } = companyLockedCandidatesFor(r);
+    const elevated = Boolean(assignRosterScope?.elevated || isElevatedAssign);
     return (
       <div className="flex w-56 max-w-full min-w-0 flex-col gap-1" data-assignee-editor>
+        {renderAssignScopePicker()}
         <AgentAssigneeSearch
-          key={`assignee-${r.id}-${currentId}`}
+          key={`assignee-${r.id}-${assignPickerMode}-${assignPickerCompanyId}-${assignPickerDepartmentId}`}
           value={currentId}
           agents={candidates}
-          placeholder={r.assignedAgent?.name ?? "Search assignee…"}
+          placeholder="Search assignee…"
+          selectedLabel={r.assignedAgent?.name ?? null}
+          emptyHint={emptyHint}
           allowClear={canUnassignWork}
           disabled={busyId === r.id}
           autoFocus
@@ -3692,7 +4085,17 @@ export function AgentKpiKanbanFlow({
           }}
         />
         {lockNote ? (
-          <p className="truncate text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{lockNote}</p>
+          <p
+            className={cn(
+              "text-[10px] font-medium leading-snug",
+              elevated
+                ? "text-zinc-500 dark:text-zinc-400"
+                : "text-amber-800 dark:text-amber-200/90",
+            )}
+          >
+            {lockNote}
+            {!elevated ? "." : null}
+          </p>
         ) : null}
       </div>
     );
@@ -3747,7 +4150,11 @@ export function AgentKpiKanbanFlow({
         onClick={(e) => {
           e.stopPropagation();
           setEditingSubAssigneeKey(null);
-          setEditingAssigneeId((current) => (current === r.id ? null : r.id));
+          setEditingAssigneeId((current) => {
+            if (current === r.id) return null;
+            seedAssignScopeFromRecord(r);
+            return r.id;
+          });
         }}
         onPointerDown={(e) => e.stopPropagation()}
         className="group inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md px-1 py-0.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900"
@@ -3810,6 +4217,7 @@ export function AgentKpiKanbanFlow({
               <option value="MONTHLY">Monthly</option>
               <option value="QUARTERLY">Quarterly</option>
               <option value="SEMI_ANNUAL">Semi Annual</option>
+              <option value="YEARLY">Annualy</option>
             </select>
           </label>
         ) : (
@@ -3843,13 +4251,16 @@ export function AgentKpiKanbanFlow({
         {draft.isRecurring &&
         (draft.frequency === "MONTHLY" ||
           draft.frequency === "QUARTERLY" ||
-          draft.frequency === "SEMI_ANNUAL") ? (
+          draft.frequency === "SEMI_ANNUAL" ||
+          draft.frequency === "YEARLY") ? (
           <label className="flex flex-col text-[10px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-500">
             {draft.frequency === "QUARTERLY"
               ? "4-month cycle"
               : draft.frequency === "SEMI_ANNUAL"
                 ? "6-month cycle"
-                : "Month cycle"}{" "}
+                : draft.frequency === "YEARLY"
+                  ? "Annualy cycle"
+                  : "Month cycle"}{" "}
             starts on day (1–31, {tz})
             <select
               value={draft.recurrenceMonthDay}
@@ -4589,9 +5000,6 @@ export function AgentKpiKanbanFlow({
                                     {pendingBadge}
                                   </div>
                                   <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                                    {kpiPillarLabel(r).toLowerCase() !== taskLabel(r).toLowerCase() ? (
-                                      <>{kpiPillarLabel(r)} · </>
-                                    ) : null}
                                     {assigneeLine(r, { canEdit: canAssignWork, editing: editingAssigneeId === r.id })}
                                   </div>
                                 </>

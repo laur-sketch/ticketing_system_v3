@@ -31,6 +31,10 @@ import {
   type RequestTypeId,
 } from "@/lib/request-types";
 import {
+  firstVisibleIntakeRequestType,
+  isRequestTypeHiddenFromIntake,
+} from "@/lib/intake-request-type-visibility";
+import {
   DELIVERY_OF_CHECK_OPTIONS,
   MODE_OF_PAYMENT_CHECK,
   MODE_OF_PAYMENT_OPTIONS,
@@ -107,17 +111,54 @@ function NewTicketPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [screenshots, setScreenshots] = useState<File[]>([]);
+  const [priority, setPriority] = useState<"LOW" | "MEDIUM" | "HIGH" | "URGENT">("LOW");
   const [modeOfPayment, setModeOfPayment] = useState("");
   const [deliveryOfCheck, setDeliveryOfCheck] = useState("");
   const [letAccountingHandlePaymentMode, setLetAccountingHandlePaymentMode] = useState(false);
   const [draftRequestType, setDraftRequestType] =
     useState<RequestTypeId>(DEFAULT_REQUEST_TYPE);
+  const [hiddenRequestTypeIds, setHiddenRequestTypeIds] = useState<RequestTypeId[]>([]);
+  const [hiddenRequestTypesReady, setHiddenRequestTypesReady] = useState(false);
   const activeRequestType = useMemo(() => {
     const raw = searchParams.get("type");
     return raw ? parseRequestTypeId(raw) : null;
   }, [searchParams]);
   const showTypeSelection = activeRequestType == null;
   const showRequestForm = activeRequestType != null;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/public/intake-request-types", { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as { hiddenTypeIds?: RequestTypeId[] };
+        if (cancelled) return;
+        setHiddenRequestTypeIds(Array.isArray(data.hiddenTypeIds) ? data.hiddenTypeIds : []);
+      } finally {
+        if (!cancelled) setHiddenRequestTypesReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hiddenRequestTypesReady) return;
+    const firstVisible = firstVisibleIntakeRequestType(hiddenRequestTypeIds);
+    setDraftRequestType((current) =>
+      isRequestTypeHiddenFromIntake(current, hiddenRequestTypeIds) ? firstVisible : current,
+    );
+  }, [hiddenRequestTypesReady, hiddenRequestTypeIds]);
+
+  useEffect(() => {
+    if (!hiddenRequestTypesReady || activeRequestType == null) return;
+    if (isRequestTypeHiddenFromIntake(activeRequestType, hiddenRequestTypeIds)) {
+      setError("That request type is not available.");
+      router.replace("/tickets/new");
+    }
+  }, [hiddenRequestTypesReady, activeRequestType, hiddenRequestTypeIds, router]);
+
   const isPaymentRequest = activeRequestType === "REQUEST_FOR_PAYMENT";
   const isAcaRequest = activeRequestType === "AUTHORITY_TO_CONDUCT_ACTIVITY";
   const isRequisitionRequest = activeRequestType === "ITEM_REQUISITION_SLIP";
@@ -777,6 +818,10 @@ function NewTicketPageInner() {
     session.user.authProvider.trim().toLowerCase() === "google";
 
   function goToRequestType(id: RequestTypeId) {
+    if (isRequestTypeHiddenFromIntake(id, hiddenRequestTypeIds)) {
+      setError("That request type is not available.");
+      return;
+    }
     if (isIssueConcernTicket(id) && issueConcernLocked) {
       setError(
         intake.message ??
@@ -1395,6 +1440,7 @@ function NewTicketPageInner() {
           fd.append("issue", issue);
         }
         fd.append("requestType", activeRequestType ?? DEFAULT_REQUEST_TYPE);
+        fd.append("priority", priority);
         appendPaymentFields(fd);
         appendRequisitionFields(fd);
         appendFundTransferFields(fd);
@@ -1430,6 +1476,7 @@ function NewTicketPageInner() {
         const payload: Record<string, unknown> = {
           issue: isAcaRequest ? acaDescription.trim() : issue,
           requestType: activeRequestType ?? DEFAULT_REQUEST_TYPE,
+          priority,
         };
         appendPaymentFields(payload);
         appendRequisitionFields(payload);
@@ -1553,6 +1600,7 @@ function NewTicketPageInner() {
               onChange={setDraftRequestType}
               onContinue={goToRequestType}
               disabled={!intakeGateReady && isRequestorIntakeLockRole}
+              hiddenTypeIds={hiddenRequestTypeIds}
               disabledTypeIds={issueConcernLocked ? (["ISSUE_CONCERN_TICKET"] as const) : []}
               disabledTypeHint={
                 issueConcernLocked
@@ -1575,6 +1623,27 @@ function NewTicketPageInner() {
                 Back to type selection
               </button>
             </div>
+
+            <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              Priority level{" "}
+              <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
+              <Select
+                name="priority"
+                value={priority}
+                onChange={(e) =>
+                  setPriority(e.target.value as "LOW" | "MEDIUM" | "HIGH" | "URGENT")
+                }
+                className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              >
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+                <option value="URGENT">Urgent</option>
+              </Select>
+              <span className="mt-1 block text-[11px] text-zinc-500 dark:text-zinc-400">
+                Defaults to Low if you leave it as-is.
+              </span>
+            </label>
             {isStaffRequestorIntake ? (
               <>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">

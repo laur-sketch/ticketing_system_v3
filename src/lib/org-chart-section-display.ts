@@ -92,6 +92,88 @@ export function orgChartMajorDepartments(
   return sections.filter((s) => s.depth <= 0 || !s.parentId);
 }
 
+/** Resolve company team by walking parents (same rule as server routing). */
+export function orgChartSectionCompanyTeamId(
+  sections: Array<Pick<OrgChartSectionOption, "id" | "parentId" | "companyTeamId">>,
+  sectionId: string,
+): string | null {
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  let current: string | null = sectionId.trim() || null;
+  const seen = new Set<string>();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const row = byId.get(current);
+    if (!row) return null;
+    if (row.companyTeamId) return row.companyTeamId;
+    current = row.parentId;
+  }
+  return null;
+}
+
+/** Keep sections belonging to a company team (via self or ancestor). */
+export function filterOrgChartSectionsByCompanyTeam(
+  sections: OrgChartSectionOption[],
+  companyTeamId: string | null | undefined,
+): OrgChartSectionOption[] {
+  const team = (companyTeamId ?? "").trim();
+  if (!team) return sections;
+  return sections.filter((s) => orgChartSectionCompanyTeamId(sections, s.id) === team);
+}
+
+/** Smart-filter options: same labels/indent as org-chart ticket intake. */
+export function buildOrgChartDepartmentFilterOptions(
+  sections: OrgChartSectionOption[],
+  companyTeamId?: string | null,
+): Array<{ value: string; label: string }> {
+  const scoped = filterOrgChartSectionsByCompanyTeam(sections, companyTeamId);
+  return scoped.map((section) => ({
+    value: section.id,
+    label: orgChartSectionOptionText(section),
+  }));
+}
+
+/** Section id plus all nested subsection ids. */
+export function collectOrgChartSectionDescendantIds(
+  rootId: string,
+  sections: Array<Pick<OrgChartSectionOption, "id" | "parentId">>,
+): Set<string> {
+  const id = rootId.trim();
+  const out = new Set<string>();
+  if (!id) return out;
+  const childrenByParent = new Map<string | null, string[]>();
+  for (const section of sections) {
+    const list = childrenByParent.get(section.parentId) ?? [];
+    list.push(section.id);
+    childrenByParent.set(section.parentId, list);
+  }
+  out.add(id);
+  const stack = [...(childrenByParent.get(id) ?? [])];
+  while (stack.length > 0) {
+    const next = stack.pop()!;
+    if (out.has(next)) continue;
+    out.add(next);
+    stack.push(...(childrenByParent.get(next) ?? []));
+  }
+  return out;
+}
+
+/** Merged HRIS user ids in a section tree (direct memberships only in the map). */
+export function mergedSourceUserIdsForOrgChartSectionTree(
+  sectionId: string,
+  sections: Array<Pick<OrgChartSectionOption, "id" | "parentId">>,
+  membersBySection: Record<string, string[]>,
+): Set<string> {
+  const treeIds = collectOrgChartSectionDescendantIds(sectionId, sections);
+  const out = new Set<string>();
+  for (const sid of treeIds) {
+    for (const mergedId of membersBySection[sid] ?? []) {
+      const key = mergedId.trim();
+      if (key) out.add(key);
+    }
+  }
+  return out;
+}
+
 /** Direct + nested sub-departments under a major department. */
 export function orgChartSubDepartments(
   sections: OrgChartSectionOption[],

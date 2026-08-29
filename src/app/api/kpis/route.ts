@@ -4,7 +4,7 @@ import { requireRole } from "@/lib/access";
 import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { computeKpis, parseHelpdeskCadence, parseKpiRangeFromQuery } from "@/lib/kpis";
 import { prisma } from "@/lib/prisma";
-import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
+import { resolveStaffCompanyTeamId, resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
 import { findSessionAgentId } from "@/lib/session-agent";
 
 export async function GET(req: Request) {
@@ -19,7 +19,10 @@ export async function GET(req: Request) {
     session?.user?.role === "Personnel"
       ? await findSessionAgentId({ email: session.user.email, name: session.user.name })
       : null;
-  const assignedAgentId = session?.user?.role === "Personnel" ? operator?.id ?? "__none__" : undefined;
+  const requestedAgentId = searchParams.get("agentId")?.trim() || null;
+
+  let assignedAgentId: string | undefined =
+    session?.user?.role === "Personnel" ? operator?.id ?? "__none__" : undefined;
 
   /**
    * Company scope uses routed-to team (`ticket.teamId`) — same as Request / Company boards —
@@ -27,7 +30,27 @@ export async function GET(req: Request) {
    */
   let teamId: string | undefined;
   let teamIds: string[] | undefined;
-  if (session?.user?.role === "Admin") {
+
+  if (session?.user?.role !== "Personnel" && requestedAgentId) {
+    const agent = await prisma.agent.findUnique({
+      where: { id: requestedAgentId },
+      select: { id: true, name: true },
+    });
+    if (!agent) {
+      return NextResponse.json({ error: "Personnel not found." }, { status: 404 });
+    }
+    if (session.user.role === "Admin") {
+      const scoped = await resolveStaffCompanyTeamId(session.user.email);
+      if (!scoped) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const agentCompanyId = await resolveAgentDesignatedCompanyId(requestedAgentId);
+      if (agentCompanyId !== scoped) {
+        return NextResponse.json({ error: "Forbidden personnel filter." }, { status: 403 });
+      }
+    }
+    assignedAgentId = requestedAgentId;
+  } else if (session?.user?.role === "Admin") {
     const scoped = await resolveStaffCompanyTeamId(session.user.email);
     const requested = searchParams.get("companyId")?.trim() || null;
     // Never fall back to an arbitrary client companyId — unscoped Admins see nothing.

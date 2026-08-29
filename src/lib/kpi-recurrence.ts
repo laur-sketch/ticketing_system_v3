@@ -5,7 +5,13 @@
 
 import { DateTime } from "luxon";
 
-export type KpiFrequencyCode = "DAILY" | "WEEKLY" | "MONTHLY" | "QUARTERLY" | "SEMI_ANNUAL";
+export type KpiFrequencyCode =
+  | "DAILY"
+  | "WEEKLY"
+  | "MONTHLY"
+  | "QUARTERLY"
+  | "SEMI_ANNUAL"
+  | "YEARLY";
 
 /** Fallback IANA zone: GMT+8 Taiwan. */
 const FALLBACK_TIME_ZONE = "Asia/Taipei";
@@ -144,6 +150,24 @@ export function getSemiAnnualPeriodKey(now: Date, anchorDay: number, timeZone: s
   return `S:${timeZone}:${start.toISODate()}`;
 }
 
+/** Yearly = 12-month blocks starting on the anchor day in January (or prior year if before that day). */
+export function getYearlyPeriodStartDt(now: Date, anchorDay: number, timeZone: string): DateTime {
+  const dt = atZone(now, timeZone);
+  const startFor = (year: number) => {
+    const dim = DateTime.fromObject({ year, month: 1, day: 1 }, { zone: timeZone }).daysInMonth ?? 28;
+    const dom = Math.min(Math.max(1, anchorDay), dim);
+    return DateTime.fromObject({ year, month: 1, day: dom }, { zone: timeZone }).startOf("day");
+  };
+  const candidate = startFor(dt.year);
+  if (dt.startOf("day") >= candidate) return candidate;
+  return startFor(dt.year - 1);
+}
+
+export function getYearlyPeriodKey(now: Date, anchorDay: number, timeZone: string): string {
+  const start = getYearlyPeriodStartDt(now, anchorDay, timeZone);
+  return `Y:${timeZone}:${start.toISODate()}`;
+}
+
 export function computePeriodKey(
   frequency: KpiFrequencyCode,
   recurrenceWeekday: number | null | undefined,
@@ -170,6 +194,10 @@ export function computePeriodKey(
     case "SEMI_ANNUAL": {
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       return getSemiAnnualPeriodKey(now, dom, zone);
+    }
+    case "YEARLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      return getYearlyPeriodKey(now, dom, zone);
     }
     default:
       return getDailyPeriodKey(now, zone);
@@ -198,6 +226,14 @@ export function getNextSemiAnnualPeriodStartDt(periodStart: DateTime, anchorDay:
   const dim = DateTime.fromObject({ year: n.year, month: n.month, day: 1 }, { zone: z }).daysInMonth ?? 28;
   const dom = Math.min(Math.max(1, anchorDay), dim);
   return DateTime.fromObject({ year: n.year, month: n.month, day: dom }, { zone: z }).startOf("day");
+}
+
+export function getNextYearlyPeriodStartDt(periodStart: DateTime, anchorDay: number): DateTime {
+  const z = periodStart.zone;
+  const n = periodStart.plus({ years: 1 });
+  const dim = DateTime.fromObject({ year: n.year, month: 1, day: 1 }, { zone: z }).daysInMonth ?? 28;
+  const dom = Math.min(Math.max(1, anchorDay), dim);
+  return DateTime.fromObject({ year: n.year, month: 1, day: dom }, { zone: z }).startOf("day");
 }
 
 /** Instant when the current period ends (start of next period) as a JS Date (absolute instant). */
@@ -230,6 +266,11 @@ export function getPeriodEndExclusive(
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       const start = getSemiAnnualPeriodStartDt(now, dom, zone);
       return getNextSemiAnnualPeriodStartDt(start, dom).toJSDate();
+    }
+    case "YEARLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      const start = getYearlyPeriodStartDt(now, dom, zone);
+      return getNextYearlyPeriodStartDt(start, dom).toJSDate();
     }
     default:
       return atZone(now, zone).startOf("day").plus({ days: 1 }).toJSDate();
@@ -267,6 +308,10 @@ export function getPeriodEndExclusiveFromCycleStart(
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       return getNextSemiAnnualPeriodStartDt(start, dom).toJSDate();
     }
+    case "YEARLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      return getNextYearlyPeriodStartDt(start, dom).toJSDate();
+    }
     default:
       return start.plus({ days: 1 }).toJSDate();
   }
@@ -275,7 +320,7 @@ export function getPeriodEndExclusiveFromCycleStart(
 /**
  * When a completed checklist may roll into the next recurrence cycle.
  *
- * - WEEKLY / MONTHLY / QUARTERLY / SEMI_ANNUAL: eligible immediately on full completion
+ * - WEEKLY / MONTHLY / QUARTERLY / SEMI_ANNUAL / YEARLY: eligible immediately on full completion
  *   (no artificial +1 calendar-day wait before resetting to CURRENT).
  * - DAILY (and callers that omit frequency, e.g. one-off archive): still
  *   wait until the start of the next calendar day in `timeZone` so the
@@ -291,7 +336,8 @@ export function getRolloverEligibleAfterCompletion(
     frequency === "WEEKLY" ||
     frequency === "MONTHLY" ||
     frequency === "QUARTERLY" ||
-    frequency === "SEMI_ANNUAL"
+    frequency === "SEMI_ANNUAL" ||
+    frequency === "YEARLY"
   ) {
     return completedAtUtc;
   }
@@ -302,7 +348,7 @@ export function getRolloverEligibleAfterCompletion(
 
 /**
  * Advance a calendar target date by one recurrence period.
- * Monthly / quarterly / semi-annual preserve day-of-month (clamped to month length).
+ * Monthly / quarterly / semi-annual / yearly preserve day-of-month (clamped to month length).
  */
 export function advanceDueDateYmdForFrequency(
   dueYmd: string,
@@ -335,6 +381,8 @@ export function advanceDueDateYmdForFrequency(
       return withClampedDay(dt.plus({ months: 4 }), dt.day);
     case "SEMI_ANNUAL":
       return withClampedDay(dt.plus({ months: 6 }), dt.day);
+    case "YEARLY":
+      return withClampedDay(dt.plus({ years: 1 }), dt.day);
     default:
       return dt.plus({ days: 1 }).toISODate();
   }

@@ -42,7 +42,7 @@ function taskDueDate(task: CalendarTask) {
     return dateFromTaskValue(task.createdAt) ?? new Date();
   }
 
-  const frequency = ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL"].includes(task.frequency)
+  const frequency = ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "YEARLY"].includes(task.frequency)
     ? task.frequency
     : "DAILY";
 

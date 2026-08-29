@@ -6,6 +6,7 @@ import {
   getQuarterlyPeriodStartDt,
   getSemiAnnualPeriodStartDt,
   getWeeklyPeriodStartDt,
+  getYearlyPeriodStartDt,
   normalizeTimeZone,
 } from "@/lib/kpi-recurrence";
 import { DateTime } from "luxon";
@@ -37,6 +38,10 @@ export function getPeriodStartInclusive(
     case "SEMI_ANNUAL": {
       const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
       return getSemiAnnualPeriodStartDt(now, dom, zone).toJSDate();
+    }
+    case "YEARLY": {
+      const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+      return getYearlyPeriodStartDt(now, dom, zone).toJSDate();
     }
     default:
       return DateTime.fromMillis(now.getTime(), { zone }).startOf("day").toJSDate();

@@ -66,8 +66,13 @@ function companyKey(name: string | null | undefined): string {
   return normalizePersonName(name ?? "");
 }
 
-function matchTeamId(
-  companyName: string | null,
+/**
+ * Map HRIS `company_name` onto a primary Team the same way the Personnel tab does
+ * (alias → exact/loose name match). Synthetic ids (`company:…`) are used when no
+ * Team row exists — assignable APIs should treat those as unscoped for Team filters.
+ */
+export function matchPersonnelCompanyTeam(
+  companyName: string | null | undefined,
   teams: Array<{ id: string; name: string }>,
 ): { teamId: string; teamName: string } {
   const roster = resolveRosterCompanyName(companyName);
@@ -84,6 +89,14 @@ function matchTeamId(
   });
   if (loose) return { teamId: loose.id, teamName: loose.name };
   return { teamId: `company:${key.replace(/\s+/g, "-")}`, teamName: display };
+}
+
+/** @deprecated use matchPersonnelCompanyTeam */
+function matchTeamId(
+  companyName: string | null,
+  teams: Array<{ id: string; name: string }>,
+): { teamId: string; teamName: string } {
+  return matchPersonnelCompanyTeam(companyName, teams);
 }
 
 function personTokens(name: string): Set<string> {

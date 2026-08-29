@@ -88,8 +88,8 @@ async function migrateLegacyMconpincoTeam(): Promise<void> {
 }
 
 /**
- * One-time: legacy MCHISI SBU split → MCHISI LPG (existing records keep their
- * data) + MCHISI FAMES (created fresh by the roster ensure loop).
+ * One-time: legacy MCHISI SBU removed from roster → fold into MCHISI LPG
+ * (MCHISI FAMES remains a separate roster company).
  */
 async function migrateLegacyMchisiSplit(): Promise<void> {
   const legacy = await prisma.team.findFirst({

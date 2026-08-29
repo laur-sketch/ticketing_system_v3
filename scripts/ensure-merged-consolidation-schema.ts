@@ -1,5 +1,6 @@
 import { PrismaClient as PrismaClientSecondary } from "@prisma/client/secondary";
 import { ensureMergedPortalWorkTables } from "./ensure-merged-task-kpi-tables";
+import { ensureMergedCompaniesSchema } from "./ensure-merged-companies-schema";
 
 function sqlId(name: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) {
@@ -15,6 +16,7 @@ export async function ensureMergedConsolidationSchema(
   sourceTag: string,
 ) {
   await ensureMergedPortalWorkTables(db, targetDb, sourceTag);
+  await ensureMergedCompaniesSchema(db, targetDb);
   const target = sqlId(targetDb);
 
   await db.$executeRawUnsafe(`

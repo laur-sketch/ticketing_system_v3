@@ -86,13 +86,14 @@ export async function GET(req: Request) {
           sourceUserId: { in: allowedIds.map((id) => BigInt(id)) },
         },
         orderBy: [{ overallEfficiency: "desc" }, { displayName: "asc" }],
-        include: { user: { select: { name: true, companyName: true, isActive: true, sourceDatabase: true } } },
+        include: { user: { select: { name: true, companyName: true, department: true, isActive: true, sourceDatabase: true } } },
       });
 
       type PersonnelRow = {
         sourceUserId: string;
         name: string;
         companyName: string | null;
+        departmentName: string | null;
         totalTasks: number;
         completedTasks: number;
         delayedTasks: number;
@@ -133,6 +134,7 @@ export async function GET(req: Request) {
           sourceUserId: row.sourceUserId.toString(),
           name,
           companyName: row.user?.companyName ?? null,
+          departmentName: row.user?.department?.trim() || null,
           totalTasks: row.totalTasks,
           completedTasks: row.completedTasks,
           delayedTasks: row.delayedTasks,
@@ -164,6 +166,8 @@ export async function GET(req: Request) {
         byName.set(key, {
           ...canonical,
           name: canonical.name.includes(",") ? canonical.name : other.name.includes(",") ? other.name : canonical.name,
+          companyName: canonical.companyName ?? other.companyName,
+          departmentName: canonical.departmentName ?? other.departmentName,
           totalTasks: Math.max(canonical.totalTasks, other.totalTasks),
           completedTasks: Math.max(canonical.completedTasks, other.completedTasks),
           delayedTasks: Math.max(canonical.delayedTasks, other.delayedTasks),

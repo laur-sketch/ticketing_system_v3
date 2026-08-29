@@ -10,6 +10,7 @@ import {
   getQuarterlyPeriodKey,
   getSemiAnnualPeriodKey,
   getWeeklyPeriodKey,
+  getYearlyPeriodKey,
   isKpiMetricsWorkingDay,
   normalizeTimeZone,
   type KpiFrequencyCode,
@@ -175,6 +176,14 @@ function periodKeysForImportedMonth(
     const keys = new Set<string>();
     for (const ymd of days) {
       keys.add(getSemiAnnualPeriodKey(DateTime.fromISO(ymd, { zone }).toJSDate(), dom, zone));
+    }
+    return [...keys];
+  }
+  if (frequency === "YEARLY") {
+    const dom = typeof recurrenceMonthDay === "number" ? recurrenceMonthDay : 1;
+    const keys = new Set<string>();
+    for (const ymd of days) {
+      keys.add(getYearlyPeriodKey(DateTime.fromISO(ymd, { zone }).toJSDate(), dom, zone));
     }
     return [...keys];
   }
@@ -557,7 +566,7 @@ export async function applyDailyPercentSnapshotsByTitle(args: {
   const allRecurring = await prisma.kpiMaintenance.findMany({
     where: {
       isRecurring: true,
-      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL"] },
+      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "YEARLY"] },
       ...whereAgent,
     },
     select: {
@@ -672,7 +681,7 @@ export async function applyPillarPercentSnapshots(args: {
   const allRecurringKpis = await prisma.kpiMaintenance.findMany({
     where: {
       isRecurring: true,
-      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL"] },
+      frequency: { in: ["DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "YEARLY"] },
       ...whereAgent,
     },
     select: {

@@ -15,7 +15,7 @@ import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { resolveAgentIdsForOrgChartSection, listOrgChartSectionHeads } from "@/lib/org-chart-section-roster";
 
 export async function GET(req: Request) {
-  const { session, unauthorized } = await requireRole(["Admin", "Personnel"]);
+  const { session, unauthorized } = await requireRole(["Admin", "Personnel", "SuperAdmin", "HighAdmin"]);
   if (unauthorized || !session) return unauthorized;
 
   const perms = await resolveOpsPermissions(session);
@@ -66,6 +66,7 @@ export async function GET(req: Request) {
 
   const [staff, orgNodes] = await Promise.all([
     loadHrisAssignableStaff({
+      // Company filter uses the same merged_users.company_name → Team mapping as Personnel.
       companyTeamId: companyIdFilter,
     }),
     prisma.orgChartNode.findMany({
@@ -83,7 +84,13 @@ export async function GET(req: Request) {
   const agents = agentIds.length
     ? await prisma.agent.findMany({
         where: { id: { in: agentIds } },
-        include: { team: true },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          teamId: true,
+          team: { select: { id: true, name: true } },
+        },
       })
     : [];
   const agentById = new Map(agents.map((a) => [a.id, a]));
@@ -111,11 +118,21 @@ export async function GET(req: Request) {
       if (!agent) return null;
       const isOnDuty = onDutyIds.has(s.agentId);
       const profile = profileByEmail.get(agent.email?.trim().toLowerCase() ?? "");
+      // Prefer Personnel-tab company on the agent payload (not agent.team, which can drift).
+      const assignmentCompany = s.assignmentCompany;
+      const team =
+        assignmentCompany?.id != null
+          ? { id: assignmentCompany.id, name: assignmentCompany.name }
+          : agent.team;
       return {
-        ...agent,
+        id: agent.id,
+        name: agent.name,
+        email: agent.email,
+        teamId: team?.id ?? agent.teamId,
+        team,
         portalRole: s.portalRole,
         headPrivileges: s.headPrivileges,
-        assignmentCompany: s.assignmentCompany,
+        assignmentCompany,
         isOnDuty,
         dutyStatus: isOnDuty ? ("ON_DUTY" as const) : ("OFFLINE" as const),
         profileImage: profile?.profileImage ?? null,

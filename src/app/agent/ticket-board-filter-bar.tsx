@@ -122,7 +122,7 @@ export function TicketBoardFilterBar(props: TicketBoardFilterBarProps) {
   for (const def of visibleFields) {
     filterOptions[def.type] = fieldMap[def.id].options
       .filter((o) => o.value !== "ALL")
-      .map((o) => ({ name: o.label, icon: undefined }));
+      .map((o) => ({ name: o.label, icon: undefined, id: o.value }));
   }
 
   const viewOptions: FilterOption[][] = [

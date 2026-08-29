@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Filters, {
@@ -19,6 +19,8 @@ export type TaskFilterField = {
   visible: boolean;
   value: string;
   options: Array<{ value: string; label: string }>;
+  /** Value treated as unfiltered — hidden from chips. Default `all`. */
+  emptyValue?: string;
 };
 
 type TaskBoardFilterBarProps = {
@@ -26,12 +28,16 @@ type TaskBoardFilterBarProps = {
   placeholder: string;
   category: TaskFilterField;
   frequency: TaskFilterField;
+  company?: TaskFilterField;
+  department?: TaskFilterField;
   savedFilterStorageKey?: string;
 };
 
-type FieldId = "category" | "frequency";
+type FieldId = "category" | "frequency" | "company" | "department";
 
 const FIELD_DEFS: Array<{ id: FieldId; type: string; param: string }> = [
+  { id: "company", type: "Company", param: "company" },
+  { id: "department", type: "Department", param: "department" },
   { id: "category", type: "Category", param: "category" },
   { id: "frequency", type: "Frequency", param: "frequency" },
 ];
@@ -47,11 +53,15 @@ export function TaskBoardFilterBar(props: TaskBoardFilterBarProps) {
   const router = useRouter();
   const [query, setQuery] = useState(initialQuery);
   const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() =>
-    savedFilterStorageKey ? loadSavedFilters(savedFilterStorageKey) : []
+    savedFilterStorageKey ? loadSavedFilters(savedFilterStorageKey) : [],
   );
 
+  useEffect(() => {
+    setQuery(initialQuery);
+  }, [initialQuery]);
+
   function updateSavedFilters(
-    next: SavedFilter[] | ((prev: SavedFilter[]) => SavedFilter[])
+    next: SavedFilter[] | ((prev: SavedFilter[]) => SavedFilter[]),
   ) {
     setSavedFilters((prev) => {
       const updated = typeof next === "function" ? next(prev) : next;
@@ -60,17 +70,37 @@ export function TaskBoardFilterBar(props: TaskBoardFilterBarProps) {
     });
   }
 
-  const fieldMap: Record<FieldId, TaskFilterField> = {
+  const fieldMap: Record<FieldId, TaskFilterField | undefined> = {
     category: props.category,
     frequency: props.frequency,
+    company: props.company,
+    department: props.department,
   };
+
+  function emptyValue(field: TaskFilterField) {
+    return (field.emptyValue ?? "all").toLowerCase();
+  }
+
+  function isEmpty(field: TaskFilterField, value: string) {
+    const v = value.trim().toLowerCase();
+    return !v || v === emptyValue(field);
+  }
 
   function optionLabel(field: TaskFilterField, value: string) {
     return field.options.find((o) => o.value === value)?.label ?? value;
   }
 
   function optionValue(field: TaskFilterField, label: string) {
-    return field.options.find((o) => o.label === label)?.value ?? "ALL";
+    const exact = field.options.find((o) => o.label === label);
+    if (exact) return exact.value;
+    const lower = label.trim().toLowerCase();
+    const byLabel = field.options.find((o) => o.label.toLowerCase() === lower);
+    if (byLabel) return byLabel.value;
+    const byValue = field.options.find(
+      (o) => o.value === label || o.value.toLowerCase() === lower,
+    );
+    if (byValue) return byValue.value;
+    return field.emptyValue ?? "all";
   }
 
   function navigate(patch: (params: URLSearchParams) => void) {
@@ -88,11 +118,11 @@ export function TaskBoardFilterBar(props: TaskBoardFilterBarProps) {
     });
   }
 
-  const visibleFields = FIELD_DEFS.filter((def) => fieldMap[def.id].visible);
+  const visibleFields = FIELD_DEFS.filter((def) => fieldMap[def.id]?.visible);
 
   const filters: Filter[] = visibleFields.flatMap((def) => {
     const field = fieldMap[def.id];
-    if (field.value.toLowerCase() === "all") return [];
+    if (!field || isEmpty(field, field.value)) return [];
     return [
       {
         id: def.type,
@@ -105,15 +135,17 @@ export function TaskBoardFilterBar(props: TaskBoardFilterBarProps) {
 
   const filterOptions: Partial<Record<string, FilterOption[]>> = {};
   for (const def of visibleFields) {
-    filterOptions[def.type] = fieldMap[def.id].options
-      .filter((o) => o.value.toLowerCase() !== "all")
-      .map((o) => ({ name: o.label, icon: undefined }));
+    const field = fieldMap[def.id]!;
+    filterOptions[def.type] = field.options
+      .filter((o) => !isEmpty(field, o.value))
+      .map((o) => ({ name: o.label, icon: undefined, id: o.value }));
   }
 
   const viewOptions: FilterOption[][] = [
     visibleFields.map((def) => ({
       name: def.type,
       icon: <FilterIcon type={def.type} />,
+      id: def.id,
     })),
   ];
 
@@ -122,14 +154,14 @@ export function TaskBoardFilterBar(props: TaskBoardFilterBarProps) {
       const byType = new Map(updated.map((f) => [f.type, f.value[f.value.length - 1]]));
       for (const def of FIELD_DEFS) {
         const field = fieldMap[def.id];
-        if (!field.visible) continue;
+        if (!field?.visible) continue;
         const label = byType.get(def.type);
         if (label === undefined) {
           params.delete(def.param);
           continue;
         }
         const code = optionValue(field, label);
-        if (code.toLowerCase() === "all") params.delete(def.param);
+        if (isEmpty(field, code)) params.delete(def.param);
         else params.set(def.param, code);
       }
     });
@@ -141,20 +173,25 @@ export function TaskBoardFilterBar(props: TaskBoardFilterBarProps) {
   }
 
   function addFilter(type: string, value: string) {
-    setFilters((prev) => [...prev.filter((f) => f.type !== type), {
-      id: type,
-      type,
-      operator: FilterOperator.IS,
-      value: [value],
-    }]);
+    setFilters((prev) => [
+      ...prev.filter((f) => f.type !== type),
+      {
+        id: type,
+        type,
+        operator: FilterOperator.IS,
+        value: [value],
+      },
+    ]);
   }
 
   function saveCurrentFilter(name: string) {
     const params = new URLSearchParams(window.location.search);
     const captured: Record<string, string> = {};
     for (const def of FIELD_DEFS) {
+      const field = fieldMap[def.id];
+      if (!field?.visible) continue;
       const value = params.get(def.param);
-      if (value && value.toLowerCase() !== "all") captured[def.param] = value;
+      if (value && !isEmpty(field, value)) captured[def.param] = value;
     }
     const q = params.get("q");
     if (q) captured.q = q;

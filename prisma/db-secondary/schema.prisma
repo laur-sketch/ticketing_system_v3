@@ -8,6 +8,27 @@ datasource db {
   url      = env("DATABASE_URL_SECONDARY")
 }
 
+/// HRIS companies with logo paths (ETL from hris-dev.companies).
+model MergedCompany {
+  sourceCompanyId BigInt    @id @map("source_company_id") @db.UnsignedBigInt
+  sourceDatabase  String    @default("hris-dev") @map("source_database") @db.VarChar(64)
+  name            String    @map("name") @db.VarChar(255)
+  /// Relative HRIS storage path (e.g. company-logos/….png).
+  logoPath        String?   @map("logo_path") @db.VarChar(255)
+  /// Optional inlined logo as data URL when the file was found on disk.
+  logoImage       String?   @map("logo_image") @db.LongText
+  phone           String?   @map("phone") @db.VarChar(64)
+  email           String?   @map("email") @db.VarChar(255)
+  address         String?   @map("address") @db.Text
+  createdAt       DateTime? @map("created_at")
+  updatedAt       DateTime? @map("updated_at")
+  mergedAt        DateTime  @default(now()) @map("merged_at")
+
+  @@index([name], map: "idx_merged_companies_name")
+  @@index([sourceDatabase], map: "idx_merged_companies_source_db")
+  @@map("merged_companies")
+}
+
 /// HRIS employees denormalized with company name (ETL target — read-mostly).
 /// sourceUserId = upstream user id; sourceDatabase = upstream DB name (e.g. hris-dev).
 model MergedUser {

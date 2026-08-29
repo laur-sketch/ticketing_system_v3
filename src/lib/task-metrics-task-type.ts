@@ -2,8 +2,11 @@ import { isItProjectImplementationPillar } from "@/lib/it-task-pillar-titles";
 import { isFieldAssignmentTask, isProjectTask } from "@/lib/kpi-subkpis";
 import { usesProjectTimelineTracker } from "@/lib/it-project-subkpis";
 
-/** Task metrics Task Type filter (no All — always scoped). */
+/** Concrete task-type buckets for company Task Metrics. */
 export type TaskMetricsTaskType = "task" | "project" | "field" | "requests";
+
+/** Smart-filter value — `ALL` = every type on one page, sectioned. */
+export type TaskMetricsTaskTypeFilter = TaskMetricsTaskType | "ALL";
 
 export const TASK_METRICS_TASK_TYPE_OPTIONS: Array<{
   value: TaskMetricsTaskType;
@@ -15,6 +18,12 @@ export const TASK_METRICS_TASK_TYPE_OPTIONS: Array<{
   { value: "requests", label: "Requests" },
 ];
 
+/** Section order when the Task filter is cleared (all types). */
+export const TASK_METRICS_ALL_TYPE_SECTIONS: Array<{
+  value: TaskMetricsTaskType;
+  label: string;
+}> = TASK_METRICS_TASK_TYPE_OPTIONS;
+
 /** Fixed donut order when Task Type = Task. */
 export const TASK_FREQUENCY_DONUT_KEYS = [
   "ONE-OFF",
@@ -23,6 +32,7 @@ export const TASK_FREQUENCY_DONUT_KEYS = [
   "MONTHLY",
   "QUARTERLY",
   "SEMI_ANNUAL",
+  "YEARLY",
 ] as const;
 
 export type TaskFrequencyDonutKey = (typeof TASK_FREQUENCY_DONUT_KEYS)[number];
@@ -35,6 +45,16 @@ export function parseTaskMetricsTaskType(raw: string | null | undefined): TaskMe
   const v = (raw ?? "").trim().toLowerCase();
   if (v === "project" || v === "field" || v === "requests") return v;
   return "task";
+}
+
+/** URL / smart-filter: missing, blank, or `all` → unscoped (all types). */
+export function parseTaskMetricsTaskTypeFilter(
+  raw: string | null | undefined,
+): TaskMetricsTaskTypeFilter {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (!v || v === "all") return "ALL";
+  if (v === "project" || v === "field" || v === "requests" || v === "task") return v;
+  return "ALL";
 }
 
 function isProjectLike(row: { title: string; subKpis: unknown }): boolean {
@@ -70,7 +90,7 @@ export function kpiMatchesTaskMetricsType(
 
 /**
  * Donut key for the selected Task Type:
- * - Task → ONE-OFF / DAILY / WEEKLY / MONTHLY / QUARTERLY / SEMI_ANNUAL
+ * - Task → ONE-OFF / DAILY / WEEKLY / MONTHLY / QUARTERLY / SEMI_ANNUAL / YEARLY
  * - Project → single PROJECTS bucket (all projects)
  * - Field Assignment → single FIELD ASSIGNMENT bucket
  * - Requests → no checklist donuts (ticket HELPDESK / USER SUPPORT only)
@@ -99,7 +119,8 @@ export function donutKeyForTaskMetricsRow(
     frequency === "WEEKLY" ||
     frequency === "MONTHLY" ||
     frequency === "QUARTERLY" ||
-    frequency === "SEMI_ANNUAL"
+    frequency === "SEMI_ANNUAL" ||
+    frequency === "YEARLY"
   ) {
     return frequency;
   }

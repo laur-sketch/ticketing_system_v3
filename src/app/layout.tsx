@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Hanken_Grotesk } from "next/font/google";
-import Script from "next/script";
 import { AuthProvider } from "@/components/AuthProvider";
 import { GlobalButtonParticles } from "@/components/GlobalButtonParticles";
 import { AppChrome } from "@/components/layout/AppChrome";
@@ -56,9 +55,10 @@ export default async function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={`${hankenGrotesk.variable} h-full antialiased dark`}>
       <body className="flex h-full min-h-dvh flex-col touch-manipulation">
-        <Script id="theme-init" strategy="beforeInteractive">
-          {themeInit}
-        </Script>
+        <script
+          id="theme-init"
+          dangerouslySetInnerHTML={{ __html: themeInit }}
+        />
         <ThemeProvider>
           <AuthProvider session={session}>
             <ServiceWorkerRegister />

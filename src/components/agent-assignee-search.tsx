@@ -91,6 +91,8 @@ export function AgentAssigneeSearch({
   align = "left",
   autoFocus = false,
   inputClassName,
+  emptyHint,
+  selectedLabel,
 }: {
   /** Currently selected agent id ("" = unassigned). */
   value: string;
@@ -104,16 +106,26 @@ export function AgentAssigneeSearch({
   autoFocus?: boolean;
   /** Extra classes merged onto the search input (e.g. underline-style inline edit). */
   inputClassName?: string;
+  /** Shown when the roster is empty (e.g. pick a company/department first). */
+  emptyHint?: string | null;
+  /** Fallback label when `value` is set but the agent is not in `agents`. */
+  selectedLabel?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [pos, setPos] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const listboxRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
 
   const selected = agents.find((a) => a.id === value) ?? null;
+  const closedLabel = selected?.name ?? (value ? selectedLabel?.trim() || "" : "");
 
   function closeList() {
     setOpen(false);
@@ -123,27 +135,35 @@ export function AgentAssigneeSearch({
   /**
    * Position the dropdown relative to the input. Rendered via a portal to
    * document.body so cards with overflow-hidden never clip the list.
+   * Prefer opening BELOW the input so scope controls above the search stay clickable.
    */
   const computeListPos = useCallback(() => {
     const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const LIST_W = 288; // w-72
-    // Prefer the rendered listbox height (grows with content); fall back to max-h-64.
-    const listHeight = listboxRef.current?.getBoundingClientRect().height ?? 256;
     const GAP = 4;
+    const EDGE = 8;
+    const MAX_H = 256; // max-h-64
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - GAP - EDGE);
+    const spaceAbove = Math.max(0, rect.top - GAP - EDGE);
+    // Prefer below unless there is almost no room (keeps Company/Department scope usable).
+    const openBelow = spaceBelow >= 96 || spaceBelow >= spaceAbove;
+    const maxHeight = Math.max(96, Math.min(MAX_H, openBelow ? spaceBelow : spaceAbove));
     const rawLeft = align === "right" ? rect.right - LIST_W : rect.left;
-    const left = Math.max(8, Math.min(rawLeft, window.innerWidth - LIST_W - 8));
-    const below = rect.bottom + GAP;
-    const top = below + listHeight <= window.innerHeight - 8 ? below : Math.max(8, rect.top - GAP - listHeight);
-    const width = Math.min(LIST_W, window.innerWidth - left - 8);
+    const left = Math.max(EDGE, Math.min(rawLeft, window.innerWidth - LIST_W - EDGE));
+    const top = openBelow
+      ? rect.bottom + GAP
+      : Math.max(EDGE, rect.top - GAP - maxHeight);
+    const width = Math.min(LIST_W, window.innerWidth - left - EDGE);
     setPos((prev) =>
       prev &&
       Math.abs(prev.top - top) < 0.5 &&
       Math.abs(prev.left - left) < 0.5 &&
-      Math.abs(prev.width - width) < 0.5
+      Math.abs(prev.width - width) < 0.5 &&
+      Math.abs(prev.maxHeight - maxHeight) < 0.5
         ? prev
-        : { top, left, width },
+        : { top, left, width, maxHeight },
     );
   }, [align]);
 
@@ -153,10 +173,20 @@ export function AgentAssigneeSearch({
       return;
     }
     computeListPos();
-    window.addEventListener("scroll", computeListPos, true);
+    function onScroll(e: Event) {
+      const target = e.target;
+      // Keep list open while scrolling inside it; close on board/page scroll so it
+      // cannot cover Company/Department scope controls after the card moves.
+      if (target instanceof Node && listboxRef.current?.contains(target)) {
+        computeListPos();
+        return;
+      }
+      closeList();
+    }
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", computeListPos);
     return () => {
-      window.removeEventListener("scroll", computeListPos, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", computeListPos);
     };
   }, [open, computeListPos]);
@@ -226,13 +256,15 @@ export function AgentAssigneeSearch({
           aria-controls={open ? listboxId : undefined}
           aria-autocomplete="list"
           aria-label="Assignee search"
-          value={open ? query : (selected?.name ?? "")}
+          value={open ? query : closedLabel}
           placeholder={placeholder}
           disabled={disabled}
           autoFocus={autoFocus}
           onFocus={() => {
             setOpen(true);
             setHighlight(0);
+            // Clear closed-label display so typing starts a real search (not a fake match).
+            setQuery("");
           }}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -271,8 +303,13 @@ export function AgentAssigneeSearch({
               id={listboxId}
               ref={listboxRef}
               role="listbox"
-              className="fixed z-[400] max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-              style={{ top: pos.top, left: pos.left, width: pos.width }}
+              className="fixed z-[400] overflow-y-auto rounded-lg border border-zinc-200 bg-white p-1 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+              style={{
+                top: pos.top,
+                left: pos.left,
+                width: pos.width,
+                maxHeight: pos.maxHeight,
+              }}
             >
           {hasUnassign ? (
             <button
@@ -297,7 +334,13 @@ export function AgentAssigneeSearch({
             </button>
           ) : null}
           {filtered.length === 0 ? (
-            <p className="px-2 py-2 text-[11px] text-zinc-500 dark:text-zinc-400">No personnel match “{query}”.</p>
+            <p className="px-2 py-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+              {agents.length === 0
+                ? emptyHint?.trim() || "No personnel in this scope."
+                : query.trim()
+                  ? `No personnel match “${query.trim()}”.`
+                  : "No personnel available."}
+            </p>
           ) : (
             filtered.map((agent, i) => {
               const rowIndex = i + (hasUnassign ? 1 : 0);

@@ -258,7 +258,7 @@ export default async function TicketPage({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 text-zinc-950 sm:p-6 dark:text-zinc-100">
         <div className="mb-4 flex shrink-0 flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-950 p-3 text-white shadow-sm sm:mb-5 sm:rounded-2xl sm:p-5 dark:border-zinc-800/90 dark:bg-[#181716]/80">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
+        <div className="min-w-0">
               <Link
                 href={backHref}
                 className="text-xs font-semibold text-orange-300 hover:text-orange-200 hover:underline"
@@ -270,8 +270,8 @@ export default async function TicketPage({
                 <span className="text-sm font-normal text-zinc-400 sm:text-base">
                   · {ticket.title}
                 </span>
-              </h1>
-            </div>
+          </h1>
+        </div>
             <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
               <span className="w-fit rounded-full bg-white/12 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-100 dark:bg-zinc-700 dark:text-zinc-200">
                 {formatTicketStatusLabel(ticket.status)}
@@ -282,8 +282,8 @@ export default async function TicketPage({
               >
                 Close
               </Link>
-            </div>
-          </div>
+        </div>
+      </div>
 
           <TicketRequestMetaDetails
             preparedByLabel={
@@ -330,8 +330,8 @@ export default async function TicketPage({
               <CustomerTicketPanel ticket={ticket} canCancelRequest={canCancelRequest} />
             }
           />
-        </div>
-      </div>
+              </div>
+              </div>
     </AgentTicketModalShell>
   );
 }

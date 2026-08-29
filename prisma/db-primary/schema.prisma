@@ -51,6 +51,7 @@ enum KpiFrequency {
   MONTHLY
   QUARTERLY
   SEMI_ANNUAL
+  YEARLY
 }
 
 enum TaskStatus {
@@ -144,6 +145,12 @@ model Team {
   id                            String         @id @default(cuid())
   name                          String         @map("name")
   description                   String?        @map("description")
+  /// Relative HRIS path (e.g. company-logos/….png) synced from merged_companies.
+  logoPath                      String?        @map("logo_path")
+  /// Optional inlined logo data URL for UI (from HRIS company logo file).
+  logoImage                     String?        @map("logo_image") @db.Text
+  /// HRIS companies.id when known.
+  hrisCompanyId                 BigInt?        @unique @map("hris_company_id")
   createdAt                     DateTime       @default(now()) @map("created_at")
   agents                        Agent[]
   tickets                       Ticket[]
@@ -324,18 +331,30 @@ model OrgChartNodeSectionMembership {
 }
 
 /// Company-scoped department (optional grouping for users and routing).
+/// Logo columns are synced from HRIS: department logo when set, else parent company logo.
 model Department {
-  id            String          @id @default(cuid())
-  name          String          @map("name")
-  companyTeamId String          @map("company_team_id")
-  companyTeam   Team            @relation(fields: [companyTeamId], references: [id], onDelete: Cascade)
-  isActive      Boolean         @default(true) @map("is_active")
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  id                  String          @id @default(cuid())
+  name                String          @map("name")
+  companyTeamId       String          @map("company_team_id")
+  companyTeam         Team            @relation(fields: [companyTeamId], references: [id], onDelete: Cascade)
+  isActive            Boolean         @default(true) @map("is_active")
+  /// HRIS departments.id when synced from merged/HRIS.
+  hrisDepartmentId    BigInt?         @unique @map("hris_department_id")
+  /// HRIS companies.id for the parent company (denormalized).
+  hrisCompanyId       BigInt?         @map("hris_company_id")
+  /// Relative path from HRIS departments.logo (usually null today).
+  logoPath            String?         @map("logo_path")
+  /// Relative path from HRIS companies.logo (company branding for this department).
+  companyLogoPath     String?         @map("company_logo_path")
+  /// Inlined data URL for display (department file preferred, else company logo).
+  logoImage           String?         @map("logo_image") @db.Text
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
   portalAccounts PortalAccount[]
 
   @@unique([companyTeamId, name])
   @@index([companyTeamId, isActive])
+  @@index([hrisCompanyId])
   @@map("departments")
 }
 
@@ -385,7 +404,7 @@ model Ticket {
   category            TicketCategory   @map("category")
   /// Intake form kind: ISSUE_CONCERN_TICKET, REQUEST_FOR_PAYMENT, etc.
   requestType         String           @default("ISSUE_CONCERN_TICKET") @map("request_type")
-  priority            TicketPriority   @default(UNSET) @map("priority")
+  priority            TicketPriority   @default(LOW) @map("priority")
   status              TicketStatus     @default(OPEN) @map("status")
   contactName         String           @map("contact_name")
   contactEmail        String           @map("contact_email")

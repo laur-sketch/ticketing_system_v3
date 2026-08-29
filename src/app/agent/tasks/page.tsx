@@ -2,6 +2,11 @@ import { isElevatedUserRole } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/access";
 import { BRAND_TITLE } from "@/lib/brand";
+import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
+import { buildOrgChartDepartmentFilterOptions } from "@/lib/org-chart-section-display";
+import { listOrgChartSectionOptions } from "@/lib/org-chart-section-roster";
+import { prisma } from "@/lib/prisma";
+import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { TASK_FREQUENCY_DONUT_KEYS } from "@/lib/task-metrics-task-type";
 import { AgentKpiKanbanFlow } from "../kpi-kanban-flow";
 import { TaskBoardFilterBar } from "./task-board-filter-bar";
@@ -10,6 +15,13 @@ export const dynamic = "force-dynamic";
 
 function firstQuery(v: string | string[] | undefined) {
   return Array.isArray(v) ? v[0] : v;
+}
+
+function frequencyOptionLabel(key: string) {
+  if (key === "ONE-OFF") return "One-off";
+  if (key === "SEMI_ANNUAL") return "Semi Annual";
+  if (key === "YEARLY") return "Annualy";
+  return key.charAt(0) + key.slice(1).toLowerCase();
 }
 
 export default async function AgentTasksPage({
@@ -21,6 +33,8 @@ export default async function AgentTasksPage({
     q?: string | string[];
     category?: string | string[];
     frequency?: string | string[];
+    company?: string | string[];
+    department?: string | string[];
   }>;
 }) {
   const session = await requireSession();
@@ -44,6 +58,46 @@ export default async function AgentTasksPage({
       : "all";
   })();
 
+  const isElevated = isElevatedUserRole(session.user.role);
+  const isAdminRole = isElevated || session.user.role === "Admin";
+  const showCompanyFilter = isAdminRole;
+
+  const [allTeams, orgChartSections] = await Promise.all([
+    showCompanyFilter
+      ? sortByRosterOrder(
+          await prisma.team.findMany({
+            where: rosterTeamNameFilter(),
+            select: { id: true, name: true },
+          }),
+        )
+      : Promise.resolve([] as Array<{ id: string; name: string }>),
+    listOrgChartSectionOptions(),
+  ]);
+
+  const scopedAdminCompanyId =
+    session.user.role === "Admin" ? await resolveStaffCompanyTeamId(session.user.email) : null;
+
+  const companies =
+    session.user.role === "Admin" && scopedAdminCompanyId
+      ? allTeams.filter((t) => t.id === scopedAdminCompanyId)
+      : allTeams;
+
+  const companyFromUrl = (firstQuery(params.company) ?? "").trim();
+  const companyFilterTeamId = (() => {
+    if (session.user.role === "Admin" && scopedAdminCompanyId) return scopedAdminCompanyId;
+    if (!showCompanyFilter) return null;
+    if (!companyFromUrl || companyFromUrl === "ALL") return null;
+    return companies.some((c) => c.id === companyFromUrl) ? companyFromUrl : null;
+  })();
+
+  const departmentFromUrl = (firstQuery(params.department) ?? "").trim();
+  const departmentFilterSectionId =
+    departmentFromUrl &&
+    departmentFromUrl !== "ALL" &&
+    orgChartSections.some((s) => s.id === departmentFromUrl)
+      ? departmentFromUrl
+      : null;
+
   const categoryOptions = [
     { value: "all", label: "All categories" },
     { value: "task", label: "Task" },
@@ -55,12 +109,12 @@ export default async function AgentTasksPage({
     { value: "all", label: "All frequencies" },
     ...TASK_FREQUENCY_DONUT_KEYS.map((key) => ({
       value: key,
-      label: key
-        .split("-")
-        .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
-        .join(" "),
+      label: frequencyOptionLabel(key),
     })),
   ];
+
+  const companyOptions = companies.map((c) => ({ value: c.id, label: c.name }));
+  const departmentOptions = buildOrgChartDepartmentFilterOptions(orgChartSections);
 
   return (
     <main className="flex min-h-[calc(100vh-56px)] flex-col bg-zinc-50 px-3 py-4 text-zinc-900 dark:bg-background dark:text-zinc-100 sm:px-4">
@@ -83,7 +137,23 @@ export default async function AgentTasksPage({
               <TaskBoardFilterBar
                 initialQuery={searchQuery}
                 placeholder="Search tasks by title"
-                savedFilterStorageKey={`saved-task-filters:${session.user.email}:v1`}
+                savedFilterStorageKey={`saved-task-filters:${session.user.email}:v2`}
+                company={
+                  showCompanyFilter && companies.length > 0 && session.user.role !== "Admin"
+                    ? {
+                        visible: true,
+                        value: companyFilterTeamId || "ALL",
+                        emptyValue: "ALL",
+                        options: companyOptions,
+                      }
+                    : { visible: false, value: "ALL", options: [] }
+                }
+                department={{
+                  visible: departmentOptions.length > 0,
+                  value: departmentFilterSectionId || "ALL",
+                  emptyValue: "ALL",
+                  options: departmentOptions,
+                }}
                 category={{
                   visible: true,
                   value: categoryFilter,
@@ -97,11 +167,10 @@ export default async function AgentTasksPage({
               />
             </div>
             <AgentKpiKanbanFlow
-              companyFilterTeamId={null}
+              companyFilterTeamId={companyFilterTeamId}
+              orgChartSectionFilterId={departmentFilterSectionId}
               sessionRole={session.user.role}
-              showAdminTaskManagement={
-                isElevatedUserRole(session.user.role) || session.user.role === "Admin"
-              }
+              showAdminTaskManagement={isAdminRole}
               focusTaskId={focusTaskId}
               fromJobOrderTicketId={fromJobOrderTicketId}
               searchQuery={searchQuery}

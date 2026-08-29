@@ -439,24 +439,49 @@ function DepartmentSegmentView({
           Show all segmented tasks
         </button>
       ) : null}
-      <ul className="space-y-3">
+      <ul className="space-y-2">
         {viewTasks.map((task) => {
           const segments = segmentsForIncludedTask(task);
           return (
             <li
               key={task.id}
-              className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/50"
+              className="rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50"
             >
-              {!focusTask ? (
-                <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-zinc-950 dark:text-zinc-50">{task.title}</p>
-                    {task.assigneeName || task.frequency ? (
-                      <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {[task.frequency, task.assigneeName].filter(Boolean).join(" · ")}
-                      </p>
-                    ) : null}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                  <p className="shrink-0 font-semibold text-zinc-950 dark:text-zinc-50">{task.title}</p>
+                  {task.frequency ? (
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                      {task.frequency}
+                    </span>
+                  ) : null}
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    {segments.map((seg) => (
+                      <span
+                        key={`${task.id}:${seg.id}`}
+                        className="inline-flex max-w-full shrink-0 items-center gap-1.5 rounded-lg border border-zinc-200/90 bg-white px-2 py-1 text-xs dark:border-zinc-700/90 dark:bg-zinc-950/70"
+                        title={`${seg.name}: ${seg.done}/${seg.total} complete`}
+                      >
+                        <span className="max-w-[9rem] truncate font-semibold text-zinc-900 dark:text-zinc-100">
+                          {seg.name}
+                        </span>
+                        <span
+                          className={cn(
+                            "shrink-0 tabular-nums font-bold",
+                            seg.percent >= 100
+                              ? "text-emerald-700 dark:text-emerald-300"
+                              : seg.percent > 0
+                                ? "text-orange-700 dark:text-orange-300"
+                                : "text-zinc-500 dark:text-zinc-400",
+                          )}
+                        >
+                          {seg.percent}%
+                        </span>
+                      </span>
+                    ))}
                   </div>
+                </div>
+                {!focusTask ? (
                   <button
                     type="button"
                     onClick={() => onFocusTask(task.id)}
@@ -464,19 +489,19 @@ function DepartmentSegmentView({
                   >
                     Focus task
                   </button>
-                </div>
-              ) : null}
-              <ul className="space-y-2">
+                ) : null}
+              </div>
+              <ul className="mt-2 space-y-2">
                 {segments.map((seg) => (
                   <li
-                    key={`${task.id}:${seg.id}`}
+                    key={`${task.id}:${seg.id}:items`}
                     className="rounded-lg border border-zinc-200/80 bg-white px-3 py-2 dark:border-zinc-700/80 dark:bg-zinc-950/60"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
                         {seg.name}
                       </span>
-                      <span className="shrink-0 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                      <span className="shrink-0 text-xs font-semibold tabular-nums text-zinc-600 dark:text-zinc-300">
                         {seg.done}/{seg.total} · {seg.percent}%
                       </span>
                     </div>
@@ -505,12 +530,6 @@ function DepartmentSegmentView({
                               )}
                             >
                               {item.title}
-                              {item.assigneeName ? (
-                                <span className="font-normal text-zinc-500 dark:text-zinc-400">
-                                  {" "}
-                                  · {item.assigneeName}
-                                </span>
-                              ) : null}
                             </span>
                           </li>
                         ))}

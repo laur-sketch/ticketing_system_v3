@@ -85,6 +85,8 @@ function frequencyLabel(freq: string): string {
       return "Q";
     case "SEMI_ANNUAL":
       return "S";
+    case "YEARLY":
+      return "Y";
     default:
       return "";
   }

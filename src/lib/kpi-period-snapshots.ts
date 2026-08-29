@@ -8,6 +8,7 @@ import {
   getQuarterlyPeriodKey,
   getSemiAnnualPeriodKey,
   getWeeklyPeriodKey,
+  getYearlyPeriodKey,
   isKpiMetricsWorkingDay,
   normalizeTimeZone,
   type KpiFrequencyCode,
@@ -315,7 +316,9 @@ export function enumeratePeriodKeysForKpiInRange(
       ? getQuarterlyPeriodKey
       : freq === "SEMI_ANNUAL"
         ? getSemiAnnualPeriodKey
-        : getMonthlyPeriodKey;
+        : freq === "YEARLY"
+          ? getYearlyPeriodKey
+          : getMonthlyPeriodKey;
   while (cursor <= end) {
     keys.add(getPeriodKey(cursor.toJSDate(), dom, zone));
     cursor = cursor.plus({ days: 1 });
@@ -341,6 +344,7 @@ export function selectKpisForPillarTaskMetrics<T extends KpiRowForMetrics>(
   const monthly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "MONTHLY");
   const quarterly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "QUARTERLY");
   const semiAnnual = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "SEMI_ANNUAL");
+  const yearly = pillarKpis.filter((k) => (k.frequency as KpiFrequencyCode) === "YEARLY");
 
   // Prefer the most granular rows that exist so monthly/yearly windows still roll up.
   if (daily.length > 0) return daily;
@@ -350,16 +354,20 @@ export function selectKpisForPillarTaskMetrics<T extends KpiRowForMetrics>(
       ? monthly
       : quarterly.length > 0
         ? quarterly
-        : semiAnnual;
+        : semiAnnual.length > 0
+          ? semiAnnual
+          : yearly;
   }
-  // YEARLY: monthly → quarterly → semi-annual
+  // YEARLY reporting: monthly → quarterly → semi-annual → yearly
   return monthly.length > 0
     ? monthly
     : quarterly.length > 0
       ? quarterly
       : semiAnnual.length > 0
         ? semiAnnual
-        : weekly;
+        : yearly.length > 0
+          ? yearly
+          : weekly;
 }
 
 function averageProgress(rows: KpiChecklistProgress[]): KpiChecklistProgress & {
@@ -1682,7 +1690,7 @@ function buildMonthlySubtaskCsvRows(args: {
     const checksList: Array<Record<string, boolean>> = [];
     for (const kpi of args.pillarKpis) {
       const freq = kpi.frequency as KpiFrequencyCode;
-      if (freq !== "MONTHLY" && freq !== "QUARTERLY" && freq !== "SEMI_ANNUAL") continue;
+      if (freq !== "MONTHLY" && freq !== "QUARTERLY" && freq !== "SEMI_ANNUAL" && freq !== "YEARLY") continue;
       const periodKeys = enumeratePeriodKeysForKpiInRange(kpi, fromYmd, toYmd, args.zone);
       for (const key of periodKeys) {
         const resolved = progressForKpiPeriod({
@@ -1734,7 +1742,7 @@ export function buildSubtaskCsvPreviewForPillar(args: {
     args.metricsCadence === "MONTHLY" &&
     args.pillarKpis.some((kpi) => {
       const freq = kpi.frequency as KpiFrequencyCode;
-      return freq === "MONTHLY" || freq === "QUARTERLY" || freq === "SEMI_ANNUAL";
+      return freq === "MONTHLY" || freq === "QUARTERLY" || freq === "SEMI_ANNUAL" || freq === "YEARLY";
     });
 
   const rows = useMonthlyLayout

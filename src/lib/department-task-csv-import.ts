@@ -183,7 +183,7 @@ export async function importDepartmentTasksFromCsv(
     }
     if (
       isRecurring &&
-      (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL")
+      (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL" || frequency === "YEARLY")
     ) {
       recurrenceMonthDay = 1;
     }

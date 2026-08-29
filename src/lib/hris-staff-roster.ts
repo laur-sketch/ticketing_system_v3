@@ -1,11 +1,12 @@
 /**
  * HRIS-first staff roster for Assignment board, Task board assignees, and Activities.
- * Source of truth: merged_users (from HRIS). Portal/Agent rows are attached when present,
- * and Agent rows are created on demand so boards can assign work.
+ * Source of truth: merged_users (from HRIS) — company membership matches the Personnel tab.
+ * Portal/Agent rows are attached when present; Agent rows are created on demand so boards
+ * can assign work.
  */
 import { pickCanonicalAgentForPortal } from "@/lib/admin-roster";
-import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { resolveHrisSourceTags } from "@/lib/merged-database-sources";
+import { matchPersonnelCompanyTeam } from "@/lib/personnel-accounts-data";
 import { prisma, prismaSecondary } from "@/lib/prisma";
 import { ensureRosterTeamsInDb } from "@/lib/roster-teams";
 import { isStaffPortalRole, normalizePortalRole } from "@/lib/staff-role";
@@ -44,12 +45,12 @@ function syntheticEmail(sourceUserId: string, username: string | null): string {
 
 /**
  * Load active HRIS people from merged_users and ensure each has a primary Agent id
- * (create Agent under their roster Team when missing).
+ * (create Agent under their Personnel-tab company Team when missing).
  */
 export async function loadHrisAssignableStaff(options?: {
-  /** Limit to one roster Team id (Personnel company lock / task filter). */
+  /** Limit to one roster Team id (same company grouping as the Personnel tab). */
   companyTeamId?: string | null;
-  /** Skip HRIS super_admin rows (default true — matches Activities). */
+  /** Skip HRIS super_admin rows (default true — matches Personnel / Activities). */
   excludeHrisSuperAdmin?: boolean;
 }): Promise<HrisAssignableStaff[]> {
   const excludeSuper = options?.excludeHrisSuperAdmin !== false;
@@ -66,7 +67,11 @@ export async function loadHrisAssignableStaff(options?: {
         AND source_database IN (${Prisma.join(sourceTags)})
       ORDER BY name ASC
     `,
-    prisma.team.findMany({ select: { id: true, name: true } }),
+    // Same team set as Personnel tab (not roster-filter-only) so company matching matches.
+    prisma.team.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
     prisma.portalAccount.findMany({
       where: { mergedSourceUserId: { not: null } },
       select: {
@@ -76,8 +81,6 @@ export async function loadHrisAssignableStaff(options?: {
         headPrivileges: true,
         mergedSourceUserId: true,
         accountStatus: true,
-        staffDesignatedCompanyId: true,
-        staffDesignatedCompany: { select: { id: true, name: true } },
       },
     }),
     prisma.agent.findMany({
@@ -86,7 +89,7 @@ export async function loadHrisAssignableStaff(options?: {
     }),
   ]);
 
-  const teamByName = new Map(teams.map((t) => [t.name.toLowerCase(), t]));
+  /** Only used when creating Agent rows that have no resolvable Personnel company Team. */
   const fallbackTeam =
     teams.find((t) => t.name === "OUTSIDE COMPANY") ??
     teams.find((t) => t.name.toLowerCase().includes("general")) ??
@@ -125,13 +128,18 @@ export async function loadHrisAssignableStaff(options?: {
 
     const sourceKey = row.source_user_id.toString();
     const portal = portalByCanonicalId.get(sourceKey) ?? null;
-    const rosterName = resolveRosterCompanyName(row.company_name);
-    const team =
-      (rosterName ? teamByName.get(rosterName.toLowerCase()) : null) ??
-      portal?.staffDesignatedCompany ??
-      fallbackTeam;
+    // Personnel tab company: merged_users.company_name only (not portal designated / agent.team).
+    const matched = matchPersonnelCompanyTeam(row.company_name, teams);
+    const assignmentTeam =
+      matched.teamId.startsWith("company:")
+        ? null
+        : teams.find((t) => t.id === matched.teamId) ?? null;
 
-    if (companyTeamId && team?.id !== companyTeamId) continue;
+    if (companyTeamId) {
+      if (!assignmentTeam || assignmentTeam.id !== companyTeamId) continue;
+    }
+
+    const teamForAgentRow = assignmentTeam ?? fallbackTeam;
 
     const email =
       (row.email ?? "").trim().toLowerCase() ||
@@ -148,13 +156,13 @@ export async function loadHrisAssignableStaff(options?: {
         .map((c) => pickCanonicalAgentForPortal(c, mutableAgents))
         .find((a): a is NonNullable<typeof a> => a != null) ?? null;
 
-    if (!agent && team) {
+    if (!agent && teamForAgentRow) {
       try {
         const created = await prisma.agent.create({
           data: {
             name: row.name,
             email,
-            teamId: team.id,
+            teamId: teamForAgentRow.id,
           },
           select: { id: true, email: true, name: true, createdAt: true, teamId: true },
         });
@@ -164,7 +172,6 @@ export async function loadHrisAssignableStaff(options?: {
       } catch {
         agent = agentByEmail.get(email) ?? null;
         if (!agent) {
-          // Email collision under another name — fall back to any name match after reload.
           const refreshed = await prisma.agent.findMany({
             orderBy: { createdAt: "asc" },
             select: { id: true, email: true, name: true, createdAt: true, teamId: true },
@@ -179,15 +186,17 @@ export async function loadHrisAssignableStaff(options?: {
     if (seenAgentIds.has(agent.id)) continue;
     seenAgentIds.add(agent.id);
 
-    if (team && agent.teamId !== team.id) {
+    if (assignmentTeam && agent.teamId !== assignmentTeam.id) {
       await prisma.agent
-        .update({ where: { id: agent.id }, data: { teamId: team.id } })
+        .update({ where: { id: agent.id }, data: { teamId: assignmentTeam.id } })
         .catch(() => null);
     }
 
-    const assignmentCompany: EffectiveAssignmentCompany | null = team
-      ? { id: team.id, name: team.name }
-      : null;
+    const assignmentCompany: EffectiveAssignmentCompany | null = assignmentTeam
+      ? { id: assignmentTeam.id, name: assignmentTeam.name }
+      : matched.teamName && matched.teamName !== "Unassigned"
+        ? { id: null, name: matched.teamName }
+        : null;
 
     const portalRole =
       (portal && isStaffPortalRole(portal.role) ? normalizePortalRole(portal.role) : null) ??
@@ -201,7 +210,7 @@ export async function loadHrisAssignableStaff(options?: {
       portalRole,
       headPrivileges: portal?.headPrivileges ?? false,
       assignmentCompany,
-      teamLabel: assignmentCompany?.name ?? "Unassigned company/SBU",
+      teamLabel: assignmentCompany?.name ?? (matched.teamName || "Unassigned company/SBU"),
     });
   }
 

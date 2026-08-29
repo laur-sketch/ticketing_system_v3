@@ -22,12 +22,27 @@ import {
 import { TaskPillarMetricsGrid } from "@/components/metrics/TaskPillarMetricsGrid";
 import { PersonnelTaskMetricsGrid } from "@/components/metrics/PersonnelTaskMetricsGrid";
 import { DepartmentTaskMetricsGrid } from "@/components/metrics/DepartmentTaskMetricsGrid";
+import { MetricsFilterBar, type MetricsFilterFieldDef } from "@/components/metrics/MetricsFilterBar";
+import {
+  buildCadenceFieldOptions,
+  buildCompanyFieldOptions,
+  buildTaskTypeFieldOptions,
+  metricsUrlPatch,
+  parseMetricsCadence,
+  parseTaskMetricsViewMode,
+  resolveTaskMetricsTaskTypeFromUrl,
+} from "@/lib/metrics-filter-url";
 import {
   buildPersonnelInsightCards,
   type MergedPersonnelEfficiencyRow,
   type PersonnelCombinedMetricCard,
   type PersonnelDelayPenaltyRow,
 } from "@/lib/task-personnel-metrics";
+import {
+  buildOrgChartDepartmentFilterOptions,
+  mergedSourceUserIdsForOrgChartSectionTree,
+  type OrgChartSectionOption,
+} from "@/lib/org-chart-section-display";
 import type { PersonnelTicketMetric } from "@/lib/kpis";
 import type { DepartmentMainMetric } from "@/lib/department-task-metrics";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
@@ -47,8 +62,12 @@ import {
   type TaskMetricsCadence,
 } from "@/lib/task-metrics-range";
 import {
-  TASK_METRICS_TASK_TYPE_OPTIONS,
+  FIELD_ASSIGNMENT_DONUT_KEY,
+  PROJECTS_DONUT_KEY,
+  TASK_FREQUENCY_DONUT_KEYS,
+  TASK_METRICS_ALL_TYPE_SECTIONS,
   type TaskMetricsTaskType,
+  type TaskMetricsTaskTypeFilter,
 } from "@/lib/task-metrics-task-type";
 
 type KpiPayload = {
@@ -187,10 +206,41 @@ function InsightsPageInner() {
   const [taskMetricsLoading, setTaskMetricsLoading] = useState(false);
   const [taskMetricsError, setTaskMetricsError] = useState<string | null>(null);
   const [taskMetricsViewMode, setTaskMetricsViewMode] = useState<TaskMetricsViewMode>("company");
-  const [taskMetricsTaskType, setTaskMetricsTaskType] = useState<TaskMetricsTaskType>("task");
+  const [taskMetricsTaskType, setTaskMetricsTaskType] = useState<TaskMetricsTaskTypeFilter>("ALL");
   const [departmentMetrics, setDepartmentMetrics] = useState<DepartmentMainMetric[]>([]);
   const [departmentMetricsLoading, setDepartmentMetricsLoading] = useState(false);
   const [departmentMetricsError, setDepartmentMetricsError] = useState<string | null>(null);
+  const [requestMetricAgents, setRequestMetricAgents] = useState<Array<{ id: string; name: string }>>(
+    [],
+  );
+  const [requestMetricAgentsLoading, setRequestMetricAgentsLoading] = useState(false);
+
+  const metricsSearchQ = searchParams.get("q") ?? "";
+  const selectedRequestMetricAgentId = searchParams.get("agentId") ?? "";
+  const selectedPersonnelDepartment =
+    searchParams.get("department") && searchParams.get("department") !== "ALL"
+      ? searchParams.get("department")!
+      : "";
+
+  const resolvedRequestMetricAgentId = useMemo(() => {
+    if (selectedRequestMetricAgentId) return selectedRequestMetricAgentId;
+    const q = metricsSearchQ.trim().toLowerCase();
+    if (!q || requestMetricAgents.length === 0) return "";
+    const matches = requestMetricAgents.filter((agent) =>
+      agent.name.toLowerCase().includes(q),
+    );
+    return matches.length === 1 ? matches[0]!.id : "";
+  }, [selectedRequestMetricAgentId, metricsSearchQ, requestMetricAgents]);
+
+  const selectedRequestMetricAgentName = useMemo(() => {
+    if (!resolvedRequestMetricAgentId) return null;
+    return (
+      requestMetricAgents.find((agent) => agent.id === resolvedRequestMetricAgentId)?.name ??
+      data?.agents?.ticketsClosedByAgent?.find((row) => row.agentId === resolvedRequestMetricAgentId)
+        ?.name ??
+      null
+    );
+  }, [resolvedRequestMetricAgentId, requestMetricAgents, data?.agents?.ticketsClosedByAgent]);
 
   const loadKpis = useCallback(async () => {
     setError(null);
@@ -206,6 +256,9 @@ function InsightsPageInner() {
     if (isAdminRole) {
       qs.set("companyId", selectedTicketMetricCompany || "ALL");
     }
+    if (resolvedRequestMetricAgentId) {
+      qs.set("agentId", resolvedRequestMetricAgentId);
+    }
     const res = await fetch(`/api/kpis?${qs.toString()}`, { cache: "no-store" });
     if (!res.ok) {
       setError("Could not load KPIs. Is the database running and migrated?");
@@ -214,7 +267,14 @@ function InsightsPageInner() {
     }
     const json = (await res.json()) as KpiPayload;
     setData(json);
-  }, [from, to, isAdminRole, isCompanyScopedAdmin, selectedTicketMetricCompany]);
+  }, [
+    from,
+    to,
+    isAdminRole,
+    isCompanyScopedAdmin,
+    selectedTicketMetricCompany,
+    resolvedRequestMetricAgentId,
+  ]);
 
   const loadTaskMetrics = useCallback(async () => {
     if (taskMetricsViewMode === "departments") return;
@@ -234,9 +294,11 @@ function InsightsPageInner() {
     });
     if (selectedTaskMetricCompany) {
       qs.set("companyId", selectedTaskMetricCompany);
+    } else if (taskMetricsViewMode === "company" || taskMetricsViewMode === "personnel") {
+      qs.set("companyId", "ALL");
     }
-    // Task Type only scopes company-view donuts.
-    if (taskMetricsViewMode === "company") {
+    // Task filter only scopes company-view donuts; omit when showing all types.
+    if (taskMetricsViewMode === "company" && taskMetricsTaskType !== "ALL") {
       qs.set("taskType", taskMetricsTaskType);
     }
     try {
@@ -337,6 +399,49 @@ function InsightsPageInner() {
   }
 
   useEffect(() => {
+    if (!showTaskReportingTabs || activeTab !== "ticket-metrics" || !isAdminRole) return;
+    let cancelled = false;
+    async function loadRequestMetricAgents() {
+      setRequestMetricAgentsLoading(true);
+      const companyParam =
+        isCompanyScopedAdmin && selectedTicketMetricCompany
+          ? selectedTicketMetricCompany
+          : selectedTicketMetricCompany && selectedTicketMetricCompany !== "ALL"
+            ? selectedTicketMetricCompany
+            : null;
+      const qs = companyParam ? `?company=${encodeURIComponent(companyParam)}` : "?anyCompany=1";
+      try {
+        const res = await fetch(`/api/agents${qs}`, { cache: "no-store" });
+        const rows = (await res.json().catch(() => [])) as Array<{ id: string; name: string }>;
+        if (cancelled) return;
+        if (!res.ok || !Array.isArray(rows)) {
+          setRequestMetricAgents([]);
+          return;
+        }
+        setRequestMetricAgents(
+          rows
+            .map((row) => ({ id: row.id, name: row.name?.trim() || "Unknown" }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        );
+      } catch {
+        if (!cancelled) setRequestMetricAgents([]);
+      } finally {
+        if (!cancelled) setRequestMetricAgentsLoading(false);
+      }
+    }
+    void loadRequestMetricAgents();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showTaskReportingTabs,
+    activeTab,
+    isAdminRole,
+    isCompanyScopedAdmin,
+    selectedTicketMetricCompany,
+  ]);
+
+  useEffect(() => {
     queueMicrotask(() => void loadKpis());
   }, [loadKpis]);
 
@@ -384,8 +489,14 @@ function InsightsPageInner() {
       const companies = json.companies ?? [];
       setTaskMetricCompanies(companies);
       setSelectedTaskMetricCompany((current) => {
+        if (isCompanyScopedAdmin) {
+          if (companies.some((company) => company.id === current)) return current;
+          return companies[0]?.id ?? "";
+        }
+        // SuperAdmin: never invent a default company — empty means all companies.
+        if (!current || current === "ALL") return "";
         if (companies.some((company) => company.id === current)) return current;
-        return companies[0]?.id ?? "";
+        return "";
       });
       setSelectedTicketMetricCompany((current) => {
         if (current === "ALL" && !isCompanyScopedAdmin) return current;
@@ -432,6 +543,48 @@ function InsightsPageInner() {
     },
     [router, searchParams],
   );
+
+  const patchMetricsUrl = useCallback(
+    (patch: (params: URLSearchParams) => void) => {
+      metricsUrlPatch(router, patch, ["tab"]);
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    const fromParam = searchParams.get("from");
+    const toParam = searchParams.get("to");
+    if (fromParam) setFrom(fromParam);
+    if (toParam) setTo(toParam);
+
+    const companyId = searchParams.get("companyId");
+    if (activeTab === "ticket-metrics") {
+      // Absent / ALL = unscoped — must reset so Clear can drop the Company chip.
+      setSelectedTicketMetricCompany(
+        companyId && companyId !== "ALL" ? companyId : "ALL",
+      );
+    }
+
+    if (activeTab === "task-metrics") {
+      setTaskMetricsViewMode(parseTaskMetricsViewMode(searchParams.get("taskView")));
+      // Always sync — Clear deletes params; missing taskType/cadence means defaults.
+      setTaskMetricsTaskType(resolveTaskMetricsTaskTypeFromUrl(searchParams.get("taskType")));
+      const cad = parseMetricsCadence(searchParams.get("cadence"));
+      if (cad !== taskMetricsCadence) {
+        handleTaskMetricsCadenceChange(cad);
+      }
+      const period = searchParams.get("period");
+      if (period) {
+        setTaskMetricsFrom(period);
+        setTaskMetricsTo(period);
+      }
+      if (companyId !== null) {
+        setSelectedTaskMetricCompany(companyId === "ALL" ? "" : companyId);
+      } else {
+        setSelectedTaskMetricCompany("");
+      }
+    }
+  }, [searchParams, activeTab, taskMetricsCadence]);
 
   useEffect(() => {
     if (tabFromUrl && tabFromUrl !== activeTab) {
@@ -487,25 +640,72 @@ function InsightsPageInner() {
     }));
   }, [data]);
 
+  const userEmail = session?.user?.email ?? "";
+
+  const requestMetricsFilterFields = useMemo((): MetricsFilterFieldDef[] => {
+    if (!isAdminRole || isCompanyScopedAdmin) return [];
+    return [
+      {
+        id: "company",
+        type: "Company",
+        param: "companyId",
+        visible: true,
+        value: selectedTicketMetricCompany || "ALL",
+        options: buildCompanyFieldOptions(taskMetricCompanies),
+      },
+    ];
+  }, [
+    isAdminRole,
+    isCompanyScopedAdmin,
+    selectedTicketMetricCompany,
+    taskMetricCompanies,
+  ]);
+
+  const viewingPersonalRequestMetrics = Boolean(resolvedRequestMetricAgentId);
+
+  const filteredAgentClosers = useMemo(() => {
+    if (viewingPersonalRequestMetrics) return [];
+    return data?.agents?.ticketsClosedByAgent ?? [];
+  }, [data?.agents?.ticketsClosedByAgent, viewingPersonalRequestMetrics]);
+
   return (
     <main className="mx-auto max-w-[112rem] space-y-8 px-3 py-6 text-zinc-900 sm:space-y-10 sm:px-5 sm:py-8 lg:px-6 md:py-10 dark:text-zinc-100">
-      <header className="rounded-2xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-6 shadow-[0_12px_40px_rgba(0,0,0,0.06)] md:p-8 dark:border-zinc-800/90 dark:from-[#101010] dark:to-[#080808] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
+      <header className="rounded-2xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50 p-4 shadow-[0_12px_40px_rgba(0,0,0,0.06)] sm:p-6 md:p-8 dark:border-zinc-800/90 dark:from-[#101010] dark:to-[#080808] dark:shadow-[0_20px_50px_rgba(0,0,0,0.4)]">
         <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
-              {BRAND_TITLE} · {isPersonnel ? "Personal metrics" : "Request metrics & reports"}
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-orange-700 sm:text-xs sm:tracking-[0.18em] dark:text-orange-400/95">
+              {viewingPersonalRequestMetrics && activeTab === "ticket-metrics"
+                ? "Personal request metrics"
+                : isPersonnel
+                  ? "Personal metrics"
+                  : "Request metrics & reports"}
             </p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 md:text-4xl dark:text-white">
-              {isPersonnel ? "Personal performance intelligence" : "Operations intelligence"}
+            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 sm:mt-2 sm:text-3xl md:text-4xl dark:text-white">
+              {viewingPersonalRequestMetrics && activeTab === "ticket-metrics"
+                ? selectedRequestMetricAgentName ?? "Personal request metrics"
+                : isPersonnel
+                  ? "Personal performance intelligence"
+                  : "Operations intelligence"}
             </h1>
+            {viewingPersonalRequestMetrics && activeTab === "ticket-metrics" && isAdminRole ? (
+              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                Showing request metrics for tickets assigned to{" "}
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  {selectedRequestMetricAgentName ?? "selected personnel"}
+                </span>
+                . Clear the search to return to company-wide metrics.
+              </p>
+            ) : null}
         </div>
-        <Tabs value={activeTab} onValueChange={(value) => selectTab(value as InsightsTab)} className="mt-6">
-          <TabsList className="flex flex-wrap rounded-full border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90">
-            <TabsTrigger value="ticket-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-              {isPersonnel ? "My Request Metrics and Reports" : "Request Metrics and Reports"}
+        <Tabs value={activeTab} onValueChange={(value) => selectTab(value as InsightsTab)} className="mt-4 sm:mt-6">
+          <TabsList className="flex h-auto w-full flex-wrap gap-1 rounded-xl border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90 sm:rounded-full sm:gap-0">
+            <TabsTrigger value="ticket-metrics" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-[11px] font-semibold leading-tight data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-4 sm:py-1.5 sm:text-xs">
+              <span className="sm:hidden">{isPersonnel ? "My requests" : "Request metrics"}</span>
+              <span className="hidden sm:inline">{isPersonnel ? "My Request Metrics and Reports" : "Request Metrics and Reports"}</span>
             </TabsTrigger>
             {showTaskReportingTabs ? (
-              <TabsTrigger value="task-metrics" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                Task Metrics and Reports
+              <TabsTrigger value="task-metrics" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-[11px] font-semibold leading-tight data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-4 sm:py-1.5 sm:text-xs">
+                <span className="sm:hidden">Task metrics</span>
+                <span className="hidden sm:inline">Task Metrics and Reports</span>
               </TabsTrigger>
             ) : null}
             {showKpiTasksTab ? (
@@ -516,6 +716,70 @@ function InsightsPageInner() {
           </TabsList>
         </Tabs>
       </header>
+
+      {activeTab === "ticket-metrics" && isAdminRole ? (
+        <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-4">
+          <MetricsFilterBar
+            initialQuery={metricsSearchQ}
+            placeholder="Search personnel by name…"
+            fields={requestMetricsFilterFields}
+            savedFilterStorageKey={
+              userEmail ? `saved-request-metrics-filters:${userEmail}:v1` : undefined
+            }
+            preserveParams={["tab", "from", "to", "agentId"]}
+            extraCaptureParams={["from", "to", "agentId"]}
+            searchSuggestions={requestMetricAgents.map((agent) => ({
+              id: agent.id,
+              label: agent.name,
+            }))}
+            searchSuggestionsLoading={requestMetricAgentsLoading}
+            searchSuggestionParam="agentId"
+            className="border-0 bg-transparent shadow-none dark:bg-transparent"
+          />
+          <div className="grid grid-cols-2 gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-700 sm:flex sm:flex-wrap sm:items-end">
+            {isCompanyScopedAdmin ? (
+              <CompanyValueLabel
+                label="Company"
+                value={
+                  taskMetricCompanies.find((c) => c.id === selectedTicketMetricCompany)?.name ??
+                  "No assigned company"
+                }
+                className="col-span-2 min-w-0 sm:col-span-1 sm:min-w-[12rem]"
+              />
+            ) : null}
+            <label className="flex min-w-0 flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              From
+              <DatePickerField
+                value={from}
+                max={to || undefined}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setFrom(next);
+                  patchMetricsUrl((params) => {
+                    params.set("from", next);
+                  });
+                }}
+                wrapperClassName="mt-1.5 w-full min-w-0"
+              />
+            </label>
+            <label className="flex min-w-0 flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              To
+              <DatePickerField
+                value={to}
+                min={from || undefined}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setTo(next);
+                  patchMetricsUrl((params) => {
+                    params.set("to", next);
+                  });
+                }}
+                wrapperClassName="mt-1.5 w-full min-w-0"
+              />
+            </label>
+          </div>
+        </div>
+      ) : null}
 
       {error && activeTab === "ticket-metrics" ? (
         <p className="rounded-xl border border-red-500/35 bg-red-50 px-4 py-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200">
@@ -569,26 +833,33 @@ function InsightsPageInner() {
             canManageDepartmentVisibility={isSuperAdmin}
             onDepartmentVisibilityChanged={() => void loadDepartmentMetrics()}
             canImportDepartmentTasks={isAdminRole}
+            metricsSearchQ={metricsSearchQ}
+            selectedPersonnelDepartment={selectedPersonnelDepartment}
+            userEmail={userEmail}
+            patchMetricsUrl={patchMetricsUrl}
           />
         </div>
       
       ) : (
         <div className="space-y-8">
           {!data ? (
-            <p className="text-sm text-zinc-600 dark:text-zinc-500">
-              {isAdminRole && !selectedTicketMetricCompany
-                ? "Loading companies…"
-                : "Loading metrics…"}
-            </p>
+            <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-6 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <span className="inline-block size-4 animate-spin rounded-full border-2 border-orange-600 border-t-transparent" aria-hidden />
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {isAdminRole && !selectedTicketMetricCompany
+                  ? "Loading companies…"
+                  : "Loading metrics…"}
+              </p>
+            </div>
           ) : (
             <>
           {/* Operational load */}
-          <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
-            <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-6 md:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+            <h2 className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-600 sm:text-[11px] sm:tracking-[0.2em] dark:text-zinc-500">
               Operational load
             </h2>
-            <div className="mt-4 space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-3 space-y-3 sm:mt-4 sm:space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
                 <MetricTile
                   label="Request volume"
                   value={String(data.operational.ticketVolume)}
@@ -607,7 +878,7 @@ function InsightsPageInner() {
                   value={String(data.sla.ticketsClosedInRange)}
                 />
               </div>
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3">
                 <MetricTile
                   label="Avg first response"
                   value={formatDuration(data.operational.firstResponseTimeMsAvg)}
@@ -625,90 +896,47 @@ function InsightsPageInner() {
           </section>
 
           {/* Volume and throughput */}
-          <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
-            <div className="flex flex-wrap items-end justify-between gap-3">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-6 md:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+            <h2 className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-600 sm:text-[11px] sm:tracking-[0.22em] dark:text-zinc-500">
+              Volume and throughput
+            </h2>
+            <p className="mt-1 text-base font-semibold leading-snug text-zinc-900 sm:text-lg dark:text-zinc-100">
+              Created vs closed (daily, real-time)
+            </p>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/50 sm:gap-4 sm:p-4">
               <div>
-                <h2 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
-                  Volume and throughput
-                </h2>
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                    Created vs closed (daily, real-time)
-                  </p>
-                  <Tabs value={volumeChartView} onValueChange={(value) => setVolumeChartView(value as typeof volumeChartView)}>
-                    <TabsList className="rounded-full border border-zinc-300 bg-zinc-100 p-1 text-[10px] font-bold uppercase tracking-[0.12em] dark:border-zinc-700 dark:bg-zinc-900/90">
-                      <TabsTrigger value="density" className="rounded-full px-3 py-1 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                        Density
-                      </TabsTrigger>
-                      <TabsTrigger value="line" className="rounded-full px-3 py-1 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white">
-                        Line chart
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
+                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                  Created in range
+                </span>
+                <span className="mt-0.5 block text-2xl font-bold tabular-nums text-orange-700 sm:text-lg dark:text-orange-400">
+                  {data.operational.ticketVolume}
+                </span>
               </div>
-              <div className="flex flex-wrap items-end justify-end gap-3 text-xs text-zinc-600 dark:text-zinc-500">
-                {isAdminRole ? (
-                  isCompanyScopedAdmin ? (
-                    <CompanyValueLabel
-                      label="Company"
-                      value={
-                        taskMetricCompanies.find((company) => company.id === selectedTicketMetricCompany)?.name ??
-                        "No assigned company"
-                      }
-                      className="min-w-[12rem]"
-                    />
-                  ) : (
-                    <label className="flex min-w-[12rem] flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                      Company
-                      <select
-                        value={selectedTicketMetricCompany}
-                        onChange={(e) => setSelectedTicketMetricCompany(e.target.value)}
-                        className="mt-1.5 min-h-10 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold normal-case tracking-normal text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
-                      >
-                        <option value="ALL">All companies</option>
-                        {taskMetricCompanies.map((company) => (
-                          <option key={company.id} value={company.id}>
-                            {company.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )
-                ) : null}
-                <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                  From
-                  <DatePickerField
-                    value={from}
-                    max={to || undefined}
-                    onChange={(e) => setFrom(e.target.value)}
-                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
-                  />
-                </label>
-                <label className="flex flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
-                  To
-                  <DatePickerField
-                    value={to}
-                    min={from || undefined}
-                    onChange={(e) => setTo(e.target.value)}
-                    wrapperClassName="mt-1.5 min-w-[10.5rem]"
-                  />
-                </label>
-                <div>
-                  <span className="block text-[10px] uppercase tracking-wider">Created in range</span>
-                  <span className="text-lg font-bold tabular-nums text-orange-700 dark:text-orange-400">
-                    {data.operational.ticketVolume}
-                  </span>
-                </div>
-                <div>
-                  <span className="block text-[10px] uppercase tracking-wider">Closed in range</span>
-                  <span className="text-lg font-bold tabular-nums text-zinc-900 dark:text-zinc-200">
-                    {data.sla.ticketsClosedInRange}
-                  </span>
-                </div>
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                  Closed in range
+                </span>
+                <span className="mt-0.5 block text-2xl font-bold tabular-nums text-zinc-900 sm:text-lg dark:text-zinc-200">
+                  {data.sla.ticketsClosedInRange}
+                </span>
               </div>
             </div>
-            <div className="mt-6">
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Tabs value={volumeChartView} onValueChange={(value) => setVolumeChartView(value as typeof volumeChartView)}>
+                <TabsList className="h-auto w-full rounded-xl border border-zinc-300 bg-zinc-100 p-1 text-[10px] font-bold uppercase tracking-[0.12em] dark:border-zinc-700 dark:bg-zinc-900/90 sm:w-auto sm:rounded-full">
+                  <TabsTrigger value="density" className="min-h-8 flex-1 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-3 sm:py-1">
+                    Density
+                  </TabsTrigger>
+                  <TabsTrigger value="line" className="min-h-8 flex-1 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-3 sm:py-1">
+                    Line chart
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
+            <div className="mt-4 sm:mt-6">
               <MetricsTrendChart
                 labels={charts.days}
                 created={charts.createdByDay}
@@ -719,8 +947,8 @@ function InsightsPageInner() {
           </section>
 
           {/* Queue composition + SLA performance */}
-          <section className="grid gap-6 lg:grid-cols-2">
-            <div className="stoic-card p-5 sm:p-7">
+          <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+            <div className="stoic-card p-4 sm:p-7">
               <h2 className="stoic-label">Queue composition</h2>
               <div className="mt-6">
                 <MetricsPieChart
@@ -737,9 +965,9 @@ function InsightsPageInner() {
               </div>
             </div>
 
-            <div className="stoic-card p-5 sm:p-7">
+            <div className="stoic-card p-4 sm:p-7">
               <h2 className="stoic-label">SLA performance</h2>
-              <div className="mt-6 grid grid-cols-2 gap-6 sm:gap-8">
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:mt-6 sm:gap-8">
                 <MetricsGauge
                   label="First response"
                   value={data.sla.firstResponseComplianceRate}
@@ -798,6 +1026,27 @@ function InsightsPageInner() {
               </div>
             </div>
           </section>
+
+          {filteredAgentClosers.length > 0 && !viewingPersonalRequestMetrics ? (
+            <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a]">
+              <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+                Top closers in range
+              </h2>
+              <ul className="mt-4 space-y-2">
+                {filteredAgentClosers.slice(0, 12).map((row) => (
+                  <li
+                    key={row.agentId}
+                    className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/50"
+                  >
+                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.name}</span>
+                    <span className="text-sm font-bold tabular-nums text-orange-700 dark:text-orange-300">
+                      {row.ticketsClosed} closed
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
             </>
           )}
         </div>
@@ -872,6 +1121,10 @@ function TaskMetricsPanel({
   canManageDepartmentVisibility = false,
   onDepartmentVisibilityChanged,
   canImportDepartmentTasks = false,
+  metricsSearchQ = "",
+  selectedPersonnelDepartment = "",
+  userEmail = "",
+  patchMetricsUrl,
 }: {
   checklistPillars: TaskChecklistPillarMetrics | null;
   personnelTicketMetrics: PersonnelTicketMetric[];
@@ -901,13 +1154,17 @@ function TaskMetricsPanel({
   lockCompanySelection: boolean;
   metricsViewMode: TaskMetricsViewMode;
   onMetricsViewModeChange: (mode: TaskMetricsViewMode) => void;
-  taskType: TaskMetricsTaskType;
-  onTaskTypeChange: (v: TaskMetricsTaskType) => void;
+  taskType: TaskMetricsTaskTypeFilter;
+  onTaskTypeChange: (v: TaskMetricsTaskTypeFilter) => void;
   allowAllCompaniesInPersonnel: boolean;
   canExtendView?: boolean;
   canManageDepartmentVisibility?: boolean;
   onDepartmentVisibilityChanged?: () => void;
   canImportDepartmentTasks?: boolean;
+  metricsSearchQ?: string;
+  selectedPersonnelDepartment?: string;
+  userEmail?: string;
+  patchMetricsUrl?: (patch: (params: URLSearchParams) => void) => void;
 }) {
   const freq = taskMetricsCadence;
   const isMonthly = freq === "MONTHLY";
@@ -917,7 +1174,7 @@ function TaskMetricsPanel({
     rangeFrom,
     rangeTo,
   });
-  const showCompanyTaskMetrics = metricsViewMode === "company" && selectedCompany !== "";
+  const showCompanyTaskMetrics = metricsViewMode === "company";
   const selectedCompanyName =
     selectedCompany === ""
       ? null
@@ -928,6 +1185,25 @@ function TaskMetricsPanel({
     "No assigned company";
   const showPersonnelCompanyFilter = metricsViewMode === "personnel";
   const showCompanyScopeFilter = metricsViewMode === "company";
+
+  function selectViewMode(optionId: TaskMetricsViewMode) {
+    onMetricsViewModeChange(optionId);
+    patchMetricsUrl?.((params) => {
+      params.set("taskView", optionId);
+      if (optionId !== "personnel") params.delete("department");
+      if (lockCompanySelection && companies[0]?.id) {
+        params.set("companyId", companies[0].id);
+      } else if (!params.get("companyId") || params.get("companyId") === "ALL") {
+        // Unscoped: leave company unselected (all companies) — no default pick.
+        params.delete("companyId");
+      }
+    });
+    if (lockCompanySelection && companies[0]?.id) {
+      onSelectedCompanyChange(companies[0].id);
+    } else if (!selectedCompany) {
+      onSelectedCompanyChange("");
+    }
+  }
 
   // Company-scoped Admin: never leave company selection empty (Personnel tab used to clear it).
   useEffect(() => {
@@ -942,7 +1218,134 @@ function TaskMetricsPanel({
   const [mergedPersonnelRows, setMergedPersonnelRows] = useState<MergedPersonnelEfficiencyRow[]>([]);
   const [mergedPersonnelLoading, setMergedPersonnelLoading] = useState(false);
   const [mergedPersonnelError, setMergedPersonnelError] = useState<string | null>(null);
+  const [orgChartSections, setOrgChartSections] = useState<OrgChartSectionOption[]>([]);
+  const [orgChartMembersBySection, setOrgChartMembersBySection] = useState<Record<string, string[]>>(
+    {},
+  );
   const mergedPeriod = taskMetricsMergedPeriod(freq, { dailyDate, rangeFrom, rangeTo });
+
+  const personnelDepartmentOptions = useMemo(
+    // Org chart departments are shared across companies — do not hide them when a
+    // company chip is set (company scopes people; department scopes org-chart members).
+    () => buildOrgChartDepartmentFilterOptions(orgChartSections),
+    [orgChartSections],
+  );
+
+  const selectedOrgChartMemberIds = useMemo(() => {
+    if (!selectedPersonnelDepartment) return null;
+    return mergedSourceUserIdsForOrgChartSectionTree(
+      selectedPersonnelDepartment,
+      orgChartSections,
+      orgChartMembersBySection,
+    );
+  }, [selectedPersonnelDepartment, orgChartSections, orgChartMembersBySection]);
+
+  const selectedOrgChartDepartmentLabel = useMemo(() => {
+    if (!selectedPersonnelDepartment) return null;
+    return (
+      personnelDepartmentOptions.find((o) => o.value === selectedPersonnelDepartment)?.label ??
+      orgChartSections.find((s) => s.id === selectedPersonnelDepartment)?.name ??
+      null
+    );
+  }, [selectedPersonnelDepartment, personnelDepartmentOptions, orgChartSections]);
+
+  const taskMetricsFilterFields = useMemo((): MetricsFilterFieldDef[] => {
+    const fields: MetricsFilterFieldDef[] = [];
+    if ((showCompanyScopeFilter || showPersonnelCompanyFilter) && !lockCompanySelection) {
+      fields.push({
+        id: "company",
+        type: "Company",
+        param: "companyId",
+        visible: true,
+        value: selectedCompany || "ALL",
+        emptyValue: "ALL",
+        options: buildCompanyFieldOptions(companies, { includeAll: false }),
+      });
+    }
+    if (showPersonnelCompanyFilter) {
+      fields.push({
+        id: "department",
+        type: "Department",
+        param: "department",
+        visible: true,
+        value: selectedPersonnelDepartment || "ALL",
+        emptyValue: "ALL",
+        options: personnelDepartmentOptions,
+      });
+    }
+    if (showCompanyScopeFilter) {
+      fields.push({
+        id: "taskType",
+        type: "Task",
+        param: "taskType",
+        visible: true,
+        value: taskType,
+        emptyValue: "ALL",
+        options: buildTaskTypeFieldOptions(),
+      });
+    }
+    fields.push({
+      id: "cadence",
+      type: "Cadence",
+      param: "cadence",
+      visible: true,
+      value: freq,
+      emptyValue: "MONTHLY",
+      options: buildCadenceFieldOptions(),
+    });
+    return fields;
+  }, [
+    showCompanyScopeFilter,
+    showPersonnelCompanyFilter,
+    lockCompanySelection,
+    selectedCompany,
+    companies,
+    personnelDepartmentOptions,
+    selectedPersonnelDepartment,
+    taskType,
+    freq,
+  ]);
+
+  useEffect(() => {
+    if (!selectedPersonnelDepartment) return;
+    if (personnelDepartmentOptions.some((o) => o.value === selectedPersonnelDepartment)) return;
+    patchMetricsUrl?.((params) => {
+      params.delete("department");
+    });
+  }, [selectedPersonnelDepartment, personnelDepartmentOptions, patchMetricsUrl]);
+
+  useEffect(() => {
+    if (metricsViewMode !== "personnel") return;
+    let cancelled = false;
+    async function loadOrgChartDepartments() {
+      try {
+        const res = await fetch("/api/org-chart-sections", { cache: "no-store" });
+        if (!res.ok) {
+          if (!cancelled) {
+            setOrgChartSections([]);
+            setOrgChartMembersBySection({});
+          }
+          return;
+        }
+        const json = (await res.json()) as {
+          sections?: OrgChartSectionOption[];
+          membersBySection?: Record<string, string[]>;
+        };
+        if (cancelled) return;
+        setOrgChartSections(json.sections ?? []);
+        setOrgChartMembersBySection(json.membersBySection ?? {});
+      } catch {
+        if (!cancelled) {
+          setOrgChartSections([]);
+          setOrgChartMembersBySection({});
+        }
+      }
+    }
+    void loadOrgChartDepartments();
+    return () => {
+      cancelled = true;
+    };
+  }, [metricsViewMode]);
 
   useEffect(() => {
     if (metricsViewMode !== "personnel") return;
@@ -989,6 +1392,7 @@ function TaskMetricsPanel({
     return buildPersonnelInsightCards({
       mergedRows: mergedPersonnelRows,
       selectedCompanyName: companyFilter,
+      selectedOrgChartMemberIds,
       personnelDelayPenalties,
       personnelTicketMetrics,
       personnelRfpAccountingMetrics,
@@ -1001,6 +1405,7 @@ function TaskMetricsPanel({
   }, [
     mergedPersonnelRows,
     selectedCompanyName,
+    selectedOrgChartMemberIds,
     personnelDelayPenalties,
     personnelTicketMetrics,
     personnelRfpAccountingMetrics,
@@ -1014,7 +1419,26 @@ function TaskMetricsPanel({
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <div className="space-y-4">
+        <MetricsFilterBar
+          initialQuery={metricsSearchQ}
+          placeholder={
+            metricsViewMode === "personnel"
+              ? "Search personnel by name…"
+              : "Search task metrics…"
+          }
+          fields={taskMetricsFilterFields}
+          savedFilterStorageKey={
+            userEmail ? `saved-task-metrics-filters:${userEmail}:v1` : undefined
+          }
+          preserveParams={["tab", "taskView", "period", "department"]}
+          extraCaptureParams={["period", "taskView", "department"]}
+        />
+        {lockCompanySelection ? (
+          <CompanyValueLabel label="Company" value={lockedCompanyName} className="max-w-xs" />
+        ) : null}
+      </div>
+      <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <h3 className="text-[11px] font-bold uppercase tracking-[0.22em] text-zinc-600 dark:text-zinc-500">
             Task metrics
@@ -1030,23 +1454,7 @@ function TaskMetricsPanel({
               <button
                 key={option.id}
                 type="button"
-                onClick={() => {
-                  onMetricsViewModeChange(option.id);
-                  if (option.id === "personnel" && allowAllCompaniesInPersonnel && !lockCompanySelection) {
-                    // SuperAdmin personnel: default to all companies.
-                    onSelectedCompanyChange("");
-                  } else if (
-                    option.id === "personnel" &&
-                    lockCompanySelection &&
-                    !selectedCompany &&
-                    companies[0]
-                  ) {
-                    // Company-scoped Admin: keep/restore their assigned company.
-                    onSelectedCompanyChange(companies[0].id);
-                  } else if (option.id === "company" && !selectedCompany && companies[0]) {
-                    onSelectedCompanyChange(companies[0].id);
-                  }
-                }}
+                onClick={() => selectViewMode(option.id)}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
                   metricsViewMode === option.id
@@ -1060,102 +1468,6 @@ function TaskMetricsPanel({
           </div>
         </div>
         <div className="flex w-full shrink-0 flex-col gap-4 lg:w-auto lg:items-end">
-          <div
-            className={cn(
-              "grid w-full gap-3 sm:items-end",
-              showCompanyScopeFilter
-                ? "sm:grid-cols-[minmax(12rem,18rem)_minmax(10rem,14rem)_auto]"
-                : showPersonnelCompanyFilter
-                  ? "sm:grid-cols-[minmax(12rem,18rem)_auto]"
-                  : "sm:grid-cols-1",
-            )}
-          >
-            {showCompanyScopeFilter ? (
-              lockCompanySelection ? (
-                <CompanyValueLabel label="Company" value={lockedCompanyName} />
-              ) : (
-                <label className="flex min-w-0 flex-col gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-                    Company
-                  </span>
-                  <select
-                    value={selectedCompany}
-                    onChange={(e) => onSelectedCompanyChange(e.target.value)}
-                    className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
-                  >
-                    {companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )
-            ) : null}
-            {showPersonnelCompanyFilter ? (
-              lockCompanySelection ? (
-                <CompanyValueLabel label="Company" value={lockedCompanyName} />
-              ) : (
-                <label className="flex min-w-0 flex-col gap-1.5">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-                    Company
-                  </span>
-                  <select
-                    value={selectedCompany}
-                    onChange={(e) => onSelectedCompanyChange(e.target.value)}
-                    className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
-                  >
-                    {allowAllCompaniesInPersonnel ? <option value="">All companies</option> : null}
-                    {companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )
-            ) : null}
-            {showCompanyScopeFilter ? (
-              <label className="flex min-w-0 flex-col gap-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-                  Task type
-                </span>
-                <select
-                  value={taskType}
-                  onChange={(e) => onTaskTypeChange(e.target.value as TaskMetricsTaskType)}
-                  className="min-h-9 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm font-semibold text-zinc-900 outline-none transition focus:border-orange-400/70 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-700/80 dark:bg-zinc-900/60 dark:text-zinc-100"
-                >
-                  {TASK_METRICS_TASK_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-500">
-                Cadence
-              </span>
-              <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-700 dark:bg-zinc-900/60">
-                {(["MONTHLY", "YEARLY"] as const).map((f) => (
-                  <button
-                    key={f}
-                    type="button"
-                    onClick={() => onTaskMetricsCadenceChange(f)}
-                    className={cn(
-                      "rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
-                      freq === f
-                        ? "bg-orange-600 text-white shadow-sm"
-                        : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                    )}
-                  >
-                    {f === "MONTHLY" ? "Monthly" : "Yearly"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
           <div
             className={cn(
               "w-full rounded-xl border border-zinc-200 bg-zinc-50/90 p-2.5 dark:border-zinc-700/80 dark:bg-zinc-900/50",
@@ -1175,6 +1487,9 @@ function TaskMetricsPanel({
                     const ym = e.target.value;
                     onRangeFromChange(ym);
                     onRangeToChange(ym);
+                    patchMetricsUrl?.((params) => {
+                      params.set("period", ym);
+                    });
                   }}
                   wrapperClassName="mt-1.5"
                   inputClassName="min-w-[10.5rem]"
@@ -1190,6 +1505,9 @@ function TaskMetricsPanel({
                     const y = e.target.value;
                     onRangeFromChange(y);
                     onRangeToChange(y);
+                    patchMetricsUrl?.((params) => {
+                      params.set("period", y);
+                    });
                   }}
                   wrapperClassName="mt-1.5"
                   inputClassName="min-w-[10.5rem]"
@@ -1209,28 +1527,50 @@ function TaskMetricsPanel({
       ) : null}
       <div className={cn("mt-6", loading && "pointer-events-none opacity-60")}>
         {metricsViewMode === "company" ? (
-          <TaskPillarMetricsGrid
-            checklistPillars={checklistPillars}
-            metricsCadence={freq}
-            reportingPeriodLabel={reportingPeriodLabel}
-            helpdeskTickets={helpdeskTickets}
-            userSupportTickets={userSupportTickets}
-            includeChecklistPillars={showCompanyTaskMetrics && taskType !== "requests"}
-            includeTicketPillars={taskType === "requests"}
-            preferPillarOrder={
-              taskType === "requests"
-                ? null
-                : taskType === "task"
-                  ? ["ONE-OFF", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "SEMI_ANNUAL"]
-                  : taskType === "field"
-                    ? ["FIELD ASSIGNMENT"]
-                    : ["PROJECTS"]
-            }
-            showEmptyPillars={
-              taskType === "task" || taskType === "field" || taskType === "project"
-            }
-            canExtendView={canExtendView}
-          />
+          taskType === "ALL" ? (
+            <div className="space-y-10">
+              {TASK_METRICS_ALL_TYPE_SECTIONS.map((section) => {
+                const isRequests = section.value === "requests";
+                const preferPillarOrder = preferPillarOrderForTaskType(section.value);
+                return (
+                  <div key={section.value} className="space-y-3">
+                    <h3 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                      {section.label}
+                    </h3>
+                    <TaskPillarMetricsGrid
+                      checklistPillars={checklistPillars}
+                      metricsCadence={freq}
+                      reportingPeriodLabel={reportingPeriodLabel}
+                      helpdeskTickets={helpdeskTickets}
+                      userSupportTickets={userSupportTickets}
+                      includeChecklistPillars={!isRequests}
+                      includeTicketPillars={isRequests}
+                      preferPillarOrder={preferPillarOrder}
+                      showEmptyPillars={!isRequests}
+                      canExtendView={canExtendView}
+                      taskType={section.value}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <TaskPillarMetricsGrid
+              checklistPillars={checklistPillars}
+              metricsCadence={freq}
+              reportingPeriodLabel={reportingPeriodLabel}
+              helpdeskTickets={helpdeskTickets}
+              userSupportTickets={userSupportTickets}
+              includeChecklistPillars={showCompanyTaskMetrics && taskType !== "requests"}
+              includeTicketPillars={taskType === "requests"}
+              preferPillarOrder={preferPillarOrderForTaskType(taskType)}
+              showEmptyPillars={
+                taskType === "task" || taskType === "field" || taskType === "project"
+              }
+              canExtendView={canExtendView}
+              taskType={taskType}
+            />
+          )
         ) : metricsViewMode === "departments" ? (
           <DepartmentTaskMetricsGrid
             sections={departmentSections}
@@ -1252,7 +1592,9 @@ function TaskMetricsPanel({
               rows={mergedPersonnelCards}
               reportingPeriodLabel={reportingPeriodLabel}
               companyLabel={selectedCompanyName}
+              departmentLabel={selectedOrgChartDepartmentLabel}
               loading={mergedPersonnelLoading}
+              searchQuery={metricsSearchQ}
             />
           </>
         )}
@@ -1261,28 +1603,42 @@ function TaskMetricsPanel({
   );
 }
 
+function preferPillarOrderForTaskType(taskType: TaskMetricsTaskType): string[] | null {
+  if (taskType === "requests") return null;
+  if (taskType === "task") return [...TASK_FREQUENCY_DONUT_KEYS];
+  if (taskType === "field") return [FIELD_ASSIGNMENT_DONUT_KEY];
+  return [PROJECTS_DONUT_KEY];
+}
+
 function MetricTile({
   label,
   value,
   accent,
+  className,
 }: {
   label: string;
   value: string;
   accent?: boolean;
+  className?: string;
 }) {
+  const compactValue = value.length > 10;
   return (
     <article
       className={cn(
-        "rounded-2xl border p-4 shadow-sm transition",
+        "rounded-xl border p-3 shadow-sm transition sm:rounded-2xl sm:p-4",
         accent
           ? "border-orange-400/40 bg-gradient-to-br from-orange-500/15 to-zinc-50 dark:border-orange-500/35 dark:from-orange-500/10 dark:to-zinc-950"
           : "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/60",
+        className,
       )}
     >
-      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">{label}</p>
+      <p className="text-[9px] font-bold uppercase leading-tight tracking-[0.12em] text-zinc-600 sm:text-[10px] sm:tracking-[0.14em] dark:text-zinc-500">
+        {label}
+      </p>
       <p
         className={cn(
-          "mt-2 text-2xl font-bold tabular-nums",
+          "mt-1.5 font-bold tabular-nums leading-tight sm:mt-2",
+          compactValue ? "text-lg sm:text-xl" : "text-xl sm:text-2xl",
           accent ? "text-orange-800 dark:text-orange-300" : "text-zinc-900 dark:text-white",
         )}
       >

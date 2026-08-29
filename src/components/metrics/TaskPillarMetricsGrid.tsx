@@ -63,6 +63,7 @@ const PILLAR_DISPLAY_NAMES: Record<string, string> = {
   MONTHLY: "Monthly",
   QUARTERLY: "Quarterly",
   SEMI_ANNUAL: "Semi Annual",
+  YEARLY: "Annualy",
   "FIELD ASSIGNMENT": "Field Assignment",
   PROJECTS: "Projects",
   "IT PROJECT IMPLEMENTATION": "Projects",

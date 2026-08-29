@@ -17,6 +17,8 @@ export type PersonnelCombinedMetricCard = {
   id: string;
   name: string;
   role: string;
+  /** HRIS / merged department label when known. */
+  departmentName?: string | null;
   tickets: {
     closed: number;
     pending: number;
@@ -251,6 +253,7 @@ export type MergedPersonnelEfficiencyRow = {
   sourceUserId: string;
   name: string;
   companyName: string | null;
+  departmentName?: string | null;
   totalTasks: number;
   completedTasks: number;
   delayedTasks: number;
@@ -362,6 +365,7 @@ export function mergePersonnelCombinedCards(
     id: preferAId ? a.id || b.id : b.id || a.id,
     name: preferDisplayName(a.name, b.name),
     role: mergeRoles(a.role, b.role),
+    departmentName: a.departmentName?.trim() || b.departmentName?.trim() || null,
     tickets: mergeActivityBuckets(a.tickets, b.tickets),
     rfpRequestor: null,
     rfpAccounting: mergeActivityBuckets(a.rfpAccounting, b.rfpAccounting),
@@ -426,6 +430,8 @@ export function dedupeMergedPersonnelRows(
     byName.set(key, {
       ...canonical,
       name: preferDisplayName(canonical.name, other.name),
+      companyName: canonical.companyName ?? other.companyName,
+      departmentName: canonical.departmentName ?? other.departmentName,
       totalTasks: Math.max(canonical.totalTasks, other.totalTasks),
       completedTasks: Math.max(canonical.completedTasks, other.completedTasks),
       delayedTasks: Math.max(canonical.delayedTasks, other.delayedTasks),
@@ -479,9 +485,37 @@ export function filterPersonnelSearchQuery(
   });
 }
 
+/** Unique department labels from merged personnel rows (optionally company-scoped). */
+export function buildPersonnelDepartmentOptions(
+  rows: MergedPersonnelEfficiencyRow[],
+  selectedCompanyName?: string | null,
+): Array<{ value: string; label: string }> {
+  let scoped = rows;
+  if (selectedCompanyName) {
+    const target = selectedCompanyName.trim().toLowerCase();
+    scoped = rows.filter((row) => {
+      const rowCompany =
+        (resolveRosterCompanyName(row.companyName) ?? row.companyName)?.trim().toLowerCase() ?? "";
+      return rowCompany === target;
+    });
+  }
+  const names = new Set<string>();
+  for (const row of scoped) {
+    const name = row.departmentName?.trim();
+    if (name) names.add(name);
+  }
+  return [
+    ...[...names].sort((a, b) => a.localeCompare(b)).map((name) => ({ value: name, label: name })),
+  ];
+}
+
 export function buildPersonnelInsightCards(args: {
   mergedRows: MergedPersonnelEfficiencyRow[];
   selectedCompanyName?: string | null;
+  /** @deprecated Prefer `selectedOrgChartMemberIds` (org-chart section filter). */
+  selectedDepartmentName?: string | null;
+  /** When set, only rows whose `sourceUserId` is in this set (org-chart section tree). */
+  selectedOrgChartMemberIds?: ReadonlySet<string> | null;
   personnelDelayPenalties: PersonnelDelayPenaltyRow[];
   personnelTicketMetrics: PersonnelTicketMetric[];
   personnelRfpAccountingMetrics: PersonnelTicketMetric[];
@@ -499,6 +533,12 @@ export function buildPersonnelInsightCards(args: {
         (resolveRosterCompanyName(row.companyName) ?? row.companyName)?.trim().toLowerCase() ?? "";
       return rowCompany === target;
     });
+  }
+  if (args.selectedOrgChartMemberIds) {
+    rows = rows.filter((row) => args.selectedOrgChartMemberIds!.has(row.sourceUserId));
+  } else if (args.selectedDepartmentName) {
+    const target = args.selectedDepartmentName.trim().toLowerCase();
+    rows = rows.filter((row) => (row.departmentName ?? "").trim().toLowerCase() === target);
   }
 
   const penaltyById = new Map(args.personnelDelayPenalties.map((row) => [row.id, row.deduction]));
@@ -575,6 +615,7 @@ export function buildPersonnelInsightCards(args: {
       id: row.sourceUserId,
       name: row.name,
       role: "Assignee",
+      departmentName: row.departmentName?.trim() || null,
       tickets:
         live != null || (!args.liveTicketsAuthoritative && (requestEfficiency != null || requestTotal > 0))
           ? {
@@ -787,6 +828,7 @@ function emptyPersonnelCard(id: string, name: string, role = "Assignee"): Person
     id,
     name: name.trim(),
     role,
+    departmentName: null,
     tickets: null,
     rfpRequestor: null,
     rfpAccounting: null,

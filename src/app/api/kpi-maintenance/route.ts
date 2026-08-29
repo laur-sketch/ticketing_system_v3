@@ -105,7 +105,11 @@ import { rosterTeamNameFilter } from "@/lib/company-roster";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { timeZoneFromPeriodKey, upsertKpiPeriodSnapshot } from "@/lib/kpi-period-snapshots";
 import { resolveOpsPermissions } from "@/lib/ops-permissions";
-import { loadAgentIdsForCompanyTeam, resolveAgentDesignatedCompanyId } from "@/lib/staff-company-scope";
+import {
+  loadAgentIdsForCompanyTeam,
+  resolveAgentDesignatedCompanyId,
+  resolveStaffCompanyTeamId,
+} from "@/lib/staff-company-scope";
 import {
   hasBeforeAndAfterScreenshots,
   hasNumericalRecord,
@@ -302,7 +306,7 @@ export async function GET(req: Request) {
     const staleCycle = currentCycleStart.getTime() > anchor.getTime();
     if (staleCycle) {
       // Incomplete work stays Delayed after the cycle deadline before resetting — the 10-day
-      // hold applies only to MONTHLY / QUARTERLY / SEMI_ANNUAL; DAILY / WEEKLY roll over at once.
+      // hold applies only to MONTHLY / QUARTERLY / SEMI_ANNUAL / YEARLY; DAILY / WEEKLY roll over at once.
       if (!complete) {
         const cycleDeadline = getPeriodEndExclusiveFromCycleStart(
           anchor,
@@ -643,11 +647,11 @@ export async function POST(req: Request) {
     }
     recurrenceWeekday = wd;
   }
-  if (!isItProject && isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL")) {
+  if (!isItProject && isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL" || frequency === "YEARLY")) {
     const dom = body.recurrenceMonthDay;
     if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
       return NextResponse.json(
-        { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY/SEMI_ANNUAL (1–31)." },
+        { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY/SEMI_ANNUAL/YEARLY (1–31)." },
         { status: 400 },
       );
     }
@@ -1882,17 +1886,39 @@ export async function PATCH(req: Request) {
       }
       const mainAssigneeCompanyId = await resolveAgentDesignatedCompanyId(kpiRow.assignedAgentId);
       const subAssigneeCompanyId = await resolveAgentDesignatedCompanyId(assignee.id);
-      if (!mainAssigneeCompanyId || !subAssigneeCompanyId) {
-        return NextResponse.json(
-          { error: "Both main task and sub-task assignees must have a designated company." },
-          { status: 400 },
-        );
-      }
-      if (subAssigneeCompanyId !== mainAssigneeCompanyId) {
-        return NextResponse.json(
-          { error: "Sub-task assignee must belong to the same company as the main task assignee." },
-          { status: 400 },
-        );
+      // Elevated roles may assign helpers cross-company; Admin/Personnel stay company-locked.
+      if (!isElevatedUserRole(session.user.role)) {
+        if (!mainAssigneeCompanyId || !subAssigneeCompanyId) {
+          return NextResponse.json(
+            { error: "Both main task and sub-task assignees must have a designated company." },
+            { status: 400 },
+          );
+        }
+        if (subAssigneeCompanyId !== mainAssigneeCompanyId) {
+          return NextResponse.json(
+            { error: "Sub-task assignee must belong to the same company as the main task assignee." },
+            { status: 400 },
+          );
+        }
+        if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
+          const scope = await resolveViewerOrgChartSectionScope(session.user.email);
+          const allowed = new Set(scope.agentIds);
+          const companyAgents = mainAssigneeCompanyId
+            ? new Set(await loadAgentIdsForCompanyTeam(mainAssigneeCompanyId))
+            : null;
+          if (
+            !allowed.has(assignee.id) ||
+            (companyAgents && !companyAgents.has(assignee.id))
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "Sub-task assignee must be within your company and org-chart department scope.",
+              },
+              { status: 403 },
+            );
+          }
+        }
       }
     }
     const updatedJson = isItProjectImplementationPillar(kpiRow.title)
@@ -2225,6 +2251,30 @@ export async function PATCH(req: Request) {
         { status: 400 },
       );
     }
+    // Admin / Personnel: must stay within company ∩ org-chart department scope.
+    if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
+      const companyId = await resolveStaffCompanyTeamId(session.user.email);
+      const sectionScope = await resolveViewerOrgChartSectionScope(session.user.email);
+      const sectionAgents = new Set(sectionScope.agentIds);
+      const companyAgents = companyId
+        ? new Set(await loadAgentIdsForCompanyTeam(companyId))
+        : new Set<string>();
+      const allowed =
+        companyId && sectionAgents.size > 0
+          ? [...sectionAgents].filter((id) => companyAgents.has(id))
+          : companyId
+            ? [...companyAgents]
+            : [...sectionAgents];
+      if (!allowed.includes(assignee.id)) {
+        return NextResponse.json(
+          {
+            error:
+              "Assignee must be within your company and org-chart department scope.",
+          },
+          { status: 403 },
+        );
+      }
+    }
     const assignedRole = (await portalCompanyAdminPrivilegesForEmail(assignee.email))
       ? "Admin Role"
       : "Personnel";
@@ -2517,11 +2567,11 @@ export async function PATCH(req: Request) {
       }
       recurrenceWeekday = wd;
     }
-    if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL")) {
+    if (isRecurring && (frequency === "MONTHLY" || frequency === "QUARTERLY" || frequency === "SEMI_ANNUAL" || frequency === "YEARLY")) {
       const dom = schedule.recurrenceMonthDay ?? kpiRow.recurrenceMonthDay ?? 1;
       if (typeof dom !== "number" || dom < 1 || dom > 31 || !Number.isInteger(dom)) {
         return NextResponse.json(
-          { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY/SEMI_ANNUAL (1–31)." },
+          { error: "recurrenceMonthDay is required for MONTHLY/QUARTERLY/SEMI_ANNUAL/YEARLY (1–31)." },
           { status: 400 },
         );
       }

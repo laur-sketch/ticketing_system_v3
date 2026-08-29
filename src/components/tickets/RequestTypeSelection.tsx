@@ -8,6 +8,7 @@ import {
   REQUEST_TYPES,
   type RequestTypeId,
 } from "@/lib/request-types";
+import { visibleIntakeRequestTypes } from "@/lib/intake-request-type-visibility";
 
 type RequestTypeSelectionProps = {
   value?: RequestTypeId;
@@ -20,6 +21,8 @@ type RequestTypeSelectionProps = {
   disabledTypeHint?: string | null;
   /** Per-type lock messages (e.g. ACA temporarily unavailable). */
   disabledTypeHints?: Partial<Record<RequestTypeId, string>>;
+  /** SuperAdmin-hidden types — omitted from the list entirely. */
+  hiddenTypeIds?: readonly RequestTypeId[];
 };
 
 export function RequestTypeSelection({
@@ -30,9 +33,22 @@ export function RequestTypeSelection({
   disabledTypeIds = [],
   disabledTypeHint = null,
   disabledTypeHints = {},
+  hiddenTypeIds = [],
 }: RequestTypeSelectionProps) {
   const disabledSet = new Set(disabledTypeIds);
+  const selectableTypes = visibleIntakeRequestTypes([...hiddenTypeIds]);
   const selectedLocked = disabledSet.has(value);
+  const effectiveValue = selectableTypes.some((t) => t.id === value)
+    ? value
+    : (selectableTypes[0]?.id ?? DEFAULT_REQUEST_TYPE);
+
+  if (selectableTypes.length === 0) {
+    return (
+      <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+        No request types are available right now. Contact your administrator.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -50,8 +66,8 @@ export function RequestTypeSelection({
 
       <fieldset className="space-y-2" disabled={disabled}>
         <legend className="sr-only">Request type</legend>
-        {REQUEST_TYPES.map((type) => {
-          const selected = value === type.id;
+        {selectableTypes.map((type) => {
+          const selected = effectiveValue === type.id;
           const typeLocked = disabledSet.has(type.id);
           const hint = disabledTypeHints[type.id] ?? (typeLocked ? disabledTypeHint : null);
           return (
@@ -120,8 +136,8 @@ export function RequestTypeSelection({
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
         <Button
           type="button"
-          disabled={disabled || selectedLocked}
-          onClick={() => onContinue(value)}
+          disabled={disabled || disabledSet.has(effectiveValue)}
+          onClick={() => onContinue(effectiveValue)}
           className="bg-orange-600 text-white hover:bg-orange-500"
         >
           {selectedLocked ? "Choose another request type" : "Continue"}

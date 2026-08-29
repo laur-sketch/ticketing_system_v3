@@ -33,6 +33,8 @@ import { persistTicketScreenshots, validateScreenshotFiles } from "@/lib/ticket-
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { runForConfirmationReminderSweep } from "@/lib/confirmation-reminders";
 import { parseRequestTypeId, requestTypeLabel } from "@/lib/request-types";
+import { isRequestTypeHiddenFromIntake } from "@/lib/intake-request-type-visibility";
+import { getIntakeRequestTypeVisibility } from "@/lib/intake-request-type-visibility-db";
 import {
   formatPaymentRequestDescription,
   formatPaymentRequestTitle,
@@ -332,6 +334,8 @@ export async function POST(req: Request) {
     if (contentType.includes("multipart/form-data")) {
       const fd = await req.formData();
       issue = String(fd.get("issue") || "");
+      const pri = fd.get("priority");
+      priority = pri != null ? String(pri) : undefined;
       const ct = fd.get("companyTeamId");
       companyTeamIdRaw = ct != null ? String(ct) : undefined;
       const ocs = fd.get("orgChartSectionId");
@@ -640,7 +644,9 @@ export async function POST(req: Request) {
     ];
 
     const effectiveCategory = (category || "GENERAL").trim();
-    const effectivePriority = (priority && String(priority).trim() ? String(priority).trim() : "LOW");
+    const rawPriority = (priority && String(priority).trim() ? String(priority).trim() : "LOW").toUpperCase();
+    // Intake defaults to LOW; treat blank/UNSET the same so creates never land as unset.
+    const effectivePriority = rawPriority === "UNSET" ? "LOW" : rawPriority;
     const issueText = (issue || description || "").trim();
     const branch = (branchRaw ?? "").trim();
     if (branch.length > 120) {
@@ -659,6 +665,13 @@ export async function POST(req: Request) {
       requestingCompanyName = requestingCompany.name;
     }
     const requestType = parseRequestTypeId(requestTypeRaw);
+    const intakeVisibility = await getIntakeRequestTypeVisibility();
+    if (isRequestTypeHiddenFromIntake(requestType, intakeVisibility.hiddenTypeIds)) {
+      return NextResponse.json(
+        { error: "This request type is not available for new submissions." },
+        { status: 400 },
+      );
+    }
     const skipPaymentNotedBy = isFormFlag(skipPaymentNotedByRaw);
     const skipApprovedBy =
       isFormFlag(skipApprovedByRaw) || isFormFlag(skipPaymentApprovedByRaw);

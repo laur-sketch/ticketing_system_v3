@@ -20,7 +20,7 @@ import {
   penaltyDeductionsForKpi,
 } from "@/lib/task-delay-penalty";
 import type { PersonnelDelayPenaltyRow } from "@/lib/task-personnel-metrics";
-import type { TaskMetricsTaskType } from "@/lib/task-metrics-task-type";
+import type { TaskMetricsTaskTypeFilter } from "@/lib/task-metrics-task-type";
 import {
   combineHelpdeskCountsByBlend,
   loadHelpdeskCsvTaskMetricCounts,
@@ -483,7 +483,7 @@ export async function computeTaskMetrics(
   range: KpiRange,
   scope: KpiScope = {},
   helpdeskCadence: HelpdeskTaskCadence = "MONTHLY",
-  opts: { timeZone?: string; taskType?: TaskMetricsTaskType } = {},
+  opts: { timeZone?: string; taskType?: TaskMetricsTaskTypeFilter } = {},
 ): Promise<TaskMetricsPayload> {
   const scoped = scope.assignedAgentIds
     ? ({ assignedAgentId: { in: scope.assignedAgentIds.length > 0 ? scope.assignedAgentIds : ["__none__"] } } as const)
@@ -492,13 +492,13 @@ export async function computeTaskMetrics(
       : {};
   /** Helpdesk / User Support use Manila working days even when the browser sends UTC before hydration. */
   const helpdeskTz = snapshotTimeZoneForTaskMetrics(opts.timeZone);
-  const taskType =
+  const taskTypeFilter: TaskMetricsTaskTypeFilter =
     opts.taskType === "project" ||
     opts.taskType === "field" ||
     opts.taskType === "task" ||
     opts.taskType === "requests"
       ? opts.taskType
-      : undefined;
+      : "ALL";
   const workingDays = workingDayIntervalsInRange(range, helpdeskTz);
   const { fromYmd, toYmd } = kpiRangeToYmd(range);
 
@@ -552,16 +552,35 @@ export async function computeTaskMetrics(
           rangeFromYmd: fromYmd,
           rangeToYmd: toYmd,
         });
-  const [taskChecklistPillars] = await Promise.all([
-    computeTaskChecklistPillarMetrics({
-      metricsCadence: helpdeskCadence,
-      fromYmd,
-      toYmd,
-      timeZone: helpdeskTz,
-      kpiWhere: kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds),
-      taskType,
-    }),
-  ]);
+
+  const kpiWhere = kpiMaintenanceWhereForTaskMetrics(scope.assignedAgentId, scope.assignedAgentIds);
+  const checklistArgs = {
+    metricsCadence: helpdeskCadence,
+    fromYmd,
+    toYmd,
+    timeZone: helpdeskTz,
+    kpiWhere,
+  } as const;
+
+  let taskChecklistPillars: TaskChecklistPillarMetrics;
+  if (taskTypeFilter === "ALL") {
+    const [task, project, field] = await Promise.all([
+      computeTaskChecklistPillarMetrics({ ...checklistArgs, taskType: "task" }),
+      computeTaskChecklistPillarMetrics({ ...checklistArgs, taskType: "project" }),
+      computeTaskChecklistPillarMetrics({ ...checklistArgs, taskType: "field" }),
+    ]);
+    taskChecklistPillars = { ...task, ...project, ...field };
+  } else if (taskTypeFilter === "requests") {
+    taskChecklistPillars = await computeTaskChecklistPillarMetrics({
+      ...checklistArgs,
+      taskType: "requests",
+    });
+  } else {
+    taskChecklistPillars = await computeTaskChecklistPillarMetrics({
+      ...checklistArgs,
+      taskType: taskTypeFilter,
+    });
+  }
 
   const personnelTicketMetrics =
     workingDays.length > 0

@@ -8,6 +8,7 @@ import { BRAND_TITLE } from "@/lib/brand";
 import { EscalationTriggersClient } from "../escalation-triggers/ui";
 import { AccessControlsPanel } from "./AccessControlsPanel";
 import { FaqPanel } from "./FaqPanel";
+import { IntakeRequestTypesPanel } from "./IntakeRequestTypesPanel";
 
 type Trigger = Pick<
   EscalationTrigger,
@@ -34,7 +35,13 @@ export function SuperAdminSettingsClient({
   function setTab(next: SuperAdminSettingsTab) {
     setTabState(next);
     const qs =
-      next === "access" ? "?tab=access" : next === "faq" ? "?tab=faq" : "?tab=alerts";
+      next === "access"
+        ? "?tab=access"
+        : next === "faq"
+          ? "?tab=faq"
+          : next === "intake"
+            ? "?tab=intake"
+            : "?tab=alerts";
     router.replace(`/admin/superadmin-settings${qs}`, { scroll: false });
   }
 
@@ -58,6 +65,8 @@ export function SuperAdminSettingsClient({
 
       {tab === "access" ? (
         <AccessControlsPanel maxOrgLayer={maxOrgLayer} />
+      ) : tab === "intake" ? (
+        <IntakeRequestTypesPanel />
       ) : tab === "faq" ? (
         <FaqPanel />
       ) : (
