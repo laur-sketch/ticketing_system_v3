@@ -46,6 +46,7 @@ import {
 import type { PersonnelTicketMetric } from "@/lib/kpis";
 import type { DepartmentMainMetric } from "@/lib/department-task-metrics";
 import { KpiDefinitionConsole } from "@/components/KpiDefinitionConsole";
+import { InsightsMetricsPanes } from "@/app/insights/insights-metrics-panes";
 import { resolveRosterCompanyName } from "@/lib/hris-company-aliases";
 import { DEFAULT_TIME_ZONE } from "@/lib/kpi-recurrence";
 import type {
@@ -572,11 +573,21 @@ function InsightsPageInner() {
   const selectTab = useCallback(
     (value: InsightsTab) => {
       setActiveTab(value);
+      const current = parseInsightsTab(searchParams.get("tab")) ?? "ticket-metrics";
+      if (current === value) return;
       const params = new URLSearchParams(searchParams.toString());
       params.set("tab", value);
       router.replace(`/insights?${params.toString()}`, { scroll: false });
     },
     [router, searchParams],
+  );
+
+  const insightsMetricsPane = activeTab === "task-metrics" ? "task" : "request";
+  const onInsightsMetricsPaneChange = useCallback(
+    (next: "request" | "task") => {
+      selectTab(next === "task" ? "task-metrics" : "ticket-metrics");
+    },
+    [selectTab],
   );
 
   const patchMetricsUrl = useCallback(
@@ -745,20 +756,20 @@ function InsightsPageInner() {
               </p>
             ) : null}
         </div>
-        <Tabs value={activeTab} onValueChange={(value) => selectTab(value as InsightsTab)} className="mt-4 sm:mt-6">
-          <TabsList className="flex h-auto w-full flex-wrap gap-1 rounded-xl border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90 sm:rounded-full sm:gap-0">
-            <TabsTrigger value="ticket-metrics" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-[11px] font-semibold leading-tight data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-4 sm:py-1.5 sm:text-xs">
+        <Tabs value={activeTab} onValueChange={(value) => selectTab(value as InsightsTab)} className="mt-4 w-full sm:mt-6">
+          <TabsList className="flex h-auto w-full gap-1 rounded-xl border border-zinc-300 bg-zinc-100 p-1 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-900/90 sm:rounded-full">
+            <TabsTrigger value="ticket-metrics" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-center text-[11px] font-semibold leading-tight data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:rounded-full sm:px-4 sm:py-2 sm:text-xs">
               <span className="sm:hidden">{isPersonnel ? "My requests" : "Request metrics"}</span>
               <span className="hidden sm:inline">{isPersonnel ? "My Request Metrics and Reports" : "Request Metrics and Reports"}</span>
             </TabsTrigger>
             {showTaskReportingTabs ? (
-              <TabsTrigger value="task-metrics" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-[11px] font-semibold leading-tight data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-4 sm:py-1.5 sm:text-xs">
+              <TabsTrigger value="task-metrics" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-center text-[11px] font-semibold leading-tight data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:rounded-full sm:px-4 sm:py-2 sm:text-xs">
                 <span className="sm:hidden">Task metrics</span>
                 <span className="hidden sm:inline">Task Metrics and Reports</span>
               </TabsTrigger>
             ) : null}
             {showKpiTasksTab ? (
-              <TabsTrigger value="kpi-mgmt" className="rounded-full px-4 py-1.5 text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white">
+              <TabsTrigger value="kpi-mgmt" className="min-h-9 flex-1 rounded-lg px-3 py-2 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:rounded-full sm:px-4 sm:py-2">
                 {isPersonnel ? "My Task Management" : "Task Management"}
               </TabsTrigger>
             ) : null}
@@ -766,7 +777,18 @@ function InsightsPageInner() {
         </Tabs>
       </header>
 
-      {activeTab === "ticket-metrics" && isAdminRole ? (
+      {activeTab === "kpi-mgmt" && showKpiTasksTab ? (
+        <div className="space-y-6">
+          <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => {}} />
+        </div>
+      ) : showTaskReportingTabs ? (
+        <InsightsMetricsPanes
+          pane={insightsMetricsPane}
+          onPaneChange={onInsightsMetricsPaneChange}
+          requestMetrics={
+            <>
+
+              {isAdminRole ? (
         <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-4">
           <MetricsFilterBar
             initialQuery={metricsSearchQ}
@@ -828,68 +850,14 @@ function InsightsPageInner() {
             </label>
           </div>
         </div>
-      ) : null}
+              ) : null}
 
-      {error && activeTab === "ticket-metrics" ? (
+              {error ? (
         <p className="rounded-xl border border-red-500/35 bg-red-50 px-4 py-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </p>
-      ) : null}
+              ) : null}
 
-      {activeTab === "kpi-mgmt" ? (
-        <div className="space-y-6">
-          <KpiDefinitionConsole onMaintenanceRecordsUpdated={() => {}} />
-        </div>
-      ) : activeTab === "task-metrics" && showTaskReportingTabs ? (
-        <div className="space-y-6">
-          <TaskMetricsPanel
-            checklistPillars={taskChecklistPillars}
-            personnelTicketMetrics={personnelTicketMetrics}
-            personnelRfpAccountingMetrics={personnelRfpAccountingMetrics}
-            personnelRfpFinanceMetrics={personnelRfpFinanceMetrics}
-            personnelIrsCanvassMetrics={personnelIrsCanvassMetrics}
-            personnelFtrPreparedMetrics={personnelFtrPreparedMetrics}
-            personnelAcaSubmittedMetrics={personnelAcaSubmittedMetrics}
-            personnelDelayPenalties={personnelDelayPenalties}
-            departmentSections={departmentMetrics}
-            helpdeskTickets={taskMetricsHelpdesk}
-            userSupportTickets={taskMetricsUserSupport}
-            loading={
-              taskMetricsViewMode === "departments" ? departmentMetricsLoading : taskMetricsLoading
-            }
-            error={
-              taskMetricsViewMode === "departments" ? departmentMetricsError : taskMetricsError
-            }
-            taskMetricsCadence={taskMetricsCadence}
-            onTaskMetricsCadenceChange={handleTaskMetricsCadenceChange}
-            dailyDate={taskMetricsDailyDate}
-            onDailyDateChange={setTaskMetricsDailyDate}
-            rangeFrom={taskMetricsFrom}
-            rangeTo={taskMetricsTo}
-            onRangeFromChange={setTaskMetricsFrom}
-            onRangeToChange={setTaskMetricsTo}
-            reportingTimeZone={recurrenceTz}
-            companies={taskMetricCompanies}
-            selectedCompany={selectedTaskMetricCompany}
-            onSelectedCompanyChange={setSelectedTaskMetricCompany}
-            lockCompanySelection={isCompanyScopedAdmin}
-            metricsViewMode={taskMetricsViewMode}
-            onMetricsViewModeChange={setTaskMetricsViewMode}
-            taskType={taskMetricsTaskType}
-            onTaskTypeChange={setTaskMetricsTaskType}
-            allowAllCompaniesInPersonnel={true}
-            canExtendView={isAdminRole}
-            canManageDepartmentVisibility={isSuperAdmin}
-            onDepartmentVisibilityChanged={() => void loadDepartmentMetrics()}
-            canImportDepartmentTasks={isAdminRole}
-            metricsSearchQ={metricsSearchQ}
-            selectedPersonnelDepartment={selectedPersonnelDepartment}
-            userEmail={userEmail}
-            patchMetricsUrl={patchMetricsUrl}
-          />
-        </div>
-      
-      ) : (
         <div className="space-y-8">
           {!data ? (
             <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-6 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -1099,6 +1067,343 @@ function InsightsPageInner() {
             </>
           )}
         </div>
+
+            </>
+          }
+          taskMetrics={
+
+            <TaskMetricsPanel
+              checklistPillars={taskChecklistPillars}
+              personnelTicketMetrics={personnelTicketMetrics}
+              personnelRfpAccountingMetrics={personnelRfpAccountingMetrics}
+              personnelRfpFinanceMetrics={personnelRfpFinanceMetrics}
+              personnelIrsCanvassMetrics={personnelIrsCanvassMetrics}
+              personnelFtrPreparedMetrics={personnelFtrPreparedMetrics}
+              personnelAcaSubmittedMetrics={personnelAcaSubmittedMetrics}
+              personnelDelayPenalties={personnelDelayPenalties}
+              departmentSections={departmentMetrics}
+              helpdeskTickets={taskMetricsHelpdesk}
+              userSupportTickets={taskMetricsUserSupport}
+              loading={
+                taskMetricsViewMode === "departments" ? departmentMetricsLoading : taskMetricsLoading
+              }
+              error={
+                taskMetricsViewMode === "departments" ? departmentMetricsError : taskMetricsError
+              }
+              taskMetricsCadence={taskMetricsCadence}
+              onTaskMetricsCadenceChange={handleTaskMetricsCadenceChange}
+              dailyDate={taskMetricsDailyDate}
+              onDailyDateChange={setTaskMetricsDailyDate}
+              rangeFrom={taskMetricsFrom}
+              rangeTo={taskMetricsTo}
+              onRangeFromChange={setTaskMetricsFrom}
+              onRangeToChange={setTaskMetricsTo}
+              reportingTimeZone={recurrenceTz}
+              companies={taskMetricCompanies}
+              selectedCompany={selectedTaskMetricCompany}
+              onSelectedCompanyChange={setSelectedTaskMetricCompany}
+              lockCompanySelection={isCompanyScopedAdmin}
+              metricsViewMode={taskMetricsViewMode}
+              onMetricsViewModeChange={setTaskMetricsViewMode}
+              taskType={taskMetricsTaskType}
+              onTaskTypeChange={setTaskMetricsTaskType}
+              allowAllCompaniesInPersonnel={true}
+              canExtendView={isAdminRole}
+              canManageDepartmentVisibility={isSuperAdmin}
+              onDepartmentVisibilityChanged={() => void loadDepartmentMetrics()}
+              canImportDepartmentTasks={isAdminRole}
+              metricsSearchQ={metricsSearchQ}
+              selectedPersonnelDepartment={selectedPersonnelDepartment}
+              userEmail={userEmail}
+              patchMetricsUrl={patchMetricsUrl}
+            />
+          
+          }
+        />
+      ) : (
+            <>
+
+              {isAdminRole ? (
+        <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-4">
+          <MetricsFilterBar
+            initialQuery={metricsSearchQ}
+            placeholder="Search personnel by name…"
+            fields={requestMetricsFilterFields}
+            savedFilterStorageKey={
+              userEmail ? `saved-request-metrics-filters:${userEmail}:v1` : undefined
+            }
+            preserveParams={["tab", "from", "to", "agentId", "department"]}
+            extraCaptureParams={["from", "to", "agentId", "department"]}
+            searchSuggestions={requestMetricAgents.map((agent) => ({
+              id: agent.id,
+              label: agent.name,
+            }))}
+            searchSuggestionsLoading={requestMetricAgentsLoading}
+            searchSuggestionParam="agentId"
+            className="border-0 bg-transparent shadow-none dark:bg-transparent"
+          />
+          <div className="grid grid-cols-2 gap-3 border-t border-zinc-200 pt-3 dark:border-zinc-700 sm:flex sm:flex-wrap sm:items-end">
+            {isCompanyScopedAdmin ? (
+              <CompanyValueLabel
+                label="Company"
+                value={
+                  taskMetricCompanies.find((c) => c.id === selectedTicketMetricCompany)?.name ??
+                  "No assigned company"
+                }
+                className="col-span-2 min-w-0 sm:col-span-1 sm:min-w-[12rem]"
+              />
+            ) : null}
+            <label className="flex min-w-0 flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              From
+              <DatePickerField
+                value={from}
+                max={to || undefined}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setFrom(next);
+                  patchMetricsUrl((params) => {
+                    params.set("from", next);
+                  });
+                }}
+                wrapperClassName="mt-1.5 w-full min-w-0"
+              />
+            </label>
+            <label className="flex min-w-0 flex-col text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-500">
+              To
+              <DatePickerField
+                value={to}
+                min={from || undefined}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setTo(next);
+                  patchMetricsUrl((params) => {
+                    params.set("to", next);
+                  });
+                }}
+                wrapperClassName="mt-1.5 w-full min-w-0"
+              />
+            </label>
+          </div>
+        </div>
+              ) : null}
+
+              {error ? (
+        <p className="rounded-xl border border-red-500/35 bg-red-50 px-4 py-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200">
+          {error}
+        </p>
+              ) : null}
+
+        <div className="space-y-8">
+          {!data ? (
+            <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-6 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <span className="inline-block size-4 animate-spin rounded-full border-2 border-orange-600 border-t-transparent" aria-hidden />
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                {isAdminRole && !selectedTicketMetricCompany
+                  ? "Loading companies…"
+                  : "Loading metrics…"}
+              </p>
+            </div>
+          ) : (
+            <>
+          {/* Operational load */}
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-6 md:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+            <h2 className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-600 sm:text-[11px] sm:tracking-[0.2em] dark:text-zinc-500">
+              Operational load
+            </h2>
+            <div className="mt-3 space-y-3 sm:mt-4 sm:space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+                <MetricTile
+                  label="Request volume"
+                  value={String(data.operational.ticketVolume)}
+                  accent
+                />
+                <MetricTile
+                  label="Active requests"
+                  value={String(data.operational.backlogSize)}
+                />
+                <MetricTile
+                  label="For Confirmation"
+                  value={String(data.operational.forConfirmationSize)}
+                />
+                <MetricTile
+                  label="Closed"
+                  value={String(data.sla.ticketsClosedInRange)}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3">
+                <MetricTile
+                  label="Avg first response"
+                  value={formatDuration(data.operational.firstResponseTimeMsAvg)}
+                />
+                <MetricTile
+                  label="Avg resolution time"
+                  value={formatDuration(data.operational.resolutionTimeMsAvg)}
+                />
+                <MetricTile
+                  label="Avg confirmation time"
+                  value={formatDuration(data.operational.confirmationTimeMsAvg)}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Volume and throughput */}
+          <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:p-6 md:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a] dark:shadow-[0_16px_48px_rgba(0,0,0,0.35)]">
+            <h2 className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-600 sm:text-[11px] sm:tracking-[0.22em] dark:text-zinc-500">
+              Volume and throughput
+            </h2>
+            <p className="mt-1 text-base font-semibold leading-snug text-zinc-900 sm:text-lg dark:text-zinc-100">
+              Created vs closed (daily, real-time)
+            </p>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/50 sm:gap-4 sm:p-4">
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                  Created in range
+                </span>
+                <span className="mt-0.5 block text-2xl font-bold tabular-nums text-orange-700 sm:text-lg dark:text-orange-400">
+                  {data.operational.ticketVolume}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                  Closed in range
+                </span>
+                <span className="mt-0.5 block text-2xl font-bold tabular-nums text-zinc-900 sm:text-lg dark:text-zinc-200">
+                  {data.sla.ticketsClosedInRange}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Tabs value={volumeChartView} onValueChange={(value) => setVolumeChartView(value as typeof volumeChartView)}>
+                <TabsList className="h-auto w-full rounded-xl border border-zinc-300 bg-zinc-100 p-1 text-[10px] font-bold uppercase tracking-[0.12em] dark:border-zinc-700 dark:bg-zinc-900/90 sm:w-auto sm:rounded-full">
+                  <TabsTrigger value="density" className="min-h-8 flex-1 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-3 sm:py-1">
+                    Density
+                  </TabsTrigger>
+                  <TabsTrigger value="line" className="min-h-8 flex-1 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:rounded-full sm:px-3 sm:py-1">
+                    Line chart
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+
+            <div className="mt-4 sm:mt-6">
+              <MetricsTrendChart
+                labels={charts.days}
+                created={charts.createdByDay}
+                closed={charts.closedByDay}
+                variant={volumeChartView}
+              />
+            </div>
+          </section>
+
+          {/* Queue composition + SLA performance */}
+          <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+            <div className="stoic-card p-4 sm:p-7">
+              <h2 className="stoic-label">Queue composition</h2>
+              <div className="mt-6">
+                <MetricsPieChart
+                  title="Open queue distribution"
+                  itemsLabel={(n) => `${n} open request${n === 1 ? "" : "s"}`}
+                  emptyDescription="No active queue items."
+                  showPercentages
+                  pieClassName="h-44 w-44 sm:h-48 sm:w-48"
+                  segments={queuePieSegments}
+                />
+              </div>
+              <div className="mt-5 border-t border-border pt-5">
+                <MetricsQueueStrip segments={charts.queueStatusMix} />
+              </div>
+            </div>
+
+            <div className="stoic-card p-4 sm:p-7">
+              <h2 className="stoic-label">SLA performance</h2>
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:mt-6 sm:gap-8">
+                <MetricsGauge
+                  label="First response"
+                  value={data.sla.firstResponseComplianceRate}
+                  target={0.95}
+                />
+                <MetricsGauge
+                  label="Resolution"
+                  value={data.sla.resolutionComplianceRate}
+                  target={0.95}
+                />
+              </div>
+              <div className="mt-6 grid grid-cols-2 gap-3 border-t border-border pt-6">
+                <div className="rounded-xl border border-border bg-surface-muted px-3 py-4 text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Transfer request rate
+                  </p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-brand">
+                    {pct(data.sla.transferRequestRate)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-surface-muted px-3 py-4 text-center">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">Reopen rate</p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-foreground">
+                    {pct(data.sla.reopenRate)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Quality signals */}
+          <section>
+            <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+              Quality &amp; signals
+            </h2>
+            <div className="mt-4 grid gap-6 lg:grid-cols-[1.7fr_1fr]">
+              <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] dark:border-zinc-800/90 dark:bg-[#0a0a0a]">
+                <MetricsBarChart
+                  title="User satisfaction (CSAT star ratings)"
+                  rows={satisfactionRows}
+                  valueFormatter={(v) =>
+                    v === 0 ? "0" : `${v} response${v === 1 ? "" : "s"}`
+                  }
+                />
+              </section>
+              <div className="grid gap-4">
+                <MetricTile
+                  label="Feedback responses"
+                  value={String(data.quality.feedbackCount)}
+                  accent
+                />
+                <MetricTile
+                  label="Quality note"
+                  value="CSAT = 1–5 stars"
+                />
+              </div>
+            </div>
+          </section>
+
+          {filteredAgentClosers.length > 0 && !viewingPersonalRequestMetrics ? (
+            <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_8px_28px_rgba(0,0,0,0.06)] sm:p-7 dark:border-zinc-800/90 dark:bg-[#0a0a0a]">
+              <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-zinc-600 dark:text-zinc-500">
+                Top closers in range
+              </h2>
+              <ul className="mt-4 space-y-2">
+                {filteredAgentClosers.slice(0, 12).map((row) => (
+                  <li
+                    key={row.agentId}
+                    className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/50"
+                  >
+                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{row.name}</span>
+                    <span className="text-sm font-bold tabular-nums text-orange-700 dark:text-orange-300">
+                      {row.ticketsClosed} closed
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+            </>
+          )}
+        </div>
+
+            </>
       )}
     </main>
   );
