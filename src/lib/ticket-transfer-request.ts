@@ -81,18 +81,25 @@ export function canViewerApproveTransfer(opts: {
   parsed: TransferRequestPayload | null;
 }): boolean {
   const { sessionRole, reviewerPortalAccountId, sessionAgentId, parsed } = opts;
-  if (sessionRole === "SuperAdmin") return true;
-  if (!parsed) return sessionRole === "SuperAdmin" || sessionRole === "Admin";
+  // Transfer pending lives in Assign Requests — admins may resolve from Ticket Controls too.
+  if (
+    sessionRole === "SuperAdmin" ||
+    sessionRole === "HighAdmin" ||
+    sessionRole === "Admin"
+  ) {
+    return true;
+  }
+  if (!parsed) return false;
 
-  // Peer transfer: the named agent accepts and takes the assignment.
+  // Preferred recipient may still claim via Ticket Controls.
   if (parsed.recipientAgentId) {
     return Boolean(sessionAgentId && sessionAgentId === parsed.recipientAgentId);
   }
 
   // Legacy: company Admin / SuperAdmin reviews a queue move.
-  if (parsed.recipientSuperAdmin) return sessionRole === "SuperAdmin";
+  if (parsed.recipientSuperAdmin) return false;
   if (parsed.recipientPortalAccountId && reviewerPortalAccountId) {
     return parsed.recipientPortalAccountId === reviewerPortalAccountId;
   }
-  return sessionRole === "SuperAdmin" || sessionRole === "Admin";
+  return false;
 }

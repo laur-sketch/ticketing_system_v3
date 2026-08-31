@@ -4,9 +4,13 @@ import { PrismaClient as PrismaClientAuth } from "@prisma/client/auth";
 
 const globalForPrisma = globalThis as unknown as {
   prismaPrimary: PrismaClientPrimary | undefined;
+  prismaPrimarySchemaRev: number | undefined;
   prismaSecondary: PrismaClientSecondary | undefined;
   prismaAuth: PrismaClientAuth | undefined;
 };
+
+/** Bump when primary schema adds models/fields that existing HMR clients would miss. */
+const PRIMARY_CLIENT_SCHEMA_REV = 4;
 
 const logLevels: ("error" | "warn")[] =
   process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"];
@@ -41,14 +45,28 @@ const primaryUrl = requireDbUrl("DATABASE_URL_PRIMARY", process.env.DATABASE_URL
 const secondaryUrl = requireDbUrl("DATABASE_URL_SECONDARY");
 const authUrl = requireDbUrl("DATABASE_URL_AUTH");
 
-export const prismaPrimary =
-  globalForPrisma.prismaPrimary ??
-  new PrismaClientPrimary({
+function createPrimaryClient() {
+  return new PrismaClientPrimary({
     log: logLevels,
     datasources: {
       db: { url: withPoolLimit(primaryUrl, 10) },
     },
   });
+}
+
+export let prismaPrimary =
+  globalForPrisma.prismaPrimary ?? createPrimaryClient();
+
+// Dev HMR can keep an old PrismaClient that predates new models (e.g. RequestBoardColumn).
+const primaryNeedsRefresh =
+  process.env.NODE_ENV !== "production" &&
+  (globalForPrisma.prismaPrimarySchemaRev !== PRIMARY_CLIENT_SCHEMA_REV ||
+    typeof (prismaPrimary as { requestBoardColumn?: unknown }).requestBoardColumn === "undefined");
+
+if (primaryNeedsRefresh) {
+  void prismaPrimary.$disconnect().catch(() => undefined);
+  prismaPrimary = createPrimaryClient();
+}
 
 /** Secondary (MySQL mergedatabase): HRIS + attendance + task activities + user efficiencies. */
 export const prismaSecondary =
@@ -72,6 +90,7 @@ export const prismaAuth =
 
 // Always reuse clients across HMR / workers to avoid "too many clients already".
 globalForPrisma.prismaPrimary = prismaPrimary;
+globalForPrisma.prismaPrimarySchemaRev = PRIMARY_CLIENT_SCHEMA_REV;
 globalForPrisma.prismaSecondary = prismaSecondary;
 globalForPrisma.prismaAuth = prismaAuth;
 

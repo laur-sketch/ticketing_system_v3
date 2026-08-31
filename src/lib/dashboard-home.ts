@@ -5,7 +5,8 @@ import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-re
 import { prisma } from "@/lib/prisma";
 import { personnelRequestBoardWhere } from "@/lib/rfp-request-board";
 import { findSessionAgentId } from "@/lib/session-agent";
-import { getTicketSlaState } from "@/lib/sla";
+import { BOARD_LANE_AT_RISK_MS, BOARD_LANE_OVERDUE_MS, getTicketSlaState } from "@/lib/sla";
+import { loadTicketBoardLaneEnteredAtMap } from "@/lib/request-board-columns";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import {
   resolveViewerDepartmentScopeLabel,
@@ -114,15 +115,17 @@ async function resolveTicketScope(session: Session): Promise<{
 
   if (isSuperAdmin) {
     ticketScope = {};
-  } else if (roleUsesOrgChartSectionBoardScope(user.role)) {
+  } else if (user.role === "Admin") {
+    ticketScope = await personnelRequestBoardWhere(personnelAgent?.id);
+    scopedCompanyTeamId = await resolveStaffCompanyTeamId(user.email);
+    departmentScopeLabel = await resolveViewerDepartmentScopeLabel(user.email);
+  } else if (user.role === "Personnel") {
     ticketScope = await sectionScopedTicketWhere({
       email: user.email,
       agentId: personnelAgent?.id,
     });
     departmentScopeLabel = await resolveViewerDepartmentScopeLabel(user.email);
     scopedCompanyTeamId = await resolveStaffCompanyTeamId(user.email);
-  } else if (isPersonnel) {
-    ticketScope = await personnelRequestBoardWhere(personnelAgent?.id);
   } else {
     scopedCompanyTeamId = await resolveStaffCompanyTeamId(user.email);
     ticketScope = { teamId: scopedCompanyTeamId ?? "__none__" };
@@ -159,6 +162,7 @@ function ticketToActionItem(row: {
   requestType: string;
   updatedAt: Date;
   contactName: string;
+  boardLaneEnteredAt?: Date | null;
   resolutionDueAt: Date;
   firstResponseAt: Date | null;
   firstResponseDueAt: Date;
@@ -286,7 +290,8 @@ async function listTasksAssignedToAgent(
 export async function loadStaffDashboardHome(session: Session): Promise<StaffDashboardHome> {
   const user = session.user;
   const now = new Date();
-  const riskWindow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const laneOverdueBefore = new Date(now.getTime() - BOARD_LANE_OVERDUE_MS);
+  const laneAtRiskBefore = new Date(now.getTime() - (BOARD_LANE_OVERDUE_MS - BOARD_LANE_AT_RISK_MS));
   const firstName = user.name?.split(" ")[0] ?? "there";
 
   const ctx = await resolveTicketScope(session);
@@ -306,6 +311,11 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
   };
   const pipelineWhere: Prisma.TicketWhereInput = {
     status: { in: [...OPEN_PIPELINE_STATUSES, "ESCALATED"] },
+    ...ticketScope,
+  };
+  /** Overdue dwell applies to every Request Board lane, including For confirmation. */
+  const boardLaneWhere: Prisma.TicketWhereInput = {
+    status: { in: ACTIVE_REQUEST_STATUSES },
     ...ticketScope,
   };
   const unassignedWhere: Prisma.TicketWhereInput = isAdminView
@@ -330,15 +340,13 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
     forConfirmation,
     closed,
     unassigned,
-    slaBreached,
-    slaAtRisk,
     escalated,
     firstResponses,
     totalTickets,
     resolvedClosed,
     taskLanes,
-    pipelineTickets,
-    overdueTickets,
+    pipelineTicketsRaw,
+    boardLaneCandidates,
     recentActivities,
     pendingTravelApprovals,
     pendingTravelConfirmations,
@@ -350,12 +358,6 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
     countStatus(["FOR_CONFIRMATION", "RESOLVED"]),
     countStatus("CLOSED"),
     prisma.ticket.count({ where: unassignedWhere }),
-    prisma.ticket.count({
-      where: { ...pipelineWhere, resolutionDueAt: { lt: now } },
-    }),
-    prisma.ticket.count({
-      where: { ...pipelineWhere, resolutionDueAt: { gte: now, lte: riskWindow } },
-    }),
     countStatus("ESCALATED"),
     prisma.ticket.findMany({
       where: { firstResponseAt: { not: null }, ...ticketScope },
@@ -392,16 +394,7 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
       },
     }),
     prisma.ticket.findMany({
-      where: {
-        ...pipelineWhere,
-        OR: [
-          { resolutionDueAt: { lt: now } },
-          { resolutionDueAt: { gte: now, lte: riskWindow } },
-        ],
-        priority: { in: ["HIGH", "URGENT"] },
-      },
-      orderBy: { resolutionDueAt: "asc" },
-      take: 6,
+      where: boardLaneWhere,
       select: {
         id: true,
         ticketNumber: true,
@@ -415,6 +408,9 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
         firstResponseAt: true,
         firstResponseDueAt: true,
       },
+      // Cap so we can evaluate 24h dwell without Prisma Client needing the new column.
+      take: 500,
+      orderBy: { updatedAt: "asc" },
     }),
     prisma.ticketActivity.findMany({
       where: { ticket: ticketScope },
@@ -440,6 +436,41 @@ export async function loadStaffDashboardHome(session: Session): Promise<StaffDas
       ? listTasksAssignedToAgent(personnelAgentId, 8)
       : Promise.resolve([] as DashboardActionItem[]),
   ]);
+
+  const laneEnteredById = await loadTicketBoardLaneEnteredAtMap([
+    ...pipelineTicketsRaw.map((t) => t.id),
+    ...boardLaneCandidates.map((t) => t.id),
+  ]);
+
+  const withLaneEntered = <T extends { id: string; updatedAt: Date }>(row: T) => ({
+    ...row,
+    boardLaneEnteredAt: laneEnteredById.get(row.id) ?? row.updatedAt,
+  });
+
+  const pipelineTickets = pipelineTicketsRaw.map(withLaneEntered);
+
+  let slaBreached = 0;
+  let slaAtRisk = 0;
+  const overdueCandidates: Array<
+    (typeof boardLaneCandidates)[number] & { boardLaneEnteredAt: Date }
+  > = [];
+  for (const row of boardLaneCandidates) {
+    const enriched = withLaneEntered(row);
+    const enteredMs = enriched.boardLaneEnteredAt.getTime();
+    if (enteredMs < laneOverdueBefore.getTime()) {
+      slaBreached += 1;
+      overdueCandidates.push(enriched);
+    } else if (enteredMs <= laneAtRiskBefore.getTime()) {
+      slaAtRisk += 1;
+      if (row.priority === "HIGH" || row.priority === "URGENT") {
+        overdueCandidates.push(enriched);
+      }
+    }
+  }
+  overdueCandidates.sort(
+    (a, b) => a.boardLaneEnteredAt.getTime() - b.boardLaneEnteredAt.getTime(),
+  );
+  const overdueTickets = overdueCandidates.slice(0, 6);
 
   const avgResponseMinutes =
     firstResponses.length === 0

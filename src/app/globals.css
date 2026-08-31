@@ -13,8 +13,9 @@ html {
 :root {
   --background: #fbfbfb;
   --foreground: #111827;
-  --muted: #4b5563;
-  --muted-subtle: #6b7280;
+  /* Secondary copy: kept dark enough for WCAG-ish contrast on white */
+  --muted: #374151;
+  --muted-subtle: #4b5563;
   --brand: #ff5c00;
   --brand-hover: #e65300;
   --brand-ink: #ffffff;
@@ -55,9 +56,10 @@ html {
 
 html.dark {
   --background: #0a0a0a;
-  --foreground: #e2e2e2;
-  --muted: #e4beb1;
-  --muted-subtle: #ab897d;
+  --foreground: #f4f4f5;
+  /* Secondary copy on near-black: prefer zinc-300/400 range over dim brown-gray */
+  --muted: #d4d4d8;
+  --muted-subtle: #a1a1aa;
   --brand: #ff5c00;
   --brand-hover: #ff7a2f;
   --brand-ink: #ffffff;
@@ -476,6 +478,37 @@ html:not(.dark) .stoic-label {
   .dark .dark\:border-zinc-800\/90,
   .dark .dark\:border-zinc-700 {
     border-color: var(--border) !important;
+  }
+
+  /*
+   * System-wide secondary text contrast.
+   * Many screens use zinc-400/500 for meta/labels; lift them so light and dark
+   * modes stay readable without rewriting every component.
+   */
+  html:not(.dark) .text-zinc-400 {
+    color: #52525b !important; /* ~zinc-600 */
+  }
+  html:not(.dark) .text-zinc-500 {
+    color: #3f3f46 !important; /* ~zinc-700 */
+  }
+  html:not(.dark) .placeholder\:text-zinc-400::placeholder,
+  html:not(.dark) .placeholder\:text-zinc-500::placeholder {
+    color: #52525b !important;
+  }
+
+  .dark .text-zinc-400,
+  .dark .dark\:text-zinc-400 {
+    color: #d4d4d8 !important; /* zinc-300 */
+  }
+  .dark .text-zinc-500,
+  .dark .dark\:text-zinc-500 {
+    color: #a1a1aa !important; /* zinc-400 */
+  }
+  .dark .placeholder\:text-zinc-400::placeholder,
+  .dark .placeholder\:text-zinc-500::placeholder,
+  .dark .dark\:placeholder\:text-zinc-400::placeholder,
+  .dark .dark\:placeholder\:text-zinc-500::placeholder {
+    color: #a1a1aa !important;
   }
 
   /* Legacy accent classes → StoicOps orange */

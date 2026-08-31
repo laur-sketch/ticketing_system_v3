@@ -1550,7 +1550,7 @@ export function TaskPillarMetricsGrid({
         const subLabel =
           cfg.metricName === "on time"
             ? `${view.positive} on time · ${view.negative} delayed · ${agg.total} sub-tasks`
-            : undefined;
+              : undefined;
         return (
           <PillarDonutCard
             key={pillar}
@@ -1595,10 +1595,10 @@ export function TaskPillarMetricsGrid({
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
                 {canShowExtendedTasks ? (
                   <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
-                    <button
-                      type="button"
+                <button
+                  type="button"
                       onClick={() => setDetailView("extended")}
-                      className={cn(
+                  className={cn(
                         "rounded-full px-3 py-1 text-xs font-semibold transition",
                         detailView === "extended"
                           ? "bg-orange-600 text-white shadow-sm"
@@ -1606,7 +1606,7 @@ export function TaskPillarMetricsGrid({
                       )}
                     >
                       Extended view
-                    </button>
+                </button>
                     <button
                       type="button"
                       onClick={() => setDetailView("chart")}
@@ -1680,7 +1680,7 @@ export function TaskPillarMetricsGrid({
                                 {[task.frequency, task.assigneeName].filter(Boolean).join(" · ")}
                               </p>
                             ) : null}
-                          </div>
+                </div>
                           <div className="shrink-0 text-right text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                             <p>
                               {showPhases
@@ -1696,7 +1696,7 @@ export function TaskPillarMetricsGrid({
                                 Total data recorded {task.totalDataRecordedPercent}%
                               </p>
                             ) : null}
-                          </div>
+                    </div>
                         </div>
                         {showPhases ? (
                           <ul className="mt-2 space-y-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
@@ -1742,7 +1742,7 @@ export function TaskPillarMetricsGrid({
                                       {" "}
                                       · {item.assigneeName}
                                     </span>
-                                  ) : null}
+                ) : null}
                                 </span>
                                 {item.recordedPercent != null ? (
                                   <span className="shrink-0 text-[11px] font-medium text-orange-700 dark:text-orange-300">
@@ -1752,7 +1752,7 @@ export function TaskPillarMetricsGrid({
                               </li>
                             ))}
                           </ul>
-                        ) : null}
+                ) : null}
                       </li>
                     );
                   })}

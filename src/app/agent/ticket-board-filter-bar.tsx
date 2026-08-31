@@ -210,25 +210,27 @@ export function TicketBoardFilterBar(props: TicketBoardFilterBarProps) {
   const canSaveCurrent = filters.length > 0 || query.trim().length > 0;
 
   return (
-    <div className="flex w-full flex-col gap-1.5 rounded-xl border border-zinc-300 bg-white p-2 shadow-sm sm:flex-row sm:items-center sm:gap-2 sm:p-2.5 dark:border-zinc-700 dark:bg-zinc-900">
-      <label className="flex min-w-0 flex-1 items-center px-1.5 py-1 text-sm text-zinc-600 sm:px-2 dark:text-zinc-400">
-        <Search className="mr-2 size-4 shrink-0 opacity-60" aria-hidden />
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onBlur={applySearch}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              applySearch();
-            }
-          }}
-          placeholder={placeholder}
-          className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
-          aria-label="Search by request number, subject, or customer"
-        />
-      </label>
+    <div className="flex w-full flex-col gap-1.5 rounded-xl border border-zinc-300 bg-white p-2 sm:flex-row sm:items-center sm:gap-2 sm:p-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <label className="flex min-w-0 flex-1 items-center px-1.5 py-1 text-sm text-zinc-700 sm:px-2 dark:text-zinc-300">
+          <Search className="mr-2 size-4 shrink-0 text-zinc-600 opacity-90 dark:text-zinc-400" aria-hidden />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onBlur={applySearch}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                applySearch();
+              }
+            }}
+            placeholder={placeholder}
+            className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-600 dark:text-zinc-100 dark:placeholder:text-zinc-400"
+            aria-label="Search by request number, subject, or customer"
+          />
+        </label>
+      </div>
 
       {visibleFields.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1.5">

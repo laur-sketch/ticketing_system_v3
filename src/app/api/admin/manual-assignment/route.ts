@@ -156,6 +156,7 @@ export async function POST(req: Request) {
       where: { id: ticketId },
       data: {
         assignedAgentId: agent.id,
+        ...(ticket.status === "ESCALATED" ? { status: "IN_PROGRESS" as const } : {}),
       },
       include: {
         assignedAgent: true,
@@ -170,6 +171,14 @@ export async function POST(req: Request) {
       "Manual assignment",
       `Assigned to ${updated.assignedAgent?.name ?? agent.name}`,
     );
+    if (ticket.status === "ESCALATED") {
+      await logActivity(
+        ticketId,
+        "SYSTEM",
+        "Transfer approved",
+        `Reassigned from Transfer pending pool to ${updated.assignedAgent?.name ?? agent.name}.`,
+      );
+    }
 
     // RFP / IRS: board assignee becomes the current procedural approver for this cycle.
     let assignedAgentIdAfterSync: string | null = updated.assignedAgentId;

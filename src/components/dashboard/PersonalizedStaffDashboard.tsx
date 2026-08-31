@@ -45,7 +45,7 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
       ]
     : [];
 
-  const adminTopRowCards: SummaryCard[] = data.isAdminView
+  const adminSummaryCards: SummaryCard[] = data.isAdminView
     ? [
         {
           id: "open-unassigned",
@@ -71,23 +71,18 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
           label: "Resolution rate",
           value: `${summary.resolutionRate.toFixed(1)}%`,
         },
-      ]
-    : [];
-
-  const adminBottomRowCards: SummaryCard[] = data.isAdminView
-    ? [
         {
           id: "sla-breached",
-          label: "SLA breached",
+          label: "Overdue (24h in column)",
           value: summary.slaBreached,
-          href: "/agent?priority=HIGH",
+          href: "/agent",
           tone: summary.slaBreached > 0 ? "danger" : "default",
         },
         {
           id: "sla-risk",
-          label: "Approaching SLA",
+          label: "Approaching overdue",
           value: summary.slaAtRisk,
-          href: "/agent?priority=HIGH",
+          href: "/agent",
           tone: summary.slaAtRisk > 0 ? "warning" : "default",
         },
         {
@@ -112,7 +107,7 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
 
   return (
     <main className="min-h-full bg-zinc-50 px-3 py-3 text-zinc-900 sm:px-5 sm:py-4 dark:bg-zinc-950 dark:text-zinc-100">
-      <div className="mx-auto w-full max-w-7xl space-y-5">
+      <div className="mx-auto w-full max-w-7xl space-y-4 sm:space-y-5">
         <header className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-700 sm:text-[11px] dark:text-orange-400/95">
             {BRAND_TITLE}
@@ -120,45 +115,42 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
           <h1 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
             {dashboardTitle}
           </h1>
-          <p className="mt-1 text-xs text-zinc-600 sm:text-sm dark:text-zinc-400">
-            Welcome back, {data.greeting}. {nowLabel} · {data.scopeLabel}
+          <p className="mt-1 text-xs leading-relaxed text-zinc-600 sm:text-sm dark:text-zinc-400">
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">Welcome back, {data.greeting}.</span>{" "}
+            <span className="text-zinc-500 dark:text-zinc-400">
+              {nowLabel} · {data.scopeLabel}
+            </span>
           </p>
         </header>
 
         {data.isPersonnelView ? <DashboardSummaryCards cards={summaryCards} /> : null}
-        {adminTopRowCards.length > 0 ? <DashboardSummaryCards cards={adminTopRowCards} /> : null}
-        {adminBottomRowCards.length > 0 ? (
-          <DashboardSummaryCards
-            cards={adminBottomRowCards}
-            className="grid-cols-1 sm:grid-cols-3"
-          />
-        ) : null}
+        {adminSummaryCards.length > 0 ? <DashboardSummaryCards cards={adminSummaryCards} /> : null}
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-3">
           <DashboardFilterPills pills={filterPills} />
           {data.isAdminView ? (
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:gap-2">
               <Link
                 href="/insights"
-                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-orange-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-orange-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 sm:rounded-full sm:py-1.5"
               >
-                <BarChart3 className="size-3.5" aria-hidden />
-                KPI / Insights
+                <BarChart3 className="size-3.5 shrink-0" aria-hidden />
+                <span className="truncate">KPI / Insights</span>
               </Link>
               <Link
                 href="/process"
-                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-orange-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:border-orange-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 sm:rounded-full sm:py-1.5"
               >
-                <SlidersHorizontal className="size-3.5" aria-hidden />
-                Process Controls
+                <SlidersHorizontal className="size-3.5 shrink-0" aria-hidden />
+                <span className="truncate">Process Controls</span>
               </Link>
             </div>
           ) : null}
         </div>
 
-        <section className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <section className="grid items-start gap-4 sm:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
           {data.isPersonnelView ? (
-            <div className="min-w-0 space-y-5 self-start">
+            <div className="min-w-0 space-y-4 self-start sm:space-y-5">
               <DashboardActionList
                 title="Assigned to me"
                 emptyMessage="No active assignments."
@@ -168,7 +160,7 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
               <DashboardRecentActivity items={data.recentActivity} />
             </div>
           ) : (
-            <div className="min-w-0 space-y-5 self-start">
+            <div className="min-w-0 space-y-4 self-start sm:space-y-5">
               <DashboardActionList
                 title="Needs your action"
                 emptyMessage="No urgent items in your scope right now."
@@ -179,7 +171,7 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
             </div>
           )}
 
-          <div className="space-y-5">
+          <div className="space-y-4 sm:space-y-5">
             {data.isPersonnelView ? (
               <DashboardActionList
                 title="Needs your action"
@@ -190,14 +182,14 @@ export function PersonalizedStaffDashboard({ data, nowLabel }: Props) {
             ) : null}
 
             <DashboardActionList
-              title={data.isPersonnelView ? "Tasks assigned to me" : "Overdue & high priority"}
+              title={data.isPersonnelView ? "Tasks assigned to me" : "Overdue (24h+ in column)"}
               emptyMessage={
                 data.isPersonnelView
                   ? "No tasks assigned to you yet."
                   : "No overdue or at-risk items."
               }
               items={data.overdueItems}
-              viewAllHref={data.isPersonnelView ? "/agent/tasks" : "/agent?priority=HIGH"}
+              viewAllHref={data.isPersonnelView ? "/agent/tasks" : "/agent"}
             />
           </div>
         </section>

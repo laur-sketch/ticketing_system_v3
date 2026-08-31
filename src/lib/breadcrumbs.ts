@@ -34,7 +34,7 @@ const QUERY_CRUMBS: Array<{
     match: (params) => params.get("board") === "company",
     segments: [
       { label: "Boards", href: "/agent" },
-      { label: "Company Board" },
+      { label: "Group Board" },
     ],
   },
   {

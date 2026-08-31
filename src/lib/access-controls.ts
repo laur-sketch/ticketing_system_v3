@@ -17,7 +17,7 @@ export const ACCESS_CAPABILITIES = [
   { id: "nav.travelOrders", label: "Travel Orders (kiosk)", group: "Navigation" },
 
   { id: "board.assignment", label: "Assign Requests", group: "Request boards" },
-  { id: "board.company", label: "Company Board", group: "Request boards" },
+  { id: "board.company", label: "Group Board", group: "Request boards" },
   { id: "board.request", label: "Requests", group: "Request boards" },
 
   { id: "ticket.create", label: "Create requests", group: "Requests" },

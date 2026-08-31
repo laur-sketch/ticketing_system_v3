@@ -11,6 +11,14 @@ import { findSessionAgentWithTeam } from "@/lib/session-agent";
 import { portalCompanyAdminPrivilegesForEmail } from "@/lib/portal-staff";
 import { resolveStaffCompanyTeamId } from "@/lib/staff-company-scope";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
+import {
+  collectOrgChartSectionDescendantIds,
+  filterOrgChartSectionsByCompanyTeam,
+  orgChartMajorDepartments,
+  orgChartRootSectionId,
+  type OrgChartSectionOption,
+} from "@/lib/org-chart-section-display";
+import { listOrgChartSectionOptions } from "@/lib/org-chart-section-roster";
 
 function mergeTeamWhereWithRoster(base?: Prisma.TeamWhereInput): Prisma.TeamWhereInput {
   const roster = rosterTeamNameFilter();
@@ -43,7 +51,15 @@ export type CompanyBoardColumn = {
   /** True when a logo path or inlined image is stored for this company. */
   hasLogo: boolean;
   buckets: Record<CompanyBucketId, CompanyTicketCard[]>;
+  /** company = Team card; department = org-chart section card. */
+  entityKind?: "company" | "department";
+  /** Department cards: true when this section has nested sub-departments. */
+  canDrillDown?: boolean;
+  /** Company team used for logos when entityKind is department (optional). */
+  logoTeamId?: string | null;
 };
+
+export type DepartmentBoardBreadcrumb = { id: string; name: string };
 
 const PERSONNEL_STATUS_FILTER: TicketStatus[] = ACTIVE_REQUEST_STATUSES;
 
@@ -82,6 +98,9 @@ type CompanyBoardScope =
       groupByRequestor: boolean;
       excludedTeamIds: string[];
       outsideId: string;
+      /** Admin Group Board: bucket tickets under send-to company, not requestor roster. */
+      scopeBySendToCompany: boolean;
+      sendToCompanyTeamId: string | null;
     }
   | { ok: false; cardMode: CompanyBoardCardMode; emptyHint: string | null };
 
@@ -103,6 +122,8 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
   let teamWhere: Prisma.TeamWhereInput | undefined;
   let excludedTeamIds: string[] = [];
   let restrictTicketTeamIds: string[] | null = null;
+  let scopeBySendToCompany = false;
+  let sendToCompanyTeamId: string | null = null;
 
   if (isElevatedUserRole(role)) {
     teamWhere = undefined;
@@ -112,12 +133,15 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
         ok: false,
         cardMode,
         emptyHint:
-          "Set a designated company for your account (Personnel) to view the company board.",
+          "Set a designated company for your account to view the group board.",
       };
     }
-    teamWhere = undefined;
-    excludedTeamIds = [staffCompanyId];
-    restrictTicketTeamIds = [staffCompanyId];
+    /** Admin Group Board: one company card; tickets filtered by send-to department tree. */
+    teamWhere = { id: staffCompanyId };
+    excludedTeamIds = [];
+    restrictTicketTeamIds = null;
+    scopeBySendToCompany = true;
+    sendToCompanyTeamId = staffCompanyId;
   } else if (role === "Personnel") {
     if (!operator?.teamId) {
       return {
@@ -191,7 +215,19 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
     ticketWhereBase.assignedAgentId = operator?.id ?? "__none__";
   }
 
-  if (restrictTicketTeamIds && restrictTicketTeamIds.length > 0) {
+  if (scopeBySendToCompany && sendToCompanyTeamId) {
+    const allSections = await listOrgChartSectionOptions();
+    const sendToSectionIds = filterOrgChartSectionsByCompanyTeam(
+      allSections,
+      sendToCompanyTeamId,
+    ).map((s) => s.id);
+    const sendToClauses: Prisma.TicketWhereInput[] = [];
+    if (sendToSectionIds.length > 0) {
+      sendToClauses.push({ orgChartSectionId: { in: sendToSectionIds } });
+    }
+    sendToClauses.push({ teamId: sendToCompanyTeamId, orgChartSectionId: null });
+    ticketWhereBase.OR = sendToClauses;
+  } else if (restrictTicketTeamIds && restrictTicketTeamIds.length > 0) {
     ticketWhereBase.teamId = { in: restrictTicketTeamIds };
   }
 
@@ -202,7 +238,16 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
       : [];
 
   let displayTeamIds: string[];
-  if (isAdminScope) {
+  if (scopeBySendToCompany && sendToCompanyTeamId) {
+    displayTeamIds = allowedTeamIds.includes(sendToCompanyTeamId) ? [sendToCompanyTeamId] : [];
+    if (displayTeamIds.length === 0) {
+      return {
+        ok: false,
+        cardMode,
+        emptyHint: "Your designated company is not on the roster.",
+      };
+    }
+  } else if (isAdminScope) {
     const baseDisplay = allowedTeamIds.filter((id) => !excludedTeamIds.includes(id));
     displayTeamIds = filterBySpecificCompany
       ? baseDisplay.filter((id) => selectedFilterTeamIds.includes(id))
@@ -220,7 +265,7 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
     displayTeamIds = allowedTeamIds;
   }
 
-  const groupByRequestor = isAdminScope || filterBySpecificCompany;
+  const groupByRequestor = scopeBySendToCompany ? false : isAdminScope || filterBySpecificCompany;
 
   if (!groupByRequestor) {
     ticketWhereBase.teamId =
@@ -236,6 +281,8 @@ async function resolveCompanyBoardScope(opts: CompanyBoardScopeOpts): Promise<Co
     groupByRequestor,
     excludedTeamIds,
     outsideId: outsideTeamRow.id,
+    scopeBySendToCompany,
+    sendToCompanyTeamId,
   };
 }
 
@@ -283,6 +330,8 @@ export async function loadCompanyBoard(opts: CompanyBoardScopeOpts): Promise<{
     groupByRequestor,
     excludedTeamIds,
     outsideId,
+    scopeBySendToCompany,
+    sendToCompanyTeamId,
   } = scope;
   const teamById = new Map(teams.map((t) => [t.id, t]));
 
@@ -341,6 +390,8 @@ export async function loadCompanyBoard(opts: CompanyBoardScopeOpts): Promise<{
       companyName: t.name,
       cardMode,
       hasLogo: t.hasLogo,
+      entityKind: "company",
+      canDrillDown: false,
       buckets: emptyBuckets(),
     });
   }
@@ -366,6 +417,8 @@ export async function loadCompanyBoard(opts: CompanyBoardScopeOpts): Promise<{
       } else {
         continue;
       }
+    } else if (scopeBySendToCompany && sendToCompanyTeamId) {
+      teamIdForColumn = sendToCompanyTeamId;
     } else {
       teamIdForColumn = x.teamId;
     }
@@ -404,6 +457,242 @@ export async function loadCompanyBoard(opts: CompanyBoardScopeOpts): Promise<{
     columns,
     cardMode,
     emptyHint: columns.length === 0 ? "No companies found for your account." : null,
+  };
+}
+
+function orgChartDirectChildren(
+  sections: OrgChartSectionOption[],
+  parentId: string,
+): OrgChartSectionOption[] {
+  return sections.filter((s) => s.parentId === parentId);
+}
+
+function sectionHasChildren(
+  sections: Array<Pick<OrgChartSectionOption, "id" | "parentId">>,
+  sectionId: string,
+): boolean {
+  return sections.some((s) => s.parentId === sectionId);
+}
+
+/**
+ * Department overview for Company Board: major departments (or children of
+ * `parentSectionId`), with request counts rolled up from each section tree.
+ */
+export async function loadDepartmentBoard(
+  opts: CompanyBoardScopeOpts & { parentSectionId?: string | null },
+): Promise<{
+  columns: CompanyBoardColumn[];
+  cardMode: CompanyBoardCardMode;
+  emptyHint: string | null;
+  parentSection: DepartmentBoardBreadcrumb | null;
+  breadcrumb: DepartmentBoardBreadcrumb[];
+}> {
+  const scope = await resolveCompanyBoardScope(opts);
+  if (!scope.ok) {
+    return {
+      columns: [],
+      cardMode: scope.cardMode,
+      emptyHint: scope.emptyHint,
+      parentSection: null,
+      breadcrumb: [],
+    };
+  }
+
+  const { cardMode, ticketWhereBase, displayTeamIds } = scope;
+  const allSections = await listOrgChartSectionOptions();
+
+  const companyFilterIds = (opts.companyTeamIds ?? []).map((s) => s.trim()).filter(Boolean);
+  const companyFilter =
+    companyFilterIds.length > 0 && !companyFilterIds.includes("ALL")
+      ? companyFilterIds[0]!
+      : displayTeamIds.length === 1
+        ? displayTeamIds[0]!
+        : null;
+
+  let sections = companyFilter
+    ? filterOrgChartSectionsByCompanyTeam(allSections, companyFilter)
+    : allSections;
+
+  if (displayTeamIds.length > 0 && !companyFilter) {
+    const allowed = new Set(displayTeamIds);
+    sections = sections.filter((s) => {
+      const team = s.companyTeamId;
+      if (!team) return true;
+      return allowed.has(team);
+    });
+  }
+
+  const parentId = (opts.parentSectionId ?? "").trim() || null;
+  let columnSections: OrgChartSectionOption[] = [];
+  let parentSection: DepartmentBoardBreadcrumb | null = null;
+  const breadcrumb: DepartmentBoardBreadcrumb[] = [];
+
+  if (parentId) {
+    const parent = sections.find((s) => s.id === parentId) ?? allSections.find((s) => s.id === parentId);
+    if (!parent) {
+      return {
+        columns: [],
+        cardMode,
+        emptyHint: "Department not found.",
+        parentSection: null,
+        breadcrumb: [],
+      };
+    }
+    parentSection = { id: parent.id, name: parent.name };
+    // Walk ancestors for breadcrumb (root → parent).
+    const byId = new Map(allSections.map((s) => [s.id, s]));
+    const chain: DepartmentBoardBreadcrumb[] = [];
+    let cur: OrgChartSectionOption | undefined = parent;
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      chain.unshift({ id: cur.id, name: cur.name });
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+    breadcrumb.push(...chain);
+
+    columnSections = orgChartDirectChildren(sections, parent.id);
+    // Include the parent as its own card for requests sent directly to it.
+    columnSections = [parent, ...columnSections];
+  } else {
+    columnSections = orgChartMajorDepartments(sections);
+  }
+
+  const columnsBySection = new Map<string, CompanyBoardColumn>();
+  const treeIdsByColumn = new Map<string, Set<string>>();
+
+  for (const section of columnSections) {
+    const isParentSelfCard = Boolean(parentId && section.id === parentId);
+    const treeIds = isParentSelfCard
+      ? new Set([section.id])
+      : collectOrgChartSectionDescendantIds(section.id, sections);
+    // When showing children under a parent, exclude the parent id from child trees
+    // (parent has its own card for direct tickets only).
+    if (parentId && section.id !== parentId) {
+      treeIds.delete(parentId);
+    }
+    treeIdsByColumn.set(section.id, treeIds);
+    columnsBySection.set(section.id, {
+      teamId: section.id,
+      companyName: isParentSelfCard ? `${section.name} (direct)` : section.name,
+      cardMode,
+      hasLogo: false,
+      logoTeamId: section.companyTeamId,
+      entityKind: "department",
+      canDrillDown: !isParentSelfCard && sectionHasChildren(sections, section.id),
+      buckets: emptyBuckets(),
+    });
+  }
+
+  const rawTickets = await prisma.ticket.findMany({
+    where: {
+      ...ticketWhereBase,
+      orgChartSectionId: { not: null },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 800,
+    select: {
+      id: true,
+      orgChartSectionId: true,
+      ticketNumber: true,
+      title: true,
+      description: true,
+      status: true,
+      priority: true,
+      updatedAt: true,
+      assignedAgentId: true,
+      assignedAgent: { select: { name: true, email: true } },
+    },
+  });
+
+  const assigneeColorByEmail = await loadStaffAssignmentColorsForAgents(
+    rawTickets.map((x) => ({ email: x.assignedAgent?.email, name: x.assignedAgent?.name })),
+  );
+
+  const sectionIdSet = new Set(sections.map((s) => s.id));
+  const seenTicketIds = new Set<string>();
+
+  for (const x of rawTickets) {
+    if (seenTicketIds.has(x.id)) continue;
+    const sectionId = (x.orgChartSectionId ?? "").trim();
+    if (!sectionId || !sectionIdSet.has(sectionId)) continue;
+
+    let columnId: string | null = null;
+    if (parentId) {
+      // Prefer deepest matching child column, else parent direct card.
+      let bestDepth = -1;
+      for (const [colId, treeIds] of treeIdsByColumn) {
+        if (!treeIds.has(sectionId)) continue;
+        const depth = sections.find((s) => s.id === colId)?.depth ?? 0;
+        if (colId === parentId) {
+          if (sectionId === parentId && columnId === null) columnId = parentId;
+          continue;
+        }
+        if (depth >= bestDepth) {
+          bestDepth = depth;
+          columnId = colId;
+        }
+      }
+      if (!columnId && sectionId === parentId) columnId = parentId;
+      // Ticket under this major but not matching a listed child (deeper nested under
+      // a child we already matched via tree) — walk to nearest column ancestor.
+      if (!columnId) {
+        let walk = sectionId;
+        const byId = new Map(sections.map((s) => [s.id, s]));
+        const seen = new Set<string>();
+        while (walk && !seen.has(walk)) {
+          seen.add(walk);
+          if (columnsBySection.has(walk)) {
+            columnId = walk;
+            break;
+          }
+          walk = byId.get(walk)?.parentId ?? "";
+        }
+      }
+    } else {
+      const majorId = orgChartRootSectionId(sections, sectionId);
+      if (columnsBySection.has(majorId)) columnId = majorId;
+    }
+
+    if (!columnId) continue;
+    const col = columnsBySection.get(columnId);
+    if (!col) continue;
+
+    const assigneeEmail = x.assignedAgent?.email?.trim().toLowerCase();
+    const assigneeColorKey = assigneeEmail ? (assigneeColorByEmail.get(assigneeEmail) ?? null) : null;
+    const card: CompanyTicketCard = {
+      id: x.id,
+      ticketNumber: x.ticketNumber,
+      title: x.title,
+      description: x.description,
+      status: x.status,
+      priority: x.priority,
+      updatedAt: x.updatedAt,
+      assignedAgentId: x.assignedAgentId,
+      assignedAgentName: x.assignedAgent?.name ?? null,
+      assigneeColorKey,
+    };
+    const b = bucketFor(card);
+    if (b === "closed" && col.buckets.closed.length >= CLOSED_CAP) continue;
+    col.buckets[b].push(card);
+    seenTicketIds.add(x.id);
+  }
+
+  const columns = columnSections
+    .map((s) => columnsBySection.get(s.id))
+    .filter((c): c is CompanyBoardColumn => Boolean(c));
+
+  return {
+    columns,
+    cardMode,
+    emptyHint:
+      columns.length === 0
+        ? parentId
+          ? "No sub-departments under this department."
+          : "No major departments found for this view."
+        : null,
+    parentSection,
+    breadcrumb,
   };
 }
 

@@ -3,12 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { EmblaCarouselType } from "embla-carousel";
-import {
-  Carousel,
-  CarouselContent,
-  CarouselItem,
-  type CarouselApi,
-} from "@/components/ui/carousel";
+import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel";
 import { cn } from "@/lib/cn";
 
 export type RequestBoardPane = "board" | "mine";
@@ -91,7 +86,7 @@ export function RequestBoardPanes({
   return (
     <div className="flex min-w-0 flex-col gap-2 sm:gap-3">
       <div
-        className="flex items-center justify-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-surface"
+        className="flex w-full items-center justify-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-800 dark:bg-surface"
         data-pane-switcher
         role="tablist"
         aria-label="Request board panes"
@@ -105,7 +100,7 @@ export function RequestBoardPanes({
             "flex-1 rounded-lg px-3 py-2 text-center text-xs font-semibold transition sm:text-sm",
             pane === "board"
               ? "bg-orange-600 text-white shadow-sm"
-              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+              : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
           )}
         >
           Requests
@@ -119,7 +114,7 @@ export function RequestBoardPanes({
             "flex-1 rounded-lg px-3 py-2 text-center text-xs font-semibold transition sm:text-sm",
             pane === "mine"
               ? "bg-orange-600 text-white shadow-sm"
-              : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
+              : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
           )}
         >
           My requests

@@ -34,12 +34,12 @@ function StaffBreadcrumbsInner({ className }: { className?: string }) {
           return (
             <li key={`${segment.label}-${index}`} className="flex min-w-0 items-center gap-1">
               {index > 0 ? (
-                <ChevronRight className="size-3 shrink-0 text-zinc-400" aria-hidden />
+                <ChevronRight className="size-3 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
               ) : null}
               {segment.href && !isLast ? (
                 <Link
                   href={segment.href}
-                  className="truncate font-medium text-zinc-600 transition hover:text-orange-700 dark:text-zinc-400 dark:hover:text-orange-300"
+                  className="truncate font-medium text-zinc-700 transition hover:text-orange-700 dark:text-zinc-300 dark:hover:text-orange-300"
                 >
                   {segment.label}
                 </Link>
@@ -47,7 +47,7 @@ function StaffBreadcrumbsInner({ className }: { className?: string }) {
                 <span
                   className={cn(
                     "truncate font-semibold",
-                    isLast ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-600 dark:text-zinc-400",
+                    isLast ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300",
                   )}
                   aria-current={isLast ? "page" : undefined}
                 >

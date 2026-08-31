@@ -63,9 +63,18 @@ async function buildTicketWhere(session: Session, query: string): Promise<Prisma
     return whereBase;
   }
 
-  if (role === "Personnel") {
+  if (role === "Admin") {
     Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
     whereBase.AND = [{ OR: searchOr }];
+    return whereBase;
+  }
+
+  if (role === "Personnel") {
+    const sectionScope = await sectionScopedTicketWhere({
+      email: session.user.email,
+      agentId: operator?.id,
+    });
+    whereBase.AND = [sectionScope, { OR: searchOr }];
     return whereBase;
   }
 
@@ -78,16 +87,9 @@ async function buildTicketWhere(session: Session, query: string): Promise<Prisma
     );
     const teamIds = rosterTeams.map((t) => t.id);
     whereBase.teamId = teamIds.length > 0 ? { in: teamIds } : { in: ["__none__"] };
-  } else if (role === "Admin" || companyAdminPrivileges) {
+  } else if (companyAdminPrivileges) {
     if (!staffCompanyId) return null;
-    const personalRfpScope = operator?.id ? await personnelRequestBoardWhere(operator.id) : null;
-    const companyScope: Prisma.TicketWhereInput = { teamId: staffCompanyId };
-    if (personalRfpScope) {
-      whereBase.OR = [companyScope, personalRfpScope];
-      whereBase.AND = [{ OR: searchOr }];
-      return whereBase;
-    }
-    whereBase.teamId = staffCompanyId;
+    Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
   } else {
     return null;
   }

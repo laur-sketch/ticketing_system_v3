@@ -85,8 +85,8 @@ describe("kpiRowInSectionAgentScope (task board visibility)", () => {
 });
 
 describe("roleUsesOrgChartSectionBoardScope", () => {
-  it("scopes Admin and Personnel; elevates SuperAdmin / HighAdmin", () => {
-    expect(roleUsesOrgChartSectionBoardScope("Admin")).toBe(true);
+  it("scopes Personnel only; elevates SuperAdmin / HighAdmin / Admin", () => {
+    expect(roleUsesOrgChartSectionBoardScope("Admin")).toBe(false);
     expect(roleUsesOrgChartSectionBoardScope("Personnel")).toBe(true);
     expect(roleUsesOrgChartSectionBoardScope("SuperAdmin")).toBe(false);
     expect(roleUsesOrgChartSectionBoardScope("HighAdmin")).toBe(false);

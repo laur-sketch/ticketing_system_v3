@@ -98,6 +98,7 @@ export function WorkforceViewsPanel() {
       setHiddenViews(hidden);
       setSavedHiddenViews(hidden);
       setMessage("Workforce toggle visibility saved.");
+      window.dispatchEvent(new Event("workforce-view-visibility-changed"));
     } catch {
       setError("Could not save Workforce toggle visibility.");
     } finally {
@@ -133,6 +134,7 @@ export function WorkforceViewsPanel() {
       setHiddenViews([]);
       setSavedHiddenViews([]);
       setMessage("All Workforce toggles are visible.");
+      window.dispatchEvent(new Event("workforce-view-visibility-changed"));
     } catch {
       setError("Could not reset Workforce toggle visibility.");
     } finally {

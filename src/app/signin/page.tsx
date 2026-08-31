@@ -197,20 +197,17 @@ function SignInForm() {
 
   return (
     <SignInLaunchPadShell>
-      <div className="mb-8 text-center">
-        <h2 className="mb-2 text-2xl font-semibold text-zinc-900 dark:text-white">Sign in</h2>
-        <p className="text-sm text-zinc-500 dark:text-[#888888]">
-          Use your HRIS username and password from the employee directory, or continue with Google.
-        </p>
+      <div className="mb-4 text-center">
+        <h2 className="text-2xl font-semibold text-zinc-900 dark:text-white">Sign in</h2>
       </div>
 
       {banner ? (
-        <p className="mb-5 rounded-xl border border-[#ff6b00]/30 bg-[#ff6b00]/10 px-3 py-2 text-xs leading-snug text-orange-900 dark:border-[#ff6b00]/25 dark:text-orange-100">
+        <p className="mb-4 rounded-xl border border-[#ff6b00]/30 bg-[#ff6b00]/10 px-3 py-2 text-xs leading-snug text-orange-900 dark:border-[#ff6b00]/25 dark:text-orange-100">
           {banner}
         </p>
       ) : null}
 
-      <form method="post" action="/signin" onSubmit={onSubmit} className="space-y-5">
+      <form method="post" action="/signin" onSubmit={onSubmit} className="space-y-3.5">
         <div>
           <label htmlFor="signin-username" className={launchPadLabelClass}>
             Username
@@ -247,17 +244,10 @@ function SignInForm() {
             />
             <button
               type="button"
-              aria-label={showPassword ? "Hide password" : "Press and hold to show password"}
-              title="Press and hold to reveal"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                setShowPassword(true);
-              }}
-              onPointerUp={() => setShowPassword(false)}
-              onPointerLeave={() => setShowPassword(false)}
-              onPointerCancel={() => setShowPassword(false)}
-              onBlur={() => setShowPassword(false)}
-              tabIndex={-1}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+              title={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((prev) => !prev)}
               className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-zinc-400 transition hover:text-zinc-800 dark:hover:text-white"
             >
               {showPassword ? (
@@ -275,7 +265,7 @@ function SignInForm() {
           </p>
         ) : null}
 
-        <div className="flex flex-col items-stretch gap-4 pt-2">
+        <div className="flex flex-col items-stretch gap-3 pt-1">
           <button
             type="submit"
             disabled={!formReady || submitting || redirecting}
@@ -357,7 +347,7 @@ function SignInForm() {
       ) : null}
 
       {googleEnabled ? (
-        <div className="mt-6 flex justify-center">
+        <div className="mt-4 flex justify-center">
           <button
             type="button"
             aria-label="Continue with Google"

@@ -48,6 +48,7 @@ export default async function ManualAssignmentPage() {
         title: true,
         description: true,
         priority: true,
+        status: true,
         updatedAt: true,
         teamId: true,
         orgChartSectionId: true,
@@ -132,6 +133,7 @@ export default async function ManualAssignmentPage() {
       title: true,
       description: true,
       priority: true,
+      status: true,
       updatedAt: true,
       assignedAgentId: true,
       orgChartSectionId: true,
@@ -180,6 +182,7 @@ export default async function ManualAssignmentPage() {
     title: string;
     description: string;
     priority: string;
+    status: string;
     updatedAt: Date;
     orgChartSectionId?: string | null;
     requestorOrgChartSectionId?: string | null;
@@ -192,6 +195,7 @@ export default async function ManualAssignmentPage() {
       title: t.title,
       description: t.description,
       priority: t.priority,
+      status: t.status,
       updatedAt: t.updatedAt.toISOString(),
       requestType: requestTypeById.get(t.id) ?? "ISSUE_CONCERN_TICKET",
       sendToSectionId,

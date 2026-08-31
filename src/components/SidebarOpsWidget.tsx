@@ -14,6 +14,7 @@ import {
   CircleDot,
   ClipboardList,
   Kanban,
+  Layers,
   LifeBuoy,
   Loader2,
   Pencil,
@@ -35,6 +36,10 @@ type SidebarSummary = {
   onDutyCount: number;
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
   selfOnDuty: boolean | null;
+  /** When false, Workforce → Activity is hidden — omit On Duty / Status block. */
+  showActivity: boolean;
+  companyDesignation: string | null;
+  departmentDesignation: string | null;
 };
 
 type ShortcutDef = {
@@ -68,7 +73,7 @@ const SHORTCUT_ID_ALIASES: Record<string, string> = {
 const SHORTCUT_CATALOG: ShortcutDef[] = [
   { id: "create", href: "/tickets/new", label: "Create", icon: PlusSquare },
   { id: "a-board", href: "/admin/manual-assignment", label: "a.board", icon: Kanban, adminOnly: true },
-  { id: "c-board", href: "/agent?board=company", label: "c.board", icon: Building2, adminOnly: true },
+  { id: "c-board", href: "/agent?board=company", label: "Group Board", icon: Building2, adminOnly: true },
   { id: "r-board", href: "/agent?board=ticket", label: "r.board", icon: Ticket },
   { id: "m-requests", href: "/agent?pane=mine", label: "m.requests", icon: UserRound },
   { id: "tasks", href: "/agent/tasks", label: "Tasks", icon: CheckSquare },
@@ -111,6 +116,9 @@ const EMPTY: SidebarSummary = {
   onDutyCount: 0,
   onDutyPreview: [],
   selfOnDuty: null,
+  showActivity: true,
+  companyDesignation: null,
+  departmentDesignation: null,
 };
 
 function shortcutsStorageKey(email: string, role: string) {
@@ -205,6 +213,16 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
           onDutyPreview: Array.isArray(payload.onDutyPreview) ? payload.onDutyPreview.slice(0, 2) : [],
           selfOnDuty:
             typeof payload.selfOnDuty === "boolean" ? payload.selfOnDuty : null,
+          showActivity: payload.showActivity !== false,
+          companyDesignation:
+            typeof payload.companyDesignation === "string" && payload.companyDesignation.trim()
+              ? payload.companyDesignation.trim()
+              : null,
+          departmentDesignation:
+            typeof payload.departmentDesignation === "string" &&
+            payload.departmentDesignation.trim()
+              ? payload.departmentDesignation.trim()
+              : null,
         });
         setFailed(false);
       } catch {
@@ -217,9 +235,12 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void refresh();
     }, 60_000);
+    const onVisibilityChanged = () => void refresh();
+    window.addEventListener("workforce-view-visibility-changed", onVisibilityChanged);
     return () => {
       stopped = true;
       window.clearInterval(timer);
+      window.removeEventListener("workforce-view-visibility-changed", onVisibilityChanged);
     };
   }, []);
 
@@ -267,32 +288,69 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
       )}
     >
       <div className="rounded-xl border border-zinc-200 bg-white/80 p-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
-            Requests
-          </p>
-          {loading ? <Loader2 size={12} className="animate-spin text-zinc-400" aria-hidden /> : null}
+        <div className="space-y-1.5 pb-2.5">
+          <div className="flex min-w-0 items-start gap-2">
+            <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-orange-500/10 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300">
+              <Building2 size={12} aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                Company
+              </p>
+              <p
+                className="mt-0.5 truncate text-[11px] font-semibold text-zinc-800 dark:text-zinc-100"
+                title={summary.companyDesignation ?? "Not set"}
+              >
+                {summary.companyDesignation ?? "Not set"}
+              </p>
+            </div>
+          </div>
+          <div className="flex min-w-0 items-start gap-2">
+            <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-sky-500/10 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+              <Layers size={12} aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                Department
+              </p>
+              <p
+                className="mt-0.5 truncate text-[11px] font-semibold text-zinc-800 dark:text-zinc-100"
+                title={summary.departmentDesignation ?? "Not set"}
+              >
+                {summary.departmentDesignation ?? "Not set"}
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
-          <QueueStat href="/agent?status=OPEN" label="Open" value={summary.open} tone="sky" />
-          <QueueStat
-            href="/agent?status=IN_PROGRESS"
-            label="Active"
-            value={summary.inProgress}
-            tone="orange"
-          />
-          <QueueStat
-            href="/agent?status=FOR_CONFIRMATION"
-            label="Confirm"
-            value={summary.forConfirmation}
-            tone="emerald"
-          />
+        <div className="border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+              Requests
+            </p>
+            {loading ? <Loader2 size={12} className="animate-spin text-zinc-400" aria-hidden /> : null}
+          </div>
+
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            <QueueStat href="/agent?status=OPEN" label="Open" value={summary.open} tone="sky" />
+            <QueueStat
+              href="/agent?status=IN_PROGRESS"
+              label="Active"
+              value={summary.inProgress}
+              tone="orange"
+            />
+            <QueueStat
+              href="/agent?status=FOR_CONFIRMATION"
+              label="Confirm"
+              value={summary.forConfirmation}
+              tone="emerald"
+            />
+          </div>
         </div>
 
         <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Tasks
             </p>
           </div>
@@ -318,21 +376,22 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
           </div>
         </div>
 
+        {summary.showActivity ? (
         <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
           {!isAdmin ? (
             <div className="flex items-center justify-between gap-2">
-              <p className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+              <p className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
                 Status
               </p>
               {failed && data == null ? (
-                <p className="min-w-0 text-right text-[11px] text-zinc-500">Unavailable</p>
+                <p className="min-w-0 text-right text-[11px] text-zinc-500 dark:text-zinc-400">Unavailable</p>
               ) : (
                 <p
                   className={cn(
                     "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold",
                     summary.selfOnDuty
                       ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                      : "bg-zinc-100 text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400",
+                      : "bg-zinc-100 text-zinc-600 dark:bg-zinc-950 dark:text-zinc-300",
                   )}
                 >
                   <span
@@ -349,7 +408,7 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
           ) : (
             <>
               <div className="flex items-center justify-between gap-2">
-                <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                <p className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
                   <Users size={11} aria-hidden />
                   On duty
                 </p>
@@ -359,9 +418,9 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
               </div>
 
               {failed && data == null ? (
-                <p className="mt-1.5 text-[11px] text-zinc-500">Couldn’t load live status.</p>
+                <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">Couldn’t load live status.</p>
               ) : summary.onDutyPreview.length === 0 ? (
-                <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-500">No one clocked in yet.</p>
+                <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">No one clocked in yet.</p>
               ) : (
                 <ul className="mt-1.5 space-y-1">
                   {summary.onDutyPreview.map((person) => (
@@ -387,10 +446,11 @@ export function SidebarOpsWidget({ className, compact = false }: Props) {
             </>
           )}
         </div>
+        ) : null}
 
         <div className="mt-2.5 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Shortcuts
             </p>
             {editing ? (

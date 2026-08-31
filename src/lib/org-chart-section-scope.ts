@@ -326,8 +326,9 @@ export async function resolveViewerOrgChartSectionScope(
 }
 
 /**
- * Ticket visibility for Admin / Personnel: send-to section in the viewer's
- * section tree, OR personal assignee / procedural / transfer scope.
+ * Ticket visibility for Personnel: send-to section in the viewer's section tree,
+ * OR personal assignee / procedural / transfer scope.
+ * Admin Request Board uses {@link personnelRequestBoardWhere} (assigned only).
  * SuperAdmin / HighAdmin use unrestricted board scope (all departments).
  */
 export async function sectionScopedTicketWhere(input: {
@@ -385,11 +386,11 @@ export async function resolveViewerDepartmentScopeLabel(
   return names.join(", ");
 }
 
-/** Whether this session role should be limited to org-chart section scope. */
+/** Whether this session role should be limited to org-chart section scope (Personnel Request Board). */
 export function roleUsesOrgChartSectionBoardScope(role: string | null | undefined): boolean {
   if (!role) return false;
   if (isElevatedUserRole(role)) return false;
-  return role === "Admin" || role === "Personnel";
+  return role === "Personnel";
 }
 
 /**

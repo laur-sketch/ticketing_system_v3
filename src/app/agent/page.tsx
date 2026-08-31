@@ -5,7 +5,7 @@ import type { TicketPriority, TicketStatus } from "@prisma/client/primary";
 import { Prisma } from "@prisma/client/primary";
 import { requireSession } from "@/lib/access";
 import { rosterTeamNameFilter, sortByRosterOrder } from "@/lib/company-roster";
-import { getCompanyBoardAggregates, loadCompanyBoard } from "@/lib/company-board";
+import { getCompanyBoardAggregates, loadCompanyBoard, loadDepartmentBoard } from "@/lib/company-board";
 import { ACTIVE_REQUEST_STATUSES, OPEN_PIPELINE_STATUSES } from "@/lib/active-request-statuses";
 import { loadTicketActivityLogForSession } from "@/lib/ticket-activity-log";
 import { prisma } from "@/lib/prisma";
@@ -42,6 +42,16 @@ import {
 } from "@/lib/org-chart-section-scope";
 import { MyRequestsBoard } from "@/components/my-requests/MyRequestsBoard";
 import { AgentKanban, type KanbanTicket } from "./agent-kanban";
+import {
+  RequestBoardEditModeProvider,
+  RequestBoardManageToolbar,
+} from "./request-board-edit-mode";
+import {
+  canManageRequestBoardColumns,
+  listRequestBoardColumns,
+  requestBoardOwnerKey,
+  resolveTicketBoardColumnId,
+} from "@/lib/request-board-columns";
 import { paymentProceduralStatusLabel, type PaymentApprovalMeta } from "@/lib/request-for-payment-approval";
 import { loadPaymentApprovalMetaMap } from "@/lib/payment-approval-db";
 import { loadAcaApprovalMetaMap } from "@/lib/aca-approval-db";
@@ -68,7 +78,9 @@ import {
   reconcileJobOrdersAwaitingExecutionAssignee,
 } from "@/lib/job-order-approval-db";
 import { CompanyKanban } from "./company-kanban";
+import { RequestKanbanFlowToggle } from "./request-kanban-flow-toggle";
 import { AgentKpiKanbanFlow } from "./kpi-kanban-flow";
+import { BoardTableToggle } from "./board-table-toggle";
 import { RequestBoardPanes } from "./request-board-panes";
 import { TicketActivityLogPanel } from "./ticket-activity-log-panel";
 import { TicketBoardFilterBar } from "./ticket-board-filter-bar";
@@ -130,6 +142,7 @@ export default async function AgentHome({
     board?: string | string[];
     company?: string | string[];
     section?: string | string[];
+    layer?: string | string[];
     task?: string | string[];
     requestType?: string | string[];
     pane?: string | string[];
@@ -148,7 +161,7 @@ export default async function AgentHome({
   const submittedBanner = firstQuery(params.submitted) === "1";
   const rawBoard = firstQuery(params.board);
   if (rawBoard === "department") {
-    redirect("/agent?board=company");
+    redirect("/agent?board=company&layer=department");
   }
   if (rawBoard === "kpi" || rawBoard === "it-tasks") {
     const qs = new URLSearchParams();
@@ -169,9 +182,13 @@ export default async function AgentHome({
   const requestedViewMode = firstQuery(params.view) === "table" ? "table" : "board";
   const boardTab = rawBoard === "kpi" ? "kpi" : rawBoard === "company" ? "company" : "ticket";
   const isCompanyBoard = boardTab === "company";
+  const companyBoardLayer =
+    isCompanyBoard && firstQuery(params.layer) === "department" ? "department" : "company";
   const selectedCompany = firstQuery(params.company) ?? "ALL";
   const sectionParam = firstQuery(params.section)?.trim() ?? "ALL";
   const selectedSection = sectionParam || "ALL";
+  const departmentParentSectionId =
+    companyBoardLayer === "department" && selectedSection !== "ALL" ? selectedSection : null;
   const viewMode = session.user.role === "Personnel" ? "board" : requestedViewMode;
   const isBoard = viewMode === "board";
   if (paneMine && (boardTab !== "ticket" || !isBoard)) {
@@ -218,6 +235,7 @@ export default async function AgentHome({
     !companyCoordinator && session.user.role === "Personnel";
 
   let companyBoardPayload: Awaited<ReturnType<typeof loadCompanyBoard>> | null = null;
+  let departmentBoardPayload: Awaited<ReturnType<typeof loadDepartmentBoard>> | null = null;
   let companyAggregates: Awaited<ReturnType<typeof getCompanyBoardAggregates>> | null = null;
   let companyActivityLogs: Awaited<ReturnType<typeof loadTicketActivityLogForSession>> = [];
 
@@ -246,9 +264,10 @@ export default async function AgentHome({
       ).filter((t) => (adminScopedCompanyId ? t.id === adminScopedCompanyId : true))
     : [];
 
-  const viewerSectionScopeForFilter = roleUsesOrgChartSectionBoardScope(session.user.role)
-    ? await resolveViewerOrgChartSectionScope(session.user.email)
-    : null;
+  const viewerSectionScopeForFilter =
+    session.user.role === "Personnel" || session.user.role === "Admin"
+      ? await resolveViewerOrgChartSectionScope(session.user.email)
+      : null;
   const orgChartSectionsForTicketFilter =
     boardTab === "ticket"
       ? viewerSectionScopeForFilter
@@ -261,7 +280,9 @@ export default async function AgentHome({
       : [];
   const selectedSectionValid =
     selectedSection === "ALL" ||
-    orgChartSectionsForTicketFilter.some((s) => s.id === selectedSection);
+    (boardTab === "ticket"
+      ? orgChartSectionsForTicketFilter.some((s) => s.id === selectedSection)
+      : true);
   const effectiveSection = selectedSectionValid ? selectedSection : "ALL";
   const ticketSectionSelected = boardTab === "ticket" && effectiveSection !== "ALL";
   const ticketAssignedFilterActive =
@@ -276,14 +297,29 @@ export default async function AgentHome({
       companyTeamIds: selectedCompany === "ALL" ? [] : [selectedCompany],
       requestTypeFilter: selectedRequestType,
     } as const;
-    const [dep, agg, logs] = await Promise.all([
-      loadCompanyBoard(companyBoardOpts),
-      getCompanyBoardAggregates(companyBoardOpts),
-      loadTicketActivityLogForSession({ session, limit: 120 }),
-    ]);
-    companyBoardPayload = dep;
-    companyAggregates = agg;
-    companyActivityLogs = logs;
+    if (companyBoardLayer === "department") {
+      const [dep, agg, logs] = await Promise.all([
+        loadDepartmentBoard({
+          ...companyBoardOpts,
+          parentSectionId: departmentParentSectionId,
+        }),
+        getCompanyBoardAggregates(companyBoardOpts),
+        loadTicketActivityLogForSession({ session, limit: 120 }),
+      ]);
+      departmentBoardPayload = dep;
+      companyBoardPayload = { columns: dep.columns, cardMode: dep.cardMode, emptyHint: dep.emptyHint };
+      companyAggregates = agg;
+      companyActivityLogs = logs;
+    } else {
+      const [dep, agg, logs] = await Promise.all([
+        loadCompanyBoard(companyBoardOpts),
+        getCompanyBoardAggregates(companyBoardOpts),
+        loadTicketActivityLogForSession({ session, limit: 120 }),
+      ]);
+      companyBoardPayload = dep;
+      companyAggregates = agg;
+      companyActivityLogs = logs;
+    }
   }
 
   const fetchTicketPipeline = !isCompanyBoard && boardTab !== "kpi";
@@ -314,13 +350,14 @@ export default async function AgentHome({
         : "ALL";
 
   const whereBase: Prisma.TicketWhereInput = {};
-  if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
+  if (session.user.role === "Admin") {
+    /** Admin Request Board: only tickets assigned to this account. */
+    Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
+  } else if (session.user.role === "Personnel") {
     Object.assign(whereBase, await sectionScopedTicketWhere({
       email: session.user.email,
       agentId: operator?.id,
     }));
-  } else if (session.user.role === "Personnel") {
-    Object.assign(whereBase, await personnelRequestBoardWhere(operator?.id));
   } else if (isElevatedUserRole(session.user.role)) {
     /** SuperAdmin / HighAdmin: all departments (no company roster scope). */
   } else {
@@ -594,8 +631,12 @@ export default async function AgentHome({
     if (boardTab !== "kpi" && selectedRequestType !== "ALL") {
       qs.set("requestType", selectedRequestType);
     }
-    if (boardTab !== "kpi" && effectiveSection !== "ALL") {
+    if (boardTab === "ticket" && effectiveSection !== "ALL") {
       qs.set("section", effectiveSection);
+    }
+    if (isCompanyBoard && companyBoardLayer === "department") {
+      qs.set("layer", "department");
+      if (departmentParentSectionId) qs.set("section", departmentParentSectionId);
     }
     if (query) qs.set("q", query);
     if (sort !== "updatedAt") qs.set("sort", sort);
@@ -651,16 +692,75 @@ export default async function AgentHome({
     (_, i) => Math.max(1, Math.min(totalPages - 4, currentPage - 2)) + i,
   ).filter((n, i, arr) => n >= 1 && n <= totalPages && arr.indexOf(n) === i);
 
-  const boardColumnTotals = isBoard
-    ? {
-        open: boardStatusCounts.OPEN ?? 0,
-        progress: (boardStatusCounts.IN_PROGRESS ?? 0) + (boardStatusCounts.ESCALATED ?? 0),
-        feedback:
-          (boardStatusCounts.PENDING_INFO ?? 0) +
-          (boardStatusCounts.FOR_CONFIRMATION ?? 0) +
-          (boardStatusCounts.RESOLVED ?? 0),
+  const boardColumns =
+    isBoard && boardTab === "ticket"
+      ? await listRequestBoardColumns(requestBoardOwnerKey(session.user))
+      : [];
+  const canManageBoardColumns = canManageRequestBoardColumns(session.user.role);
+
+  let boardColumnTotals: Record<string, number> | undefined;
+  const boardColumnIdByTicketId = new Map<string, string | null>();
+  const boardLaneEnteredAtByTicketId = new Map<string, string | null>();
+
+  if (isBoard && boardColumns.length > 0) {
+    const laneTickets = await prisma.ticket.findMany({
+      where: { ...whereBase, status: { in: STATUS_PIPELINE } },
+      select: { id: true, status: true },
+    });
+    const laneIds = laneTickets.map((t) => t.id);
+    if (laneIds.length > 0) {
+      const rows = await prisma.$queryRawUnsafe<
+        Array<{
+          id: string;
+          request_board_column_id: string | null;
+          board_lane_entered_at: Date | string | null;
+        }>
+      >(
+        `SELECT id, request_board_column_id, board_lane_entered_at FROM tickets WHERE id = ANY($1::text[])`,
+        laneIds,
+      );
+      for (const row of rows) {
+        boardColumnIdByTicketId.set(row.id, row.request_board_column_id);
+        boardLaneEnteredAtByTicketId.set(
+          row.id,
+          row.board_lane_entered_at
+            ? new Date(row.board_lane_entered_at).toISOString()
+            : null,
+        );
       }
-    : undefined;
+    }
+    boardColumnTotals = Object.fromEntries(boardColumns.map((c) => [c.id, 0]));
+    for (const t of laneTickets) {
+      const colId = resolveTicketBoardColumnId(boardColumns, {
+        status: t.status,
+        requestBoardColumnId: boardColumnIdByTicketId.get(t.id) ?? null,
+      });
+      if (colId && boardColumnTotals[colId] != null) {
+        boardColumnTotals[colId] += 1;
+      }
+    }
+  } else if (isBoard && ticketsBoardEnriched.length > 0) {
+    const ids = ticketsBoardEnriched.map((t) => t.id);
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        id: string;
+        request_board_column_id: string | null;
+        board_lane_entered_at: Date | string | null;
+      }>
+    >(
+      `SELECT id, request_board_column_id, board_lane_entered_at FROM tickets WHERE id = ANY($1::text[])`,
+      ids,
+    );
+    for (const row of rows) {
+      boardColumnIdByTicketId.set(row.id, row.request_board_column_id);
+      boardLaneEnteredAtByTicketId.set(
+        row.id,
+        row.board_lane_entered_at
+          ? new Date(row.board_lane_entered_at).toISOString()
+          : null,
+      );
+    }
+  }
 
   const boardCards: KanbanTicket[] = isBoard
     ? ticketsBoardEnriched.map((t) => ({
@@ -670,6 +770,9 @@ export default async function AgentHome({
         description: t.description,
         priority: t.priority,
         status: t.status,
+        requestBoardColumnId: boardColumnIdByTicketId.get(t.id) ?? null,
+        boardLaneEnteredAt:
+          boardLaneEnteredAtByTicketId.get(t.id) ?? t.updatedAt.toISOString(),
         requestType: boardRequestTypeById.get(t.id) ?? "ISSUE_CONCERN_TICKET",
         proceduralStatusLabel: (() => {
           const rt = boardRequestTypeById.get(t.id) ?? "";
@@ -776,14 +879,14 @@ export default async function AgentHome({
     <main
       className={`flex flex-col bg-zinc-50 text-zinc-900 dark:bg-background dark:text-zinc-100 ${
         isTicketBoardView
-          ? "min-h-[calc(100dvh-3.5rem)] px-2 py-2 sm:px-4 sm:py-4"
+          ? "min-h-[calc(100dvh-3.5rem)] px-3 py-2 sm:px-4 sm:py-3 lg:px-5"
           : "min-h-[calc(100vh-56px)] px-3 py-4 sm:px-4"
       }`}
     >
       <div
         className={`mx-auto flex w-full flex-1 flex-col ${
           isTicketBoardView ? "space-y-2 sm:space-y-4" : "space-y-4"
-        } ${isCompanyBoard ? "max-w-none" : "max-w-[96rem]"}`}
+        } ${isCompanyBoard ? "max-w-none" : "max-w-[112rem]"}`}
       >
         <section className={isTicketBoardView ? "space-y-2 sm:space-y-4" : "space-y-4"}>
           {notificationsOpen ? (
@@ -877,13 +980,15 @@ export default async function AgentHome({
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-400/95">
                   {BRAND_TITLE} ·{" "}
-                  {isCompanyBoard ? "Company" : boardTab === "kpi" ? "Tasks" : "Requests"}
+                  {isCompanyBoard ? "Group" : boardTab === "kpi" ? "Tasks" : "Requests"}
                 </p>
                 <div className="flex items-end justify-between gap-3">
                   <div className="min-w-0">
                     <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                       {isCompanyBoard
-                        ? "Company overview"
+                        ? companyBoardLayer === "department"
+                          ? "Department overview"
+                          : "Group overview"
                         : boardTab === "kpi"
                           ? "Task Board"
                           : "Requests"}
@@ -994,34 +1099,39 @@ export default async function AgentHome({
                   <div className="flex flex-wrap items-center justify-center gap-1.5 sm:justify-end sm:gap-2">
                   {/* Already on Board — hide the solitary Board chip on mobile. Table link is in the subtitle. */}
                   {session.user.role === "Personnel" || isCompanyBoard ? null : (
-                    <Tabs
+                    <BoardTableToggle
                       value={isBoard ? "board" : "table"}
-                      className={isTicketBoardView ? "hidden sm:block sm:w-auto" : "w-full sm:w-auto"}
-                    >
-                      <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
-                        <TabsTrigger
-                          value="board"
-                          asChild
-                          className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
-                        >
-                          <Link href={buildHref({ view: null, page: "1" })}>Board</Link>
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="table"
-                          asChild
-                          className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
-                        >
-                          <Link href={buildHref({ view: "table", page: "1" })}>Table</Link>
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
+                      boardHref={buildHref({ view: null, page: "1" })}
+                      tableHref={buildHref({ view: "table", page: "1" })}
+                      className={isTicketBoardView ? "hidden sm:inline-flex sm:w-auto" : "w-full sm:w-auto"}
+                    />
                   )}
                   {isCompanyBoard ? (
-                    <Tabs value="company" className="w-full sm:w-auto">
-                      <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
-                        <span className="rounded-md bg-orange-600 px-3 py-1.5 text-white">Company view</span>
-                      </TabsList>
-                    </Tabs>
+                    <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+                      <div className="inline-flex w-full rounded-lg border border-orange-300/80 bg-orange-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-orange-500/35 dark:bg-orange-950/40">
+                        <Link
+                          href={buildHref({ layer: null, section: null })}
+                          className={
+                            companyBoardLayer === "company"
+                              ? "flex-1 rounded-md bg-orange-600 px-3 py-1.5 text-center text-white sm:flex-none"
+                              : "flex-1 rounded-md px-3 py-1.5 text-center text-orange-950/80 hover:bg-orange-200/60 sm:flex-none dark:text-orange-100/90 dark:hover:bg-orange-900/50"
+                          }
+                        >
+                          Company view
+                        </Link>
+                        <Link
+                          href={buildHref({ layer: "department", section: null })}
+                          className={
+                            companyBoardLayer === "department"
+                              ? "flex-1 rounded-md bg-orange-600 px-3 py-1.5 text-center text-white sm:flex-none"
+                              : "flex-1 rounded-md px-3 py-1.5 text-center text-orange-950/80 hover:bg-orange-200/60 sm:flex-none dark:text-orange-100/90 dark:hover:bg-orange-900/50"
+                          }
+                        >
+                          Department view
+                        </Link>
+                      </div>
+                      <RequestKanbanFlowToggle />
+                    </div>
                   ) : null}
                 </div>
                 </div>
@@ -1035,8 +1145,11 @@ export default async function AgentHome({
                   </p>
                 ) : isCompanyBoard ? (
                   <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                    One card per company with priority breakdowns. Use Edit order to rearrange cards, then Save order to
-                    lock. Reset restores the last saved layout. Click a priority row to open the request list.
+                    {companyBoardLayer === "department"
+                      ? "Department cards roll up major + sub-department requests. Double-click a major for sub-departments. "
+                      : "Company cards with priority breakdowns. Double-click a company for a status kanban. "}
+                    Use <span className="font-medium text-zinc-700 dark:text-zinc-300">Kanban flow</span> to choose
+                    company or department grouping on Assign Requests drag-and-drop.
                   </p>
                 ) : null}
               </div>
@@ -1049,7 +1162,21 @@ export default async function AgentHome({
                     {companyBoardPayload.emptyHint}
                   </p>
                 ) : null}
-                <CompanyKanban columns={companyBoardPayload.columns} />
+                <CompanyKanban
+                  columns={companyBoardPayload.columns}
+                  boardLayer={companyBoardLayer}
+                  breadcrumb={departmentBoardPayload?.breadcrumb ?? []}
+                  overviewHref={
+                    companyBoardLayer === "department"
+                      ? buildHref({ layer: "department", section: null })
+                      : undefined
+                  }
+                  sectionHrefTemplate={
+                    companyBoardLayer === "department"
+                      ? buildHref({ layer: "department", section: "__SECTION__" })
+                      : undefined
+                  }
+                />
                 <TicketActivityLogPanel
                   entries={pagedCompanyActivityLogs}
                   linkTickets
@@ -1065,6 +1192,7 @@ export default async function AgentHome({
                 />
               </>
             ) : isBoard && boardTab === "ticket" ? (
+              <RequestBoardEditModeProvider canManage={canManageBoardColumns}>
               <RequestBoardPanes
                 initialPane={paneMine ? "mine" : "board"}
                 myRequests={
@@ -1090,7 +1218,7 @@ export default async function AgentHome({
                         <h2 className="mt-1.5 text-[1.5rem] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-[1.85rem]">
                           Requests
                         </h2>
-                        <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
+                        <p className="mt-1 max-w-xl text-sm text-zinc-700 dark:text-zinc-300">
                           Assigned pipeline work in Open, In progress, and Feedback lanes.
                           {session.user.role !== "Personnel" ? (
                             <>
@@ -1109,34 +1237,17 @@ export default async function AgentHome({
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center gap-2">
                         {session.user.role === "Personnel" ? null : (
-                          <Tabs value="board" className="hidden sm:block sm:w-auto">
-                            <TabsList className="w-full rounded-lg border border-zinc-300 bg-zinc-100 p-0.5 text-xs font-semibold sm:w-auto dark:border-zinc-700 dark:bg-zinc-900">
-                              <TabsTrigger
-                                value="board"
-                                asChild
-                                className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
-                              >
-                                <Link href={buildHref({ view: null, page: "1" })}>Board</Link>
-                              </TabsTrigger>
-                              <TabsTrigger
-                                value="table"
-                                asChild
-                                className="flex-1 rounded-md px-2.5 py-1.5 text-center text-xs font-semibold data-[state=active]:bg-orange-600 data-[state=active]:text-white sm:flex-none sm:px-3"
-                              >
-                                <Link href={buildHref({ view: "table", page: "1" })}>Table</Link>
-                              </TabsTrigger>
-                            </TabsList>
-                          </Tabs>
+                          <BoardTableToggle
+                            value="board"
+                            boardHref={buildHref({ view: null, page: "1" })}
+                            tableHref={buildHref({ view: "table", page: "1" })}
+                            className="hidden sm:inline-flex"
+                          />
                         )}
-                        <Link
-                          href="/tickets/new"
-                          className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#f97316] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(249,115,22,0.32)] transition hover:bg-[#fb923c] active:translate-y-px"
-                        >
-                          Create Request
-                        </Link>
                       </div>
                     </div>
-                    <div className="mt-4">
+                    <div className="mt-4 flex items-center gap-2.5 sm:gap-3">
+                      <div className="min-w-0 flex-1">
                       <TicketBoardFilterBar
                         initialQuery={searchFieldQuery}
                         placeholder="Search requests…"
@@ -1188,6 +1299,8 @@ export default async function AgentHome({
                           options: statusOptions,
                         }}
                       />
+                      </div>
+                      <RequestBoardManageToolbar columns={boardColumns} />
                     </div>
                   </header>
                   {ticketsEmpty ? (
@@ -1205,12 +1318,18 @@ export default async function AgentHome({
                     </div>
                   ) : (
                     <>
-                      <AgentKanban tickets={boardCards} columnTotals={boardColumnTotals} />
+                      <AgentKanban
+                        tickets={boardCards}
+                        columns={boardColumns}
+                        canManageColumns={canManageBoardColumns}
+                        columnTotals={boardColumnTotals}
+                      />
                       {ticketPagination}
                     </>
                   )}
                 </div>
               </RequestBoardPanes>
+              </RequestBoardEditModeProvider>
             ) : isBoard && boardTab === "kpi" ? (
               <>
                 <AgentKpiKanbanFlow
@@ -1331,19 +1450,6 @@ export default async function AgentHome({
             )}
           </section>
         </section>
-
-        <footer className="mt-auto border-t border-zinc-200 pt-3 text-[11px] text-zinc-600 dark:border-zinc-800/80">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="inline-flex items-center gap-1.5 text-orange-500/90">
-                <span className="size-1.5 rounded-full bg-orange-500" />
-                Network operational
-              </span>
-              <span className="text-zinc-500">Queue sync active</span>
-            </div>
-            <span className="text-zinc-500">AGC command · v2</span>
-          </div>
-        </footer>
       </div>
     </main>
   );

@@ -2592,18 +2592,21 @@ export function AgentWorkspace({
             ) : null}
 
             {transferPending ? (
-              <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-950/20">
-                <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
+              <div className="space-y-2 rounded-xl border border-rose-300 bg-rose-50 p-3 dark:border-rose-700/60 dark:bg-rose-950/20">
+                <p className="text-xs font-semibold text-rose-800 dark:text-rose-200">
                   {canApproveTransfer
                     ? pendingTransfer?.fromAgentName
-                      ? `Transfer request from ${pendingTransfer.fromAgentName} — accept to keep this request, or decline to return it.`
-                      : "Transfer request — accept to keep this request on your board, or decline to return it."
-                    : pendingTransfer?.recipientAgentName
-                      ? `Transfer pending on ${pendingTransfer.recipientAgentName}’s board.`
-                      : "Transfer request pending."}
+                      ? `Transfer pending from ${pendingTransfer.fromAgentName} — in the Assign Requests unassigned pool.`
+                      : "Transfer pending — this request is in the Assign Requests unassigned pool."
+                    : "Transfer pending — waiting for reassignment from the Assign Requests unassigned pool."}
                 </p>
                 {pendingTransfer?.reason ? (
-                  <p className="text-xs text-amber-700 dark:text-amber-100/80">{pendingTransfer.reason}</p>
+                  <p className="text-xs text-rose-700 dark:text-rose-100/80">{pendingTransfer.reason}</p>
+                ) : null}
+                {pendingTransfer?.recipientAgentName ? (
+                  <p className="text-[11px] text-rose-700 dark:text-rose-200/80">
+                    Preferred recipient: {pendingTransfer.recipientAgentName}
+                  </p>
                 ) : null}
                 {canApproveTransfer ? (
                   <div className="flex flex-col gap-2">
@@ -2613,12 +2616,12 @@ export function AgentWorkspace({
                 onClick={() =>
                         patch({
                           action: "approve_transfer",
-                          note: "Transfer accepted — request stays on my board.",
+                          note: "Transfer accepted — assigned to preferred recipient.",
                         })
                 }
                       className="min-h-10 w-full rounded-lg border border-emerald-500/70 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
               >
-                      Accept transfer
+                      Assign to preferred recipient
               </button>
                     <button
                       type="button"
@@ -2631,12 +2634,13 @@ export function AgentWorkspace({
                       }
                       className="min-h-10 w-full rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-900"
                     >
-                      Decline transfer
+                      Return to requester
                     </button>
                   </div>
                 ) : (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-200/80">
-                    Waiting for the selected colleague to accept or decline on their Request Board.
+                  <p className="text-[11px] text-rose-700 dark:text-rose-200/80">
+                    An admin can reassign this from Assign Requests, or return it to the original
+                    assignee from Ticket Controls.
                   </p>
                 )}
               </div>
@@ -2887,7 +2891,8 @@ export function AgentWorkspace({
                   Request for transfer
                 </label>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Send this request to a colleague. If they accept, it becomes assigned to them.
+                  Releases this request to the Assign Requests unassigned pool as Transfer pending
+                  (red outline). Note a preferred colleague for admins.
                 </p>
                 <CompanyUserSearchField
                   label="Transfer to"

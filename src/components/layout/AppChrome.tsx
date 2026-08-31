@@ -59,7 +59,7 @@ function StaffMainChrome({ children }: { children: React.ReactNode }) {
       <StaffBreadcrumbs />
       <div
         data-staff-main-scroll=""
-        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pb-[max(1rem,env(safe-area-inset-bottom,0px))]"
+        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom,0px)]"
       >
         {children}
       </div>
@@ -81,7 +81,7 @@ function StaffAppShell({
     return (
       <GlobalSearchProvider>
         <BreadcrumbProvider>
-          <div className="flex min-h-dvh flex-1 flex-col bg-zinc-50 text-foreground dark:bg-zinc-950">
+          <div className="flex min-h-dvh flex-1 flex-col bg-background text-foreground">
             <RealtimeRefreshBeacon />
             <GlobalSidebar initialRole={initialRole} />
             <StaffMainChrome>{children}</StaffMainChrome>
@@ -94,10 +94,10 @@ function StaffAppShell({
   return (
     <GlobalSearchProvider>
       <BreadcrumbProvider>
-        <div className="fixed inset-0 z-0 flex overflow-hidden bg-zinc-50 text-foreground dark:bg-zinc-950">
+        <div className="fixed inset-0 z-0 flex overflow-hidden bg-background text-foreground">
           <RealtimeRefreshBeacon />
           <GlobalSidebar initialRole={initialRole} />
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 dark:bg-zinc-950">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             <StaffMainChrome>{children}</StaffMainChrome>
           </div>
         </div>

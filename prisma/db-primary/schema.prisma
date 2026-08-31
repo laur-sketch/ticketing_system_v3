@@ -406,6 +406,11 @@ model Ticket {
   requestType         String           @default("ISSUE_CONCERN_TICKET") @map("request_type")
   priority            TicketPriority   @default(LOW) @map("priority")
   status              TicketStatus     @default(OPEN) @map("status")
+  /// Optional Request Board lane override (custom columns). Null → resolve from status.
+  requestBoardColumnId String?         @map("request_board_column_id")
+  requestBoardColumn   RequestBoardColumn? @relation(fields: [requestBoardColumnId], references: [id], onDelete: SetNull)
+  /// When the ticket entered its current Request Board lane (status lane or custom column).
+  boardLaneEnteredAt  DateTime         @default(now()) @map("board_lane_entered_at")
   contactName         String           @map("contact_name")
   contactEmail        String           @map("contact_email")
   requestorEmail      String?          @map("requestor_email")
@@ -452,6 +457,8 @@ model Ticket {
   @@index([linkedKpiMaintenanceId])
   @@index([status, updatedAt])
   @@index([status, createdAt])
+  @@index([requestBoardColumnId])
+  @@index([boardLaneEnteredAt, status])
   @@index([contactEmail, updatedAt])
   @@index([contactEmail, createdAt])
   @@index([requestorEmail, updatedAt])
@@ -803,4 +810,38 @@ model PlatformSetting {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("platform_settings")
+}
+
+/// Customizable Request Board lanes (legacy global seed/template).
+/// Live board UI now uses per-user layouts in `request_board_user_layouts`.
+model RequestBoardColumn {
+  id             String       @id @default(cuid())
+  name           String       @map("name")
+  sortOrder      Int          @map("sort_order")
+  isDefault      Boolean      @default(false) @map("is_default")
+  /// Status written when a card is dropped into this lane.
+  mappedStatus   TicketStatus @map("mapped_status")
+  /// Optional display label for the mapping (e.g. "On Delivery"). Null → use mappedStatus label.
+  mappingLabel   String?      @map("mapping_label")
+  /// Statuses that appear here when ticket.requestBoardColumnId is null (JSON string array).
+  acceptStatuses Json         @map("accept_statuses")
+  /// When false, cards cannot be dropped into this lane (default Open).
+  allowDrop      Boolean      @default(true) @map("allow_drop")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  tickets        Ticket[]
+
+  @@index([sortOrder])
+  @@map("request_board_columns")
+}
+
+/// Per-account Request Board column layout (names, order, personal custom boards).
+model RequestBoardUserLayout {
+  id        String   @id @default(cuid())
+  ownerKey  String   @unique @map("owner_key")
+  columns   Json     @map("columns")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("request_board_user_layouts")
 }

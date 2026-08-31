@@ -173,34 +173,16 @@ export async function GET(req: Request) {
   const personnelWhere =
     session.user.role === "Personnel" ? await personnelRequestBoardWhere(operator?.id) : null;
 
-  let adminCompanyWhere: Prisma.TicketWhereInput | null = null;
   let sectionBoardWhere: Prisma.TicketWhereInput | null = null;
-  if (
-    session.user.role === "Admin" ||
-    session.user.role === "Personnel"
-  ) {
-    const { roleUsesOrgChartSectionBoardScope, sectionScopedTicketWhere } = await import(
-      "@/lib/org-chart-section-scope"
-    );
-    if (roleUsesOrgChartSectionBoardScope(session.user.role)) {
-      sectionBoardWhere = await sectionScopedTicketWhere({
-        email: session.user.email,
-        agentId: operator?.id,
-      });
-    }
+  if (session.user.role === "Personnel") {
+    const { sectionScopedTicketWhere } = await import("@/lib/org-chart-section-scope");
+    sectionBoardWhere = await sectionScopedTicketWhere({
+      email: session.user.email,
+      agentId: operator?.id,
+    });
   }
-  if (session.user.role === "Admin" && !sectionBoardWhere) {
-    const scoped = await resolveStaffCompanyTeamId(session.user.email);
-    const personalRfpScope = await personnelRequestBoardWhere(operator?.id);
-    if (!scoped) {
-      adminCompanyWhere = personalRfpScope;
-    } else if (teamIdParam && teamIdParam !== scoped) {
-      return NextResponse.json({ error: "Forbidden company filter." }, { status: 403 });
-    } else {
-      adminCompanyWhere = {
-        OR: [{ teamId: scoped }, personalRfpScope],
-      };
-    }
+  if (session.user.role === "Admin") {
+    sectionBoardWhere = await personnelRequestBoardWhere(operator?.id);
   }
 
   const tickets = await prisma.ticket.findMany({
@@ -208,7 +190,6 @@ export async function GET(req: Request) {
       ...(status ? { status: status as never } : {}),
       ...(isElevatedUserRole(session.user.role) && teamIdParam ? { teamId: teamIdParam } : {}),
       ...(sectionBoardWhere ?? {}),
-      ...(sectionBoardWhere ? {} : adminCompanyWhere ?? {}),
       ...(sectionBoardWhere ? {} : personnelWhere ?? {}),
       ...(session.user.role === "Customer"
         ? customerTicketWhereBySessionEmail(session.user.email ?? "")
@@ -280,6 +261,8 @@ export async function POST(req: Request) {
     let companyTeamIdRaw: string | undefined;
     let orgChartSectionIdRaw: string | undefined;
     let requestorOrgChartSectionIdRaw: string | undefined;
+    let sendToModeRaw: string | undefined;
+    let sendToCompanyTeamIdRaw: string | undefined;
     let customerOrgRoleRaw: string | undefined;
     let branchRaw: string | undefined;
     let requestingCompanyTeamIdRaw: string | undefined;
@@ -342,6 +325,10 @@ export async function POST(req: Request) {
       orgChartSectionIdRaw = ocs != null ? String(ocs) : undefined;
       const rocs = fd.get("requestorOrgChartSectionId");
       requestorOrgChartSectionIdRaw = rocs != null ? String(rocs) : undefined;
+      const stm = fd.get("sendToMode");
+      sendToModeRaw = stm != null ? String(stm) : undefined;
+      const stc = fd.get("sendToCompanyTeamId");
+      sendToCompanyTeamIdRaw = stc != null ? String(stc) : undefined;
       const pct = fd.get("portalCompanyTeamId");
       if (!companyTeamIdRaw && pct != null) {
         companyTeamIdRaw = String(pct);
@@ -489,6 +476,9 @@ export async function POST(req: Request) {
         typeof body.requestorOrgChartSectionId === "string"
           ? body.requestorOrgChartSectionId
           : undefined;
+      sendToModeRaw = typeof body.sendToMode === "string" ? body.sendToMode : undefined;
+      sendToCompanyTeamIdRaw =
+        typeof body.sendToCompanyTeamId === "string" ? body.sendToCompanyTeamId : undefined;
       customerOrgRoleRaw =
         typeof body.customerOrgRole === "string" ? body.customerOrgRole : undefined;
       branchRaw = typeof body.branch === "string" ? body.branch : undefined;
@@ -680,9 +670,13 @@ export async function POST(req: Request) {
     const requestorCompanyTeamId = await resolveStaffCompanyTeamId(session.user.email);
     const sendToOrgChartSectionId = (orgChartSectionIdRaw ?? "").trim();
     const requestorOrgChartSectionId = (requestorOrgChartSectionIdRaw ?? "").trim();
+    const staffSendToMode = sendToModeRaw === "company" ? "company" : "department";
+    const sendToCompanyTeamId = (sendToCompanyTeamIdRaw ?? "").trim();
     let intakeCompanyTeamId = (companyTeamIdRaw ?? "").trim() || requestorCompanyTeamId;
     // Staff intake routes the company queue from the send-to org-chart section when set.
-    if (sendToOrgChartSectionId) {
+    if (staffSendToMode === "company" && sendToCompanyTeamId) {
+      intakeCompanyTeamId = sendToCompanyTeamId;
+    } else if (sendToOrgChartSectionId) {
       const sectionCompanyId = await resolveCompanyTeamIdForOrgChartSection(sendToOrgChartSectionId);
       if (sectionCompanyId) intakeCompanyTeamId = sectionCompanyId;
     }
@@ -1322,41 +1316,65 @@ export async function POST(req: Request) {
         isElevatedUserRole(session.user.role);
 
       if (isStaffIntake) {
-        if (!sendToOrgChartSectionId || !requestorOrgChartSectionId) {
+        if (!requestorOrgChartSectionId) {
           return NextResponse.json(
-            { error: "Requesting department and Send request to (department) are required." },
+            { error: "Requesting department is required." },
             { status: 400 },
           );
         }
-        if (
-          !(await orgChartSectionExists(sendToOrgChartSectionId)) ||
-          !(await orgChartSectionExists(requestorOrgChartSectionId))
-        ) {
-          return NextResponse.json({ error: "Invalid section selection." }, { status: 400 });
+        if (!(await orgChartSectionExists(requestorOrgChartSectionId))) {
+          return NextResponse.json({ error: "Invalid requesting department." }, { status: 400 });
         }
-        const sendToSection = await prisma.orgChartSection.findUnique({
-          where: { id: sendToOrgChartSectionId },
-          select: { name: true },
-        });
-        const teamIdFromSection = await resolveCompanyTeamIdForOrgChartSection(sendToOrgChartSectionId);
-        const resolvedTeamId = teamIdFromSection ?? requestorCompanyTeamId;
-        if (!resolvedTeamId) {
-          return NextResponse.json(
-            { error: "Could not resolve a company queue for the selected section." },
-            { status: 400 },
-          );
+
+        if (staffSendToMode === "company") {
+          if (!sendToCompanyTeamId) {
+            return NextResponse.json(
+              { error: "Send request to (company) is required." },
+              { status: 400 },
+            );
+          }
+          const selectedTeam = await resolveRosterTeamById(sendToCompanyTeamId);
+          if (!selectedTeam) {
+            return NextResponse.json({ error: "Invalid company selection." }, { status: 400 });
+          }
+          team = selectedTeam;
+          customerRequestSbuText = selectedTeam.name;
+          intakeRequestorSectionId = requestorOrgChartSectionId;
+          intakeSendToSectionId = null;
+        } else {
+          if (!sendToOrgChartSectionId) {
+            return NextResponse.json(
+              { error: "Send request to (department) is required." },
+              { status: 400 },
+            );
+          }
+          if (!(await orgChartSectionExists(sendToOrgChartSectionId))) {
+            return NextResponse.json({ error: "Invalid send-to department." }, { status: 400 });
+          }
+          const sendToSection = await prisma.orgChartSection.findUnique({
+            where: { id: sendToOrgChartSectionId },
+            select: { name: true },
+          });
+          const teamIdFromSection = await resolveCompanyTeamIdForOrgChartSection(sendToOrgChartSectionId);
+          const resolvedTeamId = teamIdFromSection ?? requestorCompanyTeamId;
+          if (!resolvedTeamId) {
+            return NextResponse.json(
+              { error: "Could not resolve a company queue for the selected section." },
+              { status: 400 },
+            );
+          }
+          const selectedTeam = await resolveRosterTeamById(resolvedTeamId);
+          if (!selectedTeam) {
+            return NextResponse.json(
+              { error: "Invalid company queue for the selected section." },
+              { status: 400 },
+            );
+          }
+          team = selectedTeam;
+          customerRequestSbuText = sendToSection?.name ?? selectedTeam.name;
+          intakeRequestorSectionId = requestorOrgChartSectionId;
+          intakeSendToSectionId = sendToOrgChartSectionId;
         }
-        const selectedTeam = await resolveRosterTeamById(resolvedTeamId);
-        if (!selectedTeam) {
-          return NextResponse.json(
-            { error: "Invalid company queue for the selected section." },
-            { status: 400 },
-          );
-        }
-        team = selectedTeam;
-        customerRequestSbuText = sendToSection?.name ?? selectedTeam.name;
-        intakeRequestorSectionId = requestorOrgChartSectionId;
-        intakeSendToSectionId = sendToOrgChartSectionId;
       } else if (rawCompanyTeamId) {
         const selectedTeam = await resolveRosterTeamById(rawCompanyTeamId);
         if (!selectedTeam) {
@@ -1548,6 +1566,14 @@ export async function POST(req: Request) {
         });
         if (sendToSection?.name) {
           await logActivity(ticket.id, "USER", "Send request to department", sendToSection.name);
+        }
+      } else if (staffSendToMode === "company" && sendToCompanyTeamId) {
+        const sendToTeam = await prisma.team.findUnique({
+          where: { id: sendToCompanyTeamId },
+          select: { name: true },
+        });
+        if (sendToTeam?.name) {
+          await logActivity(ticket.id, "USER", "Send request to company", sendToTeam.name);
         }
       }
     }

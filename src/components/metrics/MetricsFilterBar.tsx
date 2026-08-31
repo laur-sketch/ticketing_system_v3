@@ -425,8 +425,8 @@ export function MetricsFilterBar({
       )}
     >
       <div ref={searchRootRef} className="relative min-w-0 flex-1 p-2.5 sm:p-0">
-        <label className="flex min-w-0 items-center rounded-lg border border-zinc-200 bg-zinc-50/90 px-2.5 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-400 sm:border-0 sm:bg-transparent sm:px-2 sm:py-1">
-          <Search className="mr-2 size-4 shrink-0 opacity-60" aria-hidden />
+        <label className="flex min-w-0 items-center rounded-lg border border-zinc-200 bg-zinc-50/90 px-2.5 py-2 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950/60 dark:text-zinc-300 sm:border-0 sm:bg-transparent sm:px-2 sm:py-1">
+          <Search className="mr-2 size-4 shrink-0 text-zinc-600 opacity-90 dark:text-zinc-400" aria-hidden />
           <input
             type="text"
             value={query}
@@ -499,7 +499,7 @@ export function MetricsFilterBar({
               }
             }}
             placeholder={placeholder}
-            className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+            className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-600 dark:text-zinc-100 dark:placeholder:text-zinc-400"
           />
         </label>
         {suggestionList}

@@ -30,21 +30,25 @@ export function DashboardSummaryCards({
         const body = (
           <article
             className={cn(
-              "rounded-xl border bg-white p-3 shadow-sm sm:rounded-2xl sm:p-4 dark:bg-zinc-900",
+              "flex h-full min-h-[4.75rem] flex-col justify-between rounded-xl border bg-white p-2.5 shadow-sm sm:min-h-0 sm:rounded-2xl sm:p-4 dark:bg-zinc-900",
               toneClasses[card.tone ?? "default"],
             )}
           >
-            <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-zinc-500 sm:text-[10px]">
+            <p className="line-clamp-2 text-[9px] font-bold uppercase leading-snug tracking-[0.1em] text-zinc-500 sm:text-[10px] sm:tracking-[0.12em]">
               {card.label}
             </p>
-            <p className="mt-2 text-xl font-bold leading-none text-zinc-900 sm:text-3xl dark:text-zinc-100">
+            <p className="mt-1.5 text-xl font-bold leading-none tabular-nums text-zinc-900 sm:mt-2 sm:text-3xl dark:text-zinc-100">
               {card.value}
             </p>
           </article>
         );
-        if (!card.href) return <div key={card.id}>{body}</div>;
+        if (!card.href) return <div key={card.id} className="min-w-0">{body}</div>;
         return (
-          <Link key={card.id} href={card.href} className="group transition hover:-translate-y-0.5">
+          <Link
+            key={card.id}
+            href={card.href}
+            className="group min-w-0 transition hover:-translate-y-0.5"
+          >
             {body}
           </Link>
         );
@@ -74,9 +78,9 @@ export function DashboardActionList({
   viewAllHref?: string;
 }) {
   return (
-    <article className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-zinc-500">{title}</h2>
+    <article className="rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm sm:rounded-2xl sm:p-5 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="mb-3 flex items-center justify-between gap-2 sm:mb-4">
+        <h2 className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-500 sm:text-sm">{title}</h2>
         {viewAllHref ? (
           <Link href={viewAllHref} className="text-xs font-semibold text-orange-700 hover:underline dark:text-orange-300">
             View all
@@ -241,16 +245,18 @@ export function DashboardFilterPills({
   pills: Array<{ id: string; label: string; href: string }>;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {pills.map((pill) => (
-        <Link
-          key={pill.id}
-          href={pill.href}
-          className="inline-flex items-center rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-orange-400 hover:text-orange-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-orange-500/50 dark:hover:text-orange-200"
-        >
-          {pill.label}
-        </Link>
-      ))}
+    <div className="-mx-3 overflow-x-auto overscroll-x-contain px-3 sm:mx-0 sm:overflow-visible sm:px-0">
+      <div className="flex w-max gap-2 sm:w-auto sm:flex-wrap">
+        {pills.map((pill) => (
+          <Link
+            key={pill.id}
+            href={pill.href}
+            className="inline-flex shrink-0 items-center rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-orange-400 hover:text-orange-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-orange-500/50 dark:hover:text-orange-200"
+          >
+            {pill.label}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

@@ -83,19 +83,19 @@ export function RegistryFiltersBar({
         </label>
       ) : null}
       {hideSearch ? null : (
-        <label className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-600 shadow-sm sm:max-w-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-          <Search className="size-4 shrink-0 opacity-60" aria-hidden />
+        <label className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-sm text-zinc-700 shadow-sm sm:max-w-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+          <Search className="size-4 shrink-0 text-zinc-600 opacity-90 dark:text-zinc-400" aria-hidden />
           <input
             type="search"
             value={registrySearchQuery}
             onChange={(e) => onRegistrySearchQueryChange(e.target.value)}
             placeholder="Search by name or email…"
-            className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-500 dark:text-zinc-200"
+            className="w-full min-w-0 bg-transparent text-zinc-900 outline-none placeholder:text-zinc-600 dark:text-zinc-100 dark:placeholder:text-zinc-400"
             autoComplete="off"
           />
         </label>
       )}
-      <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
+      <p className="w-full text-[11px] font-medium text-zinc-700 dark:text-zinc-300 sm:ml-auto sm:w-auto sm:text-right">
         {registryFiltersActive
           ? `Showing ${filteredCount} of ${totalCount} user${totalCount === 1 ? "" : "s"}`
           : `${totalCount} user${totalCount === 1 ? "" : "s"}`}

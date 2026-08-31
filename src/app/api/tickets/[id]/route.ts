@@ -20,7 +20,7 @@ import {
   serializeJobOrderProjectRequest,
 } from "@/lib/job-order-project-request";
 import { loadHrisAssignableStaff } from "@/lib/hris-staff-roster";
-import { getTicketSlaState } from "@/lib/sla";
+import { didRequestBoardLaneChange, getTicketSlaState } from "@/lib/sla";
 import { isAwaitingCustomerConfirmation } from "@/lib/customer-pending-resolution";
 import { loadStaffAssignmentColorsForAgents } from "@/lib/assignee-assignment-color";
 import { normalizeFeedbackComment, validateFeedbackForRating } from "@/lib/ticket-feedback-policy";
@@ -146,6 +146,13 @@ async function loadTicketRequestType(ticketId: string): Promise<string> {
   return (rows[0]?.request_type ?? "ISSUE_CONCERN_TICKET").trim() || "ISSUE_CONCERN_TICKET";
 }
 
+/** NextResponse.json cannot serialize BigInt (e.g. Team.hrisCompanyId). */
+function jsonSafe<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? v.toString() : v)),
+  ) as T;
+}
+
 async function ticketJsonWithAssigneeColor<T extends { assignedAgent: { email: string; name?: string } | null }>(
   ticket: T,
 ): Promise<
@@ -155,23 +162,23 @@ async function ticketJsonWithAssigneeColor<T extends { assignedAgent: { email: s
 > {
   const email = ticket.assignedAgent?.email;
   if (!email) {
-    return {
+    return jsonSafe({
       ...ticket,
       assignedAgent: ticket.assignedAgent
         ? { ...ticket.assignedAgent, staffAssignmentColor: null }
         : null,
-    };
+    });
   }
   const map = await loadStaffAssignmentColorsForAgents([
     { email, name: ticket.assignedAgent?.name ?? null },
   ]);
   const staffAssignmentColor = map.get(email.trim().toLowerCase()) ?? null;
-  return {
+  return jsonSafe({
     ...ticket,
     assignedAgent: ticket.assignedAgent
       ? { ...ticket.assignedAgent, staffAssignmentColor }
       : null,
-  };
+  });
 }
 
 function canTransition(from: TicketStatus, to: TicketStatus) {
@@ -286,7 +293,17 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const payload = await ticketJsonWithAssigneeColor(ticket);
-  return NextResponse.json({ ...payload, slaState: getTicketSlaState(ticket) });
+  const laneMap = await (await import("@/lib/request-board-columns")).loadTicketBoardLaneEnteredAtMap([
+    id,
+  ]);
+  return NextResponse.json({
+    ...payload,
+    boardLaneEnteredAt: laneMap.get(id)?.toISOString() ?? null,
+    slaState: getTicketSlaState({
+      ...ticket,
+      boardLaneEnteredAt: laneMap.get(id) ?? ticket.updatedAt,
+    }),
+  });
 }
 
 export async function PATCH(
@@ -408,23 +425,44 @@ export async function PATCH(
         );
       }
 
+      const boardColumnIdRaw = body.boardColumnId;
+      const requestedBoardColumnId =
+        typeof boardColumnIdRaw === "string" && boardColumnIdRaw.trim()
+          ? boardColumnIdRaw.trim()
+          : boardColumnIdRaw === null
+            ? null
+            : undefined;
+      const statusUnchanged = ticket.status === nextStatus;
+      const onlyMovingBoard =
+        statusUnchanged &&
+        typeof requestedBoardColumnId === "string" &&
+        requestedBoardColumnId !== (ticket.requestBoardColumnId ?? null);
+
       // Unassigned tickets cannot enter the work cycle.
       // This prevents setting IN_PROGRESS / FOR_CONFIRMATION when assignedAgentId is null.
-      if (!ticket.assignedAgentId && (nextStatus === "IN_PROGRESS" || nextStatus === "FOR_CONFIRMATION")) {
+      if (
+        !onlyMovingBoard &&
+        !ticket.assignedAgentId &&
+        (nextStatus === "IN_PROGRESS" || nextStatus === "FOR_CONFIRMATION")
+      ) {
         return NextResponse.json(
           { error: "A ticket must be assigned to personnel before it can move into In progress / For confirmation." },
           { status: 400 },
         );
       }
 
-      if (!canTransition(ticket.status, nextStatus)) {
+      if (!statusUnchanged && !canTransition(ticket.status, nextStatus)) {
         return NextResponse.json(
           { error: `Cannot move from ${ticket.status} to ${nextStatus}` },
           { status: 400 },
         );
       }
 
-      if (nextStatus === "IN_PROGRESS" && ticket.priority === "UNSET") {
+      if (statusUnchanged && !onlyMovingBoard && requestedBoardColumnId === undefined) {
+        return NextResponse.json(await ticketJsonWithAssigneeColor(ticket));
+      }
+
+      if (nextStatus === "IN_PROGRESS" && ticket.priority === "UNSET" && !onlyMovingBoard) {
         return NextResponse.json(
           {
             error:
@@ -443,8 +481,10 @@ export async function PATCH(
         }
       }
 
-      const data: Prisma.TicketUpdateInput = { status: nextStatus };
+      const data: Prisma.TicketUpdateInput = statusUnchanged ? {} : { status: nextStatus };
 
+      let paymentProceduralNote: string | null = null;
+      if (!statusUnchanged) {
       if (nextStatus === "IN_PROGRESS" && ticket.status === "OPEN") {
         await touchFirstResponse(ticket, "AGENT");
       }
@@ -473,7 +513,6 @@ export async function PATCH(
 
       // RFP / ACA: For Confirmation is locked until the full procedural chain is green-lit (DONE).
       // IRS / Fund Transfer may still advance a step via For Confirmation.
-      let paymentProceduralNote: string | null = null;
       if (nextStatus === "FOR_CONFIRMATION") {
         const requestType = await loadTicketRequestType(id);
         if (requestType === "REQUEST_FOR_PAYMENT") {
@@ -687,12 +726,62 @@ export async function PATCH(
           }
         }
       }
+      } // end !statusUnchanged side effects
+
+      let boardColumnIdToSet: string | null | undefined;
+      if (typeof requestedBoardColumnId === "string") {
+        const { getRequestBoardColumnById, requestBoardOwnerKey } = await import(
+          "@/lib/request-board-columns"
+        );
+        const boardColumn = await getRequestBoardColumnById(
+          requestBoardOwnerKey(session.user),
+          requestedBoardColumnId,
+        );
+        if (!boardColumn) {
+          return NextResponse.json({ error: "Board column not found." }, { status: 400 });
+        }
+        if (!boardColumn.allowDrop) {
+          return NextResponse.json(
+            { error: "Cards cannot be moved into this board." },
+            { status: 400 },
+          );
+        }
+        boardColumnIdToSet = boardColumn.id;
+      } else if (requestedBoardColumnId === null) {
+        boardColumnIdToSet = null;
+      }
+
+      const statusAfterUpdate =
+        typeof data.status === "string" ? (data.status as TicketStatus) : ticket.status;
+      const columnAfterUpdate =
+        boardColumnIdToSet !== undefined
+          ? boardColumnIdToSet
+          : (ticket.requestBoardColumnId ?? null);
+      const laneChanged = didRequestBoardLaneChange(
+        {
+          status: ticket.status,
+          requestBoardColumnId: ticket.requestBoardColumnId,
+        },
+        { status: statusAfterUpdate, requestBoardColumnId: columnAfterUpdate },
+      );
+      // Column moves stamp via setTicketRequestBoardColumnId; status-only lane changes stamp after update.
+      const stampLaneAfterUpdate = laneChanged && boardColumnIdToSet === undefined;
 
       const updated = await prisma.ticket.update({
         where: { id },
         data,
         include: { team: true, assignedAgent: true },
       });
+
+      if (boardColumnIdToSet !== undefined) {
+        const { setTicketRequestBoardColumnId } = await import("@/lib/request-board-columns");
+        await setTicketRequestBoardColumnId(id, boardColumnIdToSet, {
+          touchLaneEnteredAt: laneChanged,
+        });
+      } else if (stampLaneAfterUpdate) {
+        const { touchTicketBoardLaneEnteredAt } = await import("@/lib/request-board-columns");
+        await touchTicketBoardLaneEnteredAt(id);
+      }
 
       const actor =
         isAwaitingCustomerConfirmation(ticket.status) && nextStatus === "IN_PROGRESS"
@@ -703,11 +792,13 @@ export async function PATCH(
       await logActivity(
         id,
         actor,
-        `Status → ${effectiveStatus}`,
+        onlyMovingBoard
+          ? "Board lane updated"
+          : `Status → ${effectiveStatus}`,
         typeof body.note === "string" ? body.note : paymentProceduralNote ?? undefined,
       );
 
-      if (effectiveStatus === "RESOLVED" || effectiveStatus === "FOR_CONFIRMATION") {
+      if (!onlyMovingBoard && (effectiveStatus === "RESOLVED" || effectiveStatus === "FOR_CONFIRMATION")) {
         const smtpRecipient =
           updated.requestorEmail?.trim() || updated.contactEmail;
         await sendResolutionEmail({
@@ -846,20 +937,32 @@ export async function PATCH(
             reason: reasonText,
           }),
         );
-        // Park the request on the recipient’s board until they accept or decline.
+        // Release to Assign Requests unassigned pool (Transfer pending) for reassignment.
+        const transferLaneChanged = didRequestBoardLaneChange(
+          {
+            status: ticket.status,
+            requestBoardColumnId: ticket.requestBoardColumnId,
+          },
+          { status: "ESCALATED", requestBoardColumnId: null },
+        );
         const updated = await prisma.ticket.update({
           where: { id },
           data: {
-            assignedAgentId: recipient.id,
+            assignedAgentId: null,
             status: "ESCALATED",
+            requestBoardColumnId: null,
           },
           include: { team: true, assignedAgent: true },
         });
+        if (transferLaneChanged) {
+          const { touchTicketBoardLaneEnteredAt } = await import("@/lib/request-board-columns");
+          await touchTicketBoardLaneEnteredAt(id);
+        }
         await logActivity(
           id,
           "SYSTEM",
-          "Transfer pending on recipient board",
-          `Request moved to ${recipient.name}’s board pending accept/decline.`,
+          "Transfer pending in unassigned pool",
+          `Request released to Assign Requests (unassigned). Preferred recipient: ${recipient.name}.`,
         );
         return NextResponse.json(await ticketJsonWithAssigneeColor(updated));
       }

@@ -22,6 +22,7 @@ type Session = {
   activated: boolean;
   offsetX: number;
   offsetY: number;
+  captureEl: HTMLElement | null;
 };
 
 /**
@@ -85,7 +86,14 @@ export function usePointerColumnDrag<T extends string>(options: {
           activated: false,
           offsetX: e.clientX - rect.left,
           offsetY: e.clientY - rect.top,
+          captureEl: el,
         };
+
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore — window listeners still track the gesture */
+        }
 
         const onMove = (ev: PointerEvent) => {
           const s = sessionRef.current;
@@ -130,6 +138,16 @@ export function usePointerColumnDrag<T extends string>(options: {
             document.body.style.removeProperty("touch-action");
           } catch {
             document.body.style.touchAction = "";
+          }
+          const s = sessionRef.current;
+          if (s?.captureEl) {
+            try {
+              if (s.captureEl.hasPointerCapture(s.pointerId)) {
+                s.captureEl.releasePointerCapture(s.pointerId);
+              }
+            } catch {
+              /* ignore */
+            }
           }
         };
 

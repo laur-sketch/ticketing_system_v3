@@ -33,13 +33,13 @@ export function BrandLockup({ variant, href, className }: Props) {
 
   if (href) {
     return (
-      <Link href={href} className={`inline-flex ${wrapClass}`}>
+      <Link href={href} className={`inline-flex min-w-0 ${wrapClass}`}>
         {inner}
       </Link>
     );
   }
 
-  return <div className={`inline-flex ${wrapClass}`}>{inner}</div>;
+  return <div className={`inline-flex min-w-0 ${wrapClass}`}>{inner}</div>;
 }
 
 function lockupInner(variant: BrandLockupVariant) {
@@ -97,8 +97,8 @@ function lockupInner(variant: BrandLockupVariant) {
       );
     case "staff-header-compact":
       return (
-        <div className="flex h-10 max-w-full items-center overflow-hidden sm:h-11">
-          <div className="min-w-0">
+        <div className="flex h-10 w-full min-w-0 max-w-full items-center overflow-hidden sm:h-11">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-bold leading-tight tracking-wide text-zinc-900 dark:text-zinc-100">
               {BRAND_TITLE}
             </p>

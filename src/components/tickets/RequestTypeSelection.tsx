@@ -51,7 +51,7 @@ export function RequestTypeSelection({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pr-8">
       <div>
         <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-orange-600 dark:text-orange-400">
           Step 1 of 2
@@ -75,7 +75,7 @@ export function RequestTypeSelection({
               key={type.id}
               aria-disabled={typeLocked || undefined}
               className={cn(
-                "flex items-start gap-3 rounded-xl border px-3.5 py-3 transition",
+                "flex scroll-mt-4 items-start gap-3 rounded-xl border px-3.5 py-3 transition",
                 typeLocked
                   ? "cursor-not-allowed opacity-45"
                   : "cursor-pointer",

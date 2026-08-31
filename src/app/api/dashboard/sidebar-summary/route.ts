@@ -11,11 +11,14 @@ import {
   resolveStaffCompanyTeamId,
 } from "@/lib/staff-company-scope";
 import {
+  resolveViewerDepartmentScopeLabel,
   roleUsesOrgChartSectionBoardScope,
   sectionScopedTicketWhere,
 } from "@/lib/org-chart-section-scope";
 import { countTaskBoardLanes } from "@/lib/task-board-lane-counts";
 import { withTtlCache } from "@/lib/ttl-cache";
+import { getWorkforceViewVisibility } from "@/lib/workforce-view-visibility-db";
+import { isWorkforceViewVisible } from "@/lib/workforce-view-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -31,13 +34,64 @@ type SidebarSummary = {
   onDutyPreview: Array<{ id: string; name: string; companyName: string }>;
   /** Personnel only: whether this user is clocked in today. */
   selfOnDuty: boolean | null;
+  /** Mirrors SuperAdmin Workforce → Activity visibility (On Duty widget). */
+  showActivity: boolean;
+  /** Staff-designated / effective company label for the sidebar. */
+  companyDesignation: string | null;
+  /** Org-chart department scope label for the sidebar. */
+  departmentDesignation: string | null;
 };
+
+async function resolveDesignations(input: {
+  role: string;
+  email: string | null | undefined;
+}): Promise<{ companyDesignation: string | null; departmentDesignation: string | null }> {
+  if (isElevatedUserRole(input.role)) {
+    return {
+      companyDesignation: "All companies",
+      departmentDesignation: "All departments",
+    };
+  }
+
+  const email = (input.email ?? "").trim();
+  const [companyTeamId, departmentDesignation] = await Promise.all([
+    resolveStaffCompanyTeamId(email),
+    roleUsesOrgChartSectionBoardScope(input.role)
+      ? resolveViewerDepartmentScopeLabel(email)
+      : Promise.resolve(null),
+  ]);
+
+  let companyDesignation: string | null = null;
+  if (companyTeamId) {
+    const team = await prisma.team.findUnique({
+      where: { id: companyTeamId },
+      select: { name: true },
+    });
+    companyDesignation = team?.name?.trim() || null;
+  }
+  if (!companyDesignation && email) {
+    const portal = await prisma.portalAccount.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: {
+        staffDesignatedCompany: { select: { name: true } },
+        company: { select: { name: true } },
+      },
+    });
+    companyDesignation =
+      portal?.staffDesignatedCompany?.name?.trim() ||
+      portal?.company?.name?.trim() ||
+      null;
+  }
+
+  return { companyDesignation, departmentDesignation };
+}
 
 async function buildSidebarSummary(input: {
   role: string;
   email: string | null | undefined;
   name: string | null | undefined;
-}): Promise<SidebarSummary> {
+  showActivity: boolean;
+}): Promise<Omit<SidebarSummary, "showActivity">> {
   const isSuperAdmin = isElevatedUserRole(input.role);
   const isPersonnel = input.role === "Personnel";
   const sessionAgent =
@@ -45,16 +99,21 @@ async function buildSidebarSummary(input: {
       ? await findSessionAgentId({ email: input.email, name: input.name })
       : null;
 
+  const designationsPromise = resolveDesignations({
+    role: input.role,
+    email: input.email,
+  });
+
   let ticketScope: Prisma.TicketWhereInput;
   if (isSuperAdmin) {
     ticketScope = {};
-  } else if (roleUsesOrgChartSectionBoardScope(input.role)) {
+  } else if (input.role === "Admin") {
+    ticketScope = await personnelRequestBoardWhere(sessionAgent?.id);
+  } else if (input.role === "Personnel") {
     ticketScope = await sectionScopedTicketWhere({
       email: input.email,
       agentId: sessionAgent?.id,
     });
-  } else if (isPersonnel) {
-    ticketScope = await personnelRequestBoardWhere(sessionAgent?.id);
   } else {
     const scopedCompanyTeamId = await resolveStaffCompanyTeamId(input.email);
     ticketScope = { teamId: scopedCompanyTeamId ?? "__none__" };
@@ -69,19 +128,21 @@ async function buildSidebarSummary(input: {
     });
 
   if (isPersonnel) {
-    const [open, inProgress, forConfirmation, selfOnDuty, taskLanes] = await Promise.all([
-      countStatus("OPEN"),
-      countStatus("IN_PROGRESS"),
-      countForConfirmation(),
-      sessionAgent?.id
-        ? isAgentOnDutyFromMergedDb(sessionAgent.id)
-        : Promise.resolve(false),
-      countTaskBoardLanes({
-        role: input.role,
-        email: input.email,
-        name: input.name,
-      }),
-    ]);
+    const [open, inProgress, forConfirmation, selfOnDuty, taskLanes, designations] =
+      await Promise.all([
+        countStatus("OPEN"),
+        countStatus("IN_PROGRESS"),
+        countForConfirmation(),
+        input.showActivity && sessionAgent?.id
+          ? isAgentOnDutyFromMergedDb(sessionAgent.id)
+          : Promise.resolve(false),
+        countTaskBoardLanes({
+          role: input.role,
+          email: input.email,
+          name: input.name,
+        }),
+        designationsPromise,
+      ]);
     return {
       open,
       inProgress,
@@ -91,27 +152,34 @@ async function buildSidebarSummary(input: {
       tasksDelayed: taskLanes.delayed,
       onDutyCount: selfOnDuty ? 1 : 0,
       onDutyPreview: [],
-      selfOnDuty,
+      selfOnDuty: input.showActivity ? selfOnDuty : null,
+      ...designations,
     };
   }
 
   const onDutyCompanyFilter = await resolveAdminOnDutyCompanyFilter(input.role, input.email);
 
-  const [open, inProgress, forConfirmation, onDuty, taskLanes] = await Promise.all([
+  const [open, inProgress, forConfirmation, onDuty, taskLanes, designations] = await Promise.all([
     countStatus("OPEN"),
     countStatus("IN_PROGRESS"),
     countForConfirmation(),
-    loadOnDutySnapshot({
-      page: 1,
-      pageSize: 4,
-      onDutyOnly: true,
-      ...(onDutyCompanyFilter ? { companyFilter: onDutyCompanyFilter } : {}),
-    }),
+    input.showActivity
+      ? loadOnDutySnapshot({
+          page: 1,
+          pageSize: 4,
+          onDutyOnly: true,
+          ...(onDutyCompanyFilter ? { companyFilter: onDutyCompanyFilter } : {}),
+        })
+      : Promise.resolve({
+          onDutyCount: 0,
+          agents: [] as Array<{ id: string; name: string; companyName: string }>,
+        }),
     countTaskBoardLanes({
       role: input.role,
       email: input.email,
       name: input.name,
     }),
+    designationsPromise,
   ]);
 
   return {
@@ -128,6 +196,7 @@ async function buildSidebarSummary(input: {
       companyName: a.companyName,
     })),
     selfOnDuty: null,
+    ...designations,
   };
 }
 
@@ -137,17 +206,23 @@ export async function GET() {
 
   const role = session.user.role ?? "Personnel";
   const email = session.user.email ?? "";
-  const cacheKey = `sidebar-summary:${role}:${email.toLowerCase()}`;
+  const visibility = await getWorkforceViewVisibility();
+  const showActivity = isWorkforceViewVisible(visibility, "activity");
+  const cacheKey = `sidebar-summary:${role}:${email.toLowerCase()}:activity=${showActivity ? "1" : "0"}`;
 
   const result = await withTtlCache(cacheKey, 30_000, () =>
     buildSidebarSummary({
       role,
       email: session.user.email,
       name: session.user.name,
+      showActivity,
     }),
   );
 
-  return NextResponse.json(result, {
-    headers: { "cache-control": "private, max-age=10, stale-while-revalidate=20" },
-  });
+  return NextResponse.json(
+    { ...result, showActivity },
+    {
+      headers: { "cache-control": "private, max-age=10, stale-while-revalidate=20" },
+    },
+  );
 }

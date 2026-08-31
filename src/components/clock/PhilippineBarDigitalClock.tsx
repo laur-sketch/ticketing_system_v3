@@ -15,8 +15,8 @@ export function PhilippineBarDigitalClock({ epochMs, className, size = "default"
   const parts = epochMs != null ? formatPhilippineBarClock(epochMs) : null;
   const digitClass = compact
     ? "h-[1.35rem] w-[0.62rem] sm:h-[1.45rem] sm:w-[0.68rem]"
-    : "h-[2rem] w-[0.95rem] sm:h-[2.15rem] sm:w-[1.05rem]";
-  const colonClass = compact ? "h-[1.35rem] sm:h-[1.45rem]" : "h-[2rem] sm:h-[2.15rem]";
+    : "h-[1.85rem] w-[0.88rem] sm:h-[2rem] sm:w-[0.95rem]";
+  const colonClass = compact ? "h-[1.35rem] sm:h-[1.45rem]" : "h-[1.85rem] sm:h-[2rem]";
 
   return (
     <div
@@ -33,7 +33,7 @@ export function PhilippineBarDigitalClock({ epochMs, className, size = "default"
           "flex items-center justify-center rounded-[calc(var(--radius-stoic)-2px)] bg-[var(--clock-face)]",
           "[--clock-face:#0a0a0a] [--clock-segment-active:#f4f4f5] [--clock-segment-inactive:color-mix(in_srgb,var(--clock-segment-active)_14%,transparent)]",
           "dark:[--clock-face:#000000] dark:[--clock-segment-active:var(--brand)] dark:[--clock-segment-inactive:color-mix(in_srgb,var(--brand)_16%,transparent)]",
-          compact ? "gap-[0.06em] px-2 py-1" : "gap-[0.1em] px-4 py-2.5 sm:px-5 sm:py-3",
+          compact ? "gap-[0.06em] px-2 py-1" : "gap-[0.1em] px-4 py-2 sm:px-5 sm:py-2",
         )}
       >
         <SevenSegmentPair text={parts?.hours ?? "--"} digitClassName={digitClass} />

@@ -4,11 +4,10 @@ import { isElevatedPlatformRole } from "@/lib/staff-role";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Menu, Search, SlidersHorizontal } from "lucide-react";
+import { Bell, Search, SlidersHorizontal } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BrandLockup } from "@/components/BrandLockup";
 import { GlobalSearchBar } from "@/components/global-search/GlobalSearchBar";
 import { useGlobalSearch } from "@/components/global-search/GlobalSearchProvider";
 import { AgentTicketDeepLink } from "@/components/AgentTicketDeepLink";
@@ -18,7 +17,6 @@ import { PhilippineTimeClock } from "@/components/PhilippineTimeClock";
 import { PatchNotesControl } from "@/components/PatchNotesControl";
 import { TravelOrderApprovalModal } from "@/components/task-board/TravelOrderApprovalModal";
 import { cn } from "@/lib/cn";
-import { openStaffMobileNav } from "@/lib/staff-mobile-nav";
 
 function notifSeenTsKey(email: string) {
   return `notif-open-seen-ts:${email}`;
@@ -564,26 +562,30 @@ export function Nav() {
       : null;
 
   return (
-    <header className="relative z-50 shrink-0 border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex h-14 items-center gap-2 px-3 sm:gap-3 sm:px-4">
+    <header className="relative z-50 shrink-0 overflow-visible border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="relative flex h-16 w-full min-w-0 items-center px-3 sm:px-4">
+        {/* True horizontal center of the header — independent of side columns */}
         {showUtilities ? (
-          <>
-            <button
-              type="button"
-              onClick={() => openStaffMobileNav()}
-              className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-foreground transition hover:bg-surface-muted lg:hidden"
-              aria-label="Open navigation menu"
-              title="Menu"
-            >
-              <Menu size={17} />
-            </button>
-            <BrandLockup
-              variant="staff-header-compact"
-              href="/"
-              className="inline-flex shrink-0"
-            />
-            <GlobalSearchBar className="hidden min-w-0 flex-1 sm:flex sm:max-w-xl" />
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center">
+            <div className="pointer-events-auto">
+              <PhilippineTimeClock className="shrink-0" />
+            </div>
+          </div>
+        ) : null}
+
+        {/* Stretch to the clock: half the header minus half the clock + a small gap */}
+        <div
+          className="relative z-[2] hidden min-w-0 shrink-0 pr-2 sm:block"
+          style={{ width: "calc(50% - 5.25rem)" }}
+        >
+          {showUtilities ? (
+            <GlobalSearchBar className="flex !w-full min-w-0 max-w-none [&>div]:h-10 [&>div]:!w-full [&>div]:gap-2.5 [&>div]:px-3.5" />
+          ) : null}
+        </div>
+
+        <div className="relative z-[2] ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+          {showUtilities ? (
+            <>
               <button
                 type="button"
                 onClick={() => openPalette()}
@@ -593,7 +595,6 @@ export function Nav() {
               >
                 <Search size={15} />
               </button>
-              <PhilippineTimeClock compact className="hidden shrink-0 md:inline-flex" />
               <div className="relative shrink-0" ref={notifRef}>
                 <button
                   type="button"
@@ -608,7 +609,7 @@ export function Nav() {
                       return next;
                     });
                   }}
-                  className="inline-flex size-9 items-center justify-center rounded-xl border border-zinc-300 bg-white text-zinc-800 shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  className="relative inline-flex size-9 items-center justify-center rounded-xl border border-zinc-300 bg-white text-zinc-800 shadow-sm transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                   aria-label="Open notifications panel"
                   title="Open notifications panel"
                 >
@@ -622,7 +623,7 @@ export function Nav() {
                 {notifOpen ? (
                   <div
                     ref={desktopNotifPanelRef}
-                    className="absolute left-0 z-50 mt-2 hidden w-[min(360px,calc(100vw_-_2rem))] max-w-[calc(100vw_-_2rem)] max-h-[min(420px,calc(100dvh_-_6rem))] overflow-hidden stoic-card-elevated bg-[var(--surface-elevated)] p-2 sm:block"
+                    className="absolute right-0 z-50 mt-2 hidden w-[min(360px,calc(100vw_-_2rem))] max-w-[calc(100vw_-_2rem)] max-h-[min(420px,calc(100dvh_-_6rem))] overflow-hidden stoic-card-elevated bg-[var(--surface-elevated)] p-2 sm:block"
                   >
                     {notifPanelBody}
                   </div>
@@ -638,13 +639,8 @@ export function Nav() {
                 <SlidersHorizontal size={15} />
               </Link>
               <PatchNotesControl visible={isElevatedPlatformRole(role)} />
-            </div>
-          </>
-        ) : null}
-
-        <div
-          className={`flex shrink-0 items-center gap-1.5 sm:gap-2 ${showUtilities ? "ml-auto" : "ml-auto w-full justify-end sm:w-auto"}`}
-        >
+            </>
+          ) : null}
           <ThemeToggle />
           {!data?.user ? (
             <Link

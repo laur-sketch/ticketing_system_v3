@@ -3,11 +3,22 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, GripVertical, UserPlus, X } from "lucide-react";
+import { motion } from "framer-motion";
+import {
+  Building2,
+  ChevronLeft,
+  Folder,
+  FolderOpen,
+  GripVertical,
+  Layers,
+  UserPlus,
+  X,
+} from "lucide-react";
 import { OrchestrationQueueNav } from "@/components/OrchestrationQueueNav";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { authInputClass, authLabelClass } from "@/components/auth/AuthShell";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import { PointerDragGhostLayer, usePointerColumnDrag } from "@/lib/pointer-column-drag";
 import { BRAND_TITLE } from "@/lib/brand";
@@ -16,7 +27,11 @@ import { parseItemRequisitionDescription } from "@/lib/item-requisition";
 import { extractFundTransferPreview } from "@/lib/fund-transfer-request";
 import { extractJobOrderPreview } from "@/lib/job-order";
 import { requestTypeAcronym, requestTypeLabel } from "@/lib/request-types";
-import { orgChartSectionOptionText } from "@/lib/org-chart-section-display";
+import {
+  readRequestKanbanFlowMode,
+  writeRequestKanbanFlowMode,
+  type RequestKanbanFlowMode,
+} from "@/lib/request-kanban-flow";
 import {
   cleanIssuePreview,
   extractDepartmentFromDescription,
@@ -30,6 +45,8 @@ type TicketCard = {
   title: string;
   description: string;
   priority: string;
+  /** Pipeline status — ESCALATED = Transfer pending (red outline in unassigned pool). */
+  status?: string;
   updatedAt: string;
   /** Intake request type id — same as ticket board (ISSUE_CONCERN_TICKET, REQUEST_FOR_PAYMENT, …). */
   requestType?: string | null;
@@ -40,6 +57,28 @@ type TicketCard = {
 };
 
 const ASSIGNMENT_UNSECTIONED = "__unsectioned__";
+const ASSIGNMENT_UNCOMPANYED = "__uncompanyed__";
+const ASSIGNMENT_SECTION_DROP_PREFIX = "__SECTION__:";
+const ASSIGNMENT_COMPANY_DROP_PREFIX = "__COMPANY__:";
+const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
+
+type PersonnelGroupMode = "company" | "section";
+
+function flowModeToGroupMode(flow: RequestKanbanFlowMode): PersonnelGroupMode {
+  return flow === "company" ? "company" : "section";
+}
+
+function groupModeToFlowMode(mode: PersonnelGroupMode): RequestKanbanFlowMode {
+  return mode === "company" ? "company" : "department";
+}
+
+type FolderOption = {
+  id: string;
+  name: string;
+  depth: number;
+  agentCount: number;
+  ticketCount: number;
+};
 
 /** Match ticket-board card title (RFP → in payment of + amount; IRS/FTR → purpose; otherwise cleaned description/title). */
 function assignmentCardPreview(ticket: TicketCard): string {
@@ -80,12 +119,20 @@ type PersonnelColumn = {
 
 type RosterSection = { id: string; name: string; depth: number };
 
-const ASSIGNMENT_SECTION_ALL = "ALL";
-const ASSIGNMENT_SECTION_DROP_PREFIX = "__SECTION__:";
-const ASSIGNMENT_USER_DROP_PREFIX = "__USER__:";
-
 function personnelSectionKey(col: PersonnelColumn): string {
   return col.sectionId?.trim() || ASSIGNMENT_UNSECTIONED;
+}
+
+function personnelCompanyKey(col: PersonnelColumn): string {
+  const id = col.companyId?.trim();
+  if (id) return id;
+  const label = col.teamLabel?.trim();
+  if (label) return `label:${label.toLowerCase()}`;
+  return ASSIGNMENT_UNCOMPANYED;
+}
+
+function personnelFolderKey(col: PersonnelColumn, mode: PersonnelGroupMode): string {
+  return mode === "company" ? personnelCompanyKey(col) : personnelSectionKey(col);
 }
 
 function personnelRoleLabel(role: string): "Admin" | "Personnel" {
@@ -115,8 +162,26 @@ function assignmentSectionDropTarget(sectionId: string): string {
   return `${ASSIGNMENT_SECTION_DROP_PREFIX}${sectionId}`;
 }
 
-function assignmentSectionIdFromTarget(target: string | null): string | null {
-  if (!target?.startsWith(ASSIGNMENT_SECTION_DROP_PREFIX)) return null;
+function assignmentCompanyDropTarget(companyId: string): string {
+  return `${ASSIGNMENT_COMPANY_DROP_PREFIX}${companyId}`;
+}
+
+function assignmentFolderDropTarget(folderId: string, mode: PersonnelGroupMode): string {
+  return mode === "company"
+    ? assignmentCompanyDropTarget(folderId)
+    : assignmentSectionDropTarget(folderId);
+}
+
+function assignmentFolderIdFromTarget(
+  target: string | null,
+  mode: PersonnelGroupMode,
+): string | null {
+  if (!target) return null;
+  if (mode === "company") {
+    if (!target.startsWith(ASSIGNMENT_COMPANY_DROP_PREFIX)) return null;
+    return target.slice(ASSIGNMENT_COMPANY_DROP_PREFIX.length);
+  }
+  if (!target.startsWith(ASSIGNMENT_SECTION_DROP_PREFIX)) return null;
   return target.slice(ASSIGNMENT_SECTION_DROP_PREFIX.length);
 }
 
@@ -130,6 +195,56 @@ function assignmentUserIdFromTarget(target: string | null): string | null {
 }
 
 const personnelSearchInputClass = cn(authInputClass, "min-w-[12rem] py-1.5 text-xs sm:min-w-[14rem]");
+
+function PersonnelGroupToggle({
+  value,
+  onChange,
+}: {
+  value: PersonnelGroupMode;
+  onChange: (next: PersonnelGroupMode) => void;
+}) {
+  const options: Array<{ id: PersonnelGroupMode; label: string; icon: typeof Building2 }> = [
+    { id: "company", label: "Company", icon: Building2 },
+    { id: "section", label: "Departments", icon: Layers },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Group personnel by company or department"
+      className="relative inline-flex rounded-lg border border-orange-300/80 bg-orange-100 p-0.5 text-xs font-semibold dark:border-orange-500/35 dark:bg-orange-950/40"
+    >
+      {options.map((option) => {
+        const selected = value === option.id;
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange(option.id)}
+            className={cn(
+              "relative z-10 inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors",
+              selected
+                ? "text-white"
+                : "text-orange-950/70 hover:text-orange-950 dark:text-orange-100/75 dark:hover:text-orange-50",
+            )}
+          >
+            {selected ? (
+              <motion.span
+                layoutId="assign-personnel-group-toggle"
+                className="absolute inset-0 -z-10 rounded-md bg-orange-600 shadow-sm"
+                transition={{ type: "spring", stiffness: 460, damping: 34, mass: 0.7 }}
+              />
+            ) : null}
+            <Icon className="relative size-3.5" aria-hidden />
+            <span className="relative">{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function ManualAssignmentBoard({
   unassigned,
@@ -146,14 +261,21 @@ export function ManualAssignmentBoard({
   const [columns, setColumns] = useState<PersonnelColumn[]>(personnel);
   const [busyTicketId, setBusyTicketId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openSectionId, setOpenSectionId] = useState<string | null>(null);
-  const [dragRevealSectionId, setDragRevealSectionId] = useState<string | null>(null);
-  const [sectionFilter, setSectionFilter] = useState<string>(ASSIGNMENT_SECTION_ALL);
+  const [groupMode, setGroupMode] = useState<PersonnelGroupMode>("section");
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  const [dragRevealFolderId, setDragRevealFolderId] = useState<string | null>(null);
   const [personnelSearchQuery, setPersonnelSearchQuery] = useState("");
   const [assignTicket, setAssignTicket] = useState<TicketCard | null>(null);
   const [sheetSearch, setSheetSearch] = useState("");
-  const [sheetSection, setSheetSection] = useState<string>(ASSIGNMENT_SECTION_ALL);
+  const [sheetGroupMode, setSheetGroupMode] = useState<PersonnelGroupMode>("section");
+  const [sheetFolderId, setSheetFolderId] = useState<string | null>(null);
   const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    const next = flowModeToGroupMode(readRequestKanbanFlowMode());
+    setGroupMode(next);
+    setSheetGroupMode(next);
+  }, []);
 
   useEffect(() => {
     queueMicrotask(() => setPortalReady(true));
@@ -175,17 +297,9 @@ export function ManualAssignmentBoard({
     };
   }, [assignTicket]);
 
-  const sectionScopedColumns = useMemo(() => {
-    if (sectionFilter === ASSIGNMENT_SECTION_ALL) return columns;
-    return columns.filter((col) => personnelSectionKey(col) === sectionFilter);
-  }, [columns, sectionFilter]);
-
   const filteredColumns = useMemo(
-    () =>
-      sectionScopedColumns.filter((col) =>
-        matchesAssignmentPersonnelSearch(col, personnelSearchQuery),
-      ),
-    [sectionScopedColumns, personnelSearchQuery],
+    () => columns.filter((col) => matchesAssignmentPersonnelSearch(col, personnelSearchQuery)),
+    [columns, personnelSearchQuery],
   );
   const personnelSearchActive = Boolean(personnelSearchQuery.trim());
 
@@ -216,7 +330,7 @@ export function ManualAssignmentBoard({
       );
       setAssignTicket(null);
       setSheetSearch("");
-      setSheetSection(ASSIGNMENT_SECTION_ALL);
+      setSheetFolderId(null);
       return true;
     } finally {
       setBusyTicketId(null);
@@ -225,10 +339,10 @@ export function ManualAssignmentBoard({
 
   const laneDrag = usePointerColumnDrag<string>({
     onDrop: (ticketId, targetId) => {
-      setDragRevealSectionId(null);
-      const sectionId = assignmentSectionIdFromTarget(targetId);
-      if (sectionId) {
-        setOpenSectionId((current) => (current === sectionId ? null : sectionId));
+      setDragRevealFolderId(null);
+      const folderId = assignmentFolderIdFromTarget(targetId, groupMode);
+      if (folderId) {
+        setOpenFolderId(folderId);
         return;
       }
       const agentId = assignmentUserIdFromTarget(targetId);
@@ -237,31 +351,33 @@ export function ManualAssignmentBoard({
       if (t) void assign(t, agentId);
     },
     onHover: (targetId) => {
-      const sectionId = assignmentSectionIdFromTarget(targetId);
-      if (sectionId) {
-        setDragRevealSectionId((prev) => (prev === sectionId ? prev : sectionId));
+      const folderId = assignmentFolderIdFromTarget(targetId, groupMode);
+      if (folderId) {
+        setDragRevealFolderId((prev) => (prev === folderId ? prev : folderId));
+        setOpenFolderId((prev) => (prev === folderId ? prev : folderId));
         return;
       }
       const agentId = assignmentUserIdFromTarget(targetId);
       if (agentId) {
         const col = columns.find((c) => c.agentId === agentId);
         if (col) {
-          const key = personnelSectionKey(col);
-          setDragRevealSectionId((prev) => (prev === key ? prev : key));
+          const key = personnelFolderKey(col, groupMode);
+          setDragRevealFolderId((prev) => (prev === key ? prev : key));
+          setOpenFolderId((prev) => (prev === key ? prev : key));
           return;
         }
       }
-      setDragRevealSectionId(null);
+      setDragRevealFolderId(null);
     },
-    onDragEnd: () => setDragRevealSectionId(null),
+    onDragEnd: () => setDragRevealFolderId(null),
     disabled: busyTicketId != null,
     activationDistance: 12,
   });
 
-  const columnsBySection = useMemo(() => {
+  const columnsByFolder = useMemo(() => {
     const grouped = new Map<string, PersonnelColumn[]>();
     for (const col of filteredColumns) {
-      const key = personnelSectionKey(col);
+      const key = personnelFolderKey(col, groupMode);
       const list = grouped.get(key);
       if (list) list.push(col);
       else grouped.set(key, [col]);
@@ -270,104 +386,162 @@ export function ManualAssignmentBoard({
       grouped.set(key, sortPersonnelByRole(list));
     }
     return grouped;
-  }, [filteredColumns]);
+  }, [filteredColumns, groupMode]);
 
   const sectionOrderIndex = useMemo(
     () => new Map(rosterSections.map((s, i) => [s.id, i])),
     [rosterSections],
   );
 
-  const sectionOptions = useMemo(() => {
-    const nameById = new Map(rosterSections.map((s) => [s.id, s.name]));
-    const depthById = new Map(rosterSections.map((s) => [s.id, s.depth]));
-    const options: Array<{ id: string; name: string; depth: number; agentCount: number }> = [];
-    for (const [id, cols] of columnsBySection) {
+  const folderOptions = useMemo(() => {
+    const nameBySectionId = new Map(rosterSections.map((s) => [s.id, s.name]));
+    const depthBySectionId = new Map(rosterSections.map((s) => [s.id, s.depth]));
+    const options: FolderOption[] = [];
+    for (const [id, cols] of columnsByFolder) {
       if (cols.length === 0) continue;
+      const ticketCount = cols.reduce((sum, c) => sum + c.cards.length, 0);
+      if (groupMode === "company") {
+        if (id === ASSIGNMENT_UNCOMPANYED) {
+          options.push({
+            id,
+            name: "No company",
+            depth: 0,
+            agentCount: cols.length,
+            ticketCount,
+          });
+          continue;
+        }
+        options.push({
+          id,
+          name: cols[0]?.teamLabel?.trim() || "Unknown company",
+          depth: 0,
+          agentCount: cols.length,
+          ticketCount,
+        });
+        continue;
+      }
       if (id === ASSIGNMENT_UNSECTIONED) {
-        options.push({ id, name: "Unsectioned", depth: 0, agentCount: cols.length });
+        options.push({
+          id,
+          name: "No department",
+          depth: 0,
+          agentCount: cols.length,
+          ticketCount,
+        });
         continue;
       }
       options.push({
         id,
-        name: nameById.get(id) ?? cols[0]?.sectionName ?? "Unknown section",
-        depth: depthById.get(id) ?? 0,
+        name: nameBySectionId.get(id) ?? cols[0]?.sectionName ?? "Unknown department",
+        depth: depthBySectionId.get(id) ?? 0,
         agentCount: cols.length,
+        ticketCount,
       });
     }
     return options.sort((a, b) => {
-      if (a.id === ASSIGNMENT_UNSECTIONED) return 1;
-      if (b.id === ASSIGNMENT_UNSECTIONED) return -1;
-      const orderA = sectionOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-      const orderB = sectionOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-      if (orderA !== orderB) return orderA - orderB;
-      return a.name.localeCompare(b.name);
-    });
-  }, [columnsBySection, rosterSections, sectionOrderIndex]);
-
-  const sectionFilterOptions = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const col of columns) {
-      const key = personnelSectionKey(col);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-    const nameById = new Map(rosterSections.map((s) => [s.id, s.name]));
-    const depthById = new Map(rosterSections.map((s) => [s.id, s.depth]));
-    const options: Array<{ id: string; name: string; depth: number; agentCount: number }> = [];
-    for (const [id, agentCount] of counts) {
-      if (id === ASSIGNMENT_UNSECTIONED) {
-        options.push({ id, name: "Unsectioned", depth: 0, agentCount });
-        continue;
+      const ungrouped =
+        groupMode === "company" ? ASSIGNMENT_UNCOMPANYED : ASSIGNMENT_UNSECTIONED;
+      if (a.id === ungrouped) return 1;
+      if (b.id === ungrouped) return -1;
+      if (groupMode === "section") {
+        const orderA = sectionOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const orderB = sectionOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        if (orderA !== orderB) return orderA - orderB;
       }
-      options.push({
-        id,
-        name: nameById.get(id) ?? "Unknown section",
-        depth: depthById.get(id) ?? 0,
-        agentCount,
-      });
-    }
-    return options.sort((a, b) => {
-      if (a.id === ASSIGNMENT_UNSECTIONED) return 1;
-      if (b.id === ASSIGNMENT_UNSECTIONED) return -1;
-      const orderA = sectionOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-      const orderB = sectionOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-      if (orderA !== orderB) return orderA - orderB;
       return a.name.localeCompare(b.name);
     });
-  }, [columns, rosterSections, sectionOrderIndex]);
+  }, [columnsByFolder, groupMode, rosterSections, sectionOrderIndex]);
 
-  const activeSectionId =
-    dragRevealSectionId ??
-    (!laneDrag.draggingItemId && openSectionId !== null ? openSectionId : null);
+  const sheetFolderOptions = useMemo(() => {
+    const grouped = new Map<string, PersonnelColumn[]>();
+    for (const col of columns) {
+      const key = personnelFolderKey(col, sheetGroupMode);
+      const list = grouped.get(key);
+      if (list) list.push(col);
+      else grouped.set(key, [col]);
+    }
+    const nameBySectionId = new Map(rosterSections.map((s) => [s.id, s.name]));
+    const options: FolderOption[] = [];
+    for (const [id, cols] of grouped) {
+      if (sheetGroupMode === "company") {
+        options.push({
+          id,
+          name:
+            id === ASSIGNMENT_UNCOMPANYED
+              ? "No company"
+              : cols[0]?.teamLabel?.trim() || "Unknown company",
+          depth: 0,
+          agentCount: cols.length,
+          ticketCount: cols.reduce((sum, c) => sum + c.cards.length, 0),
+        });
+      } else {
+        options.push({
+          id,
+          name:
+            id === ASSIGNMENT_UNSECTIONED
+              ? "No department"
+              : nameBySectionId.get(id) ?? cols[0]?.sectionName ?? "Unknown department",
+          depth: 0,
+          agentCount: cols.length,
+          ticketCount: cols.reduce((sum, c) => sum + c.cards.length, 0),
+        });
+      }
+    }
+    return options.sort((a, b) => a.name.localeCompare(b.name));
+  }, [columns, rosterSections, sheetGroupMode]);
 
-  function handleSectionFilterChange(next: string) {
-    setSectionFilter(next);
-    setOpenSectionId(next === ASSIGNMENT_SECTION_ALL ? null : next);
+  const activeFolderId =
+    dragRevealFolderId ??
+    (!laneDrag.draggingItemId && openFolderId !== null ? openFolderId : null);
+
+  const openFolder = folderOptions.find((f) => f.id === openFolderId) ?? null;
+  const openFolderColumns = openFolderId ? (columnsByFolder.get(openFolderId) ?? []) : [];
+
+  function handleGroupModeChange(next: PersonnelGroupMode) {
+    setGroupMode(next);
+    writeRequestKanbanFlowMode(groupModeToFlowMode(next));
+    setOpenFolderId(null);
+    setDragRevealFolderId(null);
   }
 
   function openAssignSheet(ticket: TicketCard) {
     setAssignTicket(ticket);
     setSheetSearch("");
-    setSheetSection(
-      sectionFilter === ASSIGNMENT_SECTION_ALL ? ASSIGNMENT_SECTION_ALL : sectionFilter,
-    );
+    setSheetGroupMode(groupMode);
+    setSheetFolderId(null);
     setError(null);
   }
 
   const sheetPeople = useMemo(() => {
     let list = columns.filter((col) => matchesAssignmentPersonnelSearch(col, sheetSearch));
-    if (sheetSection !== ASSIGNMENT_SECTION_ALL) {
-      list = list.filter((col) => personnelSectionKey(col) === sheetSection);
+    if (sheetFolderId) {
+      list = list.filter((col) => personnelFolderKey(col, sheetGroupMode) === sheetFolderId);
     }
     return sortPersonnelByRole(list);
-  }, [columns, sheetSearch, sheetSection]);
+  }, [columns, sheetSearch, sheetFolderId, sheetGroupMode]);
 
-  function renderTicketCard(t: TicketCard, assigneeColorKey?: string | null, compact?: boolean) {
+  function renderTicketCard(
+    t: TicketCard,
+    assigneeColorKey?: string | null,
+    compact?: boolean,
+    /** When true, content only — parent owns the card chrome (avoids double borders). */
+    embedded?: boolean,
+  ) {
     const preview = assignmentCardPreview(t);
+    const transferPending = t.status === "ESCALATED";
     const inner = (
       <>
         <div className="flex items-center justify-between gap-2">
           <p className="font-mono text-[11px] text-zinc-600 dark:text-zinc-500">{t.ticketNumber}</p>
           <div className="flex flex-wrap items-center justify-end gap-1">
+            {transferPending ? (
+              <span
+                className="rounded-full border border-rose-500/60 bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-800 dark:border-rose-400/50 dark:bg-rose-500/20 dark:text-rose-200"
+                title="Transfer pending — needs reassignment"
+              >
+                Transfer pending
+              </span>
+            ) : null}
             <span
               className="rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200"
               title={requestTypeLabel(t.requestType)}
@@ -383,7 +557,7 @@ export function ManualAssignmentBoard({
           href={`/agent/tickets/${t.id}`}
           className={cn(
             "mt-1 block font-semibold text-zinc-900 hover:underline dark:text-zinc-100",
-            compact ? "text-sm" : "text-base line-clamp-2",
+            compact ? "text-sm" : "text-sm line-clamp-2 sm:text-base",
           )}
         >
           {preview}
@@ -410,12 +584,20 @@ export function ManualAssignmentBoard({
       </>
     );
 
+    if (embedded) {
+      return <div key={t.id}>{inner}</div>;
+    }
+
+    const outlineClass = transferPending
+      ? "rounded-xl border-2 border-rose-500 bg-rose-50/40 ring-1 ring-rose-500/25 dark:border-rose-500 dark:bg-rose-950/20 dark:ring-rose-400/20"
+      : "rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-[#101a2f]";
+
     if (assigneeColorKey) {
       return (
         <AssigneeColorHighlight
           key={t.id}
           assigneeColorKey={assigneeColorKey}
-          className="rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-[#101a2f]"
+          className={outlineClass}
         >
           <div className="p-3">{inner}</div>
         </AssigneeColorHighlight>
@@ -423,10 +605,7 @@ export function ManualAssignmentBoard({
     }
 
     return (
-      <div
-        key={t.id}
-        className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-[#101a2f]"
-      >
+      <div key={t.id} className={cn(outlineClass, "p-3")}>
         {inner}
       </div>
     );
@@ -470,22 +649,55 @@ export function ManualAssignmentBoard({
                   </div>
 
                   <div className="space-y-2 border-b border-zinc-800 px-4 py-3">
-                    {sectionFilterOptions.length > 0 ? (
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Section</span>
-                        <select
-                          value={sheetSection}
-                          onChange={(e) => setSheetSection(e.target.value)}
-                          className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5 text-sm text-zinc-100"
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                        Group by
+                      </span>
+                      <PersonnelGroupToggle
+                        value={sheetGroupMode}
+                        onChange={(next) => {
+                          setSheetGroupMode(next);
+                          writeRequestKanbanFlowMode(groupModeToFlowMode(next));
+                          setSheetFolderId(null);
+                        }}
+                      />
+                    </div>
+                    {sheetFolderOptions.length > 0 ? (
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setSheetFolderId(null)}
+                          className={cn(
+                            "shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold",
+                            sheetFolderId === null
+                              ? "border-orange-500/60 bg-orange-500/15 text-orange-200"
+                              : "border-zinc-700 bg-zinc-900 text-zinc-300",
+                          )}
                         >
-                          <option value={ASSIGNMENT_SECTION_ALL}>All sections</option>
-                          {sectionFilterOptions.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {orgChartSectionOptionText(s)} ({s.agentCount})
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                          All
+                        </button>
+                        {sheetFolderOptions.map((folder) => (
+                          <button
+                            key={folder.id}
+                            type="button"
+                            onClick={() =>
+                              setSheetFolderId((current) =>
+                                current === folder.id ? null : folder.id,
+                              )
+                            }
+                            className={cn(
+                              "inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold",
+                              sheetFolderId === folder.id
+                                ? "border-orange-500/60 bg-orange-500/15 text-orange-200"
+                                : "border-zinc-700 bg-zinc-900 text-zinc-300",
+                            )}
+                          >
+                            <Folder className="size-3.5" aria-hidden />
+                            <span className="max-w-[9rem] truncate">{folder.name}</span>
+                            <span className="text-zinc-500">{folder.agentCount}</span>
+                          </button>
+                        ))}
+                      </div>
                     ) : null}
                     <label className="flex flex-col gap-1">
                       <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Search person</span>
@@ -588,7 +800,10 @@ export function ManualAssignmentBoard({
                         `${t.ticketNumber} · ${assignmentCardPreview(t).slice(0, 72)}`,
                     })}
                     className={cn(
-                      "touch-pan-y select-none rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 shadow-sm dark:border-zinc-700 dark:bg-[#101a2f]",
+                      "touch-pan-y select-none rounded-xl px-3 py-2.5 shadow-sm",
+                      t.status === "ESCALATED"
+                        ? "border-2 border-rose-500 bg-rose-50/40 ring-1 ring-rose-500/25 dark:border-rose-500 dark:bg-rose-950/20 dark:ring-rose-400/20"
+                        : "border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-[#101a2f]",
                       busyTicketId === t.id && "pointer-events-none opacity-50",
                       laneDrag.draggingItemId === t.id && "opacity-60 ring-1 ring-orange-400/40",
                     )}
@@ -599,7 +814,7 @@ export function ManualAssignmentBoard({
                         aria-hidden
                       />
                       <div className="min-w-0 flex-1">
-                        {renderTicketCard(t)}
+                        {renderTicketCard(t, null, false, true)}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -625,36 +840,16 @@ export function ManualAssignmentBoard({
             <div className="mb-2 flex flex-wrap items-start justify-between gap-2 px-1">
               <div>
                 <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
-                  Personnel by section
+                  Personnel
                 </h2>
                 <p className="mt-0.5 hidden text-[11px] text-zinc-500 md:block dark:text-zinc-400">
-                  Tap a section to expand, or drag a request over it to reveal admins and personnel.
+                  Open a folder, or drag a request onto one to reveal people.
                 </p>
                 <p className="mt-0.5 text-[11px] text-zinc-500 md:hidden dark:text-zinc-400">
                   Browse people here, or use Assign on a request card.
                 </p>
               </div>
-              {sectionFilterOptions.length > 0 ? (
-                <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-                  <span className="uppercase tracking-wide">Section</span>
-                  <select
-                    value={sectionFilter}
-                    onChange={(e) => handleSectionFilterChange(e.target.value)}
-                    className={cn(
-                      "min-w-[200px] max-w-[300px] rounded-lg border border-zinc-300 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
-                      "focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30",
-                    )}
-                    title="Narrow personnel to one org-chart section"
-                  >
-                    <option value={ASSIGNMENT_SECTION_ALL}>All sections</option>
-                    {sectionFilterOptions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {orgChartSectionOptionText(s)} ({s.agentCount})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+              <PersonnelGroupToggle value={groupMode} onChange={handleGroupModeChange} />
             </div>
 
             <div className="mb-3 flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800/90 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-end">
@@ -672,7 +867,7 @@ export function ManualAssignmentBoard({
               </label>
               <p className="w-full text-[11px] text-zinc-500 dark:text-zinc-500 sm:ml-auto sm:w-auto sm:text-right">
                 {personnelSearchActive
-                  ? `Showing ${filteredColumns.length} of ${sectionScopedColumns.length} user${sectionScopedColumns.length === 1 ? "" : "s"}`
+                  ? `Showing ${filteredColumns.length} of ${columns.length} user${columns.length === 1 ? "" : "s"}`
                   : `${filteredColumns.length} user${filteredColumns.length === 1 ? "" : "s"}`}
               </p>
             </div>
@@ -685,139 +880,186 @@ export function ManualAssignmentBoard({
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
                 No users match the current filters.
               </div>
-            ) : sectionOptions.length === 0 ? (
+            ) : folderOptions.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-300 bg-zinc-50/80 px-4 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
-                No personnel sections to show.
+                No {groupMode === "company" ? "companies" : "departments"} to show.
+              </div>
+            ) : openFolder ? (
+              <div className="max-h-[min(72dvh,48rem)] space-y-3 overflow-y-auto pr-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOpenFolderId(null)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-900"
+                  >
+                    <ChevronLeft className="size-3.5" aria-hidden />
+                    Folders
+                  </button>
+                  <div className="inline-flex min-w-0 items-center gap-2 rounded-xl border border-orange-300/70 bg-orange-50 px-3 py-1.5 dark:border-orange-800/60 dark:bg-orange-950/30">
+                    <FolderOpen className="size-4 shrink-0 text-orange-600 dark:text-orange-300" aria-hidden />
+                    <span className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                      {openFolder.name}
+                    </span>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {openFolder.agentCount}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div
+                  ref={laneDrag.registerColumn(assignmentFolderDropTarget(openFolder.id, groupMode))}
+                  className={cn(
+                    "space-y-3 rounded-xl border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950",
+                    activeFolderId === openFolder.id &&
+                      "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
+                  )}
+                >
+                  {[
+                    {
+                      label: "Admins",
+                      list: openFolderColumns.filter((c) => personnelRoleLabel(c.role) === "Admin"),
+                    },
+                    {
+                      label: "Personnel",
+                      list: openFolderColumns.filter(
+                        (c) => personnelRoleLabel(c.role) === "Personnel",
+                      ),
+                    },
+                  ].map((group) =>
+                    group.list.length > 0 ? (
+                      <div key={`${openFolder.id}-${group.label}`} className="space-y-2">
+                        <p className="px-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                          {group.label}
+                        </p>
+                        {group.list.map((col) => {
+                          const userTargetId = assignmentUserDropTarget(col.agentId);
+                          const isUserHovered = laneDrag.hoverColumn === userTargetId;
+                          return (
+                            <article
+                              key={col.agentId}
+                              ref={laneDrag.registerColumn(userTargetId)}
+                              className={cn(
+                                "rounded-xl border border-zinc-200 bg-zinc-50/90 p-2 transition dark:border-zinc-700 dark:bg-[#101a2f]",
+                                isUserHovered &&
+                                  "ring-2 ring-orange-500/65 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
+                              )}
+                            >
+                              <div className="mb-2 flex items-start justify-between gap-2">
+                                <div className="flex min-w-0 items-start gap-2">
+                                  <AssigneeInitialsBadge
+                                    agentName={col.name}
+                                    assigneeColorKey={col.assigneeColorKey}
+                                    className="mt-0.5 size-8 text-xs"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                                      {col.name}
+                                    </p>
+                                    <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
+                                      {col.role}
+                                      {col.teamLabel ? ` · ${col.teamLabel}` : ""}
+                                    </p>
+                                  </div>
+                                </div>
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {col.cards.length}
+                                </Badge>
+                              </div>
+                              <div className="max-h-40 space-y-1.5 overflow-y-auto pr-0.5">
+                                {col.cards.length === 0 ? (
+                                  <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
+                                    Drop requests here to assign.
+                                  </div>
+                                ) : (
+                                  col.cards.map((t) =>
+                                    renderTicketCard(t, col.assigneeColorKey, true),
+                                  )
+                                )}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : null,
+                  )}
+                  {openFolderColumns.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
+                      No people in this folder.
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : (
-              <div className="max-h-[min(72dvh,48rem)] space-y-2 overflow-y-auto pr-1">
-                {sectionOptions.map((section) => {
-                  const targetId = assignmentSectionDropTarget(section.id);
-                  const isSelected = openSectionId === section.id;
-                  const isRevealed =
-                    activeSectionId === section.id ||
-                    (personnelSearchActive && !laneDrag.draggingItemId);
-                  const showRevealRing = activeSectionId === section.id;
-                  const sectionColumns = columnsBySection.get(section.id) ?? [];
-                  const adminColumns = sectionColumns.filter(
-                    (c) => personnelRoleLabel(c.role) === "Admin",
-                  );
-                  const personnelColumns = sectionColumns.filter(
-                    (c) => personnelRoleLabel(c.role) === "Personnel",
-                  );
-
-                  return (
-                    <div
-                      key={`section-drop-${section.id}`}
-                      ref={laneDrag.registerColumn(targetId)}
-                      className={cn(
-                        "touch-pan-y rounded-xl border border-zinc-200 bg-zinc-50/80 p-2 transition dark:border-zinc-700 dark:bg-zinc-900/40",
-                        isSelected &&
-                          "border-orange-300 bg-orange-50/70 dark:border-orange-800/70 dark:bg-orange-950/20",
-                        showRevealRing &&
-                          "ring-2 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
-                      )}
-                      style={
-                        section.depth > 0
-                          ? { marginLeft: `${Math.min(section.depth, 4) * 12}px` }
-                          : undefined
-                      }
-                    >
+              <div className="max-h-[min(72dvh,48rem)] overflow-y-auto pr-1">
+                <div className="grid grid-cols-2 gap-x-2.5 gap-y-4 pt-2 sm:grid-cols-3 xl:grid-cols-4">
+                  {folderOptions.map((folder) => {
+                    const targetId = assignmentFolderDropTarget(folder.id, groupMode);
+                    const isHot =
+                      activeFolderId === folder.id || laneDrag.hoverColumn === targetId;
+                    const FolderIcon = isHot ? FolderOpen : Folder;
+                    return (
                       <button
+                        key={`folder-${folder.id}`}
                         type="button"
-                        onClick={() =>
-                          setOpenSectionId((current) =>
-                            current === section.id ? null : section.id,
-                          )
-                        }
-                        aria-pressed={isSelected}
-                        aria-expanded={isRevealed}
-                        className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-1 text-left"
+                        ref={laneDrag.registerColumn(targetId)}
+                        onClick={() => setOpenFolderId(folder.id)}
+                        className={cn(
+                          "group relative flex flex-col text-left outline-none",
+                          "focus-visible:ring-2 focus-visible:ring-orange-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950",
+                        )}
                       >
-                        <span className="min-w-0 truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                          {section.name}
-                        </span>
-                        <span className="flex shrink-0 items-center gap-1">
-                          <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                            {section.agentCount}
+                        {/* Folder tab */}
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "relative z-10 ml-2 h-2.5 w-[42%] max-w-[4.5rem] rounded-t-md border border-b-0 transition",
+                            isHot
+                              ? "border-orange-400 bg-orange-200/90 dark:border-orange-500 dark:bg-orange-900/80"
+                              : "border-zinc-300 bg-zinc-200/95 group-hover:border-orange-300 group-hover:bg-orange-100 dark:border-zinc-600 dark:bg-zinc-800 dark:group-hover:border-orange-700 dark:group-hover:bg-orange-950/60",
+                          )}
+                        />
+                        {/* Folder body */}
+                        <span
+                          className={cn(
+                            "relative z-0 -mt-px flex min-h-[5.75rem] flex-col gap-2 rounded-xl rounded-tl-md border px-3 py-2.5 shadow-sm transition",
+                            isHot
+                              ? "border-orange-400 bg-orange-50 ring-2 ring-orange-500/45 dark:border-orange-500 dark:bg-orange-950/35"
+                              : "border-zinc-300 bg-gradient-to-b from-zinc-50 to-zinc-100/80 group-hover:border-orange-300 group-hover:from-orange-50/80 group-hover:to-orange-50/40 dark:border-zinc-600 dark:from-zinc-900 dark:to-[#0f1624] dark:group-hover:border-orange-700/80 dark:group-hover:from-orange-950/40 dark:group-hover:to-zinc-900",
+                          )}
+                        >
+                          <span className="flex items-center gap-2">
+                            <FolderIcon
+                              className={cn(
+                                "size-5 shrink-0 transition",
+                                isHot
+                                  ? "text-orange-600 dark:text-orange-300"
+                                  : "text-orange-500 group-hover:text-orange-600 dark:text-orange-400",
+                              )}
+                              aria-hidden
+                            />
+                            <span className="min-w-0 flex-1 truncate text-sm font-bold leading-tight text-zinc-900 dark:text-zinc-50">
+                              {folder.name}
+                            </span>
+                            <Badge
+                              variant="secondary"
+                              className="h-5 shrink-0 px-1.5 text-[10px] tabular-nums"
+                            >
+                              {folder.agentCount}
+                            </Badge>
                           </span>
-                          <ChevronDown
-                            className={cn(
-                              "size-4 text-zinc-500 transition-transform dark:text-zinc-400",
-                              isRevealed && "rotate-180",
-                            )}
-                            aria-hidden
-                          />
+                          <span className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-200/80 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700/80 dark:text-zinc-400">
+                            <span>
+                              {folder.ticketCount} assigned
+                            </span>
+                            <span className="font-medium normal-case tracking-normal text-zinc-400 opacity-0 transition group-hover:opacity-100 dark:text-zinc-500">
+                              Open
+                            </span>
+                          </span>
                         </span>
                       </button>
-
-                      {isRevealed ? (
-                        <div className="mt-2 space-y-3 rounded-lg border border-orange-200 bg-white p-2 shadow-sm dark:border-orange-900/60 dark:bg-zinc-950">
-                          {[
-                            { label: "Admins", list: adminColumns },
-                            { label: "Personnel", list: personnelColumns },
-                          ].map((group) =>
-                            group.list.length > 0 ? (
-                              <div key={`${section.id}-${group.label}`} className="space-y-2">
-                                <p className="px-1 text-[10px] font-bold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
-                                  {group.label}
-                                </p>
-                                {group.list.map((col) => {
-                                  const userTargetId = assignmentUserDropTarget(col.agentId);
-                                  const isUserHovered = laneDrag.hoverColumn === userTargetId;
-                                  return (
-                                    <article
-                                      key={col.agentId}
-                                      ref={laneDrag.registerColumn(userTargetId)}
-                                      className={cn(
-                                        "rounded-xl border border-zinc-200 bg-zinc-50/90 p-2 transition dark:border-zinc-700 dark:bg-[#101a2f]",
-                                        isUserHovered &&
-                                          "ring-2 ring-orange-500/65 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950",
-                                      )}
-                                    >
-                                      <div className="mb-2 flex items-start justify-between gap-2">
-                                        <div className="flex min-w-0 items-start gap-2">
-                                          <AssigneeInitialsBadge
-                                            agentName={col.name}
-                                            assigneeColorKey={col.assigneeColorKey}
-                                            className="mt-0.5 size-8 text-xs"
-                                          />
-                                          <div className="min-w-0">
-                                            <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                                              {col.name}
-                                            </p>
-                                            <p className="text-[11px] text-zinc-600 dark:text-zinc-500">
-                                              {col.role}
-                                              {col.teamLabel ? ` · ${col.teamLabel}` : ""}
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[10px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                                          {col.cards.length}
-                                        </span>
-                                      </div>
-                                      <div className="max-h-40 space-y-1.5 overflow-y-auto pr-0.5">
-                                        {col.cards.length === 0 ? (
-                                          <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-[11px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-500">
-                                            Drop requests here to assign.
-                                          </div>
-                                        ) : (
-                                          col.cards.map((t) =>
-                                            renderTicketCard(t, col.assigneeColorKey, true),
-                                          )
-                                        )}
-                                      </div>
-                                    </article>
-                                  );
-                                })}
-                              </div>
-                            ) : null,
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>

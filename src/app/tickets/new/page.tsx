@@ -9,6 +9,7 @@ import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -90,20 +91,54 @@ function pickAttachmentFiles(list: File[]) {
   return list.filter((f) => isAllowedIntakeAttachment(f.type || "", f.name));
 }
 export default function NewTicketPage() {
+  return <NewTicketIntake mode="page" />;
+}
+
+export type NewTicketIntakeProps = {
+  mode?: "page" | "modal";
+  controlledType?: RequestTypeId | null;
+  onControlledTypeChange?: (type: RequestTypeId | null) => void;
+  onClose?: () => void;
+  onCreated?: () => void;
+};
+
+export function NewTicketIntake({
+  mode = "page",
+  controlledType = null,
+  onControlledTypeChange,
+  onClose,
+  onCreated,
+}: NewTicketIntakeProps) {
   return (
     <Suspense
       fallback={
-        <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-8 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100">
-          <p className="mx-auto max-w-5xl text-sm text-zinc-600 dark:text-zinc-400">Loading request intake…</p>
-        </main>
+        mode === "modal" ? (
+          <p className="px-1 py-6 text-sm text-zinc-600 dark:text-zinc-400">Loading request intake…</p>
+        ) : (
+          <main className="min-h-[calc(100vh-56px)] bg-zinc-50 px-3 py-8 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100">
+            <p className="mx-auto max-w-5xl text-sm text-zinc-600 dark:text-zinc-400">Loading request intake…</p>
+          </main>
+        )
       }
     >
-      <NewTicketPageInner />
+      <NewTicketPageInner
+        mode={mode}
+        controlledType={controlledType}
+        onControlledTypeChange={onControlledTypeChange}
+        onClose={onClose}
+        onCreated={onCreated}
+      />
     </Suspense>
   );
 }
 
-function NewTicketPageInner() {
+function NewTicketPageInner({
+  mode = "page",
+  controlledType = null,
+  onControlledTypeChange,
+  onClose,
+  onCreated,
+}: NewTicketIntakeProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, status: sessionStatus } = useSession();
@@ -119,10 +154,11 @@ function NewTicketPageInner() {
     useState<RequestTypeId>(DEFAULT_REQUEST_TYPE);
   const [hiddenRequestTypeIds, setHiddenRequestTypeIds] = useState<RequestTypeId[]>([]);
   const [hiddenRequestTypesReady, setHiddenRequestTypesReady] = useState(false);
-  const activeRequestType = useMemo(() => {
+  const urlRequestType = useMemo(() => {
     const raw = searchParams.get("type");
     return raw ? parseRequestTypeId(raw) : null;
   }, [searchParams]);
+  const activeRequestType = mode === "modal" ? controlledType : urlRequestType;
   const showTypeSelection = activeRequestType == null;
   const showRequestForm = activeRequestType != null;
 
@@ -155,9 +191,17 @@ function NewTicketPageInner() {
     if (!hiddenRequestTypesReady || activeRequestType == null) return;
     if (isRequestTypeHiddenFromIntake(activeRequestType, hiddenRequestTypeIds)) {
       setError("That request type is not available.");
-      router.replace("/tickets/new");
+      if (mode === "modal") onControlledTypeChange?.(null);
+      else router.replace("/tickets/new");
     }
-  }, [hiddenRequestTypesReady, activeRequestType, hiddenRequestTypeIds, router]);
+  }, [
+    hiddenRequestTypesReady,
+    activeRequestType,
+    hiddenRequestTypeIds,
+    router,
+    mode,
+    onControlledTypeChange,
+  ]);
 
   const isPaymentRequest = activeRequestType === "REQUEST_FOR_PAYMENT";
   const isAcaRequest = activeRequestType === "AUTHORITY_TO_CONDUCT_ACTIVITY";
@@ -180,6 +224,8 @@ function NewTicketPageInner() {
   }, [isJobOrderRequest, jobOrderStartDate, jobOrderTargetDate]);
   const [purposeOfRequest, setPurposeOfRequest] = useState("");
   const [selectedCompanyTeamId, setSelectedCompanyTeamId] = useState("");
+  const [sendToMode, setSendToMode] = useState<"company" | "department">("department");
+  const [selectedSendToCompanyTeamId, setSelectedSendToCompanyTeamId] = useState("");
   const [requestorApprovalAgents, setRequestorApprovalAgents] = useState<
     Array<{ id: string; name: string; email: string }>
   >([]);
@@ -393,6 +439,11 @@ function NewTicketPageInner() {
   }, [sessionStatus, session?.user?.role, session?.user?.email]);
 
   useEffect(() => {
+    if (!staffDesignatedCompany?.id) return;
+    setSelectedSendToCompanyTeamId((prev) => prev || staffDesignatedCompany.id);
+  }, [staffDesignatedCompany?.id]);
+
+  useEffect(() => {
     if (!isAcaRequest) {
       setAcaAnyCompanyAgents([]);
       setAcaRequestorCompanyAgents([]);
@@ -505,6 +556,8 @@ function NewTicketPageInner() {
       setSelectedRequestorOrgChartSectionId("");
       setSelectedSendToMajorDepartmentId("");
       setSelectedSendToSubDepartmentId("");
+      setSendToMode("department");
+      setSelectedSendToCompanyTeamId("");
       setUseCustomRequestingCompany(false);
       setSelectedRequestingCompanyTeamId("");
       return;
@@ -574,6 +627,7 @@ function NewTicketPageInner() {
 
   useEffect(() => {
     if (!isStaffRequestorIntake || orgChartSectionOptions.length === 0) return;
+    if (sendToMode !== "department") return;
     const recommendedName = recommendedSendToDepartmentName(activeRequestType);
     if (!recommendedName) {
       setSelectedSendToMajorDepartmentId("");
@@ -589,7 +643,12 @@ function NewTicketPageInner() {
     const selection = resolveSendToDepartmentSelection(orgChartSectionOptions, match.id);
     setSelectedSendToMajorDepartmentId(selection.majorId);
     setSelectedSendToSubDepartmentId(selection.subId);
-  }, [isStaffRequestorIntake, activeRequestType, orgChartSectionOptions]);
+  }, [isStaffRequestorIntake, activeRequestType, orgChartSectionOptions, sendToMode]);
+
+  const effectiveSendToCompanyTeamId = useMemo(() => {
+    if (sendToMode === "company") return selectedSendToCompanyTeamId.trim();
+    return "";
+  }, [sendToMode, selectedSendToCompanyTeamId]);
 
   useEffect(() => {
     if (!isPaymentRequest) {
@@ -690,13 +749,16 @@ function NewTicketPageInner() {
 
     void (async () => {
       if (isPaymentRequest) {
+        const bookkeeperCompany =
+          sendToMode === "company"
+            ? effectiveSendToCompanyTeamId
+            : bookkeeperCompanyTeamId;
         const [requestorRows, anyRows, bookkeeperRows] = await Promise.all([
           loadSectionAgents(selectedRequestorOrgChartSectionId),
           loadAnyCompanyAgents(),
-          loadSectionAndCompanyAgents(
-            selectedSendToOrgChartSectionId,
-            bookkeeperCompanyTeamId,
-          ),
+          sendToMode === "company" && effectiveSendToCompanyTeamId
+            ? loadCompanyAgents(effectiveSendToCompanyTeamId)
+            : loadSectionAndCompanyAgents(selectedSendToOrgChartSectionId, bookkeeperCompany),
         ]);
         if (cancelled) return;
         setRequestorApprovalAgents(requestorRows);
@@ -714,20 +776,24 @@ function NewTicketPageInner() {
         return;
       }
       if (isFundTransferRequest) {
-        const sectionId = selectedSendToOrgChartSectionId.trim();
-        const rows = sectionId
-          ? await loadSectionAgents(sectionId)
-          : await loadAnyCompanyAgents();
+        const rows =
+          sendToMode === "company" && effectiveSendToCompanyTeamId
+            ? await loadCompanyAgents(effectiveSendToCompanyTeamId)
+            : selectedSendToOrgChartSectionId.trim()
+              ? await loadSectionAgents(selectedSendToOrgChartSectionId)
+              : await loadAnyCompanyAgents();
         if (cancelled) return;
         setApprovalAgents(rows);
         setRequestorApprovalAgents([]);
         setBookkeeperApprovalAgents([]);
         return;
       }
-      const sectionId = selectedSendToOrgChartSectionId.trim();
-      const rows = sectionId
-        ? await loadSectionAgents(sectionId)
-        : await loadCompanyAgents(selectedCompanyTeamId);
+      const rows =
+        sendToMode === "company" && effectiveSendToCompanyTeamId
+          ? await loadCompanyAgents(effectiveSendToCompanyTeamId)
+          : selectedSendToOrgChartSectionId.trim()
+            ? await loadSectionAgents(selectedSendToOrgChartSectionId)
+            : await loadCompanyAgents(selectedCompanyTeamId);
       if (cancelled) return;
       setApprovalAgents(rows);
       setRequestorApprovalAgents([]);
@@ -747,6 +813,8 @@ function NewTicketPageInner() {
     isPaymentRequest,
     isJobOrderRequest,
     isFundTransferRequest,
+    sendToMode,
+    effectiveSendToCompanyTeamId,
     selectedCompanyTeamId,
     selectedRequestorOrgChartSectionId,
     selectedSendToOrgChartSectionId,
@@ -798,13 +866,16 @@ function NewTicketPageInner() {
       intake.message ??
         issueConcernIntakeLockMessage(intake.pendingConfirmation?.ticketNumber),
     );
-    router.replace("/tickets/new");
+    if (mode === "modal") onControlledTypeChange?.(null);
+    else router.replace("/tickets/new");
   }, [
     issueConcernLocked,
     activeRequestType,
     intake.message,
     intake.pendingConfirmation?.ticketNumber,
     router,
+    mode,
+    onControlledTypeChange,
   ]);
 
   const portalCustomer = (session?.user ?? {}) as {
@@ -852,15 +923,28 @@ function NewTicketPageInner() {
     setFundTransferAssignees({ recommendingApprovalAgentId: "", approvedByAgentId: "" });
     setJobOrderAssignees({ notedByAgentId: "", approvedByAgentId: "", approvedBy2AgentId: "" });
     setItemRequisitionAssignees({ approvedByAgentId: "" });
+    if (mode === "modal") {
+      onControlledTypeChange?.(id);
+      return;
+    }
     router.push(`/tickets/new?type=${encodeURIComponent(id)}`);
   }
 
   function goToTypeSelection() {
     setError(null);
+    if (mode === "modal") {
+      onControlledTypeChange?.(null);
+      return;
+    }
     router.push("/tickets/new");
   }
 
   async function redirectAfterCreate() {
+    if (mode === "modal") {
+      onCreated?.();
+      onClose?.();
+      return;
+    }
     const role = session?.user?.role;
     if (role === "Customer") {
       router.push("/my-tickets?submitted=1");
@@ -1187,8 +1271,18 @@ function NewTicketPageInner() {
       }
 
       if (isStaffRequestorIntake) {
-        if (!selectedRequestorOrgChartSectionId.trim() || !selectedSendToOrgChartSectionId.trim()) {
-          setError("Requesting department and Send request to (department) are required.");
+        if (!selectedRequestorOrgChartSectionId.trim()) {
+          setError("Requesting department is required.");
+          setLoading(false);
+          return;
+        }
+        if (sendToMode === "department" && !selectedSendToOrgChartSectionId.trim()) {
+          setError("Send request to (department) is required.");
+          setLoading(false);
+          return;
+        }
+        if (sendToMode === "company" && !selectedSendToCompanyTeamId.trim()) {
+          setError("Send request to (company) is required.");
           setLoading(false);
           return;
         }
@@ -1349,12 +1443,23 @@ function NewTicketPageInner() {
 
       const appendSectionFields = (target: FormData | Record<string, unknown>) => {
         if (!isStaffRequestorIntake) return;
+        const requestorId = selectedRequestorOrgChartSectionId.trim();
         if (target instanceof FormData) {
-          target.append("requestorOrgChartSectionId", selectedRequestorOrgChartSectionId.trim());
-          target.append("orgChartSectionId", selectedSendToOrgChartSectionId.trim());
+          target.append("requestorOrgChartSectionId", requestorId);
+          target.append("sendToMode", sendToMode);
+          if (sendToMode === "department") {
+            target.append("orgChartSectionId", selectedSendToOrgChartSectionId.trim());
+          } else {
+            target.append("sendToCompanyTeamId", selectedSendToCompanyTeamId.trim());
+          }
         } else {
-          target.requestorOrgChartSectionId = selectedRequestorOrgChartSectionId.trim();
-          target.orgChartSectionId = selectedSendToOrgChartSectionId.trim();
+          target.requestorOrgChartSectionId = requestorId;
+          target.sendToMode = sendToMode;
+          if (sendToMode === "department") {
+            target.orgChartSectionId = selectedSendToOrgChartSectionId.trim();
+          } else {
+            target.sendToCompanyTeamId = selectedSendToCompanyTeamId.trim();
+          }
         }
       };
 
@@ -1526,33 +1631,45 @@ function NewTicketPageInner() {
     }
   }
 
-  return (
-    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100">
-      <div className="mx-auto max-w-5xl px-3 py-4 sm:px-4">
-        <div className="mb-4 rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
-          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-orange-400">
-            {BRAND_TITLE} · Request intake
-          </p>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-100">
-            {showTypeSelection ? "Choose request type" : "Submit a request"}
-          </h1>
-          {!showTypeSelection && activeRequestType ? (
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Type:{" "}
-              <span className="font-semibold text-zinc-900 dark:text-zinc-200">
-                {requestTypeLabel(activeRequestType)}
-              </span>
-              {" · "}
-              <button
-                type="button"
-                onClick={goToTypeSelection}
-                className="font-semibold text-orange-700 underline-offset-2 hover:underline dark:text-orange-300"
-              >
-                Change type
-              </button>
+  const intakeBody = (
+      <>
+        {mode === "page" ? (
+          <div className="mb-4 rounded-md border border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)]">
+            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-orange-400">
+              {BRAND_TITLE} · Request intake
             </p>
-          ) : null}
-        </div>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-zinc-950 dark:text-zinc-100">
+              {showTypeSelection ? "Choose request type" : "Submit a request"}
+            </h1>
+            {!showTypeSelection && activeRequestType ? (
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                Type:{" "}
+                <span className="font-semibold text-zinc-900 dark:text-zinc-200">
+                  {requestTypeLabel(activeRequestType)}
+                </span>
+                {" · "}
+                <button
+                  type="button"
+                  onClick={goToTypeSelection}
+                  className="font-semibold text-orange-700 underline-offset-2 hover:underline dark:text-orange-300"
+                >
+                  Change type
+                </button>
+              </p>
+            ) : null}
+          </div>
+        ) : showTypeSelection ? null : (
+          <div className="mb-3 pr-8">
+            <h2 className="text-left text-lg font-bold text-zinc-950 dark:text-zinc-100">
+              Submit a request
+            </h2>
+            {activeRequestType ? (
+              <p className="mt-1 text-left text-sm text-zinc-600 dark:text-zinc-400">
+                {requestTypeLabel(activeRequestType)}
+              </p>
+            ) : null}
+          </div>
+        )}
 
         {isRequestorIntakeLockRole && !intakeGateReady ? (
           <div className="mb-4 rounded-md border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 dark:border-zinc-700/80 dark:bg-[#10100f] dark:text-zinc-300">
@@ -1593,7 +1710,13 @@ function NewTicketPageInner() {
           </div>
         ) : null}
 
-        <Card className="rounded-md border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5">
+        <Card
+          className={cn(
+            "rounded-md border-zinc-200 bg-white p-4 shadow-[0_14px_28px_rgba(0,0,0,0.06)] dark:border-zinc-700/80 dark:bg-[#10100f] dark:shadow-[0_14px_28px_rgba(0,0,0,0.24)] sm:p-5",
+            mode === "modal" &&
+              "border-0 bg-transparent p-0 shadow-none dark:border-0 dark:bg-transparent dark:shadow-none",
+          )}
+        >
           {showTypeSelection ? (
             <RequestTypeSelection
               value={draftRequestType}
@@ -1624,61 +1747,65 @@ function NewTicketPageInner() {
               </button>
             </div>
 
-            <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-              Priority level{" "}
-              <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
-              <Select
-                name="priority"
-                value={priority}
-                onChange={(e) =>
-                  setPriority(e.target.value as "LOW" | "MEDIUM" | "HIGH" | "URGENT")
-                }
-                className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-              >
-                <option value="LOW">Low</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="HIGH">High</option>
-                <option value="URGENT">Urgent</option>
-              </Select>
-              <span className="mt-1 block text-[11px] text-zinc-500 dark:text-zinc-400">
-                Defaults to Low if you leave it as-is.
-              </span>
-            </label>
+            {!isStaffRequestorIntake ? (
+              <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                Priority level{" "}
+                <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
+                <Select
+                  name="priority"
+                  value={priority}
+                  onChange={(e) =>
+                    setPriority(e.target.value as "LOW" | "MEDIUM" | "HIGH" | "URGENT")
+                  }
+                  className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                >
+                  <option value="LOW">Low</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HIGH">High</option>
+                  <option value="URGENT">Urgent</option>
+                </Select>
+                <span className="mt-1 block text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Defaults to Low if you leave it as-is.
+                </span>
+              </label>
+            ) : null}
             {isStaffRequestorIntake ? (
               <>
-                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  {isAcaRequest
-                    ? "Submitted by:"
-                    : isFundTransferRequest || isPaymentRequest || isJobOrderRequest
-                      ? "PREPARED BY:"
-                      : "Requestor"}
-                  <Input
-                    name="contactName"
-                    required
-                    maxLength={200}
-                    defaultValue={
-                      session?.user?.name?.trim() ||
-                      (session?.user?.email?.includes("@") ? session.user.email.split("@")[0] : "") ||
-                      ""
-                    }
-                    autoComplete="name"
-                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  />
-                </label>
-                <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  Email
-                  <Input
-                    type="email"
-                    name="contactEmail"
-                    required
-                    defaultValue={session?.user?.email?.trim() ?? ""}
-                    autoComplete="email"
-                    className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                  />
-                </label>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block min-w-0 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    {isAcaRequest
+                      ? "Submitted by:"
+                      : isFundTransferRequest || isPaymentRequest || isJobOrderRequest
+                        ? "PREPARED BY:"
+                        : "Requestor"}
+                    <Input
+                      name="contactName"
+                      required
+                      maxLength={200}
+                      defaultValue={
+                        session?.user?.name?.trim() ||
+                        (session?.user?.email?.includes("@") ? session.user.email.split("@")[0] : "") ||
+                        ""
+                      }
+                      autoComplete="name"
+                      className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </label>
+                  <label className="block min-w-0 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    Email
+                    <Input
+                      type="email"
+                      name="contactEmail"
+                      required
+                      defaultValue={session?.user?.email?.trim() ?? ""}
+                      autoComplete="email"
+                      className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </label>
+                </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+                  <div className="flex min-w-0 flex-col gap-1.5">
                     <label
                       htmlFor="intake-requestor-section"
                       className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
@@ -1704,13 +1831,171 @@ function NewTicketPageInner() {
                       ))}
                     </select>
                   </div>
-                  <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+                  {isPaymentRequest ? (
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <label className="flex h-5 cursor-pointer select-none items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={useCustomRequestingCompany}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setUseCustomRequestingCompany(checked);
+                            if (!checked) {
+                              setSelectedRequestingCompanyTeamId("");
+                              setPaymentAssignees((prev) => ({
+                                ...prev,
+                                accountingAgentId: "",
+                              }));
+                            }
+                          }}
+                          className="size-3.5 accent-orange-600"
+                        />
+                        Company
+                      </label>
+                      {useCustomRequestingCompany ? (
+                        <select
+                          id="intake-requesting-company"
+                          name="requestingCompanyTeamId"
+                          value={selectedRequestingCompanyTeamId}
+                          onChange={(e) => setSelectedRequestingCompanyTeamId(e.target.value)}
+                          disabled={companiesLoading}
+                          className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                        >
+                          <option value="">
+                            {companiesLoading ? "Loading companies…" : "Select requesting company"}
+                          </option>
+                          {sendRequestToOptions.map((team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                          {staffDesignatedLoading
+                            ? "Loading…"
+                            : staffDesignatedCompany?.name?.trim()
+                              ? staffDesignatedCompany.name
+                              : "Not yet assigned"}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <span className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                        Company
+                      </span>
+                      <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100">
+                        {staffDesignatedLoading
+                          ? "Loading…"
+                          : staffDesignatedCompany?.name?.trim() || "Not yet assigned"}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex min-w-0 flex-col gap-1.5">
                     <label
-                      htmlFor="intake-send-request-to-department"
+                      htmlFor="intake-branch"
                       className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
                     >
-                      Send request to (department)
+                      Branch{" "}
+                      <span className="ml-1 font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
                     </label>
+                    <input
+                      id="intake-branch"
+                      name="branch"
+                      maxLength={120}
+                      placeholder="e.g. Main Office, Cebu Branch"
+                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    />
+                  </div>
+                  <label className="block min-w-0 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    Priority level{" "}
+                    <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
+                    <Select
+                      name="priority"
+                      value={priority}
+                      onChange={(e) =>
+                        setPriority(e.target.value as "LOW" | "MEDIUM" | "HIGH" | "URGENT")
+                      }
+                      className="mt-1.5 border-zinc-300 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      <option value="LOW">Low</option>
+                      <option value="MEDIUM">Medium</option>
+                      <option value="HIGH">High</option>
+                      <option value="URGENT">Urgent</option>
+                    </Select>
+                    <span className="mt-1 block text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Defaults to Low if you leave it as-is.
+                    </span>
+                  </label>
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      Send request to
+                    </span>
+                    <div
+                      role="tablist"
+                      aria-label="Send request to company or department"
+                      className="inline-flex rounded-lg border border-orange-300/80 bg-orange-100 p-0.5 text-xs font-semibold dark:border-orange-500/35 dark:bg-orange-950/40"
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={sendToMode === "company"}
+                        onClick={() => {
+                          setSendToMode("company");
+                          setSelectedSendToMajorDepartmentId("");
+                          setSelectedSendToSubDepartmentId("");
+                        }}
+                        className={
+                          sendToMode === "company"
+                            ? "rounded-md bg-orange-600 px-2.5 py-1 text-white"
+                            : "rounded-md px-2.5 py-1 text-orange-950/80 hover:bg-orange-200/60 dark:text-orange-100/90 dark:hover:bg-orange-900/50"
+                        }
+                      >
+                        Company
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={sendToMode === "department"}
+                        onClick={() => {
+                          setSendToMode("department");
+                        }}
+                        className={
+                          sendToMode === "department"
+                            ? "rounded-md bg-orange-600 px-2.5 py-1 text-white"
+                            : "rounded-md px-2.5 py-1 text-orange-950/80 hover:bg-orange-200/60 dark:text-orange-100/90 dark:hover:bg-orange-900/50"
+                        }
+                      >
+                        Department
+                      </button>
+                    </div>
+                  </div>
+                  {sendToMode === "company" ? (
+                    <select
+                      id="intake-send-request-to-company"
+                      required
+                      value={selectedSendToCompanyTeamId}
+                      onChange={(e) => setSelectedSendToCompanyTeamId(e.target.value)}
+                      disabled={companiesLoading}
+                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      <option value="">
+                        {companiesLoading ? "Loading companies…" : "Select a company"}
+                      </option>
+                      {sendRequestToOptions.map((team) => (
+                        <option key={team.id} value={team.id}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <select
                         id="intake-send-request-to-department"
@@ -1750,100 +2035,25 @@ function NewTicketPageInner() {
                         </select>
                       ) : null}
                     </div>
+                  )}
+                  {sendToMode === "department" && recommendedSendToName ? (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Recommended for {requestTypeLabel(activeRequestType!)}:{" "}
+                      <span className="font-medium text-orange-700 dark:text-orange-300">
+                        {recommendedSendToName}
+                      </span>
+                      {findOrgChartSectionByName(orgChartSectionOptions, recommendedSendToName)
+                        ? null
+                        : " (not found in Manage departments yet)"}
+                    </p>
+                  ) : null}
+                  {sendToMode === "department" ? (
                     <input
                       type="hidden"
                       name="orgChartSectionId"
                       value={selectedSendToOrgChartSectionId}
                     />
-                    {recommendedSendToName ? (
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        Recommended for {requestTypeLabel(activeRequestType!)}:{" "}
-                        <span className="font-medium text-orange-700 dark:text-orange-300">
-                          {recommendedSendToName}
-                        </span>
-                        {findOrgChartSectionByName(orgChartSectionOptions, recommendedSendToName)
-                          ? null
-                          : " (not found in Manage departments yet)"}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <label
-                      htmlFor="intake-branch"
-                      className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200"
-                    >
-                      Branch{" "}
-                      <span className="ml-1 font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
-                    </label>
-                    <input
-                      id="intake-branch"
-                      name="branch"
-                      maxLength={120}
-                      placeholder="e.g. Main Office, Cebu Branch"
-                      className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 placeholder:text-zinc-500 focus:border-orange-500 focus:ring dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                    />
-                  </div>
-                  {isPaymentRequest ? (
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <label className="flex h-5 cursor-pointer select-none items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                        <input
-                          type="checkbox"
-                          checked={useCustomRequestingCompany}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setUseCustomRequestingCompany(checked);
-                            if (!checked) {
-                              setSelectedRequestingCompanyTeamId("");
-                              setPaymentAssignees((prev) => ({
-                                ...prev,
-                                accountingAgentId: "",
-                              }));
-                            }
-                          }}
-                          className="size-3.5 accent-orange-600"
-                        />
-                        Use different requesting company
-                      </label>
-                      {useCustomRequestingCompany ? (
-                        <select
-                          id="intake-requesting-company"
-                          name="requestingCompanyTeamId"
-                          value={selectedRequestingCompanyTeamId}
-                          onChange={(e) => setSelectedRequestingCompanyTeamId(e.target.value)}
-                          disabled={companiesLoading}
-                          className="box-border h-10 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm leading-none text-zinc-900 outline-none ring-orange-500/40 focus:border-orange-500 focus:ring disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-                        >
-                          <option value="">
-                            {companiesLoading ? "Loading companies…" : "Select requesting company"}
-                          </option>
-                          {sendRequestToOptions.map((team) => (
-                            <option key={team.id} value={team.id}>
-                              {team.name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
-                          {staffDesignatedLoading
-                            ? "Loading…"
-                            : staffDesignatedCompany?.name?.trim()
-                              ? `Uses your company — ${staffDesignatedCompany.name}`
-                              : "Uses your assigned company"}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex min-w-0 flex-col gap-1.5">
-                      <span className="flex h-5 items-center text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                        Company
-                      </span>
-                      <div className="box-border flex h-10 w-full items-center truncate rounded-lg border border-zinc-300 bg-zinc-50 px-3 text-sm leading-none text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-100">
-                        {staffDesignatedLoading
-                          ? "Loading…"
-                          : staffDesignatedCompany?.name?.trim() || "Not yet assigned"}
-                      </div>
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </>
             ) : (
@@ -2687,10 +2897,12 @@ function NewTicketPageInner() {
                         scope === "requestor"
                           ? Boolean(selectedRequestorOrgChartSectionId.trim())
                           : scope === "bookkeeper"
-                            ? Boolean(
-                                selectedSendToOrgChartSectionId.trim() &&
-                                  bookkeeperCompanyTeamId,
-                              )
+                            ? sendToMode === "company"
+                              ? Boolean(effectiveSendToCompanyTeamId)
+                              : Boolean(
+                                  selectedSendToOrgChartSectionId.trim() &&
+                                    bookkeeperCompanyTeamId,
+                                )
                             : true;
                       return (
                         <CompanyUserSearchField
@@ -2706,9 +2918,11 @@ function NewTicketPageInner() {
                               ? scope === "requestor"
                                 ? "Select requesting department first"
                                 : scope === "bookkeeper"
-                                  ? useCustomRequestingCompany
-                                    ? "Select send-to department and requesting company first"
-                                    : "Select send-to department first (uses your assigned company)"
+                                  ? sendToMode === "company"
+                                    ? "Select send-to company first"
+                                    : useCustomRequestingCompany
+                                      ? "Select send-to department and requesting company first"
+                                      : "Select send-to department first (uses your assigned company)"
                                   : "Loading users…"
                               : "Search by name or email…"
                           }
@@ -2823,7 +3037,7 @@ function NewTicketPageInner() {
                 !isRequisitionRequest &&
                 !selectedSendToOrgChartSectionId ? (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    Select “Send request to (department)” first to load assignees.
+                    Select “Send request to” (company or department) first to load assignees.
                   </p>
                 ) : !isPaymentRequest &&
                   !isJobOrderRequest &&
@@ -2862,7 +3076,16 @@ function NewTicketPageInner() {
           </form>
           ) : null}
         </Card>
-      </div>
+      </>
+  );
+
+  if (mode === "modal") {
+    return <div className="space-y-1">{intakeBody}</div>;
+  }
+
+  return (
+    <main className="min-h-[calc(100vh-56px)] bg-zinc-50 text-zinc-900 dark:bg-[#0e0e0d] dark:text-zinc-100">
+      <div className="mx-auto max-w-5xl px-3 py-4 sm:px-4">{intakeBody}</div>
     </main>
   );
 }

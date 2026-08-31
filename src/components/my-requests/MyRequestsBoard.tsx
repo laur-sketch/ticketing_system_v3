@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { AssigneeColorHighlight } from "@/components/ticket/AssigneeColorHighlight";
 import { AssigneeInitialsBadge } from "@/components/ticket/AssigneeInitialsBadge";
 import { CancelRequestButton } from "@/components/tickets/CancelRequestButton";
+import { CreateRequestButton } from "@/components/tickets/CreateRequestModal";
 import { TicketBoardFilterBar } from "@/app/agent/ticket-board-filter-bar";
 import {
   customerHasPendingResolvedTicket,
@@ -274,13 +275,10 @@ export async function MyRequestsBoard({
                 Resume {intakeBlock.ticketNumber}
               </Link>
             ) : (
-              <Link
-                href="/tickets/new"
+              <CreateRequestButton
+                showPlusIcon
                 className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#f97316] px-4 text-sm font-semibold text-white shadow-[0_8px_24px_rgba(249,115,22,0.32)] transition hover:bg-[#fb923c] active:translate-y-px"
-              >
-                <Plus className="size-4" />
-                Create Request
-              </Link>
+              />
             )}
           </div>
         </div>

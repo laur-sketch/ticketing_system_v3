@@ -5,7 +5,7 @@ import { isElevatedPlatformRole } from "@/lib/staff-role";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import {
   Activity,
   BarChart3,
@@ -18,7 +18,6 @@ import {
   LayoutDashboard,
   LifeBuoy,
   LogOut,
-  Menu,
   PlusSquare,
   Shield,
   Ticket,
@@ -26,10 +25,11 @@ import {
   UserRound,
   Users,
   X,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { navLinkActive } from "@/lib/nav-link-active";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { BrandLogo } from "@/components/BrandLogo";
 import { SidebarOpsWidget } from "@/components/SidebarOpsWidget";
 import { closeStaffMobileNav, subscribeStaffMobileNav } from "@/lib/staff-mobile-nav";
 import { SESSION_PROFILE_IMAGE_ROUTE } from "@/lib/session-profile-image";
@@ -139,28 +139,82 @@ function iconForLink(label: string) {
   return Home;
 }
 
-function navChildActive(
-  pathname: string,
-  searchParams: URLSearchParams | null,
-  child: NavChild,
-): boolean {
-  return navLinkActive(pathname, child.href, searchParams);
-}
-
 function NavLinkRow({
   href,
   label,
   active,
   onNavigate,
   dense,
+  variant = "row",
 }: {
   href: string;
   label: string;
   active: boolean;
   onNavigate?: () => void;
   dense?: boolean;
+  /** Square app tiles (mobile overlay + desktop sidebar). */
+  variant?: "row" | "card" | "tile";
 }) {
   const Icon = iconForLink(label);
+
+  if (variant === "tile") {
+    return (
+      <Link
+        href={href}
+        onClick={onNavigate}
+        className={cn(
+          "flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-2.5 text-center transition sm:gap-2.5 sm:px-2.5 sm:py-3",
+          active
+            ? "border-orange-500/60 bg-orange-500/15 text-orange-950 dark:border-orange-400/70 dark:bg-orange-500/20 dark:text-orange-50"
+            : "border-zinc-200 bg-white text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50 dark:border-white/12 dark:bg-[var(--surface-elevated)] dark:text-zinc-50 dark:hover:border-white/20 dark:hover:bg-[var(--surface-muted)]",
+        )}
+      >
+        <span
+          className={cn(
+            "inline-flex size-10 shrink-0 items-center justify-center rounded-2xl sm:size-12",
+            active
+              ? "bg-orange-600 text-white"
+              : "bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-zinc-200 dark:bg-[var(--surface-muted)] dark:text-zinc-100 dark:ring-white/15",
+          )}
+        >
+          <Icon size={22} strokeWidth={2.1} />
+        </span>
+        <span className="line-clamp-2 max-w-full text-[11px] font-semibold leading-snug tracking-tight text-inherit sm:text-[13px]">
+          {label}
+        </span>
+      </Link>
+    );
+  }
+
+  if (variant === "card") {
+    return (
+      <Link
+        href={href}
+        onClick={onNavigate}
+        className={cn(
+          "flex items-center gap-2.5 rounded-xl border px-2.5 py-2.5 transition",
+          active
+            ? "border-orange-500/45 bg-orange-500/15 text-orange-900 shadow-[inset_0_0_0_1px_rgba(249,115,22,0.12)] dark:text-orange-100"
+            : "border-zinc-200 bg-white text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-zinc-200 dark:hover:border-white/20 dark:hover:bg-white/[0.07]",
+        )}
+      >
+        <span
+          className={cn(
+            "inline-flex size-9 shrink-0 items-center justify-center rounded-lg",
+            active
+              ? "bg-orange-600 text-white"
+              : "bg-zinc-100 text-zinc-600 ring-1 ring-inset ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-white/10",
+          )}
+        >
+          <Icon size={16} strokeWidth={2.1} />
+        </span>
+        <span className="min-w-0 flex-1 text-left text-[12px] font-semibold leading-snug tracking-tight">
+          {label}
+        </span>
+      </Link>
+    );
+  }
+
   return (
     <Link
       href={href}
@@ -189,133 +243,11 @@ function NavLinkRow({
   );
 }
 
-function SidebarProfileFooter({
-  variant,
-  collapsed,
-  roleLabel,
-  userName,
-  userEmail,
-  avatarSrc,
-  accountActive,
-  onNavigate,
-  className,
-}: {
-  variant: "mobile" | "desktop";
-  collapsed?: boolean;
-  roleLabel: string;
-  userName: string;
-  userEmail: string;
-  avatarSrc: string | undefined;
-  accountActive: boolean;
-  onNavigate?: () => void;
-  className?: string;
-}) {
-  const mobile = variant === "mobile";
-
-  if (collapsed) {
-    return (
-      <div
-        className={cn(
-          "flex shrink-0 flex-col items-center gap-2 border-t border-zinc-200/80 px-2 py-3 dark:border-white/10",
-          className,
-        )}
-      >
-        <Link
-          href="/admin/account"
-          title={`${roleLabel} · ${userName}`}
-          className={cn(
-            "inline-flex size-10 items-center justify-center rounded-xl transition",
-            accountActive
-              ? "ring-2 ring-orange-500/40"
-              : "hover:bg-zinc-200/70 dark:hover:bg-zinc-900",
-          )}
-        >
-          <Avatar className="size-9 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white">
-            <AvatarImage src={avatarSrc} alt={userName} />
-            <AvatarFallback className="bg-transparent">
-              <UserRound className="size-4" aria-hidden />
-            </AvatarFallback>
-          </Avatar>
-        </Link>
-        <button
-          type="button"
-          title="Sign out"
-          onClick={() => void signOut({ callbackUrl: "/" })}
-          className="inline-flex size-9 items-center justify-center rounded-xl border border-zinc-300 text-zinc-600 transition hover:bg-white dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-        >
-          <LogOut size={15} />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className={cn(
-        "shrink-0 border-t px-3 pt-2",
-        mobile
-          ? "border-white/10 pb-[max(1rem,env(safe-area-inset-bottom,0px))]"
-          : "border-zinc-200/80 pb-2 dark:border-white/10",
-        className,
-      )}
-    >
-      <Link
-        href="/admin/account"
-        onClick={onNavigate}
-        className={cn(
-          "flex items-center gap-2.5 rounded-xl px-2 py-2 transition",
-          mobile
-            ? accountActive
-              ? "bg-orange-500/15 ring-1 ring-inset ring-orange-400/25"
-              : "hover:bg-white/5"
-            : accountActive
-              ? "bg-orange-500/15 ring-1 ring-inset ring-orange-500/25"
-              : "hover:bg-zinc-100 dark:hover:bg-zinc-900",
-        )}
-        title={`${userName} · ${userEmail}`}
-      >
-        <Avatar className="size-10 shrink-0 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white shadow-sm">
-          <AvatarImage src={avatarSrc} alt={userName} />
-          <AvatarFallback className="bg-transparent">
-            <UserRound className="size-4" aria-hidden />
-          </AvatarFallback>
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <p
-            className={cn(
-              "truncate text-sm font-semibold leading-snug",
-              mobile ? "text-zinc-50" : "text-zinc-900 dark:text-zinc-100",
-            )}
-          >
-            {userName}
-          </p>
-          <p
-            className={cn(
-              "truncate text-[11px] leading-snug",
-              mobile ? "text-zinc-400" : "text-zinc-500 dark:text-zinc-400",
-            )}
-          >
-            {roleLabel}
-          </p>
-        </div>
-      </Link>
-      <button
-        type="button"
-        onClick={() => {
-          onNavigate?.();
-          void signOut({ callbackUrl: "/" });
-        }}
-        className={cn(
-          "mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition",
-          mobile
-            ? "bg-orange-600 text-white hover:bg-orange-500"
-            : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800",
-        )}
-      >
-        <LogOut size={15} />
-        Sign out
-      </button>
-    </div>
+function flattenNavLinks(links: NavItem[]): { href: string; label: string }[] {
+  return links.flatMap((item) =>
+    item.kind === "link"
+      ? [{ href: item.href, label: item.label }]
+      : item.children.map((child) => ({ href: child.href, label: child.label })),
   );
 }
 
@@ -343,7 +275,10 @@ function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
     : undefined;
   const accountActive = navLinkActive(pathname, "/admin/account");
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobilePresent, setMobilePresent] = useState(false);
+  const [mobileEntered, setMobileEntered] = useState(false);
+  const mobileCloseTimer = useRef<number | null>(null);
+  const MOBILE_SLIDE_MS = 320;
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -353,24 +288,59 @@ function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
   }, []);
 
   useEffect(() => {
-    return subscribeStaffMobileNav((open) => {
-      setMobileOpen(open);
+    return () => {
+      if (mobileCloseTimer.current != null) window.clearTimeout(mobileCloseTimer.current);
+    };
+  }, []);
+
+  function openMobile() {
+    if (mobileCloseTimer.current != null) {
+      window.clearTimeout(mobileCloseTimer.current);
+      mobileCloseTimer.current = null;
+    }
+    setMobilePresent(true);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => setMobileEntered(true));
     });
+  }
+
+  function closeMobile() {
+    setMobileEntered(false);
+    if (mobileCloseTimer.current != null) window.clearTimeout(mobileCloseTimer.current);
+    mobileCloseTimer.current = window.setTimeout(() => {
+      setMobilePresent(false);
+      mobileCloseTimer.current = null;
+      closeStaffMobileNav();
+    }, MOBILE_SLIDE_MS);
+  }
+
+  useEffect(() => {
+    return subscribeStaffMobileNav((open) => {
+      if (open) openMobile();
+      else closeMobile();
+    });
+    // openMobile/closeMobile only use setState + refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    setMobileOpen(false);
+    if (mobileCloseTimer.current != null) {
+      window.clearTimeout(mobileCloseTimer.current);
+      mobileCloseTimer.current = null;
+    }
+    setMobileEntered(false);
+    setMobilePresent(false);
     closeStaffMobileNav();
   }, [pathname]);
 
   useEffect(() => {
-    if (!mobileOpen) return;
+    if (!mobilePresent) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [mobileOpen]);
+  }, [mobilePresent]);
 
   if (
     pathname === "/signin" ||
@@ -391,43 +361,88 @@ function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
     });
   }
 
-  function closeMobile() {
-    setMobileOpen(false);
-    closeStaffMobileNav();
+  function onFloatingNavClick() {
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+      toggleCollapsed();
+      return;
+    }
+    if (mobilePresent) closeMobile();
+    else openMobile();
   }
+
+  const showMobileFab = !mobilePresent;
 
   return (
     <>
-      {mobileOpen ? (
-        <div className="fixed inset-0 z-[90] lg:hidden">
+      {/* Borderless >> / << control — slides with the sidebar */}
+      <button
+        type="button"
+        onClick={onFloatingNavClick}
+        className={cn(
+          "fixed top-1/2 z-[88] -translate-y-1/2 text-zinc-500 transition-[left,color,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:text-orange-600 dark:text-zinc-400 dark:hover:text-orange-400",
+          "inline-flex items-center justify-center p-1",
+          showMobileFab ? "left-2 max-lg:flex" : "max-lg:hidden",
+          "lg:flex",
+          collapsed ? "lg:left-2" : "lg:left-[calc(16rem+0.35rem)]",
+        )}
+        aria-label={collapsed ? "Open navigation" : "Hide navigation"}
+        title={collapsed ? "Open navigation" : "Hide navigation"}
+      >
+        <span className="relative inline-flex size-[22px] items-center justify-center">
+          <ChevronsRight
+            size={22}
+            strokeWidth={2.25}
+            className={cn(
+              "absolute transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              collapsed ? "scale-100 opacity-100" : "scale-75 opacity-0 max-lg:scale-100 max-lg:opacity-100",
+              !collapsed && "lg:pointer-events-none",
+            )}
+            aria-hidden
+          />
+          <ChevronsLeft
+            size={22}
+            strokeWidth={2.25}
+            className={cn(
+              "absolute hidden transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:block",
+              collapsed ? "pointer-events-none scale-75 opacity-0" : "scale-100 opacity-100",
+            )}
+            aria-hidden
+          />
+        </span>
+      </button>
+
+      {mobilePresent ? (
+        <>
           <button
             type="button"
-            className="absolute inset-0 bg-zinc-950/60 backdrop-blur-[2px]"
-            onClick={closeMobile}
             aria-label="Close navigation menu"
+            onClick={closeMobile}
+            className={cn(
+              "fixed inset-0 z-[89] bg-zinc-950/45 transition-opacity duration-300 ease-out lg:hidden dark:bg-black/55",
+              mobileEntered ? "opacity-100" : "opacity-0",
+            )}
           />
-          <aside
-            className="absolute inset-y-0 left-0 flex w-[min(92vw,22rem)] max-w-[22rem] flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-100 shadow-[20px_0_60px_rgba(0,0,0,0.45)]"
+          <div
+            className={cn(
+              "fixed inset-y-0 left-0 z-[90] flex w-full max-w-none flex-col bg-zinc-50 text-zinc-900 shadow-2xl transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] lg:hidden dark:bg-zinc-950 dark:text-zinc-100",
+              mobileEntered ? "translate-x-0" : "-translate-x-full",
+            )}
             role="dialog"
             aria-modal="true"
             aria-label="Main navigation"
           >
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3.5 pt-[max(0.85rem,env(safe-area-inset-top,0px))]">
-              <Link
-                href="/"
-                onClick={closeMobile}
-                className="flex min-w-0 items-center gap-2.5"
-                title="Workforce Productivity Dashboard"
-              >
-                <BrandLogo width={36} className="h-auto max-h-8 w-9 shrink-0" />
-                <span className="truncate text-sm font-bold tracking-wide text-zinc-100">
-                  Menu
-                </span>
-              </Link>
+            <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-3 py-3 pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:gap-3 sm:px-4 dark:border-white/10">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold tracking-wide text-zinc-900 dark:text-white">Menu</p>
+                <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-300">
+                  Navigate
+                </p>
+              </div>
+
               <button
                 type="button"
                 onClick={closeMobile}
-                className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white text-zinc-700 transition hover:bg-zinc-100 dark:border-white/25 dark:bg-white/10 dark:text-white dark:hover:bg-white/15"
                 aria-label="Close navigation menu"
               >
                 <X size={16} />
@@ -435,197 +450,155 @@ function GlobalSidebarInner({ initialRole }: { initialRole?: string }) {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-              <nav className="space-y-5 px-3 py-4">
-                {links.map((item) => {
-                  if (item.kind === "link") {
-                    return (
-                      <div key={`m-${item.href}-${item.label}`}>
-                        <NavLinkRow
-                          href={item.href}
-                          label={item.label}
-                          active={navLinkActive(pathname, item.href)}
-                          onNavigate={closeMobile}
-                        />
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={`m-group-${item.label}`} className="space-y-1.5">
-                      <p className="px-3 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
-                        {item.label}
-                      </p>
-                      <div className="space-y-1">
-                        {item.children.map((child) => (
-                          <NavLinkRow
-                            key={`m-${child.href}-${child.label}`}
-                            href={child.href}
-                            label={child.label}
-                            active={navChildActive(pathname, searchParams, child)}
-                            onNavigate={closeMobile}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+              <nav className="px-4 py-5" aria-label="Primary">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 landscape:grid-cols-3">
+                  {flattenNavLinks(links).map((item) => (
+                    <NavLinkRow
+                      key={`m-${item.href}-${item.label}`}
+                      href={item.href}
+                      label={item.label}
+                      active={navLinkActive(pathname, item.href, searchParams)}
+                      onNavigate={closeMobile}
+                      variant="tile"
+                    />
+                  ))}
+                </div>
               </nav>
 
-              <SidebarOpsWidget compact />
+              <div className="px-4 pb-4">
+                <SidebarOpsWidget compact />
+              </div>
             </div>
 
-            <SidebarProfileFooter
-              variant="mobile"
-              roleLabel={roleLabel}
-              userName={userName}
-              userEmail={userEmail}
-              avatarSrc={avatarSrc}
-              accountActive={accountActive}
-              onNavigate={closeMobile}
-            />
-          </aside>
-        </div>
+            <div className="flex shrink-0 items-center gap-2 border-t border-zinc-200 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] sm:px-4 dark:border-white/10">
+              <Link
+                href="/admin/account"
+                onClick={closeMobile}
+                title={`${userName} · ${userEmail}`}
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2 rounded-xl px-1.5 py-1 transition",
+                  accountActive
+                    ? "bg-orange-500/15 ring-1 ring-inset ring-orange-500/30 dark:bg-orange-500/20 dark:ring-orange-400/40"
+                    : "hover:bg-zinc-100 dark:hover:bg-white/10",
+                )}
+              >
+                <Avatar className="size-8 shrink-0 border border-orange-500/40 bg-gradient-to-br from-orange-500 to-orange-700 text-white sm:size-9">
+                  <AvatarImage src={avatarSrc} alt={userName} />
+                  <AvatarFallback className="bg-transparent">
+                    <UserRound className="size-3.5 sm:size-4" aria-hidden />
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold leading-snug text-zinc-900 dark:text-white">{userName}</p>
+                  <p className="truncate text-[11px] font-medium leading-snug text-orange-600 dark:text-orange-300">{roleLabel}</p>
+                </div>
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeMobile();
+                  void signOut({ callbackUrl: "/" });
+                }}
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-orange-600 px-2.5 text-xs font-semibold text-white transition hover:bg-orange-500 sm:px-3"
+                title="Sign out"
+              >
+                <LogOut size={14} aria-hidden />
+                <span className="max-sm:sr-only">Sign out</span>
+              </button>
+            </div>
+          </div>
+        </>
       ) : null}
 
       <aside
         className={cn(
-          "hidden h-full min-h-0 shrink-0 flex-col self-stretch overflow-hidden border-r border-zinc-200 bg-zinc-50 transition-all duration-200 dark:border-zinc-800 dark:bg-zinc-950 lg:flex",
-          collapsed ? "w-[4.5rem]" : "w-64",
+          "hidden h-full min-h-0 shrink-0 flex-col self-stretch overflow-hidden lg:flex",
+          "transition-[width,min-width,max-width,opacity,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          collapsed
+            ? "pointer-events-none w-0 min-w-0 max-w-0 border-transparent bg-transparent opacity-0"
+            : "w-64 min-w-64 max-w-64 border-r border-zinc-200 bg-zinc-50 opacity-100 dark:border-zinc-800 dark:bg-zinc-950",
         )}
+        aria-hidden={collapsed}
       >
         <div
           className={cn(
-            "flex h-12 shrink-0 items-center border-b border-zinc-200/80 px-2.5 dark:border-zinc-800",
-            collapsed ? "justify-center" : "justify-between gap-2 px-3",
+            "flex h-full w-64 min-h-0 flex-col",
+            "transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            collapsed
+              ? "pointer-events-none -translate-x-4 opacity-0"
+              : "translate-x-0 opacity-100",
           )}
         >
-          {!collapsed ? (
-            <Link
-              href="/"
-              className="flex min-w-0 items-center gap-2"
-              title="Workforce Productivity Dashboard"
-            >
-              <BrandLogo width={28} className="h-auto max-h-7 w-7 shrink-0" />
-              <p className="truncate text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+          <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200/80 px-3 py-2.5 dark:border-zinc-800">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold tracking-wide text-zinc-900 dark:text-zinc-100">
+                Menu
+              </p>
+              <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
                 Navigate
               </p>
-            </Link>
-          ) : null}
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-zinc-300 text-zinc-600 transition hover:bg-white dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
-            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {collapsed ? <BrandLogo width={22} className="h-auto max-h-5 w-5" /> : <Menu size={16} />}
-          </button>
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div
-            className={cn(
-              "min-h-0 flex-1 overflow-y-auto overscroll-contain",
-              collapsed && "flex flex-col",
-            )}
-          >
-            <nav
-              className={cn(
-                "px-2 py-2 text-sm",
-                collapsed && "flex flex-col items-center",
-              )}
-            >
-              <div className={cn(collapsed ? "flex flex-col items-center gap-1.5" : "space-y-2.5")}>
-                {links.map((item) => {
-                  if (item.kind === "group") {
-                    if (collapsed) {
-                      return (
-                        <div key={`group-${item.label}`} className="flex w-full flex-col items-center gap-1">
-                          {item.children.map((child) => {
-                            const ChildIcon = iconForLink(child.label);
-                            const active = navChildActive(pathname, searchParams, child);
-                            return (
-                              <Link
-                                key={`${child.href}-${child.label}`}
-                                href={child.href}
-                                title={child.label}
-                                className={cn(
-                                  "inline-flex size-9 items-center justify-center rounded-xl transition",
-                                  active
-                                    ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                                    : "text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
-                                )}
-                              >
-                                <ChildIcon size={16} strokeWidth={2.2} />
-                              </Link>
-                            );
-                          })}
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={`group-${item.label}`} className="space-y-0.5">
-                        <p className="px-2.5 text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-500">
-                          {item.label}
-                        </p>
-                        <div className="space-y-0.5">
-                          {item.children.map((child) => (
-                            <NavLinkRow
-                              key={`${child.href}-${child.label}`}
-                              href={child.href}
-                              label={child.label}
-                              active={navChildActive(pathname, searchParams, child)}
-                              dense
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  const active = navLinkActive(pathname, item.href);
-                  const Icon = iconForLink(item.label);
-                  if (collapsed) {
-                    return (
-                      <Link
-                        key={`${item.href}-${item.label}`}
-                        href={item.href}
-                        title={item.label}
-                        className={cn(
-                          "inline-flex size-9 items-center justify-center rounded-xl transition",
-                          active
-                            ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                            : "text-zinc-500 hover:bg-zinc-200/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100",
-                        )}
-                      >
-                        <Icon size={16} strokeWidth={2.2} />
-                      </Link>
-                    );
-                  }
-                  return (
-                    <NavLinkRow
-                      key={`${item.href}-${item.label}`}
-                      href={item.href}
-                      label={item.label}
-                      active={active}
-                      dense
-                    />
-                  );
-                })}
-              </div>
-            </nav>
-
-            {!collapsed ? <SidebarOpsWidget /> : null}
+            </div>
           </div>
 
-          <SidebarProfileFooter
-            variant="desktop"
-            collapsed={collapsed}
-            roleLabel={roleLabel}
-            userName={userName}
-            userEmail={userEmail}
-            avatarSrc={avatarSrc}
-            accountActive={accountActive}
-          />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <nav className="px-2.5 py-2.5" aria-label="Primary">
+                <div className="grid grid-cols-2 gap-2">
+                  {flattenNavLinks(links).map((item) => (
+                    <NavLinkRow
+                      key={`d-${item.href}-${item.label}`}
+                      href={item.href}
+                      label={item.label}
+                      active={navLinkActive(pathname, item.href, searchParams)}
+                      variant="tile"
+                    />
+                  ))}
+                </div>
+              </nav>
+
+              <div className="px-2.5 pb-2.5">
+                <SidebarOpsWidget />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2 border-t border-zinc-200/80 px-3 py-2.5 dark:border-zinc-800">
+            <Link
+              href="/admin/account"
+              title={`${userName} · ${userEmail}`}
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-2 rounded-xl px-1.5 py-1 transition",
+                accountActive
+                  ? "bg-orange-500/15 ring-1 ring-inset ring-orange-500/25"
+                  : "hover:bg-zinc-100 dark:hover:bg-zinc-900",
+              )}
+            >
+              <Avatar className="size-8 shrink-0 border border-orange-500/30 bg-gradient-to-br from-orange-600 to-orange-800 text-white">
+                <AvatarImage src={avatarSrc} alt={userName} />
+                <AvatarFallback className="bg-transparent">
+                  <UserRound className="size-3.5" aria-hidden />
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
+                  {userName}
+                </p>
+                <p className="truncate text-[11px] font-medium leading-snug text-orange-600 dark:text-orange-400">
+                  {roleLabel}
+                </p>
+              </div>
+            </Link>
+            <button
+              type="button"
+              onClick={() => void signOut({ callbackUrl: "/" })}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-orange-600 px-2.5 text-xs font-semibold text-white transition hover:bg-orange-500"
+              title="Sign out"
+            >
+              <LogOut size={13} aria-hidden />
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
     </>
